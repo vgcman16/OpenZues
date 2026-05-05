@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.5% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~68.2% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11038,6 +11038,313 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 325 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `5460ebf5`.
+- Microsoft Teams delegated Graph reaction auth now mirrors OpenClaw
+  `extensions/msteams/src/token.ts`, `extensions/msteams/src/graph.ts`, and
+  `extensions/msteams/src/graph-messages.ts` for expired stored delegated
+  tokens: OpenZues still prefers a usable stored delegated token, but expired
+  SSO rows no longer get sent to Graph. They fall through to the existing app
+  Graph token path instead, matching OpenClaw's delegated-preferred,
+  app-token fallback posture. This closes `OZ-PROV-001BF`; repo-wide parity is
+  now estimated at ~66.6%. Remaining Teams breadth is full delegated OAuth
+  setup/refresh-token bootstrap and broader channel/provider queue heads.
+- Verified the Microsoft Teams expired delegated-token fallback slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_msteams_react_skips_expired_stored_delegated_token -q`
+  (`1 passed`), adjacent Teams reaction/probe proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react or msteams_reactions or delegated_auth_status or msteams_native_route"`
+  (`9 passed, 326 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `ddbeb84f`.
+- Microsoft Teams delegated Graph token refresh now mirrors OpenClaw
+  `extensions/msteams/src/token.ts` and
+  `extensions/msteams/src/oauth.token.ts`: stored Teams SSO rows can carry a
+  refresh token, scopes, and user-principal metadata, expired delegated rows
+  refresh through the Azure v2 token endpoint before app-token fallback, the
+  refreshed access token is persisted for later sends, and the previous
+  refresh token is preserved when Azure omits a new one. This closes
+  `OZ-PROV-001BG`; repo-wide parity is now estimated at ~66.7%. Remaining
+  Teams breadth is the operator-facing delegated OAuth setup/bootstrap surface
+  and broader channel/provider queue heads.
+- Verified the Microsoft Teams delegated refresh-token slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_msteams_react_refreshes_expired_stored_delegated_token -q`
+  (`1 passed`), adjacent Teams reaction/probe proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react or msteams_reactions or delegated_auth_status or msteams_native_route"`
+  (`10 passed, 326 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\database.py`.
+  Checkpointed in `34a34a44`.
+- Microsoft Teams delegated OAuth setup bootstrap now mirrors OpenClaw
+  `extensions/msteams/src/oauth.flow.ts`,
+  `extensions/msteams/src/oauth.shared.ts`, and
+  `extensions/msteams/src/setup-surface.ts`: `openzues setup
+  msteams-delegated-auth --json` resolves native Teams route credentials,
+  enables `channels.msteams.delegatedAuth`, emits the OpenClaw redirect URI
+  and localhost callback metadata, builds a state-protected Azure v2 auth URL
+  with default delegated scopes, and returns a PKCE verifier/challenge pair
+  without leaking the app password. This closes `OZ-PROV-001BH`; repo-wide
+  parity is now estimated at ~66.8%. Remaining Teams delegated-auth breadth is
+  callback parsing/token exchange persistence and local callback/manual
+  completion ergonomics.
+- Verified the Microsoft Teams delegated OAuth setup bootstrap slice with
+  `python -m pytest tests\test_cli.py::test_setup_msteams_delegated_auth_json_builds_openclaw_auth_url -q`
+  (`1 passed`), adjacent CLI/provider proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_delegated_auth or channels_status_json_reports_msteams_native_probe or channels_capabilities_json_reports_msteams_poll_support or setup_wizard or setup_bootstrap"`
+  (`5 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\cli.py`.
+  Checkpointed in `6f368d37`.
+- Microsoft Teams delegated OAuth completion now mirrors OpenClaw
+  `extensions/msteams/src/oauth.flow.ts` and
+  `extensions/msteams/src/oauth.token.ts`: `openzues setup
+  msteams-delegated-auth --callback-url ... --state ... --pkce-verifier ...`
+  rejects bare codes/state mismatches, exchanges authorization codes through
+  the Azure v2 token endpoint with the upstream form contract, requires a
+  refresh token, applies the five-minute expiry buffer, persists access and
+  refresh tokens under the native delegated token store, and keeps app
+  password/access/refresh tokens out of CLI output. This closes
+  `OZ-PROV-001BI`; repo-wide parity is now estimated at ~66.9%. Remaining
+  Teams setup breadth is local callback server/manual prompt ergonomics.
+- Verified the Microsoft Teams delegated OAuth completion slice with
+  `python -m pytest tests\test_cli.py::test_setup_msteams_delegated_auth_complete_exchanges_and_stores_tokens -q`
+  (`1 passed`), adjacent Teams/setup CLI proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_delegated_auth or channels_status_json_reports_msteams_native_probe or channels_capabilities_json_reports_msteams_poll_support or setup_wizard or setup_bootstrap"`
+  (`6 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\cli.py`.
+  Checkpointed in `3695ca29`.
+- Microsoft Teams read message actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.read.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="read"`
+  resolves `messageId` with explicit or tool-context Teams targets, obtains
+  route-backed Graph credentials with delegated-token preference when a stored
+  requester token is usable, GETs chat or team/channel Graph message
+  endpoints, and returns OpenClaw-shaped `{ok, channel, action, message}`
+  projection with `id`, `text`, `from`, and `createdAt`. This closes
+  `OZ-PROV-001BJ`; repo-wide parity is now estimated at ~67.0%. Remaining
+  Teams Graph action breadth is pin/unpin/list-pins/search/member-info.
+- Verified the Microsoft Teams read message action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_read_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`10 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `4d3635c3`.
+- Microsoft Teams pin message actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="pin"`
+  resolves `target` / `to` plus `messageId`, obtains route-backed Graph
+  credentials with delegated-token preference when available, rejects channel
+  pinning with the upstream Graph v1.0 unavailable error, POSTs
+  `message@odata.bind` to `/chats/{chatId}/pinnedMessages`, and returns
+  OpenClaw-shaped `{ok, channel, action, pinnedMessageId}` results. This
+  closes `OZ-PROV-001BK`; repo-wide parity is now estimated at ~67.1%.
+  Remaining Teams Graph action breadth is unpin/list-pins/search/member-info.
+- Verified the Microsoft Teams pin message action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_pin_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`11 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `1a99d147`.
+- Microsoft Teams unpin message actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="unpin"`
+  resolves `pinnedMessageId` or the upstream `messageId` fallback, obtains
+  route-backed Graph credentials with delegated-token preference when
+  available, rejects channel unpinning with the upstream Graph v1.0
+  unavailable error, DELETEs
+  `/chats/{chatId}/pinnedMessages/{pinnedMessageId}`, and returns
+  OpenClaw-shaped `{ok, channel, action}` results. This closes
+  `OZ-PROV-001BL`; repo-wide parity is now estimated at ~67.2%. Remaining
+  Teams Graph action breadth is list-pins/search/member-info.
+- Verified the Microsoft Teams unpin message action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_unpin_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`12 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `dafcd607`.
+- Microsoft Teams list-pins actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.read.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="list-pins"`
+  resolves route-backed Graph chat targets, obtains route-backed Graph
+  credentials with delegated-token preference when available, rejects channel
+  list-pins with the upstream Graph v1.0 unavailable error, GETs
+  `/chats/{chatId}/pinnedMessages?$expand=message`, follows bounded
+  `@odata.nextLink` pagination, and returns OpenClaw-shaped `{ok, channel,
+  action, pins}` summaries. This closes `OZ-PROV-001BM`; repo-wide parity is
+  now estimated at ~67.3%. Remaining Teams Graph action breadth is
+  search/member-info.
+- Verified the Microsoft Teams list-pins action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_list_pins_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`13 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `9531fbe3`.
+- Microsoft Teams search actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.search.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="search"`
+  resolves route-backed Graph chat/team-channel targets, obtains route-backed
+  Graph credentials with delegated-token preference when available, strips
+  double quotes from `query`, clamps numeric `limit` to 1..50, escapes OData
+  sender filters, sends Graph `$search` with `ConsistencyLevel=eventual`, and
+  returns OpenClaw-shaped `{ok, channel, action, messages}` summaries. This
+  closes `OZ-PROV-001BN`; repo-wide parity is now estimated at ~67.4%.
+  Remaining Teams Graph action breadth is member-info.
+- Verified the Microsoft Teams search action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_search_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`14 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `29547a56`.
+- Microsoft Teams member-info actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-members.ts`, and
+  `extensions/msteams/src/graph-members.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="member-info"` trims `userId`,
+  obtains route-backed Graph credentials with delegated-token preference when
+  available, fetches `/users/{id}` with the upstream `$select` field set, and
+  returns OpenClaw-shaped `{ok, channel, action, user}` results. This closes
+  `OZ-PROV-001BO`; repo-wide parity is now estimated at ~67.5%. Remaining
+  Teams Graph action breadth is channel-list/channel-info.
+- Verified the Microsoft Teams member-info action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_member_info_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`15 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `8aa5f0a6`.
+- Microsoft Teams channel-list actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-teams.ts`, and
+  `extensions/msteams/src/graph-teams.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="channel-list"` trims `teamId`,
+  obtains route-backed Graph credentials with delegated-token preference when
+  available, fetches `/teams/{teamId}/channels` with the upstream `$select`
+  field set, follows bounded `@odata.nextLink` pagination, and returns
+  OpenClaw-shaped `{ok, channel, action, channels, truncated}` results. This
+  closes `OZ-PROV-001BP`; repo-wide parity is now estimated at ~67.6%.
+  Remaining Teams Graph action breadth is channel-info.
+- Verified the Microsoft Teams channel-list action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_channel_list_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_channel_list or msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`16 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `cf1b7f18`.
+- Microsoft Teams channel-info actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-teams.ts`, and
+  `extensions/msteams/src/graph-teams.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="channel-info"` trims
+  `teamId`/`channelId`, obtains route-backed Graph credentials with
+  delegated-token preference when available, fetches the Graph team channel
+  with the upstream `$select` field set, and returns OpenClaw-shaped `{ok,
+  channel, action, channelInfo}` results. This closes `OZ-PROV-001BQ`;
+  repo-wide parity is now estimated at ~67.7%. Remaining Teams Bot Framework
+  action breadth is upload-file/edit/delete.
+- Verified the Microsoft Teams channel-info action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_channel_info_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_channel_info or msteams_channel_list or msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`17 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `4e6fc71a`.
+- Microsoft Teams edit actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/send.test.ts`: native `message.action` dispatch for
+  `channel="msteams"`, `action="edit"` resolves Teams conversation targets,
+  accepts OpenClaw `text`/`content`/`message` content fallback plus
+  `messageId`, obtains route-backed Bot Framework credentials, PUTs a message
+  activity update to `/activities/{messageId}`, and returns OpenClaw-shaped
+  `{ok, channel, conversationId}` results. This closes `OZ-PROV-001BR`;
+  repo-wide parity is now estimated at ~67.8%. Remaining Teams Bot Framework
+  action breadth is delete/upload-file.
+- Verified the Microsoft Teams edit action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_edit_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_edit or msteams_channel_info or msteams_channel_list or msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`18 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `df3f4f0d`.
+- Microsoft Teams delete actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/send.test.ts`: native `message.action` dispatch for
+  `channel="msteams"`, `action="delete"` resolves Teams conversation targets
+  plus `messageId`, obtains route-backed Bot Framework credentials, DELETEs
+  `/activities/{messageId}`, and returns OpenClaw-shaped `{ok, channel,
+  conversationId}` results. This closes `OZ-PROV-001BS`; repo-wide parity is
+  now estimated at ~67.9%. Remaining Teams Bot Framework action breadth is
+  upload-file.
+- Verified the Microsoft Teams delete action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_delete_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_delete or msteams_edit or msteams_channel_info or msteams_channel_list or msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`19 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `fd98306a`.
+- Microsoft Teams upload-file actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/send.test.ts`: native `message.action` dispatch for
+  `channel="msteams"`, `action="upload-file"` resolves Teams conversation
+  targets, accepts upstream `filePath` / `path` / `media` sources, preserves
+  `text` / `content` / `message` plus `filename` / `title` metadata, routes
+  through the native Bot Framework send path with FileConsent/Graph upload
+  metadata, and returns OpenClaw-shaped `{ok, channel, action, messageId,
+  conversationId}` plus `pendingUploadId` when Teams returns one. This closes
+  `OZ-PROV-001BT`; repo-wide parity is now estimated at ~68.0%. Remaining
+  Teams action breadth is adaptive-card `send` with a `card` payload.
+- Verified the Microsoft Teams upload-file action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_upload_file_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams and message_action"`
+  (`15 passed, 332 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `86be3a2c`.
+- Microsoft Teams adaptive-card send actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/channel.actions.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="send"` with a `card` payload
+  resolves Teams conversation targets, posts an Adaptive Card activity through
+  the route-backed Bot Framework service URL, and returns OpenClaw-shaped
+  `{ok, channel, messageId, conversationId}` results. This closes
+  `OZ-PROV-001BU`; repo-wide parity is now estimated at ~68.1%. The next
+  provider action seam is Twitch `message.action send`.
+- Verified the Microsoft Teams adaptive-card send action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_send_card_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams and message_action"`
+  (`16 passed, 332 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `30fbcc69`.
+- Twitch send message actions now mirror OpenClaw
+  `extensions/twitch/src/actions.ts`, `extensions/twitch/src/outbound.ts`,
+  and `extensions/twitch/src/actions.test.ts`: native `message.action`
+  dispatch for `channel="twitch"`, `action="send"` accepts required
+  `message` plus optional `to` scalar params, falls back to the native route
+  default channel, shares the route-backed Twitch chat sender and markdown
+  stripping path, and returns OpenClaw-shaped `{ok, channel, messageId,
+  timestamp}` results. This closes `OZ-PROV-001BV`; repo-wide parity is now
+  estimated at ~68.2%. The next provider action seam is Feishu/Lark
+  message-action contract breadth.
+- Verified the Twitch send message action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_twitch_send_route -q`
+  (`1 passed`), adjacent Twitch provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "twitch"` (`3 passed, 346
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `9baee646`.
 
 ## References
 

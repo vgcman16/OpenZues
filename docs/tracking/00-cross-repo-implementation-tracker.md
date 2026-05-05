@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~66.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~68.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams inbound media auth-fallback slice is checkpointed in `5460ebf5`.
+The Twitch send message action slice is checkpointed in `9baee646`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,349 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams inbound media auth fallback checkpointed in `5460ebf5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue delegated auth setup breadth or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Twitch send message action checkpointed in `9baee646` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark message-action contract breadth |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BV` Twitch send message action
+  - Source: `openclaw-main/extensions/twitch/src/actions.ts`,
+    `openclaw-main/extensions/twitch/src/outbound.ts`,
+    `openclaw-main/extensions/twitch/src/actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="twitch"`,
+    `action="send"` accepts required `message` plus optional `to` scalar
+    params, falls back to the native route default channel, shares the
+    route-backed Twitch chat sender and markdown stripping path, and returns
+    OpenClaw-shaped `{ok, channel, messageId, timestamp}`.
+  - Evidence required: focused runtime test, adjacent Twitch provider tests,
+    ruff, mypy
+  - Status: checkpointed in `9baee646`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Twitch send action proof (`1
+    passed`), adjacent Twitch provider proof (`3 passed, 346 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BU` Microsoft Teams adaptive-card send action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/channel.actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="send"` with a `card` payload resolves Teams conversation targets,
+    posts an Adaptive Card Bot Framework activity through the native route,
+    and returns OpenClaw-shaped `{ok, channel, messageId, conversationId}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `30fbcc69`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams adaptive-card send
+    proof (`1 passed`), adjacent Teams action/provider proof (`16 passed, 332
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BT` Microsoft Teams upload-file message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="upload-file"` resolves Teams conversation targets, accepts
+    OpenClaw `filePath` / `path` / `media` aliases, preserves
+    `text`/`content`/`message` plus `filename`/`title` metadata, routes
+    through the native Bot Framework send path with FileConsent/Graph upload
+    metadata, and returns OpenClaw-shaped `{ok, channel, action, messageId,
+    conversationId}` plus `pendingUploadId` when present.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `86be3a2c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams upload-file proof (`1
+    passed`), adjacent Teams action/provider proof (`15 passed, 332
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BS` Microsoft Teams delete message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="delete"` resolves Teams conversation targets plus `messageId`,
+    obtains Bot Framework bearer credentials through route config, DELETEs
+    `/activities/{messageId}`, and returns OpenClaw-shaped `{ok, channel,
+    conversationId}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `fd98306a`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams delete proof (`1
+    passed`), adjacent Teams action/provider proof (`19 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BR` Microsoft Teams edit message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="edit"` resolves Teams conversation targets, accepts
+    `text`/`content`/`message` content fallback plus `messageId`, obtains
+    Bot Framework bearer credentials through route config, PUTs a message
+    activity update to `/activities/{messageId}`, and returns OpenClaw-shaped
+    `{ok, channel, conversationId}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `df3f4f0d`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams edit proof (`1
+    passed`), adjacent Teams action/provider proof (`18 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BQ` Microsoft Teams channel-info action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-teams.ts`,
+    `openclaw-main/extensions/msteams/src/graph-teams.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="channel-info"` trims `teamId`/`channelId`, fetches the Graph team
+    channel with the upstream `$select` field set through route-backed Graph
+    auth, and returns OpenClaw-shaped `{ok, channel, action, channelInfo}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `4e6fc71a`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams channel-info proof (`1
+    passed`), adjacent Teams action/provider proof (`17 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BP` Microsoft Teams channel-list action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-teams.ts`,
+    `openclaw-main/extensions/msteams/src/graph-teams.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="channel-list"` trims `teamId`, fetches Graph team channels with
+    the upstream `$select` field set through route-backed Graph auth, follows
+    bounded `@odata.nextLink` pagination, and returns OpenClaw-shaped `{ok,
+    channel, action, channels, truncated}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `cf1b7f18`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams channel-list proof (`1
+    passed`), adjacent Teams action/provider proof (`16 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BO` Microsoft Teams member-info action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-members.ts`,
+    `openclaw-main/extensions/msteams/src/graph-members.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="member-info"` trims `userId`, fetches the Graph user profile with
+    the upstream `$select` field set through route-backed Graph auth, and
+    returns OpenClaw-shaped `{ok, channel, action, user}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `8aa5f0a6`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams member-info proof (`1
+    passed`), adjacent Teams action/provider proof (`15 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BN` Microsoft Teams search message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.search.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="search"` resolves route-backed Graph chat/team-channel targets,
+    strips double quotes from `query`, clamps numeric `limit` to 1..50, escapes
+    OData `from` filters, sends Graph `$search` with
+    `ConsistencyLevel=eventual`, and returns OpenClaw-shaped `{ok, channel,
+    action, messages}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `29547a56`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams search proof (`1
+    passed`), adjacent Teams action/provider proof (`14 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BM` Microsoft Teams list-pins message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.read.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="list-pins"` resolves route-backed Graph chat targets, rejects
+    channel list-pins with the upstream Graph v1.0 unavailable error, GETs
+    `/chats/{chatId}/pinnedMessages?$expand=message`, follows bounded
+    `@odata.nextLink` pagination, and returns OpenClaw-shaped `{ok, channel,
+    action, pins}` with `id`, `pinnedMessageId`, `messageId`, and `text`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `9531fbe3`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams list-pins proof (`1
+    passed`), adjacent Teams action/provider proof (`13 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BL` Microsoft Teams unpin message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="unpin"` accepts `pinnedMessageId` or the upstream `messageId`
+    fallback, resolves route-backed Graph chat targets, rejects channel
+    unpinning with the upstream Graph v1.0 unavailable error, DELETEs
+    `/chats/{chatId}/pinnedMessages/{pinnedMessageId}`, and returns
+    OpenClaw-shaped `{ok, channel, action}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `dafcd607`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams unpin proof (`1
+    passed`), adjacent Teams action/provider proof (`12 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BK` Microsoft Teams pin message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="pin"` accepts `target`/`to` plus `messageId`, resolves
+    route-backed Graph chat targets, rejects channel pinning with the upstream
+    Graph v1.0 unavailable error, POSTs `message@odata.bind` to
+    `/chats/{chatId}/pinnedMessages`, and returns OpenClaw-shaped
+    `{ok, channel, action, pinnedMessageId}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `1a99d147`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams pin proof (`1
+    passed`), adjacent Teams action/provider proof (`11 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BJ` Microsoft Teams read message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.read.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="read"` resolves `messageId` plus explicit or tool-context Teams
+    targets, obtains route-backed Graph credentials with delegated-token
+    preference when available, GETs the Graph message resource through chat or
+    team/channel endpoints, and returns OpenClaw-shaped `{ok, channel, action,
+    message}` with `id`, `text`, `from`, and `createdAt`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `4d3635c3`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams read proof (`1
+    passed`), adjacent Teams action/provider proof (`10 passed, 327
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BI` Microsoft Teams delegated OAuth completion
+  - Source: `openclaw-main/extensions/msteams/src/oauth.flow.ts`,
+    `openclaw-main/extensions/msteams/src/oauth.token.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/cli.py`,
+    `tests/test_cli.py`
+  - Contract: native CLI completion parses the full redirect URL, enforces
+    state matching, posts the upstream Azure v2 authorization-code form
+    payload with redirect URI, code verifier, client secret, and scopes,
+    requires a refresh token, applies the five-minute expiry buffer, persists
+    delegated access/refresh tokens with scopes/user metadata, and omits
+    secrets/tokens from output.
+  - Evidence required: focused CLI test, adjacent Teams/setup CLI tests, ruff,
+    mypy
+  - Status: checkpointed in `3695ca29`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated OAuth completion proof
+    (`1 passed`), adjacent Teams/setup CLI proof (`6 passed, 507
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BH` Microsoft Teams delegated OAuth setup bootstrap
+  - Source: `openclaw-main/extensions/msteams/src/oauth.flow.ts`,
+    `openclaw-main/extensions/msteams/src/oauth.shared.ts`,
+    `openclaw-main/extensions/msteams/src/setup-surface.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/cli.py`,
+    `tests/test_cli.py`
+  - Contract: native CLI setup resolves Teams route credentials, enables
+    `channels.msteams.delegatedAuth`, emits upstream redirect/callback
+    metadata, builds an Azure v2 delegated OAuth URL with state, default
+    scopes, PKCE S256 challenge, and `prompt=consent`, returns the verifier
+    for completion, and does not leak the app password.
+  - Evidence required: focused CLI test, adjacent Teams/setup CLI tests, ruff,
+    mypy
+  - Status: checkpointed in `6f368d37`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated OAuth setup proof
+    (`1 passed`), adjacent Teams/setup CLI proof (`5 passed, 507
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BG` Microsoft Teams delegated refresh-token flow
+  - Source: `openclaw-main/extensions/msteams/src/token.ts`,
+    `openclaw-main/extensions/msteams/src/oauth.token.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/database.py`,
+    `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: expired Teams delegated Graph token rows refresh through Azure
+    using persisted refresh tokens/scopes before app-token fallback; refreshed
+    access tokens are persisted and old refresh tokens are preserved when the
+    provider omits a replacement.
+  - Evidence required: focused runtime test, adjacent Teams reaction/probe
+    tests, ruff, mypy
+  - Status: checkpointed in `34a34a44`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated refresh-token proof
+    (`1 passed`), adjacent Teams reaction/probe proof (`10 passed, 326
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BF` Microsoft Teams expired delegated-token fallback
+  - Source: `openclaw-main/extensions/msteams/src/token.ts`,
+    `openclaw-main/extensions/msteams/src/graph.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Teams Graph reaction actions prefer usable stored delegated
+    tokens, but skip expired stored SSO rows so app Graph auth handles the
+    request instead of sending stale bearer tokens to Graph.
+  - Evidence required: focused runtime test, adjacent Teams reaction/probe
+    tests, ruff, mypy
+  - Status: checkpointed in `ddbeb84f`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused expired delegated-token fallback proof
+    (`1 passed`), adjacent Teams reaction/probe proof (`9 passed, 326
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001BE` Microsoft Teams inbound media auth fallback
   - Source: `openclaw-main/extensions/msteams/src/attachments/download.ts`,

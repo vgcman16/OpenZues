@@ -1579,6 +1579,94 @@ def _emit_channel_logs(payload: dict[str, object], *, json_output: bool) -> None
         typer.echo(" ".join(parts))
 
 
+def _msteams_delegated_auth_config_patch(account_id: str | None) -> dict[str, object]:
+    normalized_account_id = (
+        _optional_cli_string(account_id)
+        or DEFAULT_ACCOUNT_ID
+    )
+    if normalized_account_id == DEFAULT_ACCOUNT_ID:
+        return {"channels": {"msteams": {"delegatedAuth": {"enabled": True}}}}
+    return {
+        "channels": {
+            "msteams": {
+                "accounts": {
+                    normalized_account_id: {"delegatedAuth": {"enabled": True}}
+                }
+            }
+        }
+    }
+
+
+def _msteams_delegated_auth_config_from_snapshot(
+    snapshot: object,
+    *,
+    account_id: str | None,
+) -> dict[str, object]:
+    if not isinstance(snapshot, Mapping):
+        return {"enabled": False}
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return {"enabled": False}
+    channel_config = channels.get("msteams") or channels.get("teams")
+    if not isinstance(channel_config, Mapping):
+        return {"enabled": False}
+    normalized_account_id = (
+        _optional_cli_string(account_id)
+        or DEFAULT_ACCOUNT_ID
+    )
+    if normalized_account_id != DEFAULT_ACCOUNT_ID:
+        accounts = channel_config.get("accounts")
+        if isinstance(accounts, Mapping):
+            account_config = accounts.get(normalized_account_id) or accounts.get(
+                DEFAULT_ACCOUNT_ID
+            )
+            if isinstance(account_config, Mapping):
+                delegated_auth = (
+                    account_config.get("delegatedAuth")
+                    or account_config.get("delegated_auth")
+                )
+                if isinstance(delegated_auth, Mapping):
+                    return dict(delegated_auth)
+    delegated_auth = channel_config.get("delegatedAuth") or channel_config.get(
+        "delegated_auth"
+    )
+    if isinstance(delegated_auth, Mapping):
+        return dict(delegated_auth)
+    if isinstance(delegated_auth, bool):
+        return {"enabled": delegated_auth}
+    return {"enabled": False}
+
+
+def _emit_msteams_delegated_auth_bootstrap(
+    payload: dict[str, object],
+    *,
+    json_output: bool,
+) -> None:
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+    typer.echo("Microsoft Teams delegated OAuth")
+    typer.echo(f"account: {payload.get('accountId') or DEFAULT_ACCOUNT_ID}")
+    status = _optional_cli_string(payload.get("status"))
+    if status is not None:
+        typer.echo(f"status: {status}")
+    connection_name = _optional_cli_string(payload.get("connectionName"))
+    if connection_name is not None:
+        typer.echo(f"connection: {connection_name}")
+    user_id = _optional_cli_string(payload.get("userId"))
+    if user_id is not None:
+        typer.echo(f"user: {user_id}")
+    typer.echo(f"redirect: {payload.get('redirectUri') or ''}")
+    auth_url = _optional_cli_string(payload.get("authUrl"))
+    if auth_url is not None:
+        typer.echo(f"auth URL: {auth_url}")
+    pkce = payload.get("pkce")
+    if isinstance(pkce, Mapping):
+        verifier = _optional_cli_string(pkce.get("verifier"))
+        if verifier is not None:
+            typer.echo(f"PKCE verifier: {verifier}")
+
+
 def _emit_gateway_bootstrap(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -30264,6 +30352,97 @@ def setup_wizard_update(
         _run_with_services(lambda services: services.setup.save_wizard_session(payload))
     ).model_dump(mode="json")
     _emit_payload(result, json_output=json_output)
+
+
+@setup_app.command("msteams-delegated-auth")
+def setup_msteams_delegated_auth(
+    account_id: str | None = typer.Option(
+        None,
+        "--account",
+        help="Microsoft Teams route account id.",
+    ),
+    state: str | None = typer.Option(
+        None,
+        "--state",
+        help="OAuth CSRF state. Generated for start; expected state for completion.",
+    ),
+    pkce_verifier: str | None = typer.Option(
+        None,
+        "--pkce-verifier",
+        help="PKCE verifier. Generated when omitted.",
+    ),
+    callback_url: str | None = typer.Option(
+        None,
+        "--callback-url",
+        help="Complete delegated auth from the full redirect URL.",
+    ),
+    user_id: str | None = typer.Option(
+        None,
+        "--user-id",
+        help="Teams/AAD user id for token storage; inferred from the access token when omitted.",
+    ),
+    scopes: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--scope",
+            help="Delegated OAuth scope. Repeat to override the OpenClaw defaults.",
+        ),
+    ] = None,
+    manual: bool = typer.Option(
+        False,
+        "--manual",
+        "--remote",
+        help="Mark the bootstrap for manual local-browser completion.",
+    ),
+    enable_config: bool = typer.Option(
+        True,
+        "--enable-config/--no-enable-config",
+        help="Enable channels.msteams.delegatedAuth in the saved config.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the delegated auth bootstrap as JSON.",
+    ),
+) -> None:
+    async def _action(services: CliServices) -> dict[str, object]:
+        if _optional_cli_string(callback_url) is not None:
+            payload = await services.ops_mesh.complete_msteams_delegated_auth_bootstrap(
+                account_id=account_id,
+                callback_url=str(callback_url or ""),
+                expected_state=state,
+                pkce_verifier=pkce_verifier,
+                user_id=user_id,
+                scopes=scopes,
+            )
+        else:
+            payload = await services.ops_mesh.build_msteams_delegated_auth_bootstrap(
+                account_id=account_id,
+                state=state,
+                pkce_verifier=pkce_verifier,
+                scopes=scopes,
+                manual=manual,
+            )
+        if enable_config:
+            config_result = services.gateway_config.patch_object(
+                _msteams_delegated_auth_config_patch(account_id)
+            )
+            payload["config"] = {
+                "path": config_result.get("path"),
+                "hash": config_result.get("hash"),
+                "delegatedAuth": _msteams_delegated_auth_config_from_snapshot(
+                    config_result.get("config"),
+                    account_id=account_id,
+                ),
+            }
+        return payload
+
+    try:
+        payload = _run(_run_with_services(_action))
+    except (RuntimeError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_msteams_delegated_auth_bootstrap(payload, json_output=json_output)
 
 
 @setup_app.command("launch")

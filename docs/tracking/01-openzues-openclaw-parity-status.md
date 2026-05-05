@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~66.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~68.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -183,6 +183,12 @@ may lag behind this tracker.
   chat delivery, and result metadata.
   - Status: checkpointed in `6185301b`
 
+- [x] Twitch send message action support, preserving OpenClaw required
+  message/optional target handling, default route channel fallback,
+  route-backed chat sender reuse, markdown stripping, and
+  `{channel,messageId,timestamp}` result projection.
+  - Status: checkpointed in `9baee646`
+
 - [x] Signal native reaction action support, preserving OpenClaw JSON-RPC
   `sendReaction` payloads, direct/group target normalization, target-author
   fallback and required group-author behavior, `remove=true`, and
@@ -207,6 +213,67 @@ may lag behind this tracker.
   message-action target resolution, app-token auth, grouped reaction summaries,
   known emoji labels, and anonymous/deleted-user reaction counts.
   - Status: checkpointed in `4996cf5c`
+
+- [x] Microsoft Teams read message action support, preserving OpenClaw Graph
+  message-action target fallback, route-backed Graph auth, delegated-token
+  preference, chat/team-channel endpoint selection, and `id`/`text`/`from`/
+  `createdAt` result projection.
+  - Status: checkpointed in `4d3635c3`
+
+- [x] Microsoft Teams pin message action support, preserving OpenClaw Graph
+  chat pin payloads, `message@odata.bind`, pinned-message id projection,
+  delegated-token preference, and the upstream Graph v1.0 channel pinning
+  unavailable boundary.
+  - Status: checkpointed in `1a99d147`
+
+- [x] Microsoft Teams unpin message action support, preserving OpenClaw Graph
+  chat pinned-resource DELETEs, `pinnedMessageId` / `messageId` fallback, and
+  the upstream Graph v1.0 channel unpinning unavailable boundary.
+  - Status: checkpointed in `dafcd607`
+
+- [x] Microsoft Teams list-pins action support, preserving OpenClaw Graph chat
+  pin listing, `$expand=message`, bounded `@odata.nextLink` pagination, and
+  pinned-message summary projection.
+  - Status: checkpointed in `9531fbe3`
+
+- [x] Microsoft Teams search action support, preserving OpenClaw Graph
+  `$search`, 1..50 limit clamping, quote stripping, sender filter escaping,
+  `ConsistencyLevel=eventual`, and message summary projection.
+  - Status: checkpointed in `29547a56`
+
+- [x] Microsoft Teams member-info action support, preserving OpenClaw Graph
+  user profile lookup, `$select` field coverage, route-backed Graph auth, and
+  user profile projection.
+  - Status: checkpointed in `8aa5f0a6`
+
+- [x] Microsoft Teams channel-list action support, preserving OpenClaw Graph
+  team channel listing, `$select` field coverage, bounded pagination, and
+  `truncated` projection.
+  - Status: checkpointed in `cf1b7f18`
+
+- [x] Microsoft Teams channel-info action support, preserving OpenClaw Graph
+  team channel lookup, `$select` field coverage, and `channelInfo` projection.
+  - Status: checkpointed in `4e6fc71a`
+
+- [x] Microsoft Teams edit message action support, preserving OpenClaw Bot
+  Framework proactive updateActivity behavior, content fallback, route-backed
+  bot auth, and conversation result projection.
+  - Status: checkpointed in `df3f4f0d`
+
+- [x] Microsoft Teams delete message action support, preserving OpenClaw Bot
+  Framework proactive deleteActivity behavior, route-backed bot auth, and
+  conversation result projection.
+  - Status: checkpointed in `fd98306a`
+
+- [x] Microsoft Teams upload-file message action support, preserving OpenClaw
+  file-source aliases, filename/title metadata, Bot Framework send routing,
+  Graph/FileConsent upload metadata, and action result projection.
+  - Status: checkpointed in `86be3a2c`
+
+- [x] Microsoft Teams adaptive-card send action support, preserving OpenClaw
+  `send` plus `card` handling, Bot Framework Adaptive Card activity shape,
+  and conversation result projection.
+  - Status: checkpointed in `30fbcc69`
 
 - [x] Microsoft Teams native readiness probe support, preserving OpenClaw Bot
   Framework credential posture, Graph app-token posture metadata, optional
@@ -249,6 +316,28 @@ may lag behind this tracker.
   OpenClaw's `preferDelegated` Graph token behavior for `react` / `unreact`
   when a persisted SSO token exists for the requester.
   - Status: checkpointed in `507c90ad`
+
+- [x] Microsoft Teams expired delegated-token fallback, preserving OpenClaw's
+  delegated-preferred/app-token fallback behavior when a stored SSO token is
+  stale.
+  - Status: checkpointed in `ddbeb84f`
+
+- [x] Microsoft Teams delegated refresh-token flow, preserving OpenClaw's
+  expired delegated-token refresh, old-refresh-token preservation, and
+  refreshed access-token persistence before app-token fallback.
+  - Status: checkpointed in `34a34a44`
+
+- [x] Microsoft Teams delegated OAuth setup bootstrap, preserving OpenClaw's
+  PKCE/state-protected Azure authorization URL, localhost redirect metadata,
+  default delegated scopes, and setup-time `delegatedAuth.enabled` config
+  patch without leaking the app password.
+  - Status: checkpointed in `6f368d37`
+
+- [x] Microsoft Teams delegated OAuth completion, preserving OpenClaw's full
+  redirect URL parsing, state verification, authorization-code token exchange,
+  refresh-token requirement, expiry buffer, native token persistence, and
+  secret-free CLI output.
+  - Status: checkpointed in `3695ca29`
 
 - [x] Microsoft Teams threaded replies, preserving OpenClaw Bot Framework
   channel thread routing via `<conversationId>;messageid=<thread-root>` and

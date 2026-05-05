@@ -20838,6 +20838,1627 @@ async def test_ops_mesh_service_blocks_msteams_signin_verify_for_group_sender_al
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_upload_file_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    site_id = "contoso.sharepoint.com,site-guid,web-guid"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-upload-file"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    report_path = tmp_path / "report.pdf"
+    report_bytes = b"%PDF-1.7 openzues teams upload action"
+    report_path.write_bytes(report_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Upload File Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"sharePointSiteId={site_id}"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_uploads: list[tuple[str, str, bytes, dict[str, str]]] = []
+    json_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-bot-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-graph-token"
+
+    def fake_request_bytes_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object:
+        del self, timeout_seconds
+        assert body is not None
+        graph_uploads.append((method, target, body, dict(headers or {})))
+        return {"id": "drive-item-upload-action"}
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        json_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/createLink"):
+            return {"link": {"webUrl": "https://tenant.sharepoint.com/:b:/shared-upload"}}
+        if "$select=eTag,webDavUrl,name" in target:
+            return {
+                "eTag": '"{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee},1"',
+                "webDavUrl": (
+                    "https://tenant.sharepoint.com/sites/ops/Q1-report.pdf"
+                ),
+                "name": "Q1-report.pdf",
+            }
+        return {"id": "teams-upload-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bytes_provider_url",
+        fake_request_bytes_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="upload-file",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "path": str(report_path),
+                "message": "Quarterly report",
+                "filename": "Q1-report.pdf",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-upload-file-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "upload-file",
+        "messageId": "teams-upload-message-123",
+        "conversationId": conversation_id,
+    }
+    assert graph_uploads == [
+        (
+            "PUT",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/root:"
+                "/OpenClawShared/Q1-report.pdf:/content"
+            ),
+            report_bytes,
+            {
+                "User-Agent": "OpenZues",
+                "Authorization": "Bearer teams-graph-token",
+                "Content-Type": "application/pdf",
+            },
+        )
+    ]
+    assert json_requests[-1] == (
+        "POST",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "19%3Aops-thread%40thread.tacv2/activities"
+        ),
+        {
+            "type": "message",
+            "channelData": {"feedbackLoopEnabled": False},
+            "entities": [
+                {
+                    "type": "https://schema.org/Message",
+                    "@type": "Message",
+                    "@id": "",
+                    "additionalType": ["AIGeneratedContent"],
+                }
+            ],
+            "text": "Quarterly report",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.card.file.info",
+                    "contentUrl": (
+                        "https://tenant.sharepoint.com/sites/ops/Q1-report.pdf"
+                    ),
+                    "name": "Q1-report.pdf",
+                    "content": {
+                        "uniqueId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                        "fileType": "pdf",
+                    },
+                }
+            ],
+        },
+        "Authorization",
+        "Bearer teams-bot-token",
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_send_card_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    card = {
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [{"type": "TextBlock", "text": "Quarterly report", "wrap": True}],
+    }
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-send-card"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Card Send Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    card_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        card_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-card-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="send",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "card": card,
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-send-card-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "messageId": "teams-card-message-123",
+        "conversationId": conversation_id,
+    }
+    assert card_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities"
+            ),
+            {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card,
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer bot-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_delete_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-delete"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Delete Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    deletes: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        deletes.append((method, target, payload, secret_header_name, secret_token))
+        return None
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="delete",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "activity-456",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-delete-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "conversationId": conversation_id,
+    }
+    assert deletes == [
+        (
+            "DELETE",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities/activity-456"
+            ),
+            None,
+            "Authorization",
+            "Bearer bot-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Edit Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    updates: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        updates.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "activity-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="edit",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "activity-123",
+                "content": "Updated message text",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "conversationId": conversation_id,
+    }
+    assert updates == [
+        (
+            "PUT",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities/activity-123"
+            ),
+            {"type": "message", "id": "activity-123", "text": "Updated message text"},
+            "Authorization",
+            "Bearer bot-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_channel_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-channel-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Channel Info Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        return {
+            "id": "ch-1",
+            "displayName": "General",
+            "description": "The default channel",
+            "membershipType": "standard",
+            "webUrl": "https://teams.microsoft.com/l/channel/ch-1/General",
+            "createdDateTime": "2026-01-15T09:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="channel-info",
+            params={"teamId": "team-abc", "channelId": "ch-1"},
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-channel-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "channel-info",
+        "channelInfo": {
+            "id": "ch-1",
+            "displayName": "General",
+            "description": "The default channel",
+            "membershipType": "standard",
+            "webUrl": "https://teams.microsoft.com/l/channel/ch-1/General",
+            "createdDateTime": "2026-01-15T09:00:00Z",
+        },
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/teams/team-abc/channels/ch-1?"
+                "$select=id,displayName,description,membershipType,webUrl,createdDateTime"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_channel_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    next_link = (
+        "https://graph.microsoft.com/v1.0/teams/team-abc/channels?"
+        "$select=id,displayName,description,membershipType&$skip=1"
+    )
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-channel-list"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Channel List Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        if target == next_link:
+            return {
+                "value": [
+                    {
+                        "id": "ch-2",
+                        "displayName": "Engineering",
+                        "description": "Engineering discussions",
+                        "membershipType": "private",
+                    }
+                ]
+            }
+        return {
+            "value": [
+                {
+                    "id": "ch-1",
+                    "displayName": "General",
+                    "description": "The default channel",
+                    "membershipType": "standard",
+                }
+            ],
+            "@odata.nextLink": next_link,
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="channel-list",
+            params={"teamId": "team-abc"},
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-channel-list-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "channel-list",
+        "channels": [
+            {
+                "id": "ch-1",
+                "displayName": "General",
+                "description": "The default channel",
+                "membershipType": "standard",
+            },
+            {
+                "id": "ch-2",
+                "displayName": "Engineering",
+                "description": "Engineering discussions",
+                "membershipType": "private",
+            },
+        ],
+        "truncated": False,
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/teams/team-abc/channels?"
+                "$select=id,displayName,description,membershipType"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+        ("GET", next_link, None, "Authorization", "Bearer graph-access-token"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_member_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-member-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Member Info Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        return {
+            "id": "user-123",
+            "displayName": "Alice Smith",
+            "mail": "alice@contoso.com",
+            "jobTitle": "Engineer",
+            "userPrincipalName": "alice@contoso.com",
+            "officeLocation": "Building 1",
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="member-info",
+            params={"userId": " user-123 "},
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-member-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "member-info",
+        "user": {
+            "id": "user-123",
+            "displayName": "Alice Smith",
+            "mail": "alice@contoso.com",
+            "jobTitle": "Engineer",
+            "userPrincipalName": "alice@contoso.com",
+            "officeLocation": "Building 1",
+        },
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/users/user-123?"
+                "$select=id,displayName,mail,jobTitle,userPrincipalName,officeLocation"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_search_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-search"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Search Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[dict[str, object | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        graph_gets.append(
+            {
+                "method": method,
+                "target": target,
+                "payload": payload,
+                "secretHeaderName": secret_header_name,
+                "secretToken": secret_token,
+                "extraHeaders": extra_headers,
+            }
+        )
+        return {
+            "value": [
+                {
+                    "id": "msg-1",
+                    "body": {"content": "Meeting notes from Monday"},
+                    "from": {"user": {"id": "u1", "displayName": "Alice"}},
+                    "createdDateTime": "2026-03-25T10:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="search",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "query": 'meeting "notes"',
+                "limit": 100,
+                "from": "O'Brien",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-search-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "search",
+        "messages": [
+            {
+                "id": "msg-1",
+                "text": "Meeting notes from Monday",
+                "from": {"user": {"id": "u1", "displayName": "Alice"}},
+                "createdAt": "2026-03-25T10:00:00Z",
+            }
+        ],
+    }
+    assert graph_gets == [
+        {
+            "method": "GET",
+            "target": (
+                "https://graph.microsoft.com/v1.0/chats/"
+                "19%3Aops-thread%40thread.tacv2/messages?"
+                "$search=%22meeting%20notes%22&$top=50&"
+                "$filter=from%2Fuser%2FdisplayName%20eq%20'O''Brien'"
+            ),
+            "payload": None,
+            "secretHeaderName": "Authorization",
+            "secretToken": "Bearer graph-access-token",
+            "extraHeaders": {"ConsistencyLevel": "eventual"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_list_pins_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    next_link = (
+        "https://graph.microsoft.com/v1.0/chats/"
+        "19%3Aops-thread%40thread.tacv2/pinnedMessages?$expand=message&$skiptoken=page2"
+    )
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-list-pins"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native List Pins Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        if target == next_link:
+            return {
+                "value": [
+                    {
+                        "id": "pinned-2",
+                        "message": {"id": "msg-2", "body": {"content": "Second pin"}},
+                    }
+                ]
+            }
+        return {
+            "value": [
+                {
+                    "id": "pinned-1",
+                    "message": {"id": "msg-1", "body": {"content": "First pin"}},
+                }
+            ],
+            "@odata.nextLink": next_link,
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="list-pins",
+            params={"target": f"conversation:{conversation_id}"},
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-list-pins-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "list-pins",
+        "pins": [
+            {
+                "id": "pinned-1",
+                "pinnedMessageId": "pinned-1",
+                "messageId": "msg-1",
+                "text": "First pin",
+            },
+            {
+                "id": "pinned-2",
+                "pinnedMessageId": "pinned-2",
+                "messageId": "msg-2",
+                "text": "Second pin",
+            },
+        ],
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/chats/"
+                "19%3Aops-thread%40thread.tacv2/pinnedMessages?$expand=message"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+        ("GET", next_link, None, "Authorization", "Bearer graph-access-token"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_unpin_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-unpin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Unpin Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_deletes: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_deletes.append((method, target, payload, secret_header_name, secret_token))
+        return None
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="unpin",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "pinned-1",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-unpin-action",
+        )
+    )
+
+    assert result == {"ok": True, "channel": "msteams", "action": "unpin"}
+    assert graph_deletes == [
+        (
+            "DELETE",
+            (
+                "https://graph.microsoft.com/v1.0/chats/"
+                "19%3Aops-thread%40thread.tacv2/pinnedMessages/pinned-1"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_pin_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-pin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Pin Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "pinned-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="pin",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "msg-1",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-pin-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "pin",
+        "pinnedMessageId": "pinned-1",
+    }
+    assert graph_posts == [
+        (
+            "POST",
+            "https://graph.microsoft.com/v1.0/chats/19%3Aops-thread%40thread.tacv2/pinnedMessages",
+            {
+                "message@odata.bind": (
+                    "https://graph.microsoft.com/v1.0/chats/"
+                    "19%3Aops-thread%40thread.tacv2/messages/msg-1"
+                )
+            },
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_read_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-read"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Read Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        return {
+            "id": "msg-1",
+            "body": {"content": "Hello world", "contentType": "text"},
+            "from": {"user": {"id": "u1", "displayName": "Alice"}},
+            "createdDateTime": "2026-03-23T10:00:00Z",
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="read",
+            params={"messageId": "msg-1"},
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-read-action",
+            tool_context={"currentChannelId": f"conversation:{conversation_id}"},
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "read",
+        "message": {
+            "id": "msg-1",
+            "text": "Hello world",
+            "from": {"user": {"id": "u1", "displayName": "Alice"}},
+            "createdAt": "2026-03-23T10:00:00Z",
+        },
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            "https://graph.microsoft.com/v1.0/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1",
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -21243,6 +22864,315 @@ async def test_ops_mesh_service_msteams_react_prefers_stored_delegated_token(
             "Bearer stored-delegated-graph-token",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_msteams_react_skips_expired_stored_delegated_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Expired Delegated React Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    await database.upsert_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+        token="expired-delegated-graph-token",
+        expires_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                        }
+                    }
+                }
+            }
+
+    token_calls: list[tuple[str, str, str]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append((tenant_id, app_id, app_password))
+        return "app-graph-token"
+
+    graph_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="react",
+            params={
+                "target": "conversation:19:ops-thread@thread.tacv2",
+                "messageId": "msg-1",
+                "emoji": "like",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-react-expired-delegated-token",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "react",
+        "reactionType": "like",
+    }
+    assert token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert graph_posts == [
+        (
+            "POST",
+            "https://graph.microsoft.com/beta/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1/setReaction",
+            {"reactionType": "like"},
+            "Authorization",
+            "Bearer app-graph-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_msteams_react_refreshes_expired_stored_delegated_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Refresh Delegated React Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    await database.upsert_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+        token="expired-delegated-graph-token",
+        expires_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        refresh_token="old-refresh-token",
+        scopes=["Chat.ReadWrite", "offline_access"],
+        user_principal_name="user@example.com",
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                        }
+                    }
+                }
+            }
+
+    refresh_calls: list[tuple[str, str, str, str, tuple[str, ...]]] = []
+
+    def fake_refresh_delegated_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+        refresh_token: str,
+        scopes: tuple[str, ...],
+    ) -> dict[str, object]:
+        del self
+        refresh_calls.append((tenant_id, app_id, app_password, refresh_token, scopes))
+        return {
+            "accessToken": "refreshed-delegated-token",
+            "expiresAt": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            "scopes": ["Chat.ReadWrite", "offline_access"],
+            "userPrincipalName": "user@example.com",
+        }
+
+    def fail_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        raise AssertionError("app-only graph token should not be fetched")
+
+    graph_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_refresh_delegated_graph_token",
+        fake_refresh_delegated_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fail_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="react",
+            params={
+                "target": "conversation:19:ops-thread@thread.tacv2",
+                "messageId": "msg-1",
+                "emoji": "like",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-react-refresh-delegated-token",
+        )
+    )
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "react",
+        "reactionType": "like",
+    }
+    assert refresh_calls == [
+        (
+            "tenant-id",
+            "teams-app-id",
+            "teams-app-password",
+            "old-refresh-token",
+            ("Chat.ReadWrite", "offline_access"),
+        )
+    ]
+    assert graph_posts == [
+        (
+            "POST",
+            "https://graph.microsoft.com/beta/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1/setReaction",
+            {"reactionType": "like"},
+            "Authorization",
+            "Bearer refreshed-delegated-token",
+        )
+    ]
+    assert stored is not None
+    assert stored["token"] == "refreshed-delegated-token"
+    assert stored["refresh_token"] == "old-refresh-token"
+    assert json.loads(stored["scopes_json"]) == ["Chat.ReadWrite", "offline_access"]
+    assert stored["user_principal_name"] == "user@example.com"
 
 
 @pytest.mark.asyncio
@@ -21982,6 +23912,98 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_r
             "token": "oauth:twitch-token",
             "channel": "openzues",
             "message": "Twitch native parity. https://cdn.example.com/clip.png",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_twitch_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-twitch-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Twitch Native Action Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="oauth:twitch-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "twitch",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "#OpenZues",
+        },
+    )
+    twitch_sends: list[dict[str, object]] = []
+
+    def fake_send_twitch_chat_message(
+        self: OpsMeshService,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self
+        twitch_sends.append(
+            {
+                "username": username,
+                "client_id": client_id,
+                "token": token,
+                "channel": channel,
+                "message": message,
+            }
+        )
+        return "twitch-action-msg-1"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_send_twitch_chat_message",
+        fake_send_twitch_chat_message,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="twitch",
+            action="send",
+            params={"message": "Hello **Twitch**!"},
+            account_id="default",
+            requester_sender_id="twitch-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:twitch:channel:openzues",
+            idempotency_key="idem-twitch-send-action",
+        )
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["channel"] == "twitch"
+    assert result["messageId"] == "twitch-action-msg-1"
+    assert isinstance(result["timestamp"], int)
+    assert twitch_sends == [
+        {
+            "username": "openzues",
+            "client_id": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "message": "Hello Twitch!",
         }
     ]
 

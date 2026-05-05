@@ -466,6 +466,9 @@ class Database:
                     user_id TEXT NOT NULL,
                     token TEXT NOT NULL,
                     expires_at TEXT,
+                    refresh_token TEXT,
+                    scopes_json TEXT,
+                    user_principal_name TEXT,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (connection_name, user_id)
                 );
@@ -671,6 +674,9 @@ class Database:
             await self._ensure_column(db, "missions", "session_key", "TEXT")
             await self._ensure_column(db, "missions", "conversation_target_json", "TEXT")
             await self._ensure_column(db, "missions", "toolsets_json", "TEXT NOT NULL DEFAULT '[]'")
+            await self._ensure_column(db, "msteams_sso_tokens", "refresh_token", "TEXT")
+            await self._ensure_column(db, "msteams_sso_tokens", "scopes_json", "TEXT")
+            await self._ensure_column(db, "msteams_sso_tokens", "user_principal_name", "TEXT")
             await db.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_missions_task
@@ -2666,8 +2672,12 @@ class Database:
         user_id: str,
         token: str,
         expires_at: str | None,
+        refresh_token: str | None = None,
+        scopes: list[str] | None = None,
+        user_principal_name: str | None = None,
     ) -> None:
         now = utcnow()
+        scopes_json = json.dumps(scopes) if scopes is not None else None
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """
@@ -2676,15 +2686,30 @@ class Database:
                     user_id,
                     token,
                     expires_at,
+                    refresh_token,
+                    scopes_json,
+                    user_principal_name,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(connection_name, user_id) DO UPDATE SET
                     token = excluded.token,
                     expires_at = excluded.expires_at,
+                    refresh_token = excluded.refresh_token,
+                    scopes_json = excluded.scopes_json,
+                    user_principal_name = excluded.user_principal_name,
                     updated_at = excluded.updated_at
                 """,
-                (connection_name, user_id, token, expires_at, now),
+                (
+                    connection_name,
+                    user_id,
+                    token,
+                    expires_at,
+                    refresh_token,
+                    scopes_json,
+                    user_principal_name,
+                    now,
+                ),
             )
             await db.commit()
 
@@ -2698,7 +2723,15 @@ class Database:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """
-                SELECT connection_name, user_id, token, expires_at, updated_at
+                SELECT
+                    connection_name,
+                    user_id,
+                    token,
+                    expires_at,
+                    refresh_token,
+                    scopes_json,
+                    user_principal_name,
+                    updated_at
                 FROM msteams_sso_tokens
                 WHERE connection_name = ? AND user_id = ?
                 """,
@@ -2718,7 +2751,15 @@ class Database:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """
-                SELECT connection_name, user_id, token, expires_at, updated_at
+                SELECT
+                    connection_name,
+                    user_id,
+                    token,
+                    expires_at,
+                    refresh_token,
+                    scopes_json,
+                    user_principal_name,
+                    updated_at
                 FROM msteams_sso_tokens
                 WHERE connection_name = ?
                 ORDER BY updated_at DESC, user_id ASC

@@ -239,6 +239,22 @@ MSTEAMS_REACTION_EMOJIS = {
     "angry": "\U0001f621",
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
+MSTEAMS_OAUTH_REDIRECT_URI = "http://localhost:8086/oauth2callback"
+MSTEAMS_OAUTH_CALLBACK_PORT = 8086
+MSTEAMS_OAUTH_CALLBACK_PATH = "/oauth2callback"
+MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME = "msteams-delegated"
+MSTEAMS_DEFAULT_DELEGATED_USER_ID = "delegated"
+MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
+    "ChatMessage.Send",
+    "ChannelMessage.Send",
+    "Chat.ReadWrite",
+    "offline_access",
+)
+MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS = 300
+MSTEAMS_LIST_PINS_MAX_PAGES = 10
+MSTEAMS_LIST_CHANNELS_MAX_PAGES = 10
+MSTEAMS_SEARCH_DEFAULT_LIMIT = 25
+MSTEAMS_SEARCH_MAX_LIMIT = 50
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
 MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -532,6 +548,105 @@ def _timestamp_ms(value: datetime | str | None) -> int | None:
     if parsed is None:
         return None
     return int(parsed.timestamp() * 1000)
+
+
+def _msteams_token_expired(value: str | None) -> bool:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+    return parsed <= datetime.now(UTC)
+
+
+def _msteams_stored_token_scopes(value: object) -> tuple[str, ...]:
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [scope for scope in value.split() if scope]
+    elif isinstance(value, list):
+        parsed = value
+    else:
+        parsed = []
+    if not isinstance(parsed, list):
+        return MSTEAMS_DEFAULT_DELEGATED_SCOPES
+    scopes = tuple(str(scope).strip() for scope in parsed if str(scope).strip())
+    return scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+
+
+def _msteams_base64url_digest(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _msteams_generate_oauth_state() -> str:
+    return secrets.token_hex(32)
+
+
+def _msteams_generate_pkce_pair(verifier: str | None = None) -> tuple[str, str]:
+    resolved_verifier = verifier.strip() if isinstance(verifier, str) else ""
+    if not resolved_verifier:
+        resolved_verifier = secrets.token_hex(32)
+    challenge = _msteams_base64url_digest(
+        hashlib.sha256(resolved_verifier.encode("ascii")).digest()
+    )
+    return resolved_verifier, challenge
+
+
+def _msteams_build_delegated_auth_url(
+    *,
+    tenant_id: str,
+    client_id: str,
+    challenge: str,
+    state: str,
+    scopes: tuple[str, ...],
+) -> str:
+    endpoint = (
+        "https://login.microsoftonline.com/"
+        f"{quote(tenant_id, safe='')}/oauth2/v2.0/authorize"
+    )
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": MSTEAMS_OAUTH_REDIRECT_URI,
+            "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "prompt": "consent",
+        }
+    )
+    return f"{endpoint}?{query}"
+
+
+def _msteams_parse_delegated_oauth_callback(
+    callback_url: str,
+    *,
+    expected_state: str,
+) -> tuple[str, str]:
+    trimmed = str(callback_url or "").strip()
+    if not trimmed:
+        raise ValueError("No input provided")
+    parsed = urlparse(trimmed)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(
+            "Paste the full redirect URL (including code and state parameters), "
+            "not just the authorization code."
+        )
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    code = _msteams_inbound_optional_string(query.get("code"))
+    if code is None:
+        raise ValueError("Missing 'code' parameter in URL")
+    state = _msteams_inbound_optional_string(query.get("state"))
+    if state is None:
+        raise ValueError("Missing 'state' parameter in URL. Paste the full redirect URL.")
+    normalized_expected = str(expected_state or "").strip()
+    if state != normalized_expected:
+        raise ValueError("OAuth state mismatch - please try again")
+    return code, state
 
 
 def _requires_secret(auth_scheme: str) -> bool:
@@ -5107,6 +5222,48 @@ def _msteams_sso_config_from_snapshot(
     )
 
 
+def _msteams_delegated_auth_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsSsoConfig | None:
+    sso_config = _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
+    if sso_config is not None:
+        return sso_config
+    channel_config = _msteams_channel_config_from_snapshot(
+        snapshot,
+        account_id=account_id,
+    )
+    raw_delegated_auth = channel_config.get("delegatedAuth") or channel_config.get(
+        "delegated_auth"
+    )
+    if isinstance(raw_delegated_auth, Mapping):
+        delegated_auth = _msteams_inbound_mapping(raw_delegated_auth)
+        enabled = _msteams_sso_enabled(delegated_auth.get("enabled"))
+    else:
+        delegated_auth = {}
+        enabled = _msteams_sso_enabled(raw_delegated_auth)
+    if not enabled:
+        return None
+    connection_name = (
+        _msteams_inbound_optional_string(
+            delegated_auth.get("connectionName") or delegated_auth.get("connection_name")
+        )
+        or MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME
+    )
+    user_token_base_url = (
+        _msteams_inbound_optional_string(
+            delegated_auth.get("userTokenBaseUrl")
+            or delegated_auth.get("user_token_base_url")
+        )
+        or MSTEAMS_USER_TOKEN_BASE_URL
+    )
+    return _MSTeamsSsoConfig(
+        connection_name=connection_name,
+        user_token_base_url=user_token_base_url,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _MSTeamsInboundSessionContext:
     conversation_target: ConversationTargetView
@@ -5227,6 +5384,103 @@ def _msteams_action_target(request: GatewayMessageActionDispatchRequest) -> str:
     return target
 
 
+def _msteams_action_content(params: dict[str, Any]) -> str:
+    for key in ("text", "content", "message"):
+        value = params.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _msteams_action_card(params: dict[str, Any]) -> dict[str, object]:
+    value = params.get("card")
+    parsed: object = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("card must be a JSON object.") from exc
+    if not isinstance(parsed, Mapping):
+        raise RuntimeError("Microsoft Teams card send requires card.")
+    return dict(parsed)
+
+
+def _msteams_action_upload_file_path(params: dict[str, Any]) -> str:
+    for key in ("filePath", "path", "media"):
+        value = _message_action_param_raw_string(params, key)
+        if value is not None:
+            return value
+    raise RuntimeError("Upload-file requires media, filePath, or path.")
+
+
+def _msteams_action_upload_channel_data(
+    params: dict[str, Any],
+    *,
+    filename: str | None,
+    message: str,
+) -> dict[str, object]:
+    raw_channel_data = params.get("channelData")
+    channel_data: dict[str, object] = (
+        dict(raw_channel_data) if isinstance(raw_channel_data, Mapping) else {}
+    )
+    for key in (
+        "msteamsFileInfo",
+        "msteamsFile",
+        "teamsFileInfo",
+        "teamsFile",
+        "msteamsFileInfos",
+        "msteamsFiles",
+        "teamsFileInfos",
+        "teamsFiles",
+        "msteamsFileConsent",
+        "teamsFileConsent",
+        "fileConsent",
+        "msteamsGraphUpload",
+        "msteamsSharePointUpload",
+        "teamsGraphUpload",
+        "teamsSharePointUpload",
+        "graphUpload",
+    ):
+        value = params.get(key)
+        if isinstance(value, Mapping):
+            channel_data.setdefault(key, dict(value))
+        elif isinstance(value, list):
+            channel_data.setdefault(key, value)
+    if filename and not any(
+        key in channel_data
+        for key in (
+            "msteamsFileInfo",
+            "msteamsFile",
+            "teamsFileInfo",
+            "teamsFile",
+            "msteamsFileInfos",
+            "msteamsFiles",
+            "teamsFileInfos",
+            "teamsFiles",
+            "msteamsFileConsent",
+            "teamsFileConsent",
+            "fileConsent",
+            "msteamsGraphUpload",
+            "msteamsSharePointUpload",
+            "teamsGraphUpload",
+            "teamsSharePointUpload",
+            "graphUpload",
+        )
+    ):
+        size_in_bytes = _optional_int_payload_value(params, "sizeInBytes")
+        if size_in_bytes is not None and size_in_bytes >= 0:
+            file_consent: dict[str, object] = {
+                "filename": filename,
+                "sizeInBytes": size_in_bytes,
+            }
+            if message:
+                file_consent["description"] = message
+            channel_data["msteamsFileConsent"] = file_consent
+        else:
+            channel_data["msteamsGraphUpload"] = {"filename": filename}
+    return channel_data
+
+
 def _msteams_graph_conversation_target(raw_target: str | None) -> str:
     target = str(raw_target or "").strip()
     if not target:
@@ -5272,6 +5526,56 @@ def _msteams_graph_message_endpoint(
         "https://graph.microsoft.com/v1.0/chats/"
         f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
     )
+
+
+def _msteams_graph_message_endpoint_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    message_id: str,
+) -> str:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}"
+        )
+    return (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
+    )
+
+
+def _msteams_graph_pinned_messages_endpoint_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    pinned_message_id: str | None = None,
+) -> tuple[str, str]:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    if "/" in conversation_id:
+        raise RuntimeError(
+            "Pin/unpin is not supported for channel messages on Graph v1.0. "
+            "Only chat conversations support pinned messages."
+        )
+    endpoint = (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/pinnedMessages"
+    )
+    if pinned_message_id is not None:
+        endpoint = f"{endpoint}/{quote(pinned_message_id, safe='')}"
+    return endpoint, conversation_id
 
 
 def _msteams_graph_conversation_target_for_route(
@@ -5328,6 +5632,133 @@ def _msteams_reaction_type(raw_reaction: str | None) -> str:
     if lowered in MSTEAMS_REACTION_EMOJIS:
         return lowered
     return normalized
+
+
+def _msteams_message_summary(result: object, *, fallback_message_id: str) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    message: dict[str, object] = {"id": str(result.get("id") or fallback_message_id)}
+    body = result.get("body")
+    if isinstance(body, dict):
+        content = body.get("content")
+        if isinstance(content, str):
+            message["text"] = content
+    sender = result.get("from")
+    if isinstance(sender, dict):
+        message["from"] = sender
+    created_at = result.get("createdDateTime")
+    if isinstance(created_at, str):
+        message["createdAt"] = created_at
+    return message
+
+
+def _msteams_encode_query_component(value: str) -> str:
+    return quote(value, safe="-_.!~*'()")
+
+
+def _msteams_odata_escape(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _msteams_search_limit(raw_limit: object) -> int:
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, float)):
+        return MSTEAMS_SEARCH_DEFAULT_LIMIT
+    if not math.isfinite(float(raw_limit)):
+        return MSTEAMS_SEARCH_DEFAULT_LIMIT
+    return min(max(math.floor(float(raw_limit)), 1), MSTEAMS_SEARCH_MAX_LIMIT)
+
+
+def _msteams_search_messages(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    messages: list[dict[str, object]] = []
+    raw_messages = result.get("value")
+    if not isinstance(raw_messages, list):
+        return messages
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            continue
+        fallback_id = str(raw_message.get("id") or "")
+        messages.append(_msteams_message_summary(raw_message, fallback_message_id=fallback_id))
+    return messages
+
+
+def _msteams_user_profile(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    user: dict[str, object] = {}
+    for key in (
+        "id",
+        "displayName",
+        "mail",
+        "jobTitle",
+        "userPrincipalName",
+        "officeLocation",
+    ):
+        value = result.get(key)
+        if isinstance(value, str):
+            user[key] = value
+    return user
+
+
+def _msteams_channel_summary(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    channel: dict[str, object] = {}
+    for key in (
+        "id",
+        "displayName",
+        "description",
+        "membershipType",
+        "webUrl",
+        "createdDateTime",
+    ):
+        value = result.get(key)
+        if isinstance(value, str):
+            channel[key] = value
+    return channel
+
+
+def _msteams_channel_page(result: object) -> tuple[list[dict[str, object]], str | None]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    channels: list[dict[str, object]] = []
+    raw_channels = result.get("value")
+    if isinstance(raw_channels, list):
+        for raw_channel in raw_channels:
+            if isinstance(raw_channel, dict):
+                channels.append(_msteams_channel_summary(raw_channel))
+    next_link = str(result.get("@odata.nextLink") or "").strip() or None
+    return channels, next_link
+
+
+def _msteams_pin_page(result: object) -> tuple[list[dict[str, object]], str | None]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    pins: list[dict[str, object]] = []
+    raw_pins = result.get("value")
+    if isinstance(raw_pins, list):
+        for raw_pin in raw_pins:
+            if not isinstance(raw_pin, dict):
+                continue
+            pin_id = str(raw_pin.get("id") or "").strip()
+            pin: dict[str, object] = {
+                "id": pin_id,
+                "pinnedMessageId": pin_id,
+            }
+            message = raw_pin.get("message")
+            if isinstance(message, dict):
+                message_id = str(message.get("id") or "").strip()
+                if message_id:
+                    pin["messageId"] = message_id
+                body = message.get("body")
+                if isinstance(body, dict):
+                    content = body.get("content")
+                    if isinstance(content, str):
+                        pin["text"] = content
+            pins.append(pin)
+    next_link = str(result.get("@odata.nextLink") or "").strip() or None
+    return pins, next_link
 
 
 def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
@@ -9877,6 +10308,218 @@ class OpsMeshService:
             return None
         return _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
 
+    def _msteams_delegated_auth_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> _MSTeamsSsoConfig | None:
+        if self.gateway_config_service is None:
+            return None
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return None
+        if not isinstance(snapshot, Mapping):
+            return None
+        return _msteams_delegated_auth_config_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+
+    async def build_msteams_delegated_auth_bootstrap(
+        self,
+        *,
+        account_id: str | None = None,
+        state: str | None = None,
+        pkce_verifier: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        manual: bool = False,
+    ) -> dict[str, object]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="msteams",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "No native Microsoft Teams route is configured for delegated auth setup."
+            )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        if not route_config.app_id or not route_config.tenant_id:
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires appId and tenantId "
+                "in the route target."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        secret_value = str(secret_token or "").strip()
+        if not secret_value or secret_value.lower().startswith("bearer "):
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires a route app password secret."
+            )
+        resolved_scopes = tuple(
+            str(scope).strip()
+            for scope in (scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+            if str(scope).strip()
+        ) or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+        resolved_state = str(state or "").strip() or _msteams_generate_oauth_state()
+        verifier, challenge = _msteams_generate_pkce_pair(pkce_verifier)
+        auth_url = _msteams_build_delegated_auth_url(
+            tenant_id=route_config.tenant_id,
+            client_id=route_config.app_id,
+            challenge=challenge,
+            state=resolved_state,
+            scopes=resolved_scopes,
+        )
+        return {
+            "ok": True,
+            "status": "ready",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": normalized_account_id,
+            "tenantId": route_config.tenant_id,
+            "clientId": route_config.app_id,
+            "redirectUri": MSTEAMS_OAUTH_REDIRECT_URI,
+            "callbackPort": MSTEAMS_OAUTH_CALLBACK_PORT,
+            "callbackPath": MSTEAMS_OAUTH_CALLBACK_PATH,
+            "manual": bool(manual),
+            "authUrl": auth_url,
+            "state": resolved_state,
+            "scopes": list(resolved_scopes),
+            "pkce": {
+                "verifier": verifier,
+                "challenge": challenge,
+                "method": "S256",
+            },
+        }
+
+    async def complete_msteams_delegated_auth_bootstrap(
+        self,
+        *,
+        account_id: str | None = None,
+        callback_url: str,
+        expected_state: str | None,
+        pkce_verifier: str | None,
+        user_id: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        code, returned_state = _msteams_parse_delegated_oauth_callback(
+            callback_url,
+            expected_state=str(expected_state or "").strip(),
+        )
+        verifier = str(pkce_verifier or "").strip()
+        if not verifier:
+            raise ValueError(
+                "Microsoft Teams delegated auth completion requires --pkce-verifier."
+            )
+        route = await self._provider_route_for_channel_account(
+            channel="msteams",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "No native Microsoft Teams route is configured for delegated auth setup."
+            )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        if not route_config.app_id or not route_config.tenant_id:
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires appId and tenantId "
+                "in the route target."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        secret_value = str(secret_token or "").strip()
+        if not secret_value or secret_value.lower().startswith("bearer "):
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires a route app password secret."
+            )
+        resolved_scopes = tuple(
+            str(scope).strip()
+            for scope in (scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+            if str(scope).strip()
+        ) or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+        exchanged = await asyncio.to_thread(
+            self._msteams_exchange_delegated_graph_token,
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret_value,
+            code=code,
+            verifier=verifier,
+            scopes=resolved_scopes,
+        )
+        access_token = _msteams_inbound_optional_string(
+            exchanged.get("accessToken") or exchanged.get("access_token")
+        )
+        refresh_token = _msteams_inbound_optional_string(
+            exchanged.get("refreshToken") or exchanged.get("refresh_token")
+        )
+        if access_token is None or refresh_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was incomplete."
+            )
+        expires_at = _msteams_inbound_optional_string(
+            exchanged.get("expiresAt") or exchanged.get("expires_at")
+        )
+        raw_scopes = exchanged.get("scopes")
+        if isinstance(raw_scopes, str):
+            next_scopes = tuple(scope for scope in raw_scopes.split() if scope)
+        elif isinstance(raw_scopes, list):
+            next_scopes = tuple(str(scope).strip() for scope in raw_scopes if str(scope).strip())
+        else:
+            next_scopes = resolved_scopes
+        token_payload = _msteams_decode_jwt_payload(access_token) or {}
+        user_principal_name = _msteams_inbound_optional_string(
+            token_payload.get("preferred_username") or token_payload.get("upn")
+        )
+        resolved_user_id = (
+            _msteams_inbound_optional_string(user_id)
+            or _msteams_inbound_optional_string(token_payload.get("oid"))
+            or _msteams_inbound_optional_string(token_payload.get("aadObjectId"))
+            or _msteams_inbound_optional_string(token_payload.get("sub"))
+            or user_principal_name
+            or MSTEAMS_DEFAULT_DELEGATED_USER_ID
+        )
+        delegated_config = self._msteams_delegated_auth_config(
+            account_id=normalized_account_id,
+        )
+        connection_name = (
+            delegated_config.connection_name
+            if delegated_config is not None
+            else MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME
+        )
+        await self.database.upsert_msteams_sso_token(
+            connection_name=connection_name,
+            user_id=resolved_user_id,
+            token=access_token,
+            expires_at=expires_at,
+            refresh_token=refresh_token,
+            scopes=list(next_scopes),
+            user_principal_name=user_principal_name,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "status": "stored",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": normalized_account_id,
+            "tenantId": route_config.tenant_id,
+            "clientId": route_config.app_id,
+            "connectionName": connection_name,
+            "userId": resolved_user_id,
+            "state": returned_state,
+            "scopes": list(next_scopes),
+        }
+        if expires_at is not None:
+            result["expiresAt"] = expires_at
+        if user_principal_name is not None:
+            result["userPrincipalName"] = user_principal_name
+        return result
+
     def _msteams_signin_channel_config(
         self,
         *,
@@ -10268,7 +10911,7 @@ class OpsMeshService:
         normalized_user_id = _msteams_inbound_optional_string(user_id)
         if normalized_user_id is None:
             return None
-        sso_config = self._msteams_sso_config(account_id=account_id)
+        sso_config = self._msteams_delegated_auth_config(account_id=account_id)
         if sso_config is None:
             return None
         stored = await self.database.get_msteams_sso_token(
@@ -10277,17 +10920,272 @@ class OpsMeshService:
         )
         if not isinstance(stored, Mapping):
             return None
+        expires_at = _msteams_inbound_optional_string(stored.get("expires_at"))
+        if _msteams_token_expired(expires_at):
+            refreshed = await self._msteams_refresh_stored_delegated_graph_secret_token(
+                account_id=account_id,
+                user_id=normalized_user_id,
+                sso_config=sso_config,
+                stored=stored,
+            )
+            if refreshed is not None:
+                return refreshed
+            return None
         token = _msteams_inbound_optional_string(stored.get("token"))
         if token is None:
             return None
         return f"Bearer {token}"
+
+    async def _msteams_refresh_stored_delegated_graph_secret_token(
+        self,
+        *,
+        account_id: str | None,
+        user_id: str,
+        sso_config: _MSTeamsSsoConfig,
+        stored: Mapping[str, Any],
+    ) -> str | None:
+        del account_id
+        refresh_token = _msteams_inbound_optional_string(stored.get("refresh_token"))
+        if refresh_token is None:
+            return None
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return None
+        route_config, app_password = credentials
+        app_secret = str(app_password or "").strip()
+        if (
+            not route_config.app_id
+            or not route_config.tenant_id
+            or not app_secret
+            or app_secret.lower().startswith("bearer ")
+        ):
+            return None
+        scopes = _msteams_stored_token_scopes(stored.get("scopes_json"))
+        try:
+            refreshed = await asyncio.to_thread(
+                self._msteams_refresh_delegated_graph_token,
+                tenant_id=route_config.tenant_id,
+                app_id=route_config.app_id,
+                app_password=app_secret,
+                refresh_token=refresh_token,
+                scopes=scopes,
+            )
+        except Exception:
+            return None
+        access_token = _msteams_inbound_optional_string(
+            refreshed.get("accessToken") or refreshed.get("access_token")
+        )
+        if access_token is None:
+            return None
+        next_refresh_token = (
+            _msteams_inbound_optional_string(
+                refreshed.get("refreshToken") or refreshed.get("refresh_token")
+            )
+            or refresh_token
+        )
+        expires_at = _msteams_inbound_optional_string(
+            refreshed.get("expiresAt") or refreshed.get("expires_at")
+        )
+        if expires_at is None:
+            expires_in = refreshed.get("expiresIn") or refreshed.get("expires_in")
+            if isinstance(expires_in, int | float) and expires_in > 0:
+                expires_at = (
+                    datetime.now(UTC)
+                    + timedelta(
+                        seconds=max(
+                            0,
+                            int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS,
+                        )
+                    )
+                ).isoformat()
+        raw_scopes = refreshed.get("scopes")
+        if isinstance(raw_scopes, str):
+            next_scopes = tuple(scope for scope in raw_scopes.split() if scope)
+        elif isinstance(raw_scopes, list):
+            next_scopes = tuple(str(scope).strip() for scope in raw_scopes if str(scope).strip())
+        else:
+            next_scopes = scopes
+        user_principal_name = (
+            _msteams_inbound_optional_string(
+                refreshed.get("userPrincipalName") or refreshed.get("user_principal_name")
+            )
+            or _msteams_inbound_optional_string(stored.get("user_principal_name"))
+        )
+        await self.database.upsert_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=user_id,
+            token=access_token,
+            expires_at=expires_at,
+            refresh_token=next_refresh_token,
+            scopes=list(next_scopes),
+            user_principal_name=user_principal_name,
+        )
+        return f"Bearer {access_token}"
+
+    def _msteams_refresh_delegated_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+        refresh_token: str,
+        scopes: tuple[str, ...],
+    ) -> dict[str, object]:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams delegated token refresh HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams delegated token refresh failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response was not JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response was not an object."
+            )
+        access_token = _msteams_inbound_optional_string(payload.get("access_token"))
+        if access_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response missing access_token."
+            )
+        result: dict[str, object] = {"accessToken": access_token}
+        refresh_token_value = _msteams_inbound_optional_string(payload.get("refresh_token"))
+        if refresh_token_value is not None:
+            result["refreshToken"] = refresh_token_value
+        expires_in = payload.get("expires_in")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            result["expiresAt"] = (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=max(0, int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS)
+                )
+            ).isoformat()
+        scope = _msteams_inbound_optional_string(payload.get("scope"))
+        if scope is not None:
+            result["scopes"] = [part for part in scope.split() if part]
+        else:
+            result["scopes"] = list(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+        return result
+
+    def _msteams_exchange_delegated_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+        code: str,
+        verifier: str,
+        scopes: tuple[str, ...],
+    ) -> dict[str, object]:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "authorization_code",
+                "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+                "code": code,
+                "redirect_uri": MSTEAMS_OAUTH_REDIRECT_URI,
+                "code_verifier": verifier,
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams delegated token exchange HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams delegated token exchange failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was not JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was not an object."
+            )
+        access_token = _msteams_inbound_optional_string(payload.get("access_token"))
+        if access_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response missing access_token."
+            )
+        refresh_token = _msteams_inbound_optional_string(payload.get("refresh_token"))
+        if refresh_token is None:
+            raise RuntimeError("No refresh token received from Azure AD. Please try again.")
+        result: dict[str, object] = {
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+        }
+        expires_in = payload.get("expires_in")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            result["expiresAt"] = (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=max(0, int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS)
+                )
+            ).isoformat()
+        scope = _msteams_inbound_optional_string(payload.get("scope"))
+        if scope is not None:
+            result["scopes"] = [part for part in scope.split() if part]
+        else:
+            result["scopes"] = list(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+        return result
 
     async def _msteams_delegated_auth_probe(
         self,
         *,
         account_id: str | None,
     ) -> dict[str, object] | None:
-        sso_config = self._msteams_sso_config(account_id=account_id)
+        sso_config = self._msteams_delegated_auth_config(account_id=account_id)
         if sso_config is None:
             return None
         try:
@@ -14022,6 +14920,254 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "msteams" and action == "edit":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action edit."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "delete":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action delete."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "send" and request.params.get("card") is not None:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action send."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_send_card_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "upload-file":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action upload-file."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_upload_file_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "read":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action read."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_read_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "pin":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action pin."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_pin_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "unpin":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action unpin."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_unpin_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "list-pins":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action list-pins."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_list_pins_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "search":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action search."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_search_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "member-info":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action member-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_member_info_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "channel-list":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action channel-list."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_channel_list_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "channel-info":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action channel-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_channel_info_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
         if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -14048,6 +15194,22 @@ class OpsMeshService:
                 )
             return await asyncio.to_thread(
                 self._dispatch_msteams_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "twitch" and action == "send":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Twitch route is configured for message.action send."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_twitch_send_message_action,
                 route,
                 request,
                 secret_token,
@@ -24717,6 +25879,503 @@ class OpsMeshService:
             "reactions": _msteams_reaction_summaries(result),
         }
 
+    def _dispatch_msteams_edit_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        content = _msteams_action_content(request.params)
+        if not content:
+            raise RuntimeError("Edit requires content.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=target,
+        )
+        self._request_json_provider_url(
+            _msteams_activity_update_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+                activity_id=message_id,
+            ),
+            method="PUT",
+            payload={"type": "message", "id": message_id, "text": content},
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "conversationId": conversation_id,
+        }
+
+    def _dispatch_msteams_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=target,
+        )
+        self._request_json_provider_url(
+            _msteams_activity_update_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+                activity_id=message_id,
+            ),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "conversationId": conversation_id,
+        }
+
+    def _dispatch_msteams_send_card_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        card = _msteams_action_card(request.params)
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=target,
+        )
+        result = self._request_json_provider_url(
+            _msteams_activity_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+            ),
+            method="POST",
+            payload={
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card,
+                    }
+                ],
+            },
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams API returned a non-JSON response.")
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "messageId": _msteams_message_id(result) or "unknown",
+            "conversationId": conversation_id,
+        }
+
+    def _dispatch_msteams_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        media_url = _msteams_action_upload_file_path(request.params)
+        message = _msteams_action_content(request.params)
+        filename = _message_action_param_string(
+            request.params,
+            "filename",
+        ) or _message_action_param_string(request.params, "title")
+        event: dict[str, Any] = {
+            "to": target,
+            "message": message,
+            "mediaUrl": media_url,
+        }
+        reply_to_id = (
+            _message_action_param_string(request.params, "replyToId")
+            or _message_action_param_string(request.params, "threadId")
+            or _message_action_param_string(request.params, "thread")
+        )
+        if reply_to_id:
+            event["replyToId"] = reply_to_id
+        channel_data = _msteams_action_upload_channel_data(
+            request.params,
+            filename=filename,
+            message=message,
+        )
+        if channel_data:
+            event["channelData"] = channel_data
+        native_result = self._post_msteams_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "upload-file",
+            "messageId": str(native_result.get("messageId") or "unknown"),
+            "conversationId": str(
+                native_result.get("conversationId")
+                or native_result.get("chatId")
+                or native_result.get("channelId")
+                or ""
+            ),
+        }
+        pending_upload_id = str(native_result.get("pendingUploadId") or "").strip()
+        if pending_upload_id:
+            result["pendingUploadId"] = pending_upload_id
+        return result
+
+    def _dispatch_msteams_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams read requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            _msteams_graph_message_endpoint_for_route(
+                route_config=route_config,
+                target=target,
+                message_id=message_id,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "read",
+            "message": _msteams_message_summary(result, fallback_message_id=message_id),
+        }
+
+    def _dispatch_msteams_pin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams pin requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        endpoint, conversation_id = _msteams_graph_pinned_messages_endpoint_for_route(
+            route_config=route_config,
+            target=target,
+        )
+        result = self._request_json_provider_url(
+            endpoint,
+            method="POST",
+            payload={
+                "message@odata.bind": (
+                    "https://graph.microsoft.com/v1.0/chats/"
+                    f"{quote(conversation_id, safe='')}/messages/{quote(message_id, safe='')}"
+                )
+            },
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+        response: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "pin",
+        }
+        pinned_message_id = str(result.get("id") or "").strip()
+        if pinned_message_id:
+            response["pinnedMessageId"] = pinned_message_id
+        return response
+
+    def _dispatch_msteams_unpin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        pinned_message_id = _message_action_param_string(
+            request.params,
+            "pinnedMessageId",
+        ) or _message_action_param_string(
+            request.params,
+            "messageId",
+        )
+        if pinned_message_id is None:
+            raise RuntimeError("Unpin requires a target (to) and pinnedMessageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        endpoint, _conversation_id = _msteams_graph_pinned_messages_endpoint_for_route(
+            route_config=route_config,
+            target=target,
+            pinned_message_id=pinned_message_id,
+        )
+        self._request_json_provider_url(
+            endpoint,
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {"ok": True, "channel": "msteams", "action": "unpin"}
+
+    def _dispatch_msteams_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        endpoint, _conversation_id = _msteams_graph_pinned_messages_endpoint_for_route(
+            route_config=route_config,
+            target=target,
+        )
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        pins: list[dict[str, object]] = []
+        next_url: str | None = f"{endpoint}?$expand=message"
+        pages = 0
+        while next_url is not None and pages < MSTEAMS_LIST_PINS_MAX_PAGES:
+            result = self._request_json_provider_url(
+                next_url,
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            page_pins, next_link = _msteams_pin_page(result)
+            pins.extend(page_pins)
+            next_url = next_link
+            pages += 1
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "list-pins",
+            "pins": pins,
+        }
+
+    def _dispatch_msteams_search_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        query = _message_action_param_string(request.params, "query")
+        if query is None:
+            raise RuntimeError("Search requires a target (to) and query.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_graph_conversation_target_for_route(
+            route_config=route_config,
+            raw_target=target,
+        )
+        if "/" in conversation_id:
+            team_id, channel_id = conversation_id.split("/", 1)
+            if not team_id.strip() or not channel_id.strip():
+                raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+            base_endpoint = (
+                "https://graph.microsoft.com/v1.0/teams/"
+                f"{quote(team_id.strip(), safe='')}/channels/"
+                f"{quote(channel_id.strip(), safe='')}/messages"
+            )
+        else:
+            base_endpoint = (
+                "https://graph.microsoft.com/v1.0/chats/"
+                f"{quote(conversation_id, safe='')}/messages"
+            )
+        sanitized_query = query.replace('"', "")
+        query_parts = [
+            f"$search={_msteams_encode_query_component(f'\"{sanitized_query}\"')}",
+            f"$top={_msteams_search_limit(request.params.get('limit'))}",
+        ]
+        sender = _message_action_param_string(request.params, "from")
+        if sender is not None:
+            query_parts.append(
+                "$filter="
+                + _msteams_encode_query_component(
+                    f"from/user/displayName eq '{_msteams_odata_escape(sender)}'"
+                )
+            )
+        result = self._request_json_provider_url(
+            f"{base_endpoint}?{'&'.join(query_parts)}",
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+            extra_headers={"ConsistencyLevel": "eventual"},
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "search",
+            "messages": _msteams_search_messages(result),
+        }
+
+    def _dispatch_msteams_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        if user_id is None:
+            raise RuntimeError("member-info requires a userId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            (
+                "https://graph.microsoft.com/v1.0/users/"
+                f"{quote(user_id, safe='')}?"
+                "$select=id,displayName,mail,jobTitle,userPrincipalName,officeLocation"
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "member-info",
+            "user": _msteams_user_profile(result),
+        }
+
+    def _dispatch_msteams_channel_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        team_id = _message_action_param_string(
+            request.params,
+            "teamId",
+            required=True,
+        )
+        if team_id is None:
+            raise RuntimeError("channel-list requires a teamId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        channels: list[dict[str, object]] = []
+        next_url: str | None = (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id, safe='')}/channels?"
+            "$select=id,displayName,description,membershipType"
+        )
+        pages = 0
+        while next_url is not None and pages < MSTEAMS_LIST_CHANNELS_MAX_PAGES:
+            result = self._request_json_provider_url(
+                next_url,
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            page_channels, next_link = _msteams_channel_page(result)
+            channels.extend(page_channels)
+            next_url = next_link
+            pages += 1
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "channel-list",
+            "channels": channels,
+            "truncated": next_url is not None,
+        }
+
+    def _dispatch_msteams_channel_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        team_id = _message_action_param_string(request.params, "teamId")
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if team_id is None or channel_id is None:
+            raise RuntimeError("channel-info requires teamId and channelId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            (
+                "https://graph.microsoft.com/v1.0/teams/"
+                f"{quote(team_id, safe='')}/channels/{quote(channel_id, safe='')}?"
+                "$select=id,displayName,description,membershipType,webUrl,createdDateTime"
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "channel-info",
+            "channelInfo": _msteams_channel_summary(result),
+        }
+
     def _dispatch_msteams_react_message_action(
         self,
         route: dict[str, Any],
@@ -24772,6 +26431,46 @@ class OpsMeshService:
         }
         if remove:
             result["removed"] = True
+        return result
+
+    def _dispatch_twitch_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        raw_message = request.params.get("message")
+        if raw_message is None:
+            raise RuntimeError("Missing required parameter: message")
+        if not isinstance(raw_message, (str, int, float, bool)):
+            raise RuntimeError("Parameter message must be a string, number, or boolean")
+        message = str(raw_message).strip()
+        if not message:
+            raise RuntimeError("Missing required parameter: message")
+        raw_to = request.params.get("to")
+        to: str | None = None
+        if raw_to is not None:
+            if not isinstance(raw_to, (str, int, float, bool)):
+                raise RuntimeError("Parameter to must be a string, number, or boolean")
+            to = str(raw_to).strip() or None
+        event: dict[str, Any] = {"message": message}
+        if to:
+            event["to"] = to
+        native_result = self._post_twitch_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        timestamp = native_result.get("timestamp")
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "twitch",
+            "messageId": str(native_result.get("messageId") or "unknown"),
+            "timestamp": timestamp
+            if isinstance(timestamp, int)
+            else (_timestamp_ms(datetime.now(UTC)) or 0),
+        }
         return result
 
     def _post_msteams_provider_event(
