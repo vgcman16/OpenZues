@@ -12,6 +12,7 @@ import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19265,6 +19266,170 @@ async def test_ops_mesh_service_stages_msteams_downloadable_attachments() -> Non
     assert "gateway-attachments" in str(staged_paths[0])
     assert result["delivery"] == {"runtime": "session-backed", "media": {"staged": 2}}
     assert result["messageId"] == "inbound-media-stage-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_stages_msteams_media_with_auth_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Media Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    session_deliveries: list[tuple[str, str]] = []
+    token_calls: list[tuple[str, str, str, str]] = []
+    fetch_calls: list[tuple[str, str | None]] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nauth-fallback"
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-auth-fallback-1"}
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("graph", tenant_id, app_id, app_password))
+        return "graph-access-token"
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("bot", tenant_id, app_id, app_password))
+        return "bot-access-token"
+
+    class FakeMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeMediaResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            return png_bytes
+
+    def fake_urlopen(request: object, timeout: int = 30) -> FakeMediaResponse:
+        del timeout
+        assert isinstance(request, Request)
+        authorization = request.get_header("Authorization")
+        fetch_calls.append((request.full_url, authorization))
+        if authorization is None:
+            raise HTTPError(
+                request.full_url,
+                401,
+                "Unauthorized",
+                {},
+                io.BytesIO(b"unauthorized"),
+            )
+        if authorization == "Bearer graph-access-token":
+            return FakeMediaResponse()
+        raise HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(b"forbidden"))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+        canvas_state_dir=tmp_path,
+    )
+    source_url = "https://tenant.sharepoint.com/:i:/r/sites/team/Shared%20Documents/photo.png"
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-auth-fallback-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "19:ops-thread@thread.tacv2",
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "image/png",
+                    "name": "photo.png",
+                    "contentUrl": source_url,
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id="msteams:conversation:19:ops-thread@thread.tacv2",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert token_calls == [("graph", "tenant-id", "teams-app-id", "teams-app-password")]
+    assert len(fetch_calls) == 2
+    assert fetch_calls[0][0].startswith("https://graph.microsoft.com/v1.0/shares/u!")
+    assert fetch_calls == [
+        (fetch_calls[0][0], None),
+        (fetch_calls[0][0], "Bearer graph-access-token"),
+    ]
+    assert result["mediaUrls"] == [source_url]
+    assert result["MediaTypes"] == ["image/png"]
+    staged_paths = result["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert result["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert result["messageId"] == "inbound-media-auth-fallback-1"
 
 
 @pytest.mark.asyncio

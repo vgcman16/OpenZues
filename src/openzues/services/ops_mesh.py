@@ -266,6 +266,15 @@ MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
     "azureedge.net",
     "microsoft.com",
 )
+MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST: tuple[str, ...] = (
+    "api.botframework.com",
+    "botframework.com",
+    "smba.trafficmanager.net",
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
+)
 MSTEAMS_GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
 MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES: tuple[str, ...] = (
     ".sharepoint.com",
@@ -474,6 +483,12 @@ class _MSTeamsFeedbackReflectionResult:
     learning: str
     follow_up: bool
     user_message: str | None
+
+
+class _MSTeamsInboundMediaHttpError(RuntimeError):
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -4379,6 +4394,27 @@ def _msteams_media_url_allowed(media_url: str, allow_hosts: tuple[str, ...]) -> 
         if host == normalized_suffix or host.endswith(f".{normalized_suffix}"):
             return True
     return False
+
+
+def _msteams_media_auth_url_allowed(media_url: str, auth_allow_hosts: tuple[str, ...]) -> bool:
+    return _msteams_media_url_allowed(media_url, auth_allow_hosts)
+
+
+def _msteams_media_auth_scope_order(media_url: str) -> tuple[Literal["graph", "bot"], ...]:
+    host = str(urlparse(media_url).hostname or "").strip().lower()
+    looks_like_graph = (
+        host.endswith("graph.microsoft.com")
+        or host.endswith("graph.microsoft.us")
+        or host.endswith("graph.microsoft.de")
+        or host.endswith("graph.microsoft.cn")
+        or host.endswith("sharepoint.com")
+        or host.endswith("sharepoint.us")
+        or host.endswith("sharepoint.de")
+        or host.endswith("sharepoint.cn")
+        or host.endswith("1drv.ms")
+        or "sharepoint" in host
+    )
+    return ("graph", "bot") if looks_like_graph else ("bot", "graph")
 
 
 def _msteams_fetch_response_bytes(response: object) -> bytes | None:
@@ -9881,32 +9917,105 @@ class OpsMeshService:
         channel_config = self._msteams_signin_channel_config(account_id=account_id)
         return _msteams_normalized_host_suffixes(channel_config.get("mediaAllowHosts"))
 
+    def _msteams_media_auth_allow_hosts(
+        self,
+        *,
+        account_id: str | None,
+    ) -> tuple[str, ...]:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        values = channel_config.get("mediaAuthAllowHosts")
+        if not isinstance(values, list):
+            return MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST
+        suffixes = tuple(
+            str(value).strip().lower().lstrip(".")
+            for value in values
+            if str(value).strip()
+        )
+        return suffixes or MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST
+
     async def _default_msteams_inbound_media_fetch(
         self,
         request: GatewayMSTeamsInboundMediaFetchRequest,
     ) -> object:
-        return await asyncio.to_thread(self._download_msteams_inbound_media_url, request)
+        try:
+            return await asyncio.to_thread(self._download_msteams_inbound_media_url, request)
+        except _MSTeamsInboundMediaHttpError as exc:
+            if exc.status not in {401, 403}:
+                raise RuntimeError(str(exc)) from exc
+            auth_allow_hosts = self._msteams_media_auth_allow_hosts(
+                account_id=request.account_id
+            )
+            if not _msteams_media_auth_url_allowed(request.url, auth_allow_hosts):
+                raise RuntimeError(str(exc)) from exc
+            credentials = await self._msteams_sso_route_credentials()
+            if credentials is None:
+                raise RuntimeError(str(exc)) from exc
+            route_config, secret_token = credentials
+            for scope in _msteams_media_auth_scope_order(request.url):
+                try:
+                    bearer_token = await asyncio.to_thread(
+                        self._msteams_inbound_media_auth_bearer,
+                        route_config=route_config,
+                        secret_token=secret_token,
+                        scope=scope,
+                    )
+                except Exception:
+                    continue
+                try:
+                    return await asyncio.to_thread(
+                        self._download_msteams_inbound_media_url,
+                        request,
+                        bearer_token,
+                    )
+                except _MSTeamsInboundMediaHttpError:
+                    continue
+            raise RuntimeError(str(exc)) from exc
+
+    def _msteams_inbound_media_auth_bearer(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+        scope: Literal["graph", "bot"],
+    ) -> str:
+        if scope == "graph":
+            return self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            )
+        return self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
 
     def _download_msteams_inbound_media_url(
         self,
         request: GatewayMSTeamsInboundMediaFetchRequest,
+        bearer_token: str | None = None,
     ) -> dict[str, object]:
+        headers = {"User-Agent": "OpenZues-MSTeamsMedia/1.0"}
+        if bearer_token:
+            headers["Authorization"] = bearer_token
         http_request = Request(
             request.url,
-            headers={"User-Agent": "OpenZues-MSTeamsMedia/1.0"},
+            headers=headers,
             method="GET",
         )
         try:
             with urlopen(http_request, timeout=30) as response:
                 if response.status >= 400:
-                    raise RuntimeError(f"Microsoft Teams media URL returned HTTP {response.status}")
+                    raise _MSTeamsInboundMediaHttpError(
+                        f"Microsoft Teams media URL returned HTTP {response.status}",
+                        status=int(response.status),
+                    )
                 media_bytes = response.read(request.max_bytes + 1)
                 if len(media_bytes) > request.max_bytes:
                     raise RuntimeError("Microsoft Teams media attachment is too large.")
                 content_type = response.headers.get("Content-Type")
         except HTTPError as exc:
-            raise RuntimeError(
-                _http_error_message("Microsoft Teams media URL returned HTTP", exc)
+            raise _MSTeamsInboundMediaHttpError(
+                _http_error_message("Microsoft Teams media URL returned HTTP", exc),
+                status=int(exc.code),
             ) from exc
         except URLError as exc:
             raise RuntimeError(f"Microsoft Teams media URL failed: {exc.reason}") from exc
