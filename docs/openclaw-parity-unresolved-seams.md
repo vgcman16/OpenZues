@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.2% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6062,10 +6062,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~65.1%. Verified with focused runtime pytest, adjacent Teams
   send/action/provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `5c54430c`.
+- Closed the Microsoft Teams SSO group sender allowlist authorization/drop
+  seam from OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `src/security/dm-policy-shared.ts`: after route allowlist approval, non-DM
+  `signin/verifyState` invokes now evaluate `groupPolicy` and
+  `groupAllowFrom`/`allowFrom` before SSO dispatch, still ACK Teams with
+  `invokeResponse` status 200 on blocked senders, return safe blocked
+  metadata, skip Bot Framework User Token service calls, avoid delegated token
+  persistence, and do not leak the magic-code state. Repo-wide parity is now
+  estimated at ~65.2%. Verified with focused runtime pytest, adjacent Teams
+  send/action/provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `a203f34e`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams SSO
-  group sender allowlist drops, delegated-token consumers, full Bot Framework
-  HTTP inbound wiring, feedback reflection follow-up generation,
+  send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
+  consumers, full Bot Framework HTTP inbound wiring, feedback reflection
+  follow-up generation,
   welcome/member lifecycle handling, richer inbound media staging, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
