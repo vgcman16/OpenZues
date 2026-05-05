@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.8% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~66.9% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11092,6 +11092,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py src\openzues\cli.py tests\test_cli.py`,
   and `mypy src\openzues\services\ops_mesh.py src\openzues\cli.py`.
   Checkpointed in `6f368d37`.
+- Microsoft Teams delegated OAuth completion now mirrors OpenClaw
+  `extensions/msteams/src/oauth.flow.ts` and
+  `extensions/msteams/src/oauth.token.ts`: `openzues setup
+  msteams-delegated-auth --callback-url ... --state ... --pkce-verifier ...`
+  rejects bare codes/state mismatches, exchanges authorization codes through
+  the Azure v2 token endpoint with the upstream form contract, requires a
+  refresh token, applies the five-minute expiry buffer, persists access and
+  refresh tokens under the native delegated token store, and keeps app
+  password/access/refresh tokens out of CLI output. This closes
+  `OZ-PROV-001BI`; repo-wide parity is now estimated at ~66.9%. Remaining
+  Teams setup breadth is local callback server/manual prompt ergonomics.
+- Verified the Microsoft Teams delegated OAuth completion slice with
+  `python -m pytest tests\test_cli.py::test_setup_msteams_delegated_auth_complete_exchanges_and_stores_tokens -q`
+  (`1 passed`), adjacent Teams/setup CLI proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_delegated_auth or channels_status_json_reports_msteams_native_probe or channels_capabilities_json_reports_msteams_poll_support or setup_wizard or setup_bootstrap"`
+  (`6 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\cli.py`.
+  Checkpointed in `3695ca29`.
 
 ## References
 

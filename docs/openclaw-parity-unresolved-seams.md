@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.9% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6228,9 +6228,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~66.8%. Verified with focused CLI pytest, adjacent
   Teams/setup CLI proof, `ruff check`, and `mypy`; source/test checkpointed in
   `6f368d37`.
+- Closed the Microsoft Teams delegated OAuth completion seam from OpenClaw
+  `extensions/msteams/src/oauth.flow.ts` and
+  `extensions/msteams/src/oauth.token.ts`: native OpenZues CLI setup completion
+  now parses the full redirect URL, enforces state matching, exchanges the
+  authorization code through Azure v2 using the upstream form payload
+  (`authorization_code`, redirect URI, code verifier, scopes), requires a
+  refresh token, subtracts the five-minute expiry buffer, persists delegated
+  access/refresh tokens with scopes and user principal metadata, and omits
+  app passwords and tokens from output. Repo-wide parity is now estimated at
+  ~66.9%. Verified with focused CLI pytest, adjacent Teams/setup CLI proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `3695ca29`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated OAuth
-  callback parsing/token exchange persistence or another source-backed
+  local callback/manual prompt ergonomics or another source-backed
   channel/provider route action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

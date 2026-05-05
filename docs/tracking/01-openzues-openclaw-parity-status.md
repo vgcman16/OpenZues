@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~66.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~66.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -265,6 +265,12 @@ may lag behind this tracker.
   default delegated scopes, and setup-time `delegatedAuth.enabled` config
   patch without leaking the app password.
   - Status: checkpointed in `6f368d37`
+
+- [x] Microsoft Teams delegated OAuth completion, preserving OpenClaw's full
+  redirect URL parsing, state verification, authorization-code token exchange,
+  refresh-token requirement, expiry buffer, native token persistence, and
+  secret-free CLI output.
+  - Status: checkpointed in `3695ca29`
 
 - [x] Microsoft Teams threaded replies, preserving OpenClaw Bot Framework
   channel thread routing via `<conversationId>;messageid=<thread-root>` and
