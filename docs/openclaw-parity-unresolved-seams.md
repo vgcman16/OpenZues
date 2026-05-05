@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.3% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6074,10 +6074,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~65.2%. Verified with focused runtime pytest, adjacent Teams
   send/action/provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `a203f34e`.
+- Closed the first Microsoft Teams Bot Framework webhook wiring seam from
+  OpenClaw `extensions/msteams/src/monitor.ts`: OpenZues now exposes
+  `/api/messages`, rejects requests without a `Bearer` authorization header
+  before JSON parsing, enforces the 1 MiB Teams webhook body limit, accepts
+  activity JSON, and dispatches valid activities into the native Ops Mesh
+  inbound handler. Repo-wide parity is now estimated at ~65.3%. Verified with
+  focused app pytest, adjacent app proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `b162bc17`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
-  consumers, full Bot Framework HTTP inbound wiring, feedback reflection
-  follow-up generation,
+  send/poll/replay metadata gap, starting with Microsoft Teams Bot Framework
+  JWT validation, configured webhook path aliasing, delegated-token consumers,
+  feedback reflection follow-up generation,
   welcome/member lifecycle handling, richer inbound media staging, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

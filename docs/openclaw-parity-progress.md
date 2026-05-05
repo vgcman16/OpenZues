@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.2% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.3% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10797,6 +10797,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
   in `a203f34e`.
+
+- Microsoft Teams Bot Framework webhook wiring now has the first native
+  FastAPI slice from OpenClaw's `extensions/msteams/src/monitor.ts`: OpenZues
+  exposes the standard `/api/messages` path, rejects requests without a
+  `Bearer` authorization header before JSON body parsing, enforces the
+  1 MiB Teams webhook body limit, accepts activity JSON, and dispatches valid
+  activities through `OpsMeshService.handle_msteams_inbound_activity`. This
+  closes `OZ-PROV-001AS`; repo-wide parity is now estimated at ~65.3%.
+  Remaining Microsoft Teams HTTP breadth is Bot Framework JWT validation,
+  configured webhook-path aliasing, richer inbound media staging, feedback
+  reflection, and member lifecycle handling.
+- Verified the Microsoft Teams webhook slice with
+  `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_requires_bearer_before_json_body tests\test_app.py::test_msteams_messages_endpoint_dispatches_signin_invoke -q`
+  (`2 passed`), adjacent app proof
+  `python -m pytest tests\test_app.py -q -k "msteams_messages_endpoint or gateway_channels_endpoint_classifies_msteams_native_route or notification_route_operator_form_offers_msteams_native_routes"`
+  (`4 passed, 209 deselected`), `ruff check src\openzues\app.py
+  tests\test_app.py`, and `mypy src\openzues\app.py`. Checkpointed in
+  `b162bc17`.
 
 ## References
 

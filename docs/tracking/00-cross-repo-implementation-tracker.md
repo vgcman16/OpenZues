@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~65.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~65.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams SSO group sender allowlist authorization slice is
-checkpointed in `a203f34e`.
+The Microsoft Teams Bot Framework `/api/messages` webhook slice is
+checkpointed in `b162bc17`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,9 +62,24 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams SSO group sender allowlist authorization checkpointed in `a203f34e` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, member lifecycle, richer inbound media staging, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams `/api/messages` webhook dispatch checkpointed in `b162bc17` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Bot Framework JWT validation, configured webhook path aliasing, delegated-token consumers, feedback reflection, member lifecycle, richer inbound media staging, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AS` Microsoft Teams Bot Framework `/api/messages` webhook
+  - Source: `openclaw-main/extensions/msteams/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_app.py`
+  - Contract: standard Bot Framework Teams activity POSTs to `/api/messages`
+    are bearer-gated before JSON parsing, bounded to the upstream 1 MiB body
+    limit, decoded as activity objects, and dispatched through the native Ops
+    Mesh Microsoft Teams inbound handler.
+  - Evidence required: focused app tests, adjacent app tests, ruff, mypy
+  - Status: checkpointed in `b162bc17`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams `/api/messages`
+    proofs (`2 passed`), adjacent app proof (`4 passed, 209 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AR` Microsoft Teams SSO group sender allowlist authorization/drop
   - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
