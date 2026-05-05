@@ -7756,6 +7756,107 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_dangerous_name_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-dangerous-name.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  isDangerousNameMatchingEnabled,
+  resolveDangerousNameMatchingEnabled
+} = require("openclaw/plugin-sdk/dangerous-name-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.dangerous_name",
+      description: "Use OpenClaw dangerous-name SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          direct: [
+            isDangerousNameMatchingEnabled({ dangerouslyAllowNameMatching: true }),
+            isDangerousNameMatchingEnabled({ dangerouslyAllowNameMatching: false }),
+            isDangerousNameMatchingEnabled({}),
+            isDangerousNameMatchingEnabled(null)
+          ],
+          resolved: [
+            resolveDangerousNameMatchingEnabled({}),
+            resolveDangerousNameMatchingEnabled({
+              providerConfig: { dangerouslyAllowNameMatching: true }
+            }),
+            resolveDangerousNameMatchingEnabled({
+              providerConfig: { dangerouslyAllowNameMatching: true },
+              accountConfig: { dangerouslyAllowNameMatching: false }
+            }),
+            resolveDangerousNameMatchingEnabled({
+              providerConfig: { dangerouslyAllowNameMatching: false },
+              accountConfig: { dangerouslyAllowNameMatching: true }
+            })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-dangerous-name-plugin",
+                    "name": "Runtime Dangerous Name Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-dangerous-name-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.dangerous_name"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.dangerous_name"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "direct": [True, False, False, False],
+        "resolved": [False, True, False, True],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_normalization_helpers(
     tmp_path,
 ) -> None:

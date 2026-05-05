@@ -18113,6 +18113,21 @@ function normalizeAtHashSlug(raw) {
   return cleaned.replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function isDangerousNameMatchingEnabled(config) {
+  return Boolean(config && config.dangerouslyAllowNameMatching === true);
+}
+
+function resolveDangerousNameMatchingEnabled(input) {
+  const accountConfig = input && input.accountConfig;
+  if (
+    accountConfig &&
+    typeof accountConfig.dangerouslyAllowNameMatching === "boolean"
+  ) {
+    return accountConfig.dangerouslyAllowNameMatching;
+  }
+  return isDangerousNameMatchingEnabled(input && input.providerConfig);
+}
+
 function lowercasePreservingWhitespace(value) {
   return String(value ?? "").toLowerCase();
 }
@@ -20759,6 +20774,11 @@ const stringNormalizationRuntime = {
   normalizeStringEntriesLower,
 };
 
+const dangerousNameRuntime = {
+  isDangerousNameMatchingEnabled,
+  resolveDangerousNameMatchingEnabled,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21026,6 +21046,7 @@ const genericSdk = new Proxy(
     hasOutboundText,
     isAcpSessionKey,
     isCronSessionKey,
+    isDangerousNameMatchingEnabled,
     isNumericTargetId,
     isRecord,
     isReasoningReplyPayload,
@@ -21088,6 +21109,7 @@ const genericSdk = new Proxy(
     resolveChunkMode,
     resolveAgentRoute,
     resolveDefaultAgentBoundAccountId,
+    resolveDangerousNameMatchingEnabled,
     resolveEnabledConfiguredAccountId,
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
@@ -21150,6 +21172,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/string-normalization-runtime"
   ) {
     return stringNormalizationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/dangerous-name-runtime" ||
+    request === "@openclaw/plugin-sdk/dangerous-name-runtime"
+  ) {
+    return dangerousNameRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
