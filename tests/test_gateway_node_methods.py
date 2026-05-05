@@ -7756,6 +7756,105 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secure_random_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secure-random-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  generateSecureToken,
+  generateSecureUuid
+} = require("openclaw/plugin-sdk/secure-random-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secure_random",
+      description: "Use OpenClaw secure-random-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const defaultToken = generateSecureToken();
+        const sixByteToken = generateSecureToken(6);
+        const zeroByteToken = generateSecureToken(0);
+        const uuid = generateSecureUuid();
+        return {
+          defaultTokenLength: defaultToken.length,
+          defaultTokenUrlSafe: /^[A-Za-z0-9_-]+$/.test(defaultToken),
+          sixByteTokenLength: sixByteToken.length,
+          sixByteTokenUrlSafe: /^[A-Za-z0-9_-]+$/.test(sixByteToken),
+          zeroByteToken,
+          uuidMatches: (
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+          ).test(uuid)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secure-random-plugin",
+                    "name": "Runtime Secure Random Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-secure-random-runtime-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secure_random"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secure_random"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "defaultTokenLength": 22,
+        "defaultTokenUrlSafe": True,
+        "sixByteTokenLength": 8,
+        "sixByteTokenUrlSafe": True,
+        "zeroByteToken": "",
+        "uuidMatches": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_number_runtime_helpers(
     tmp_path,
 ) -> None:

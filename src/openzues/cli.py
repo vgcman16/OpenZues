@@ -18085,6 +18085,14 @@ function parseFiniteNumber(value) {
   return undefined;
 }
 
+function generateSecureUuid() {
+  return crypto.randomUUID();
+}
+
+function generateSecureToken(bytes = 16) {
+  return crypto.randomBytes(bytes).toString("base64url");
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -20890,6 +20898,11 @@ const numberRuntime = {
   parseFiniteNumber,
 };
 
+const secureRandomRuntime = {
+  generateSecureToken,
+  generateSecureUuid,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21151,6 +21164,8 @@ const genericSdk = new Proxy(
     formatSetExplicitDefaultToConfiguredInstruction,
     formatErrorMessage,
     formatUncaughtError,
+    generateSecureToken,
+    generateSecureUuid,
     getSubagentDepth,
     hasNonEmptyString,
     hasConfiguredSecretInput,
@@ -21314,6 +21329,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/number-runtime"
   ) {
     return numberRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secure-random-runtime" ||
+    request === "@openclaw/plugin-sdk/secure-random-runtime"
+  ) {
+    return secureRandomRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
