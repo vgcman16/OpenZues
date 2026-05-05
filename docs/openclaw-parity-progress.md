@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.0% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~66.1% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10943,6 +10943,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`17 passed, 312 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `507c90ad`.
+
+- Microsoft Teams native readiness probes now project delegated-auth posture
+  from persisted SSO tokens when `channels.msteams.sso` is configured, matching
+  the `delegatedAuth` branch in OpenClaw `extensions/msteams/src/probe.ts`.
+  OpenZues lists the newest token for the configured `connectionName`, decodes
+  scopes and user principal metadata, reports token expiry without exposing the
+  bearer, and preserves the existing app/bot Graph probe result. This closes
+  `OZ-PROV-001BA`; repo-wide parity is now estimated at ~66.1%.
+- Verified the Microsoft Teams delegated-auth probe slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_probe_msteams_reports_delegated_auth_status -q`
+  (`1 passed`), adjacent Teams probe/SSO/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_probe or probe_msteams or msteams_signin or msteams_react or msteams_reactions"`
+  (`11 passed, 319 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\database.py`.
+  Checkpointed in `2f4e2496`.
 
 ## References
 

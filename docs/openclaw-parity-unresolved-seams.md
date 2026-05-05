@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.1% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6143,10 +6143,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Graph token acquisition. Repo-wide parity is now estimated at ~66.0%.
   Verified with focused runtime pytest, adjacent Teams SSO/action proof,
   `ruff check`, and `mypy`; source/test checkpointed in `507c90ad`.
+- Closed the Microsoft Teams delegated-auth probe posture seam from OpenClaw
+  `extensions/msteams/src/probe.ts`: native readiness probes now include a
+  safe `delegatedAuth` result when SSO is configured, using the newest
+  persisted token for the configured connection to project scopes, user
+  principal, user id, and expiry without leaking the bearer. Repo-wide parity
+  is now estimated at ~66.1%. Verified with focused runtime pytest, adjacent
+  Teams probe/SSO/action proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `2f4e2496`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams feedback
   reflection learning/follow-up generation, downloadable inbound media staging,
-  delegated auth probe/setup breadth, or another
+  delegated auth setup breadth, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

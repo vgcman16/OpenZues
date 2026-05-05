@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~66.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~66.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams stored delegated-token reaction slice is checkpointed in
-`507c90ad`.
+The Microsoft Teams delegated-auth probe posture slice is checkpointed in
+`2f4e2496`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -64,9 +64,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams delegated-token reaction consumer checkpointed in `507c90ad` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams feedback reflection learning/follow-up, downloadable inbound media staging, delegated auth probe/setup breadth, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams delegated-auth probe checkpointed in `2f4e2496` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams feedback reflection learning/follow-up, downloadable inbound media staging, delegated auth setup breadth, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BA` Microsoft Teams delegated-auth probe posture
+  - Source: `openclaw-main/extensions/msteams/src/probe.ts`,
+    `openclaw-main/extensions/msteams/src/token.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/database.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Teams readiness probes include safe `delegatedAuth`
+    status when SSO is configured, using the newest persisted token for the
+    configured connection to project scopes, user principal, user id, and
+    expiry without leaking the bearer.
+  - Evidence required: focused runtime test, adjacent Teams probe/SSO/action
+    tests, ruff, mypy
+  - Status: checkpointed in `2f4e2496`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated-auth probe proof
+    (`1 passed`), adjacent Teams probe/SSO/action proof
+    (`11 passed, 319 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AZ` Microsoft Teams stored delegated-token reaction writes
   - Source: `openclaw-main/extensions/msteams/src/graph.ts`,
