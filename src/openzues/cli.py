@@ -13988,6 +13988,22 @@ def _plugin_registry_storage_path(services: CliServices) -> Path | None:
     return data_dir / "settings" / "plugin-registry.json"
 
 
+_PLUGIN_REGISTRY_METADATA_KEYS = (
+    "providerEndpoints",
+    "modelIdNormalization",
+    "providerRequest",
+)
+
+
+def _plugin_registry_metadata_from_row(row: Mapping[str, object]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in _PLUGIN_REGISTRY_METADATA_KEYS:
+        value = row.get(key)
+        if isinstance(value, list | dict):
+            metadata[key] = copy.deepcopy(value)
+    return metadata
+
+
 def _normalize_plugin_registry_index(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
@@ -14009,6 +14025,7 @@ def _normalize_plugin_registry_index(value: object) -> dict[str, object] | None:
             {
                 "pluginId": plugin_id,
                 "enabled": raw_plugin.get("enabled") is True,
+                **_plugin_registry_metadata_from_row(raw_plugin),
             }
         )
     plugins.sort(key=lambda plugin: str(plugin.get("pluginId") or ""))
@@ -14031,6 +14048,7 @@ def _plugin_registry_index_from_plugins(
             {
                 "pluginId": plugin_id,
                 "enabled": _optional_cli_string(plugin.get("status")) == "loaded",
+                **_plugin_registry_metadata_from_row(plugin),
             }
         )
     plugins.sort(key=lambda entry: str(entry.get("pluginId") or ""))

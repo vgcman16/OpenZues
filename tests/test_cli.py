@@ -11841,6 +11841,93 @@ def test_plugins_registry_refresh_json_persists_current_index(
     }
 
 
+def test_plugins_registry_refresh_json_persists_provider_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "provider-registry"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "provider-registry",
+                "name": "Provider Registry",
+                "enabledByDefault": True,
+                "providers": ["openai"],
+                "providerEndpoints": [
+                    {
+                        "endpointClass": "openai-public",
+                        "hostSuffixes": [".OPENAI.AZURE.COM"],
+                    }
+                ],
+                "modelIdNormalization": {
+                    "providers": {"openai": {"prefixWhenBare": "openai"}}
+                },
+                "providerRequest": {
+                    "providers": {
+                        "openai": {
+                            "family": "openai-family",
+                            "openAICompletions": {"supportsStreamingUsage": True},
+                        }
+                    }
+                },
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    refresh = runner.invoke(app, ["plugins", "registry", "--refresh", "--json"])
+    inspect = runner.invoke(app, ["plugins", "registry", "--json"])
+
+    assert refresh.exit_code == 0, refresh.stdout
+    assert inspect.exit_code == 0, inspect.stdout
+    registry_plugin = json.loads(refresh.stdout)["registry"]["plugins"][0]
+    assert registry_plugin == {
+        "pluginId": "provider-registry",
+        "enabled": True,
+        "providerEndpoints": [
+            {
+                "endpointClass": "openai-public",
+                "hostSuffixes": [".openai.azure.com"],
+            }
+        ],
+        "modelIdNormalization": {"providers": {"openai": {"prefixWhenBare": "openai"}}},
+        "providerRequest": {
+            "providers": {
+                "openai": {
+                    "family": "openai-family",
+                    "openAICompletions": {"supportsStreamingUsage": True},
+                }
+            }
+        },
+    }
+    assert json.loads(inspect.stdout)["persisted"]["plugins"][0] == registry_plugin
+
+
 def test_plugins_list_json_reports_persisted_registry_source_after_refresh(
     tmp_path,
     monkeypatch,
