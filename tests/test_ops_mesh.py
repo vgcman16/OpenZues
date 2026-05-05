@@ -16687,6 +16687,165 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-media-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Media Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"image_key": "img_direct_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_media_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    media_url = "data:image/png;base64,aW1hZ2U="
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="",
+        media_urls=[media_url],
+        account_id="feishu-bot",
+        idempotency_key="idem-native-feishu-media-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id=feishu_target,
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-feishu-media-send",
+        "channel": "feishu",
+        "messageId": "om_feishu_media_1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "feishu",
+            "target": feishu_target,
+            "accountId": "feishu-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "mediaIds": ["om_feishu_media_1"],
+        "mediaUrls": [media_url],
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/images",
+            {"image_type": "message"},
+            "media.png",
+            b"image",
+            "image/png",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"image_key": "img_direct_1"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+    assert delivery is not None
+    assert delivery["event_payload"]["mediaUrls"] == [media_url]
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_media_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "mediaIds": ["om_feishu_media_1"],
+        "mediaUrls": [media_url],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

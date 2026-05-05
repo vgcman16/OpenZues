@@ -25722,7 +25722,30 @@ class OpsMeshService:
             ),
         )
         if media_urls:
-            raise RuntimeError("Feishu native provider route does not support media sends yet.")
+            media_event = dict(event)
+            media_event["to"] = str(
+                event.get("to") or (conversation_target or {}).get("peer_id") or ""
+            )
+            media_results = [
+                self._post_feishu_media_provider_event(
+                    route,
+                    media_event,
+                    media_url,
+                    secret_token,
+                )
+                for media_url in media_urls
+            ]
+            native_result = dict(media_results[-1])
+            message_ids = [
+                str(result.get("messageId")).strip()
+                for result in media_results
+                if str(result.get("messageId") or "").strip()
+            ]
+            if message_ids:
+                native_result["messageId"] = message_ids[-1]
+                native_result["mediaIds"] = message_ids
+            native_result["mediaUrls"] = media_urls
+            return native_result
         text = str(event.get("message") or "").strip()
         if not text:
             raise RuntimeError("Feishu route is missing message text.")
