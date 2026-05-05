@@ -18032,6 +18032,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
+const util = require("util");
 const { pathToFileURL } = require("url");
 const Module = require("module");
 
@@ -30599,6 +30600,62 @@ const runtimeStoreRuntime = {
   createPluginRuntimeStore,
 };
 
+function createLoggerBackedRuntime(params) {
+  const logger = (params && params.logger) || console;
+  const exitError = params && params.exitError;
+  return {
+    log: (...args) => {
+      logger.info(util.format(...args));
+    },
+    error: (...args) => {
+      logger.error(util.format(...args));
+    },
+    writeStdout: (value) => {
+      logger.info(value);
+    },
+    writeJson: (value, space = 2) => {
+      logger.info(JSON.stringify(value, null, space > 0 ? space : undefined));
+    },
+    exit: (code) => {
+      throw (typeof exitError === "function" ? exitError(code) : new Error(`exit ${code}`));
+    },
+  };
+}
+
+function resolveRuntimeEnv(params) {
+  return params && params.runtime ? params.runtime : createLoggerBackedRuntime(params || {});
+}
+
+function resolveRuntimeEnvWithUnavailableExit(params) {
+  const unavailableMessage =
+    (params && params.unavailableMessage) || "Runtime exit not available";
+  return resolveRuntimeEnv({
+    ...(params || {}),
+    exitError: () => new Error(unavailableMessage),
+  });
+}
+
+function createNonExitingRuntime() {
+  return createLoggerBackedRuntime({ logger: console });
+}
+
+const defaultRuntime = createLoggerBackedRuntime({
+  logger: console,
+  exitError: () => new Error("process exit unavailable in OpenZues plugin runtime"),
+});
+
+const runtimeLoggerRuntime = {
+  createLoggerBackedRuntime,
+  resolveRuntimeEnv,
+  resolveRuntimeEnvWithUnavailableExit,
+};
+
+const runtimeRuntime = {
+  ...runtimeLoggerRuntime,
+  createNonExitingRuntime,
+  defaultRuntime,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -31303,6 +31360,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...runtimeRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31779,6 +31837,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-store"
   ) {
     return runtimeStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-logger" ||
+    request === "@openclaw/plugin-sdk/runtime-logger"
+  ) {
+    return runtimeLoggerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime" ||
+    request === "@openclaw/plugin-sdk/runtime"
+  ) {
+    return runtimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

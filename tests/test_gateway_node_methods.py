@@ -13649,6 +13649,145 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function captureError(fn) {
+  try {
+    fn();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error && error.message };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_helpers",
+      description: "Use OpenClaw runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const info = [];
+        const errors = [];
+        const logger = {
+          info(message) {
+            info.push(message);
+          },
+          error(message) {
+            errors.push(message);
+          }
+        };
+        const loggerRuntime = runtime.createLoggerBackedRuntime({ logger });
+        loggerRuntime.log("hello %s", "runtime");
+        loggerRuntime.error("bad %d", 7);
+        loggerRuntime.writeStdout("plain text");
+        loggerRuntime.writeJson({ ok: true }, 0);
+
+        const existing = {
+          marker: "existing-runtime",
+          exit(code) {
+            throw new Error("existing exit " + code);
+          }
+        };
+        const reused = runtime.resolveRuntimeEnv({ runtime: existing, logger });
+        const synthesized = runtime.resolveRuntimeEnv({
+          logger,
+          exitError(code) {
+            return new Error("custom exit " + code);
+          }
+        });
+        const unavailable = runtime.resolveRuntimeEnvWithUnavailableExit({
+          logger,
+          unavailableMessage: "exit blocked"
+        });
+
+        return {
+          exportTypes: [
+            typeof runtime.createLoggerBackedRuntime,
+            typeof runtime.resolveRuntimeEnv,
+            typeof runtime.resolveRuntimeEnvWithUnavailableExit,
+            typeof genericSdk.createLoggerBackedRuntime
+          ],
+          info,
+          errors,
+          reusedSame: reused === existing,
+          synthesizedExit: captureError(() => synthesized.exit(5)),
+          unavailableExit: captureError(() => unavailable.exit(9)),
+          defaultExit: captureError(() => loggerRuntime.exit(3))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-helpers-plugin",
+                    "name": "Runtime Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.runtime_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function"],
+        "info": ["hello runtime", "plain text", '{"ok":true}'],
+        "errors": ["bad 7"],
+        "reusedSame": True,
+        "synthesizedExit": {"ok": False, "message": "custom exit 5"},
+        "unavailableExit": {"ok": False, "message": "exit blocked"},
+        "defaultExit": {"ok": False, "message": "exit 3"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
