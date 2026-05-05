@@ -18076,6 +18076,43 @@ function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
 
+function normalizeStringEntries(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((entry) => normalizeOptionalString(String(entry)) || "")
+    .filter(Boolean);
+}
+
+function normalizeStringEntriesLower(list) {
+  return normalizeStringEntries(list).map(
+    (entry) => normalizeOptionalLowercaseString(entry) || "",
+  );
+}
+
+function normalizeSlugInput(raw) {
+  return (normalizeOptionalLowercaseString(raw) || "").normalize("NFC");
+}
+
+function normalizeHyphenSlug(raw) {
+  const trimmed = normalizeSlugInput(raw);
+  if (!trimmed) {
+    return "";
+  }
+  const dashed = trimmed.replace(/\s+/g, "-");
+  const cleaned = dashed.replace(/[^\p{L}\p{M}\p{N}#@._+-]+/gu, "-");
+  return cleaned.replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+}
+
+function normalizeAtHashSlug(raw) {
+  const trimmed = normalizeSlugInput(raw);
+  if (!trimmed) {
+    return "";
+  }
+  const withoutPrefix = trimmed.replace(/^[@#]+/, "");
+  const dashed = withoutPrefix.replace(/[\s_]+/g, "-");
+  const cleaned = dashed.replace(/[^\p{L}\p{M}\p{N}-]+/gu, "-");
+  return cleaned.replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+}
+
 function lowercasePreservingWhitespace(value) {
   return String(value ?? "").toLowerCase();
 }
@@ -20703,12 +20740,23 @@ const textRuntime = {
   hasNonEmptyString,
   localeLowercasePreservingWhitespace,
   lowercasePreservingWhitespace,
+  normalizeAtHashSlug,
+  normalizeHyphenSlug,
   normalizeLowercaseStringOrEmpty,
   normalizeNullableString,
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
+  normalizeStringEntries,
+  normalizeStringEntriesLower,
   normalizeStringifiedOptionalString,
   readStringValue,
+};
+
+const stringNormalizationRuntime = {
+  normalizeAtHashSlug,
+  normalizeHyphenSlug,
+  normalizeStringEntries,
+  normalizeStringEntriesLower,
 };
 
 const errorRuntime = {
@@ -20992,10 +21040,12 @@ const genericSdk = new Proxy(
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
     mergeAccountConfig,
+    normalizeAtHashSlug,
     normalizeAccountId,
     normalizeAgentId,
     normalizeChatType,
     normalizeE164,
+    normalizeHyphenSlug,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
     normalizeMessageChannel,
@@ -21007,6 +21057,8 @@ const genericSdk = new Proxy(
     normalizeResolvedSecretInputString,
     normalizeSecretInput,
     normalizeSecretInputString,
+    normalizeStringEntries,
+    normalizeStringEntriesLower,
     normalizeStringifiedOptionalString,
     normalizeOutboundReplyPayload,
     parseAgentSessionKey,
@@ -21092,6 +21144,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/error-runtime"
   ) {
     return errorRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/string-normalization-runtime" ||
+    request === "@openclaw/plugin-sdk/string-normalization-runtime"
+  ) {
+    return stringNormalizationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
