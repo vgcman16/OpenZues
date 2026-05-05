@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.9% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~69.0% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11459,6 +11459,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `b1bfb9e2`.
+- Feishu/Lark channel-info message actions now mirror the base chat-info
+  branch of OpenClaw `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/chat.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="channel-info"` accepts
+  upstream chat/channel aliases, GETs Feishu `im/v1/chats/{chatId}` with
+  route-backed bearer auth, and returns OpenClaw-shaped `{ok, provider,
+  action, channel}` chat metadata. This closes `OZ-PROV-001CD`; repo-wide
+  parity is now estimated at ~69.0%. The next Feishu message-action seam is
+  `member-info`.
+- Verified the Feishu/Lark channel-info action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_channel_info_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`10 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `f0bd7837`.
 
 ## References
 
