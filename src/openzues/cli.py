@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import codecs
 import copy
 import inspect
@@ -63,6 +64,7 @@ from openzues.services.control_chat import (
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
+from openzues.services.device_bootstrap_tokens import issue_device_bootstrap_token
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
 from openzues.services.gateway_acp_spawn import (
@@ -22919,6 +22921,57 @@ def _build_bootstrap_payload(
     )
 
 
+def _encode_pairing_setup_code(payload: Mapping[str, object]) -> str:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _format_pairing_host(host: str) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _normalize_pairing_setup_url(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        raise ValueError("Gateway URL unavailable.")
+    candidate = value if "://" in value else f"wss://{value}"
+    parsed = urlparse(candidate)
+    if parsed.username or parsed.password:
+        raise ValueError("Configured publicUrl is invalid.")
+    scheme = parsed.scheme.lower()
+    if scheme == "http":
+        scheme = "ws"
+    elif scheme == "https":
+        scheme = "wss"
+    if scheme not in {"ws", "wss"} or not parsed.hostname:
+        raise ValueError("Configured publicUrl is invalid.")
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return f"{scheme}://{_format_pairing_host(parsed.hostname)}{port}"
+
+
+def _resolve_qr_gateway_url(
+    *,
+    app_settings: Settings,
+    url: str | None,
+    public_url: str | None,
+    remote: bool,
+) -> tuple[str, str]:
+    explicit_url = str(url or "").strip() or str(public_url or "").strip()
+    if explicit_url:
+        return _normalize_pairing_setup_url(explicit_url), (
+            "cli.url" if str(url or "").strip() else "cli.publicUrl"
+        )
+    scheme = "wss" if remote else "ws"
+    return (
+        _normalize_pairing_setup_url(
+            f"{scheme}://{app_settings.host}:{app_settings.port}"
+        ),
+        "openzues.settings",
+    )
+
+
 def _apply_swarm_launch_override(
     payload: MissionCreate,
     *,
@@ -23042,6 +23095,115 @@ def health_command(
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_health(payload, json_output=json_output)
+
+
+@app.command("qr")
+def qr_command(
+    remote: bool = typer.Option(
+        False,
+        "--remote",
+        help="Prefer a remote gateway URL when deriving the setup payload.",
+    ),
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Override the gateway URL used in the setup payload.",
+    ),
+    public_url: str | None = typer.Option(
+        None,
+        "--public-url",
+        help="Override the public gateway URL used in the setup payload.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Accept an OpenClaw gateway-token override without embedding it in the setup code.",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="Accept an OpenClaw gateway-password override without embedding it in the setup code.",
+    ),
+    setup_code_only: bool = typer.Option(
+        False,
+        "--setup-code-only",
+        help="Print only the base64url setup code.",
+    ),
+    ascii_qr: bool = typer.Option(
+        True,
+        "--ascii/--no-ascii",
+        help="Include the terminal QR placeholder in human output.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the setup code payload as JSON.",
+    ),
+) -> None:
+    try:
+        if str(token or "").strip() and str(password or "").strip():
+            raise ValueError("Use either --token or --password, not both.")
+        app_settings = _runtime_settings()
+        gateway_url, url_source = _resolve_qr_gateway_url(
+            app_settings=app_settings,
+            url=url,
+            public_url=public_url,
+            remote=remote,
+        )
+        issued = issue_device_bootstrap_token(base_dir=app_settings.data_dir)
+        setup_code = _encode_pairing_setup_code(
+            {
+                "url": gateway_url,
+                "bootstrapToken": issued.token,
+            }
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if setup_code_only:
+        typer.echo(setup_code)
+        return
+
+    auth_label = (
+        "password"
+        if str(password or "").strip()
+        else "token"
+        if str(token or "").strip()
+        else "bootstrap-token"
+    )
+    payload = {
+        "setupCode": setup_code,
+        "gatewayUrl": gateway_url,
+        "auth": auth_label,
+        "urlSource": url_source,
+        "expiresAtMs": issued.expires_at_ms,
+    }
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    lines = [
+        "Pairing QR",
+        "Scan this with the OpenClaw mobile app (Onboarding -> Scan QR).",
+        "",
+    ]
+    if ascii_qr:
+        lines.extend(
+            [
+                "(terminal QR rendering is unavailable in this native CLI build)",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            f"Setup code: {setup_code}",
+            f"Gateway: {gateway_url}",
+            f"Auth: {auth_label}",
+            f"Source: {url_source}",
+        ]
+    )
+    typer.echo("\n".join(lines))
 
 
 @app.command("status")

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import codecs
 import json
 import os
@@ -50,6 +51,11 @@ from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
 runner = CliRunner()
+
+
+def _decode_base64url_json(value: str) -> dict[str, object]:
+    padded = value.strip() + "=" * (-len(value.strip()) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
 
 
 def _bootstrap_cli_workspace(tmp_path, monkeypatch, *, task_name: str = "CLI Gateway Loop") -> None:
@@ -107,6 +113,44 @@ def test_close_services_shuts_down_background_service_loops() -> None:
         "mission_service",
         "manager",
     ]
+
+
+def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("OPENZUES_GATEWAY_TOKEN", "raw-gateway-token")
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    setup_code = result.stdout.strip()
+    assert setup_code
+    assert "\n" not in setup_code
+    assert "=" not in setup_code
+    assert "raw-gateway-token" not in setup_code
+
+    payload = _decode_base64url_json(setup_code)
+    assert payload["url"] == "wss://gateway.example.test:18789"
+    bootstrap_token = payload["bootstrapToken"]
+    assert isinstance(bootstrap_token, str)
+    assert bootstrap_token
+
+    bootstrap_state_path = data_dir / "devices" / "bootstrap.json"
+    bootstrap_state = json.loads(bootstrap_state_path.read_text(encoding="utf-8"))
+    record = bootstrap_state[bootstrap_token]
+    assert record["token"] == bootstrap_token
+    assert record["profile"]["roles"] == ["node", "operator"]
+    assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
