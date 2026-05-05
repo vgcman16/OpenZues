@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -195,6 +195,10 @@ may lag behind this tracker.
 - [x] Imported plugin SDK tool-payload shim for structured tool result payload
   extraction and standalone plain-text tool-call block parsing/stripping.
   - Status: checkpointed in `387717ed`
+
+- [x] Imported plugin SDK boolean-param shim for loose boolean tool parameter
+  reading.
+  - Status: checkpointed in `65bd842f`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1170,9 +1174,20 @@ may lag behind this tracker.
     `2cf7fb27`, reply-chunking helper shim checkpointed in `b000f51c`,
     reply-payload helper shim checkpointed in `5d628f16`, account-helper
     shim checkpointed in `6d2cf33b`, account-core/account-resolution shim
-    checkpointed in `47fa2f39`, and tool-payload shim checkpointed in
-    `387717ed`, but broader plugin SDK helper/runtime surface breadth remains.
+    checkpointed in `47fa2f39`, tool-payload shim checkpointed in
+    `387717ed`, and boolean-param shim checkpointed in `65bd842f`, but
+    broader plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK boolean-param shim.
+  - Source: `openclaw-main/src/plugin-sdk/boolean-param.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `65bd842f`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused boolean-param proof (`1 passed`),
+    adjacent plugin invoke proof (`23 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK tool-payload shim.
   - Source: `openclaw-main/src/plugin-sdk/tool-payload.ts`
