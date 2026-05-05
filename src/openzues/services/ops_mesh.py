@@ -3635,6 +3635,119 @@ def _msteams_poll_card(
     return poll_id, card
 
 
+def _msteams_poll_vote_nested_value(
+    value: object,
+    keys: tuple[str, ...],
+) -> object | None:
+    current = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _msteams_poll_vote_optional_string(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return str(value)
+    return None
+
+
+def _msteams_poll_vote_selection_values(value: object) -> list[str]:
+    if isinstance(value, list):
+        selections = [
+            selection
+            for entry in value
+            if (selection := _msteams_poll_vote_optional_string(entry)) is not None
+        ]
+        return selections
+    normalized = _msteams_poll_vote_optional_string(value)
+    if normalized is None:
+        return []
+    if "," in normalized:
+        return [entry.strip() for entry in normalized.split(",") if entry.strip()]
+    return [normalized]
+
+
+def _msteams_poll_vote_from_value(value: object) -> tuple[str, list[str]] | None:
+    if not isinstance(value, Mapping):
+        return None
+    poll_id = (
+        _msteams_poll_vote_optional_string(value.get("openclawPollId"))
+        or _msteams_poll_vote_optional_string(value.get("pollId"))
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("openclaw", "pollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("openclaw", "poll", "id"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "openclawPollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "pollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "openclaw", "pollId"))
+        )
+    )
+    if poll_id is None:
+        return None
+    selections = _msteams_poll_vote_selection_values(value.get("choices"))
+    if not selections:
+        selections = _msteams_poll_vote_selection_values(
+            _msteams_poll_vote_nested_value(value, ("data", "choices"))
+        )
+    if not selections:
+        return None
+    return poll_id, selections
+
+
+def _msteams_poll_vote_from_message_action_params(
+    params: Mapping[str, Any],
+) -> tuple[str, list[str]] | None:
+    sources: list[object] = []
+    activity = params.get("activity")
+    if isinstance(activity, Mapping):
+        sources.append(activity.get("value"))
+    for key in ("value", "actionValue", "data"):
+        sources.append(params.get(key))
+    sources.append(params)
+    for source in sources:
+        vote = _msteams_poll_vote_from_value(source)
+        if vote is not None:
+            return vote
+    return None
+
+
+def _msteams_normalize_poll_selections(
+    *,
+    options: list[str],
+    max_selections: int,
+    selections: list[str],
+) -> list[str]:
+    mapped: list[str] = []
+    for entry in selections:
+        try:
+            selected_index = int(entry, 10)
+        except ValueError:
+            continue
+        if 0 <= selected_index < len(options):
+            mapped.append(str(selected_index))
+    limit = max(1, max_selections)
+    limited = mapped[:limit] if limit > 1 else mapped[:1]
+    deduped: list[str] = []
+    for entry in limited:
+        if entry not in deduped:
+            deduped.append(entry)
+    return deduped
+
+
 def _msteams_action_target(request: GatewayMessageActionDispatchRequest) -> str:
     target = (
         _message_action_param_string(request.params, "to")
@@ -11257,6 +11370,16 @@ class OpsMeshService:
                 route,
                 request,
             )
+        if channel == "msteams" and action == "poll-vote":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action poll-vote."
+                )
+            return await self._dispatch_msteams_poll_vote_message_action(request)
         if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -21294,6 +21417,138 @@ class OpsMeshService:
             app_password=secret,
         )
         return f"Bearer {access_token}"
+
+    def _msteams_poll_vote_voter_id(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> str:
+        del self
+        raw_voter_id = (
+            str(request.requester_sender_id or "").strip()
+            or _message_action_param_string(request.params, "voterId")
+            or _message_action_param_string(request.params, "senderId")
+            or _message_action_param_string(request.params, "userId")
+        )
+        if raw_voter_id:
+            return raw_voter_id
+        tool_context = request.tool_context or {}
+        if isinstance(tool_context, dict):
+            for key in ("currentSenderId", "senderId", "currentUserId", "userId"):
+                normalized = str(tool_context.get(key) or "").strip()
+                if normalized:
+                    return normalized
+        raise RuntimeError("Microsoft Teams poll vote requires a voter id.")
+
+    async def _msteams_poll_delivery_for_vote(
+        self,
+        poll_id: str,
+    ) -> dict[str, Any] | None:
+        for delivery in await self.database.list_outbound_deliveries(limit=1000):
+            if str(delivery.get("event_type") or "") != "gateway/poll":
+                continue
+            event_payload = delivery.get("event_payload")
+            if not isinstance(event_payload, dict):
+                continue
+            if str(event_payload.get("channel") or "").strip().lower() != "msteams":
+                continue
+            route_scope = delivery.get("route_scope")
+            if not isinstance(route_scope, dict):
+                continue
+            provider_result = route_scope.get("provider_result")
+            if not isinstance(provider_result, dict):
+                continue
+            if str(provider_result.get("pollId") or "").strip() == poll_id:
+                return delivery
+        return None
+
+    async def _dispatch_msteams_poll_vote_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        vote = _msteams_poll_vote_from_message_action_params(request.params)
+        if vote is None:
+            raise RuntimeError("Microsoft Teams poll vote requires pollId and choices.")
+        poll_id, raw_selections = vote
+        voter_id = self._msteams_poll_vote_voter_id(request)
+        delivery = await self._msteams_poll_delivery_for_vote(poll_id)
+        if delivery is None:
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "action": "poll-vote",
+                "pollId": poll_id,
+                "voterId": voter_id,
+                "selections": raw_selections,
+                "recorded": False,
+            }
+        event_payload = delivery.get("event_payload")
+        route_scope = delivery.get("route_scope")
+        if not isinstance(event_payload, dict) or not isinstance(route_scope, dict):
+            raise RuntimeError("Microsoft Teams poll vote could not load poll metadata.")
+        raw_options = event_payload.get("options")
+        options = (
+            [str(option) for option in raw_options if isinstance(option, str)]
+            if isinstance(raw_options, list)
+            else []
+        )
+        if not options:
+            raise RuntimeError("Microsoft Teams poll vote could not load poll options.")
+        max_selections = _optional_int_payload_value(event_payload, "maxSelections") or 1
+        selections = _msteams_normalize_poll_selections(
+            options=options,
+            max_selections=max_selections,
+            selections=raw_selections,
+        )
+        raw_provider_result = route_scope.get("provider_result")
+        provider_result = (
+            dict(cast(Mapping[str, object], raw_provider_result))
+            if isinstance(raw_provider_result, dict)
+            else {}
+        )
+        raw_meta = provider_result.get("meta")
+        meta = (
+            dict(cast(Mapping[str, object], raw_meta))
+            if isinstance(raw_meta, dict)
+            else {}
+        )
+        existing_poll = meta.get("poll")
+        poll_meta = dict(existing_poll) if isinstance(existing_poll, dict) else {}
+        existing_votes = poll_meta.get("votes")
+        votes: dict[str, list[str]] = {}
+        if isinstance(existing_votes, dict):
+            for key, value in existing_votes.items():
+                if isinstance(value, list):
+                    votes[str(key)] = [str(entry) for entry in value]
+        votes[voter_id] = selections
+        poll_meta.update(
+            {
+                "id": poll_id,
+                "question": str(event_payload.get("question") or ""),
+                "options": options,
+                "maxSelections": max(1, max_selections),
+                "conversationId": str(provider_result.get("conversationId") or ""),
+                "messageId": str(provider_result.get("messageId") or ""),
+                "votes": votes,
+                "updatedAt": utcnow(),
+            }
+        )
+        meta["poll"] = poll_meta
+        provider_result["meta"] = meta
+        updated_route_scope = dict(route_scope)
+        updated_route_scope["provider_result"] = provider_result
+        await self.database.update_outbound_delivery(
+            int(delivery["id"]),
+            route_scope=updated_route_scope,
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "poll-vote",
+            "pollId": poll_id,
+            "voterId": voter_id,
+            "selections": selections,
+            "recorded": True,
+        }
 
     def _dispatch_msteams_reactions_message_action(
         self,
