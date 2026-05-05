@@ -4145,6 +4145,78 @@ def _msteams_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+def _msteams_inbound_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for entry in value:
+        normalized = _msteams_inbound_optional_string(entry)
+        if normalized is not None:
+            entries.append(normalized)
+    return entries
+
+
+def _msteams_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    channels = _msteams_inbound_mapping(snapshot.get("channels"))
+    channel_config = _msteams_inbound_mapping(
+        channels.get("msteams") or channels.get("teams")
+    )
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
+    account_config: Mapping[str, Any] = {}
+    if accounts:
+        account_config = _msteams_inbound_mapping(
+            accounts.get(normalized_account_id)
+            or accounts.get(DEFAULT_ACCOUNT_ID)
+            or {}
+        )
+    if not account_config:
+        return channel_config
+    merged = dict(channel_config)
+    merged.update(account_config)
+    return merged
+
+
+def _msteams_signin_conversation_type(activity: Mapping[str, Any]) -> str | None:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    conversation_type = _msteams_inbound_optional_string(
+        conversation.get("conversationType")
+    )
+    return conversation_type.lower() if conversation_type is not None else None
+
+
+def _msteams_signin_is_direct_message(activity: Mapping[str, Any]) -> bool:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    conversation_type = _msteams_signin_conversation_type(activity)
+    if conversation_type == "personal":
+        return True
+    return conversation_type is None and not bool(conversation.get("isGroup"))
+
+
+def _msteams_allowlist_allows_sender(
+    allow_from: list[str],
+    *,
+    sender_id: str,
+    sender_name: str | None,
+    allow_name_matching: bool,
+) -> bool:
+    normalized_allow_from = {
+        entry.strip().lower() for entry in allow_from if entry.strip()
+    }
+    if "*" in normalized_allow_from:
+        return True
+    normalized_sender_id = sender_id.strip().lower()
+    if normalized_sender_id and normalized_sender_id in normalized_allow_from:
+        return True
+    if allow_name_matching and sender_name:
+        return sender_name.strip().lower() in normalized_allow_from
+    return False
+
+
 def _msteams_signin_user(activity: Mapping[str, Any]) -> tuple[str, str]:
     sender = _msteams_inbound_mapping(activity.get("from"))
     user_id = (
@@ -4205,21 +4277,12 @@ def _msteams_sso_config_from_snapshot(
     *,
     account_id: str | None,
 ) -> _MSTeamsSsoConfig | None:
-    channels = _msteams_inbound_mapping(snapshot.get("channels"))
-    channel_config = _msteams_inbound_mapping(
-        channels.get("msteams") or channels.get("teams")
+    channel_config = _msteams_channel_config_from_snapshot(
+        snapshot,
+        account_id=account_id,
     )
-    account_config: Mapping[str, Any] = {}
-    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
-    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
-    if accounts:
-        account_config = _msteams_inbound_mapping(
-            accounts.get(normalized_account_id)
-            or accounts.get(DEFAULT_ACCOUNT_ID)
-            or {}
-        )
     sso_config = _msteams_inbound_mapping(
-        account_config.get("sso") or channel_config.get("sso")
+        channel_config.get("sso")
     )
     if not _msteams_sso_enabled(sso_config.get("enabled")):
         return None
@@ -8973,6 +9036,21 @@ class OpsMeshService:
             return None
         return _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
 
+    def _msteams_signin_channel_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> Mapping[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, Mapping):
+            return {}
+        return _msteams_channel_config_from_snapshot(snapshot, account_id=account_id)
+
     async def _msteams_sso_route_credentials(
         self,
     ) -> tuple[_MSTeamsRouteConfig, str] | None:
@@ -9009,6 +9087,43 @@ class OpsMeshService:
         metadata["message"] = message
         if status is not None:
             metadata["httpStatus"] = status
+        return metadata
+
+    def _msteams_signin_authorization_block_metadata(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        base_metadata: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        if not channel_config or not _msteams_signin_is_direct_message(activity):
+            return None
+        dm_policy = (
+            _msteams_inbound_optional_string(channel_config.get("dmPolicy"))
+            or "pairing"
+        ).lower()
+        if dm_policy != "allowlist":
+            return None
+        sender = _msteams_inbound_mapping(activity.get("from"))
+        sender_id, _channel_id = _msteams_signin_user(activity)
+        sender_name = _msteams_inbound_optional_string(sender.get("name"))
+        allow_name_matching = bool(channel_config.get("dangerouslyAllowNameMatching"))
+        if _msteams_allowlist_allows_sender(
+            _msteams_inbound_string_list(channel_config.get("allowFrom")),
+            sender_id=sender_id,
+            sender_name=sender_name,
+            allow_name_matching=allow_name_matching,
+        ):
+            return None
+        metadata = dict(base_metadata)
+        metadata.pop("code", None)
+        metadata.pop("message", None)
+        metadata["status"] = "blocked"
+        metadata["reason"] = "msteams_signin_sender_not_allowlisted"
+        metadata["conversationType"] = (
+            _msteams_signin_conversation_type(activity) or "personal"
+        )
         return metadata
 
     async def _msteams_handle_signin_token_exchange(
@@ -9209,7 +9324,14 @@ class OpsMeshService:
         )
         sso_config = self._msteams_sso_config(account_id=account_id)
         if sso_config is not None:
-            if name == "signin/tokenExchange":
+            authorization_block = self._msteams_signin_authorization_block_metadata(
+                activity,
+                account_id=account_id,
+                base_metadata=sso_metadata,
+            )
+            if authorization_block is not None:
+                sso_metadata = authorization_block
+            elif name == "signin/tokenExchange":
                 sso_metadata = await self._msteams_handle_signin_token_exchange(
                     activity,
                     base_metadata=sso_metadata,
