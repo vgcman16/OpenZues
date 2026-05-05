@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~74.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~74.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -300,6 +300,10 @@ may lag behind this tracker.
   command-token detection, including bot-addressed slash normalization,
   inbound metadata stripping, and command authorization gates.
   - Status: checkpointed in `c0c5e8fa`
+
+- [x] Imported plugin SDK global-singleton shim for process-global
+  singleton/map resolution and scoped expiring ID caches.
+  - Status: checkpointed in `d773e608`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
