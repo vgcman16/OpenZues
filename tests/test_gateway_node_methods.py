@@ -10761,6 +10761,373 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_webhook_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-webhook-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const webhookPath = require("openclaw/plugin-sdk/webhook-path");
+const scopedWebhookPath = require("@openclaw/plugin-sdk/webhook-path");
+const memoryGuards = require("openclaw/plugin-sdk/webhook-memory-guards");
+const requestGuards = require("openclaw/plugin-sdk/webhook-request-guards");
+const webhookTargets = require("openclaw/plugin-sdk/webhook-targets");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createReq(method, url, headers) {
+  return {
+    method,
+    url,
+    headers: headers || {},
+    socket: { remoteAddress: "127.0.0.1" }
+  };
+}
+
+function createRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: undefined,
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+    },
+    getHeader(name) {
+      return this.headers[String(name).toLowerCase()];
+    },
+    end(value) {
+      this.body = value;
+    }
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.webhook_helpers",
+      description: "Use OpenClaw webhook SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const limiter = memoryGuards.createFixedWindowRateLimiter({
+          windowMs: 10,
+          maxRequests: 1,
+          maxTrackedKeys: 5,
+          pruneIntervalMs: 10
+        });
+        const counter = memoryGuards.createBoundedCounter({
+          maxTrackedKeys: 2,
+          ttlMs: 10,
+          pruneIntervalMs: 10
+        });
+        const logs = [];
+        const anomaly = memoryGuards.createWebhookAnomalyTracker({
+          trackedStatusCodes: [401],
+          logEvery: 2
+        });
+        const inFlight = requestGuards.createWebhookInFlightLimiter({
+          maxInFlightPerKey: 1,
+          maxTrackedKeys: 5
+        });
+
+        const firstLifecycleRes = createRes();
+        const firstLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: firstLifecycleRes,
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        const secondLifecycleRes = createRes();
+        const secondLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: secondLifecycleRes,
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        if (firstLifecycle.ok) {
+          firstLifecycle.release();
+        }
+        const thirdLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: createRes(),
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        if (thirdLifecycle.ok) {
+          thirdLifecycle.release();
+        }
+
+        const methodRes = createRes();
+        const methodOk = requestGuards.applyBasicWebhookRequestGuards({
+          req: createReq("GET", "/hook"),
+          res: methodRes,
+          allowMethods: ["POST"]
+        });
+        const mediaTypeRes = createRes();
+        const mediaTypeOk = requestGuards.applyBasicWebhookRequestGuards({
+          req: createReq("POST", "/hook", { "content-type": "text/plain" }),
+          res: mediaTypeRes,
+          requireJsonContentType: true
+        });
+
+        const targetMap = new Map();
+        const lifecycle = [];
+        const registeredA = webhookTargets.registerWebhookTarget(
+          targetMap,
+          { path: "hook/", id: "A" },
+          {
+            onFirstPathTarget: ({ path, target }) => {
+              lifecycle.push(`first:${path}:${target.id}`);
+              return () => lifecycle.push(`teardown:${path}`);
+            },
+            onLastPathTargetRemoved: ({ path }) => lifecycle.push(`last:${path}`)
+          }
+        );
+        const registeredB = webhookTargets.registerWebhookTarget(targetMap, {
+          path: "/hook",
+          id: "B"
+        });
+        const resolved = webhookTargets.resolveWebhookTargets(
+          createReq("POST", "/hook/?query=1"),
+          targetMap
+        );
+        registeredB.unregister();
+        const sizeAfterB = (targetMap.get("/hook") || []).length;
+        registeredA.unregister();
+        const hasAfterA = targetMap.has("/hook");
+
+        const pipelineCalls = [];
+        const pipelineHandled = await webhookTargets.withResolvedWebhookRequestPipeline({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: createRes(),
+          targetsByPath: new Map([["/hook", [{ id: "P" }]]]),
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: requestGuards.createWebhookInFlightLimiter(),
+          handle: ({ path, targets }) => pipelineCalls.push(`${path}:${targets[0].id}`)
+        });
+        const pipelineMissing = await webhookTargets.withResolvedWebhookRequestPipeline({
+          req: createReq("POST", "/missing"),
+          res: createRes(),
+          targetsByPath: new Map([["/hook", [{ id: "P" }]]]),
+          handle: () => pipelineCalls.push("missing")
+        });
+
+        const authRes = createRes();
+        const authTarget = webhookTargets.resolveWebhookTargetWithAuthOrRejectSync({
+          targets: [{ id: "A" }, { id: "B" }],
+          res: authRes,
+          isMatch: (target) => target.id === "B"
+        });
+        const rejectAuthRes = createRes();
+        const rejectAuthTarget = webhookTargets.resolveWebhookTargetWithAuthOrRejectSync({
+          targets: [{ id: "A" }],
+          res: rejectAuthRes,
+          isMatch: () => false
+        });
+        const rejectMethodRes = createRes();
+
+        return {
+          paths: [
+            webhookPath.normalizeWebhookPath(" hook/ "),
+            webhookPath.normalizeWebhookPath(" / "),
+            webhookPath.resolveWebhookPath({ webhookUrl: "https://example.test/a/b?x=1" }),
+            webhookPath.resolveWebhookPath({ webhookPath: " explicit/ignored " }),
+            webhookPath.resolveWebhookPath({ webhookUrl: "not a url", defaultPath: "/fallback" }),
+            scopedWebhookPath.normalizeWebhookPath("scoped")
+          ],
+          rate: [
+            limiter.isRateLimited("k", 100),
+            limiter.isRateLimited("k", 101),
+            limiter.isRateLimited("k", 111),
+            limiter.size()
+          ],
+          counter: [
+            counter.increment("old", 100),
+            counter.increment("old", 101),
+            counter.increment("fresh", 112),
+            counter.size()
+          ],
+          anomaly: [
+            anomaly.record({
+              key: "k",
+              statusCode: 415,
+              message: (count) => `ignored:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            anomaly.record({
+              key: "k",
+              statusCode: 401,
+              message: (count) => `hit:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            anomaly.record({
+              key: "k",
+              statusCode: 401,
+              message: (count) => `hit:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            logs,
+            anomaly.size()
+          ],
+          contentTypes: [
+            requestGuards.isJsonContentType("application/json"),
+            requestGuards.isJsonContentType("application/cloudevents+json; charset=utf-8"),
+            requestGuards.isJsonContentType("text/plain"),
+            requestGuards.WEBHOOK_BODY_READ_DEFAULTS.preAuth.maxBytes,
+            requestGuards.WEBHOOK_IN_FLIGHT_DEFAULTS.maxInFlightPerKey
+          ],
+          guardRejections: [
+            methodOk,
+            methodRes.statusCode,
+            methodRes.getHeader("allow"),
+            methodRes.body,
+            mediaTypeOk,
+            mediaTypeRes.statusCode,
+            mediaTypeRes.body
+          ],
+          inFlight: [
+            firstLifecycle.ok,
+            secondLifecycle.ok,
+            secondLifecycleRes.statusCode,
+            thirdLifecycle.ok,
+            inFlight.size()
+          ],
+          targets: {
+            registered: registeredA.target,
+            resolved,
+            sizeAfterB,
+            hasAfterA,
+            lifecycle,
+            single: webhookTargets.resolveSingleWebhookTarget(["a", "b"], (value) => value === "b"),
+            ambiguous: webhookTargets.resolveSingleWebhookTarget(["a", "b"], () => true),
+            asyncSingle: await webhookTargets.resolveSingleWebhookTargetAsync(
+              ["a", "b"],
+              async (value) => value === "a"
+            ),
+            authTarget,
+            rejectAuthTarget,
+            rejectAuthStatus: rejectAuthRes.statusCode,
+            rejectAuthBody: rejectAuthRes.body,
+            rejectedMethod: webhookTargets.rejectNonPostWebhookRequest(
+              createReq("GET", "/hook"),
+              rejectMethodRes
+            ),
+            rejectedMethodStatus: rejectMethodRes.statusCode,
+            rejectedMethodAllow: rejectMethodRes.getHeader("allow"),
+            rejectedMethodBody: rejectMethodRes.body
+          },
+          pipeline: [pipelineHandled, pipelineMissing, pipelineCalls],
+          exportTypes: [
+            typeof webhookPath.normalizeWebhookPath,
+            typeof memoryGuards.createFixedWindowRateLimiter,
+            typeof requestGuards.createWebhookInFlightLimiter,
+            typeof webhookTargets.registerWebhookTarget,
+            typeof genericSdk.normalizeWebhookPath,
+            typeof genericSdk.createWebhookAnomalyTracker
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-webhook-helpers-plugin",
+                    "name": "Runtime Webhook Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-webhook-helpers-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.webhook_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.webhook_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "paths": ["/hook", "/", "/a/b", "/explicit/ignored", None, "/scoped"],
+        "rate": [False, True, False, 1],
+        "counter": [1, 2, 1, 1],
+        "anomaly": [0, 1, 2, ["hit:1", "hit:2"], 1],
+        "contentTypes": [True, True, False, 65536, 8],
+        "guardRejections": [
+            False,
+            405,
+            "POST",
+            "Method Not Allowed",
+            False,
+            415,
+            "Unsupported Media Type",
+        ],
+        "inFlight": [True, False, 429, True, 0],
+        "targets": {
+            "registered": {"path": "/hook", "id": "A"},
+            "resolved": {
+                "path": "/hook",
+                "targets": [{"path": "/hook", "id": "A"}, {"path": "/hook", "id": "B"}],
+            },
+            "sizeAfterB": 1,
+            "hasAfterA": False,
+            "lifecycle": ["first:/hook:A", "teardown:/hook", "last:/hook"],
+            "single": {"kind": "single", "target": "b"},
+            "ambiguous": {"kind": "ambiguous"},
+            "asyncSingle": {"kind": "single", "target": "a"},
+            "authTarget": {"id": "B"},
+            "rejectAuthTarget": None,
+            "rejectAuthStatus": 401,
+            "rejectAuthBody": "unauthorized",
+            "rejectedMethod": True,
+            "rejectedMethodStatus": 405,
+            "rejectedMethodAllow": "POST",
+            "rejectedMethodBody": "Method Not Allowed",
+        },
+        "pipeline": [True, False, ["/hook:P"]],
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

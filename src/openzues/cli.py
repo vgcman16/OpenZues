@@ -18648,6 +18648,710 @@ function pruneMapToMaxSize(map, maxSize) {
   }
 }
 
+function normalizeWebhookPath(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return "/";
+  }
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  if (withSlash.length > 1 && withSlash.endsWith("/")) {
+    return withSlash.slice(0, -1);
+  }
+  return withSlash;
+}
+
+function resolveWebhookPath(params) {
+  const trimmedPath =
+    params && typeof params.webhookPath === "string" ? params.webhookPath.trim() : "";
+  if (trimmedPath) {
+    return normalizeWebhookPath(trimmedPath);
+  }
+  const webhookUrl =
+    params && typeof params.webhookUrl === "string" ? params.webhookUrl.trim() : "";
+  if (webhookUrl) {
+    try {
+      const parsed = new URL(webhookUrl);
+      return normalizeWebhookPath(parsed.pathname || "/");
+    } catch (_error) {
+      return null;
+    }
+  }
+  if (params && Object.prototype.hasOwnProperty.call(params, "defaultPath")) {
+    return params.defaultPath == null ? null : params.defaultPath;
+  }
+  return null;
+}
+
+const WEBHOOK_RATE_LIMIT_DEFAULTS = Object.freeze({
+  windowMs: 60000,
+  maxRequests: 120,
+  maxTrackedKeys: 4096,
+});
+
+const WEBHOOK_ANOMALY_COUNTER_DEFAULTS = Object.freeze({
+  maxTrackedKeys: 4096,
+  ttlMs: 6 * 60 * 60000,
+  logEvery: 25,
+});
+
+const WEBHOOK_ANOMALY_STATUS_CODES = Object.freeze([400, 401, 408, 413, 415, 429]);
+
+function createFixedWindowRateLimiter(options) {
+  const windowMs = Math.max(1, Math.floor(options && options.windowMs));
+  const maxRequests = Math.max(1, Math.floor(options && options.maxRequests));
+  const maxTrackedKeys = Math.max(1, Math.floor(options && options.maxTrackedKeys));
+  const pruneIntervalMs = Math.max(
+    1,
+    Math.floor((options && options.pruneIntervalMs) || windowMs),
+  );
+  const state = new Map();
+  let lastPruneMs = 0;
+
+  const touch = (key, value) => {
+    state.delete(key);
+    state.set(key, value);
+  };
+  const prune = (nowMs) => {
+    for (const [key, entry] of state) {
+      if (nowMs - entry.windowStartMs >= windowMs) {
+        state.delete(key);
+      }
+    }
+  };
+
+  return {
+    isRateLimited(key, nowMs = Date.now()) {
+      if (!key) {
+        return false;
+      }
+      if (nowMs - lastPruneMs >= pruneIntervalMs) {
+        prune(nowMs);
+        lastPruneMs = nowMs;
+      }
+      const existing = state.get(key);
+      if (!existing || nowMs - existing.windowStartMs >= windowMs) {
+        touch(key, { count: 1, windowStartMs: nowMs });
+        pruneMapToMaxSize(state, maxTrackedKeys);
+        return false;
+      }
+      const nextCount = existing.count + 1;
+      touch(key, { count: nextCount, windowStartMs: existing.windowStartMs });
+      pruneMapToMaxSize(state, maxTrackedKeys);
+      return nextCount > maxRequests;
+    },
+    size() {
+      return state.size;
+    },
+    clear() {
+      state.clear();
+      lastPruneMs = 0;
+    },
+  };
+}
+
+function createBoundedCounter(options) {
+  const maxTrackedKeys = Math.max(1, Math.floor(options && options.maxTrackedKeys));
+  const ttlMs = Math.max(0, Math.floor((options && options.ttlMs) || 0));
+  const pruneIntervalMs = Math.max(
+    1,
+    Math.floor((options && options.pruneIntervalMs) || (ttlMs > 0 ? ttlMs : 60000)),
+  );
+  const counters = new Map();
+  let lastPruneMs = 0;
+
+  const touch = (key, value) => {
+    counters.delete(key);
+    counters.set(key, value);
+  };
+  const isExpired = (entry, nowMs) => ttlMs > 0 && nowMs - entry.updatedAtMs >= ttlMs;
+  const prune = (nowMs) => {
+    if (ttlMs <= 0) {
+      return;
+    }
+    for (const [key, entry] of counters) {
+      if (isExpired(entry, nowMs)) {
+        counters.delete(key);
+      }
+    }
+  };
+
+  return {
+    increment(key, nowMs = Date.now()) {
+      if (!key) {
+        return 0;
+      }
+      if (nowMs - lastPruneMs >= pruneIntervalMs) {
+        prune(nowMs);
+        lastPruneMs = nowMs;
+      }
+      const existing = counters.get(key);
+      const baseCount = existing && !isExpired(existing, nowMs) ? existing.count : 0;
+      const nextCount = baseCount + 1;
+      touch(key, { count: nextCount, updatedAtMs: nowMs });
+      pruneMapToMaxSize(counters, maxTrackedKeys);
+      return nextCount;
+    },
+    size() {
+      return counters.size;
+    },
+    clear() {
+      counters.clear();
+      lastPruneMs = 0;
+    },
+  };
+}
+
+function createWebhookAnomalyTracker(options = {}) {
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.floor(options.maxTrackedKeys || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.maxTrackedKeys),
+  );
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.ttlMs));
+  const logEvery = Math.max(
+    1,
+    Math.floor(options.logEvery || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.logEvery),
+  );
+  const trackedStatusCodes = new Set(options.trackedStatusCodes || WEBHOOK_ANOMALY_STATUS_CODES);
+  const counter = createBoundedCounter({ maxTrackedKeys, ttlMs });
+  return {
+    record({ key, statusCode, message, log, nowMs }) {
+      if (!trackedStatusCodes.has(statusCode)) {
+        return 0;
+      }
+      const next = counter.increment(key, nowMs);
+      if (log && (next === 1 || next % logEvery === 0)) {
+        log(message(next));
+      }
+      return next;
+    },
+    size() {
+      return counter.size();
+    },
+    clear() {
+      counter.clear();
+    },
+  };
+}
+
+const WEBHOOK_BODY_READ_DEFAULTS = Object.freeze({
+  preAuth: Object.freeze({ maxBytes: 64 * 1024, timeoutMs: 5000 }),
+  postAuth: Object.freeze({ maxBytes: 1024 * 1024, timeoutMs: 30000 }),
+});
+
+const WEBHOOK_IN_FLIGHT_DEFAULTS = Object.freeze({
+  maxInFlightPerKey: 8,
+  maxTrackedKeys: 4096,
+});
+
+function createWebhookInFlightLimiter(options = {}) {
+  const maxInFlightPerKey = Math.max(
+    1,
+    Math.floor(options.maxInFlightPerKey || WEBHOOK_IN_FLIGHT_DEFAULTS.maxInFlightPerKey),
+  );
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.floor(options.maxTrackedKeys || WEBHOOK_IN_FLIGHT_DEFAULTS.maxTrackedKeys),
+  );
+  const active = new Map();
+  return {
+    tryAcquire(key) {
+      if (!key) {
+        return true;
+      }
+      const current = active.get(key) || 0;
+      if (current >= maxInFlightPerKey) {
+        return false;
+      }
+      active.set(key, current + 1);
+      pruneMapToMaxSize(active, maxTrackedKeys);
+      return true;
+    },
+    release(key) {
+      if (!key) {
+        return;
+      }
+      const current = active.get(key);
+      if (current === undefined) {
+        return;
+      }
+      if (current <= 1) {
+        active.delete(key);
+        return;
+      }
+      active.set(key, current - 1);
+    },
+    size() {
+      return active.size;
+    },
+    clear() {
+      active.clear();
+    },
+  };
+}
+
+function isJsonContentType(value) {
+  const first = Array.isArray(value) ? value[0] : value;
+  if (!first) {
+    return false;
+  }
+  const mediaType = normalizeOptionalLowercaseString(String(first).split(";", 1)[0]);
+  return mediaType === "application/json" || Boolean(mediaType && mediaType.endsWith("+json"));
+}
+
+function requestBodyErrorToText(code) {
+  if (code === "PAYLOAD_TOO_LARGE") {
+    return "Payload Too Large";
+  }
+  if (code === "REQUEST_BODY_TIMEOUT") {
+    return "Request Body Timeout";
+  }
+  if (code === "CONNECTION_CLOSED") {
+    return "Connection Closed";
+  }
+  return "Bad Request";
+}
+
+function createRequestBodyLimitError(code) {
+  const error = new Error(requestBodyErrorToText(code));
+  error.code = code;
+  return error;
+}
+
+function isRequestBodyLimitError(error) {
+  return (
+    error &&
+    typeof error === "object" &&
+    ["PAYLOAD_TOO_LARGE", "REQUEST_BODY_TIMEOUT", "CONNECTION_CLOSED"].includes(error.code)
+  );
+}
+
+function readRequestBodyWithLimit(req, limits = {}) {
+  const maxBytes = Math.max(
+    1,
+    Math.floor(limits.maxBytes || WEBHOOK_BODY_READ_DEFAULTS.postAuth.maxBytes),
+  );
+  const timeoutMs = Math.max(
+    0,
+    Math.floor(limits.timeoutMs || WEBHOOK_BODY_READ_DEFAULTS.postAuth.timeoutMs),
+  );
+  const contentLengthHeader =
+    req && req.headers ? req.headers["content-length"] || req.headers["Content-Length"] : undefined;
+  const contentLength = Number.parseInt(String(contentLengthHeader || ""), 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    return Promise.reject(createRequestBodyLimitError("PAYLOAD_TOO_LARGE"));
+  }
+  if (!req || typeof req.on !== "function") {
+    return Promise.resolve("");
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+    let timer = null;
+    const finish = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      callback(value);
+    };
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (typeof req.destroy === "function") {
+          req.destroy();
+        }
+        finish(reject, createRequestBodyLimitError("REQUEST_BODY_TIMEOUT"));
+      }, timeoutMs);
+    }
+    req.on("data", (chunk) => {
+      if (settled) {
+        return;
+      }
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+      total += buffer.length;
+      if (total > maxBytes) {
+        if (typeof req.destroy === "function") {
+          req.destroy();
+        }
+        finish(reject, createRequestBodyLimitError("PAYLOAD_TOO_LARGE"));
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on("end", () => finish(resolve, Buffer.concat(chunks).toString("utf8")));
+    req.on("close", () => finish(reject, createRequestBodyLimitError("CONNECTION_CLOSED")));
+    req.on("error", (error) => finish(reject, error));
+  });
+}
+
+async function readJsonBodyWithLimit(req, options = {}) {
+  try {
+    const raw = await readRequestBodyWithLimit(req, options);
+    if (!raw.trim()) {
+      return options.emptyObjectOnEmpty ? { ok: true, value: {} } : { ok: true, value: null };
+    }
+    return { ok: true, value: JSON.parse(raw) };
+  } catch (error) {
+    if (isRequestBodyLimitError(error)) {
+      return { ok: false, code: error.code };
+    }
+    return { ok: false, code: "INVALID_BODY" };
+  }
+}
+
+function resolveWebhookBodyReadLimits(params = {}) {
+  const defaults =
+    params.profile === "pre-auth"
+      ? WEBHOOK_BODY_READ_DEFAULTS.preAuth
+      : WEBHOOK_BODY_READ_DEFAULTS.postAuth;
+  const maxBytes =
+    typeof params.maxBytes === "number" && Number.isFinite(params.maxBytes) && params.maxBytes > 0
+      ? Math.floor(params.maxBytes)
+      : defaults.maxBytes;
+  const timeoutMs =
+    typeof params.timeoutMs === "number" &&
+    Number.isFinite(params.timeoutMs) &&
+    params.timeoutMs > 0
+      ? Math.floor(params.timeoutMs)
+      : defaults.timeoutMs;
+  return { maxBytes, timeoutMs };
+}
+
+function respondWebhookBodyReadError({ res, code, invalidMessage }) {
+  if (code === "PAYLOAD_TOO_LARGE") {
+    res.statusCode = 413;
+    res.end(requestBodyErrorToText("PAYLOAD_TOO_LARGE"));
+    return { ok: false };
+  }
+  if (code === "REQUEST_BODY_TIMEOUT") {
+    res.statusCode = 408;
+    res.end(requestBodyErrorToText("REQUEST_BODY_TIMEOUT"));
+    return { ok: false };
+  }
+  if (code === "CONNECTION_CLOSED") {
+    res.statusCode = 400;
+    res.end(requestBodyErrorToText("CONNECTION_CLOSED"));
+    return { ok: false };
+  }
+  res.statusCode = 400;
+  res.end(invalidMessage || "Bad Request");
+  return { ok: false };
+}
+
+function applyBasicWebhookRequestGuards(params) {
+  const allowMethods =
+    params.allowMethods && params.allowMethods.length ? params.allowMethods : null;
+  if (allowMethods && !allowMethods.includes(params.req.method || "")) {
+    params.res.statusCode = 405;
+    params.res.setHeader("Allow", allowMethods.join(", "));
+    params.res.end("Method Not Allowed");
+    return false;
+  }
+  if (
+    params.rateLimiter &&
+    params.rateLimitKey &&
+    params.rateLimiter.isRateLimited(params.rateLimitKey, params.nowMs || Date.now())
+  ) {
+    params.res.statusCode = 429;
+    params.res.end("Too Many Requests");
+    return false;
+  }
+  if (
+    params.requireJsonContentType &&
+    params.req.method === "POST" &&
+    !isJsonContentType(params.req.headers && params.req.headers["content-type"])
+  ) {
+    params.res.statusCode = 415;
+    params.res.end("Unsupported Media Type");
+    return false;
+  }
+  return true;
+}
+
+function beginWebhookRequestPipelineOrReject(params) {
+  if (
+    !applyBasicWebhookRequestGuards({
+      req: params.req,
+      res: params.res,
+      allowMethods: params.allowMethods,
+      rateLimiter: params.rateLimiter,
+      rateLimitKey: params.rateLimitKey,
+      nowMs: params.nowMs,
+      requireJsonContentType: params.requireJsonContentType,
+    })
+  ) {
+    return { ok: false };
+  }
+  const inFlightKey = params.inFlightKey || "";
+  const inFlightLimiter = params.inFlightLimiter;
+  if (inFlightLimiter && inFlightKey && !inFlightLimiter.tryAcquire(inFlightKey)) {
+    params.res.statusCode = params.inFlightLimitStatusCode || 429;
+    params.res.end(params.inFlightLimitMessage || "Too Many Requests");
+    return { ok: false };
+  }
+  let released = false;
+  return {
+    ok: true,
+    release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      if (inFlightLimiter && inFlightKey) {
+        inFlightLimiter.release(inFlightKey);
+      }
+    },
+  };
+}
+
+async function readWebhookBodyOrReject(params) {
+  const limits = resolveWebhookBodyReadLimits(params);
+  try {
+    const raw = await readRequestBodyWithLimit(params.req, limits);
+    return { ok: true, value: raw };
+  } catch (error) {
+    return respondWebhookBodyReadError({
+      res: params.res,
+      code: isRequestBodyLimitError(error) ? error.code : "INVALID_BODY",
+      invalidMessage: params.invalidBodyMessage || (error && error.message) || "Bad Request",
+    });
+  }
+}
+
+async function readJsonWebhookBodyOrReject(params) {
+  const limits = resolveWebhookBodyReadLimits(params);
+  const body = await readJsonBodyWithLimit(params.req, {
+    maxBytes: limits.maxBytes,
+    timeoutMs: limits.timeoutMs,
+    emptyObjectOnEmpty: params.emptyObjectOnEmpty,
+  });
+  if (body.ok) {
+    return { ok: true, value: body.value };
+  }
+  return respondWebhookBodyReadError({
+    res: params.res,
+    code: body.code,
+    invalidMessage: params.invalidJsonMessage,
+  });
+}
+
+const pathTeardownByTargetMap = new WeakMap();
+const registeredPluginHttpRoutes = [];
+
+function getPathTeardownMap(targetsByPath) {
+  const existing = pathTeardownByTargetMap.get(targetsByPath);
+  if (existing) {
+    return existing;
+  }
+  const created = new Map();
+  pathTeardownByTargetMap.set(targetsByPath, created);
+  return created;
+}
+
+function registerPluginHttpRoute(route) {
+  const normalizedRoute = {
+    ...route,
+    path: normalizeWebhookPath(route && route.path ? route.path : "/"),
+  };
+  registeredPluginHttpRoutes.push(normalizedRoute);
+  let active = true;
+  return () => {
+    if (!active) {
+      return;
+    }
+    active = false;
+    const index = registeredPluginHttpRoutes.indexOf(normalizedRoute);
+    if (index >= 0) {
+      registeredPluginHttpRoutes.splice(index, 1);
+    }
+  };
+}
+
+function registerWebhookTarget(targetsByPath, target, opts = {}) {
+  const key = normalizeWebhookPath(target.path);
+  const normalizedTarget = { ...target, path: key };
+  const existing = targetsByPath.get(key) || [];
+  if (existing.length === 0 && typeof opts.onFirstPathTarget === "function") {
+    const onFirstPathResult = opts.onFirstPathTarget({
+      path: key,
+      target: normalizedTarget,
+    });
+    if (typeof onFirstPathResult === "function") {
+      getPathTeardownMap(targetsByPath).set(key, onFirstPathResult);
+    }
+  }
+  targetsByPath.set(key, [...existing, normalizedTarget]);
+  let isActive = true;
+  const unregister = () => {
+    if (!isActive) {
+      return;
+    }
+    isActive = false;
+    const updated = (targetsByPath.get(key) || []).filter((entry) => entry !== normalizedTarget);
+    if (updated.length > 0) {
+      targetsByPath.set(key, updated);
+      return;
+    }
+    targetsByPath.delete(key);
+    const teardownMap = getPathTeardownMap(targetsByPath);
+    const teardown = teardownMap.get(key);
+    if (teardown) {
+      teardownMap.delete(key);
+      teardown();
+    }
+    if (typeof opts.onLastPathTargetRemoved === "function") {
+      opts.onLastPathTargetRemoved({ path: key });
+    }
+  };
+  return { target: normalizedTarget, unregister };
+}
+
+function registerWebhookTargetWithPluginRoute(params) {
+  return registerWebhookTarget(params.targetsByPath, params.target, {
+    onFirstPathTarget: ({ path }) =>
+      registerPluginHttpRoute({
+        ...(params.route || {}),
+        path,
+        replaceExisting:
+          params.route && Object.prototype.hasOwnProperty.call(params.route, "replaceExisting")
+            ? params.route.replaceExisting
+            : true,
+      }),
+    onLastPathTargetRemoved: params.onLastPathTargetRemoved,
+  });
+}
+
+function resolveWebhookTargets(req, targetsByPath) {
+  const url = new URL((req && req.url) || "/", "http://localhost");
+  const path = normalizeWebhookPath(url.pathname);
+  const targets = targetsByPath.get(path);
+  if (!targets || targets.length === 0) {
+    return null;
+  }
+  return { path, targets };
+}
+
+async function withResolvedWebhookRequestPipeline(params) {
+  const resolved = resolveWebhookTargets(params.req, params.targetsByPath);
+  if (!resolved) {
+    return false;
+  }
+  const inFlightKey =
+    typeof params.inFlightKey === "function"
+      ? params.inFlightKey({
+          req: params.req,
+          path: resolved.path,
+          targets: resolved.targets,
+        })
+      : params.inFlightKey ||
+        `${resolved.path}:${(params.req.socket && params.req.socket.remoteAddress) || "unknown"}`;
+  const requestLifecycle = beginWebhookRequestPipelineOrReject({
+    req: params.req,
+    res: params.res,
+    allowMethods: params.allowMethods,
+    rateLimiter: params.rateLimiter,
+    rateLimitKey: params.rateLimitKey,
+    nowMs: params.nowMs,
+    requireJsonContentType: params.requireJsonContentType,
+    inFlightLimiter: params.inFlightLimiter,
+    inFlightKey,
+    inFlightLimitStatusCode: params.inFlightLimitStatusCode,
+    inFlightLimitMessage: params.inFlightLimitMessage,
+  });
+  if (!requestLifecycle.ok) {
+    return true;
+  }
+  try {
+    await params.handle(resolved);
+    return true;
+  } finally {
+    requestLifecycle.release();
+  }
+}
+
+function updateMatchedWebhookTarget(matched, target) {
+  if (matched) {
+    return { ok: false, result: { kind: "ambiguous" } };
+  }
+  return { ok: true, matched: target };
+}
+
+function finalizeMatchedWebhookTarget(matched) {
+  if (!matched) {
+    return { kind: "none" };
+  }
+  return { kind: "single", target: matched };
+}
+
+function resolveSingleWebhookTarget(targets, isMatch) {
+  let matched = undefined;
+  for (const target of targets || []) {
+    if (!isMatch(target)) {
+      continue;
+    }
+    const updated = updateMatchedWebhookTarget(matched, target);
+    if (!updated.ok) {
+      return updated.result;
+    }
+    matched = updated.matched;
+  }
+  return finalizeMatchedWebhookTarget(matched);
+}
+
+async function resolveSingleWebhookTargetAsync(targets, isMatch) {
+  let matched = undefined;
+  for (const target of targets || []) {
+    if (!(await isMatch(target))) {
+      continue;
+    }
+    const updated = updateMatchedWebhookTarget(matched, target);
+    if (!updated.ok) {
+      return updated.result;
+    }
+    matched = updated.matched;
+  }
+  return finalizeMatchedWebhookTarget(matched);
+}
+
+function resolveWebhookTargetMatchOrReject(params, match) {
+  if (match.kind === "single") {
+    return match.target;
+  }
+  if (match.kind === "ambiguous") {
+    params.res.statusCode = params.ambiguousStatusCode || 401;
+    params.res.end(params.ambiguousMessage || "ambiguous webhook target");
+    return null;
+  }
+  params.res.statusCode = params.unauthorizedStatusCode || 401;
+  params.res.end(params.unauthorizedMessage || "unauthorized");
+  return null;
+}
+
+async function resolveWebhookTargetWithAuthOrReject(params) {
+  const match = await resolveSingleWebhookTargetAsync(params.targets, async (target) =>
+    params.isMatch(target),
+  );
+  return resolveWebhookTargetMatchOrReject(params, match);
+}
+
+function resolveWebhookTargetWithAuthOrRejectSync(params) {
+  const match = resolveSingleWebhookTarget(params.targets, params.isMatch);
+  return resolveWebhookTargetMatchOrReject(params, match);
+}
+
+function rejectNonPostWebhookRequest(req, res) {
+  if (req.method === "POST") {
+    return false;
+  }
+  res.statusCode = 405;
+  res.setHeader("Allow", "POST");
+  res.end("Method Not Allowed");
+  return true;
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -27279,6 +27983,49 @@ const collectionRuntime = {
   pruneMapToMaxSize,
 };
 
+const webhookPathRuntime = {
+  normalizeWebhookPath,
+  resolveWebhookPath,
+};
+
+const webhookMemoryGuardsRuntime = {
+  WEBHOOK_ANOMALY_COUNTER_DEFAULTS,
+  WEBHOOK_ANOMALY_STATUS_CODES,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  createBoundedCounter,
+  createFixedWindowRateLimiter,
+  createWebhookAnomalyTracker,
+};
+
+const webhookRequestGuardsRuntime = {
+  WEBHOOK_BODY_READ_DEFAULTS,
+  WEBHOOK_IN_FLIGHT_DEFAULTS,
+  applyBasicWebhookRequestGuards,
+  beginWebhookRequestPipelineOrReject,
+  createWebhookInFlightLimiter,
+  installRequestBodyLimitGuard: passthrough,
+  isJsonContentType,
+  isRequestBodyLimitError,
+  readJsonBodyWithLimit,
+  readJsonWebhookBodyOrReject,
+  readRequestBodyWithLimit,
+  readWebhookBodyOrReject,
+  requestBodyErrorToText,
+};
+
+const webhookTargetsRuntime = {
+  registerPluginHttpRoute,
+  registerWebhookTarget,
+  registerWebhookTargetWithPluginRoute,
+  rejectNonPostWebhookRequest,
+  resolveSingleWebhookTarget,
+  resolveSingleWebhookTargetAsync,
+  resolveWebhookTargetWithAuthOrReject,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  withResolvedWebhookRequestPipeline,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -27847,6 +28594,10 @@ const genericSdk = new Proxy(
     ...commandSurfaceRuntime,
     ...commandAuthRuntime,
     ...channelSetupRuntime,
+    ...webhookPathRuntime,
+    ...webhookMemoryGuardsRuntime,
+    ...webhookRequestGuardsRuntime,
+    ...webhookTargetsRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -28210,6 +28961,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/collection-runtime"
   ) {
     return collectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-path" ||
+    request === "@openclaw/plugin-sdk/webhook-path"
+  ) {
+    return webhookPathRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-memory-guards" ||
+    request === "@openclaw/plugin-sdk/webhook-memory-guards"
+  ) {
+    return webhookMemoryGuardsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-request-guards" ||
+    request === "@openclaw/plugin-sdk/webhook-request-guards"
+  ) {
+    return webhookRequestGuardsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-targets" ||
+    request === "@openclaw/plugin-sdk/webhook-targets"
+  ) {
+    return webhookTargetsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
