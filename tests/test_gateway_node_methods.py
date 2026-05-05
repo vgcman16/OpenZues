@@ -12613,6 +12613,112 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_login_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-login.cjs"
+    runtime_entry.write_text(
+        """
+const authLogin = require("openclaw/plugin-sdk/provider-auth-login");
+const genericSdk = require("openclaw/plugin-sdk");
+
+async function capture(name, fn) {
+  try {
+    await fn({ providerId: "demo" });
+    return { name, ok: true };
+  } catch (error) {
+    return { name, ok: false, message: error && error.message };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_login",
+      description: "Use OpenClaw provider auth login SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          exportTypes: [
+            typeof authLogin.loginOpenAICodexOAuth,
+            typeof authLogin.loginChutes,
+            typeof authLogin.githubCopilotLoginCommand,
+            typeof genericSdk.loginOpenAICodexOAuth
+          ],
+          unavailable: [
+            await capture("openai", authLogin.loginOpenAICodexOAuth),
+            await capture("chutes", authLogin.loginChutes),
+            await capture("github", authLogin.githubCopilotLoginCommand)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-login-plugin",
+                    "name": "Runtime Provider Auth Login Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-login.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_login"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_login"})
+
+    unavailable_message = (
+        "Provider auth login helpers require an interactive OpenClaw login runtime."
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 4,
+        "unavailable": [
+            {"name": "openai", "ok": False, "message": unavailable_message},
+            {"name": "chutes", "ok": False, "message": unavailable_message},
+            {"name": "github", "ok": False, "message": unavailable_message},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

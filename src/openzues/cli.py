@@ -20795,6 +20795,10 @@ async function promptSecretRefForSetup() {
   throw new Error("SecretRef setup prompts are unavailable in the native test shim.");
 }
 
+async function providerAuthLoginUnavailable() {
+  throw new Error("Provider auth login helpers require an interactive OpenClaw login runtime.");
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -29615,6 +29619,12 @@ const providerAuthApiKeyRuntime = {
   validateApiKeyInput,
 };
 
+const providerAuthLoginRuntime = {
+  githubCopilotLoginCommand: providerAuthLoginUnavailable,
+  loginChutes: providerAuthLoginUnavailable,
+  loginOpenAICodexOAuth: providerAuthLoginUnavailable,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -30199,6 +30209,7 @@ const genericSdk = new Proxy(
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
+    ...providerAuthLoginRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -30670,6 +30681,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-api-key"
   ) {
     return providerAuthApiKeyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-login" ||
+    request === "@openclaw/plugin-sdk/provider-auth-login"
+  ) {
+    return providerAuthLoginRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
