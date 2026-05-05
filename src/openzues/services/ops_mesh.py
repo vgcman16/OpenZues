@@ -15476,6 +15476,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel in {"feishu", "lark"} and action == "unpin":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action unpin."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_unpin_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
         if channel == "matrix" and action in {"edit", "editMessage"}:
@@ -26854,6 +26870,34 @@ class OpsMeshService:
             "channel": "feishu",
             "action": "pin",
             "pin": pin,
+        }
+
+    def _dispatch_feishu_unpin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _feishu_action_message_id(request.params, action="unpin")
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/pins/{quote(message_id, safe='')}",
+            ),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu pin delete failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        return {
+            "ok": True,
+            "channel": "feishu",
+            "action": "unpin",
+            "messageId": message_id,
         }
 
     def _post_msteams_provider_event(
