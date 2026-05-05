@@ -12936,6 +12936,208 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-web-search-contract.cjs"
+    runtime_entry.write_text(
+        """
+const fields = require("openclaw/plugin-sdk/provider-web-search-contract-fields");
+const config = require("openclaw/plugin-sdk/provider-web-search-config-contract");
+const contract = require("openclaw/plugin-sdk/provider-web-search-contract");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_web_search_contract",
+      description: "Use OpenClaw web-search provider contract SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const scoped = fields.createBaseWebSearchProviderContractFields({
+          credentialPath: "plugins.entries.google.config.webSearch.apiKey",
+          searchCredential: { type: "scoped", scopeId: "gemini" },
+          configuredCredential: { pluginId: "google" }
+        });
+        const scopedSearchConfig = {};
+        scoped.setCredentialValue(scopedSearchConfig, "AIza-next");
+        const scopedConfig = {};
+        scoped.setConfiguredCredentialValue(scopedConfig, "AIza-configured");
+
+        const topLevel = contract.createWebSearchProviderContractFields({
+          credentialPath: "plugins.entries.brave.config.webSearch.apiKey",
+          searchCredential: { type: "top-level" },
+          configuredCredential: { pluginId: "brave", field: "token" }
+        });
+        const topLevelSearchConfig = {};
+        topLevel.setCredentialValue(topLevelSearchConfig, "BSA-next");
+        const topLevelConfig = {};
+        topLevel.setConfiguredCredentialValue(topLevelConfig, "BSA-configured");
+
+        const keyless = contract.createWebSearchProviderContractFields({
+          credentialPath: "",
+          searchCredential: { type: "none" },
+          selectionPluginId: "ollama"
+        });
+        const keylessSearchConfig = { apiKey: "ignored" };
+        keyless.setCredentialValue(keylessSearchConfig, "still ignored");
+
+        const merged = config.mergeScopedSearchConfig(
+          { gemini: { region: "us" }, apiKey: "old" },
+          "gemini",
+          { apiKey: "AIza-merged", mode: "fast" },
+          { mirrorApiKeyToTopLevel: true }
+        );
+
+        return {
+          exportTypes: [
+            typeof fields.createBaseWebSearchProviderContractFields,
+            typeof config.getScopedCredentialValue,
+            typeof config.mergeScopedSearchConfig,
+            typeof contract.createWebSearchProviderContractFields,
+            typeof genericSdk.createWebSearchProviderContractFields
+          ],
+          scoped: {
+            inactiveSecretPaths: scoped.inactiveSecretPaths,
+            existingCredential: scoped.getCredentialValue({ gemini: { apiKey: "AIza-scoped" } }),
+            searchConfig: scopedSearchConfig,
+            configuredValue: scoped.getConfiguredCredentialValue(scopedConfig),
+            configuredConfig: scopedConfig
+          },
+          topLevel: {
+            existingCredential: topLevel.getCredentialValue({ apiKey: "BSA-top-level" }),
+            searchConfig: topLevelSearchConfig,
+            configuredValue: topLevel.getConfiguredCredentialValue(topLevelConfig),
+            configuredConfig: topLevelConfig,
+            hasSelection: typeof topLevel.applySelectionConfig
+          },
+          keyless: {
+            inactiveSecretPaths: keyless.inactiveSecretPaths,
+            credential: keyless.getCredentialValue({ apiKey: "ignored" }),
+            searchConfig: keylessSearchConfig,
+            selectedConfig: keyless.applySelectionConfig({})
+          },
+          configHelpers: {
+            topLevel: config.getTopLevelCredentialValue({ apiKey: "top" }),
+            scoped: config.getScopedCredentialValue({ gemini: { apiKey: "scoped" } }, "gemini"),
+            missingScoped: config.getScopedCredentialValue({ gemini: "bad" }, "gemini"),
+            merged,
+            resolvedPluginConfig: config.resolveProviderWebSearchPluginConfig(
+              { plugins: { entries: { brave: { config: { webSearch: { token: "BSA" } } } } } },
+              "brave"
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-web-search-contract-plugin",
+                    "name": "Runtime Provider Web Search Contract Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-web-search-contract.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_web_search_contract"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_web_search_contract"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 5,
+        "scoped": {
+            "inactiveSecretPaths": ["plugins.entries.google.config.webSearch.apiKey"],
+            "existingCredential": "AIza-scoped",
+            "searchConfig": {"gemini": {"apiKey": "AIza-next"}},
+            "configuredValue": "AIza-configured",
+            "configuredConfig": {
+                "plugins": {
+                    "entries": {
+                        "google": {
+                            "enabled": True,
+                            "config": {"webSearch": {"apiKey": "AIza-configured"}},
+                        }
+                    }
+                }
+            },
+        },
+        "topLevel": {
+            "existingCredential": "BSA-top-level",
+            "searchConfig": {"apiKey": "BSA-next"},
+            "configuredValue": "BSA-configured",
+            "configuredConfig": {
+                "plugins": {
+                    "entries": {
+                        "brave": {
+                            "enabled": True,
+                            "config": {"webSearch": {"token": "BSA-configured"}},
+                        }
+                    }
+                }
+            },
+            "hasSelection": "undefined",
+        },
+        "keyless": {
+            "inactiveSecretPaths": [],
+            "searchConfig": {"apiKey": "ignored"},
+            "selectedConfig": {
+                "plugins": {"entries": {"ollama": {"enabled": True}}}
+            },
+        },
+        "configHelpers": {
+            "topLevel": "top",
+            "scoped": "scoped",
+            "merged": {
+                "gemini": {"region": "us", "apiKey": "AIza-merged", "mode": "fast"},
+                "apiKey": "AIza-merged",
+            },
+            "resolvedPluginConfig": {"token": "BSA"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

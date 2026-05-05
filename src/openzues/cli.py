@@ -20471,6 +20471,159 @@ function enableProviderPluginInConfig(cfg, pluginId) {
   return { config: next, enabled: true };
 }
 
+function getTopLevelCredentialValue(searchConfig) {
+  return searchConfig ? searchConfig.apiKey : undefined;
+}
+
+function setTopLevelCredentialValue(searchConfigTarget, value) {
+  searchConfigTarget.apiKey = value;
+}
+
+function getScopedCredentialValue(searchConfig, key) {
+  const scoped = searchConfig ? searchConfig[key] : undefined;
+  if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) {
+    return undefined;
+  }
+  return scoped.apiKey;
+}
+
+function setScopedCredentialValue(searchConfigTarget, key, value) {
+  const scoped = searchConfigTarget[key];
+  if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) {
+    searchConfigTarget[key] = { apiKey: value };
+    return;
+  }
+  scoped.apiKey = value;
+}
+
+function mergeScopedSearchConfig(searchConfig, key, pluginConfig, options = {}) {
+  if (!pluginConfig) {
+    return searchConfig;
+  }
+  const currentScoped =
+    searchConfig &&
+    searchConfig[key] &&
+    typeof searchConfig[key] === "object" &&
+    !Array.isArray(searchConfig[key])
+      ? searchConfig[key]
+      : {};
+  const next = {
+    ...(searchConfig || {}),
+    [key]: {
+      ...currentScoped,
+      ...pluginConfig,
+    },
+  };
+  if (options.mirrorApiKeyToTopLevel && pluginConfig.apiKey !== undefined) {
+    next.apiKey = pluginConfig.apiKey;
+  }
+  return next;
+}
+
+function resolveProviderWebSearchPluginConfig(config, pluginId) {
+  const pluginConfig =
+    config &&
+    config.plugins &&
+    config.plugins.entries &&
+    config.plugins.entries[pluginId] &&
+    config.plugins.entries[pluginId].config;
+  if (!pluginConfig || typeof pluginConfig !== "object" || Array.isArray(pluginConfig)) {
+    return undefined;
+  }
+  const webSearch = pluginConfig.webSearch;
+  if (!webSearch || typeof webSearch !== "object" || Array.isArray(webSearch)) {
+    return undefined;
+  }
+  return webSearch;
+}
+
+function ensureWebSearchObject(target, key) {
+  const current = target[key];
+  if (current && typeof current === "object" && !Array.isArray(current)) {
+    return current;
+  }
+  const next = {};
+  target[key] = next;
+  return next;
+}
+
+function setProviderWebSearchPluginConfigValue(configTarget, pluginId, key, value) {
+  const plugins = ensureWebSearchObject(configTarget, "plugins");
+  const entries = ensureWebSearchObject(plugins, "entries");
+  const entry = ensureWebSearchObject(entries, pluginId);
+  if (entry.enabled === undefined) {
+    entry.enabled = true;
+  }
+  const config = ensureWebSearchObject(entry, "config");
+  const webSearch = ensureWebSearchObject(config, "webSearch");
+  webSearch[key] = value;
+}
+
+function createSearchCredentialFields(credential) {
+  switch (credential.type) {
+    case "scoped":
+      return {
+        getCredentialValue: (searchConfig) =>
+          getScopedCredentialValue(searchConfig, credential.scopeId),
+        setCredentialValue: (searchConfigTarget, value) =>
+          setScopedCredentialValue(searchConfigTarget, credential.scopeId, value),
+      };
+    case "top-level":
+      return {
+        getCredentialValue: getTopLevelCredentialValue,
+        setCredentialValue: setTopLevelCredentialValue,
+      };
+    case "none":
+      return {
+        getCredentialValue: () => undefined,
+        setCredentialValue: () => {},
+      };
+    default:
+      throw new Error("Unsupported web search credential type");
+  }
+}
+
+function createConfiguredCredentialFields(configuredCredential) {
+  if (!configuredCredential) {
+    return {};
+  }
+  const field = configuredCredential.field || "apiKey";
+  return {
+    getConfiguredCredentialValue: (config) =>
+      (resolveProviderWebSearchPluginConfig(config, configuredCredential.pluginId) || {})[field],
+    setConfiguredCredentialValue: (configTarget, value) => {
+      setProviderWebSearchPluginConfigValue(
+        configTarget,
+        configuredCredential.pluginId,
+        field,
+        value,
+      );
+    },
+  };
+}
+
+function createBaseWebSearchProviderContractFields(options) {
+  return {
+    inactiveSecretPaths:
+      options.inactiveSecretPaths || (options.credentialPath ? [options.credentialPath] : []),
+    ...createSearchCredentialFields(options.searchCredential),
+    ...createConfiguredCredentialFields(options.configuredCredential),
+  };
+}
+
+function createWebSearchProviderContractFields(options) {
+  const selectionPluginId = options.selectionPluginId;
+  return {
+    ...createBaseWebSearchProviderContractFields(options),
+    ...(selectionPluginId
+      ? {
+          applySelectionConfig: (config) =>
+            enableProviderPluginInConfig(config, selectionPluginId).config,
+        }
+      : {}),
+  };
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -29802,9 +29955,26 @@ const providerWebFetchContractRuntime = {
   enablePluginInConfig: enableProviderPluginInConfig,
 };
 
+const providerWebSearchConfigContractRuntime = {
+  createWebSearchProviderContractFields,
+  getScopedCredentialValue,
+  getTopLevelCredentialValue,
+  mergeScopedSearchConfig,
+  resolveProviderWebSearchPluginConfig,
+  setProviderWebSearchPluginConfigValue,
+  setScopedCredentialValue,
+  setTopLevelCredentialValue,
+};
+
+const providerWebSearchContractFieldsRuntime = {
+  createBaseWebSearchProviderContractFields,
+};
+
 const providerWebSearchContractRuntime = {
+  ...providerWebSearchConfigContractRuntime,
+  ...providerWebSearchContractFieldsRuntime,
+  createWebSearchProviderContractFields,
   enablePluginInConfig: enableProviderPluginInConfig,
-  createWebSearchProviderContractFields: passthrough,
 };
 
 const providerAuthResultRuntime = {
@@ -30503,6 +30673,10 @@ const genericSdk = new Proxy(
     ...providerCatalogSharedRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
+    ...providerWebFetchContractRuntime,
+    ...providerWebSearchConfigContractRuntime,
+    ...providerWebSearchContractFieldsRuntime,
+    ...providerWebSearchContractRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -30955,6 +31129,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-fetch-contract"
   ) {
     return providerWebFetchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-config-contract"
+  ) {
+    return providerWebSearchConfigContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-contract-fields" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-contract-fields"
+  ) {
+    return providerWebSearchContractFieldsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-contract" ||
