@@ -163,6 +163,7 @@ BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
 BLUEBUBBLES_MEDIA_MB = 1024 * 1024
 BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+FEISHU_MEDIA_MB = 1024 * 1024
 FEISHU_TRANSCODABLE_AUDIO_EXTS = {
     ".aac",
     ".aiff",
@@ -1569,6 +1570,20 @@ def _bluebubbles_positive_number(value: object) -> float | None:
     if not math.isfinite(float(value)) or float(value) <= 0:
         return None
     return float(value)
+
+
+def _feishu_media_max_bytes(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> int | None:
+    channel_config = _feishu_channel_config(snapshot)
+    account_config = _feishu_account_config(channel_config, account_id)
+    for value in (account_config.get("mediaMaxMb"), channel_config.get("mediaMaxMb")):
+        max_mb = _bluebubbles_positive_number(value)
+        if max_mb is not None:
+            return int(max_mb * FEISHU_MEDIA_MB)
+    return None
 
 
 def _bluebubbles_media_max_bytes(
@@ -27723,7 +27738,11 @@ class OpsMeshService:
         config_snapshot = self._feishu_config_snapshot()
         media_bytes, content_type, filename = self._load_feishu_media(
             media_url,
-            max_bytes=30 * 1024 * 1024,
+            max_bytes=_feishu_media_max_bytes(
+                config_snapshot,
+                account_id=account_id,
+            )
+            or 30 * FEISHU_MEDIA_MB,
             local_roots=_feishu_media_local_roots(
                 config_snapshot,
                 account_id=account_id,

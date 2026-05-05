@@ -18010,6 +18010,122 @@ async def test_ops_mesh_service_message_action_allows_feishu_local_media_under_c
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_uses_feishu_account_media_max_mb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-feishu-account-media-max"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Account Media Max Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "feishu": {
+                    "mediaMaxMb": 5,
+                    "accounts": {"feishu-bot": {"mediaMaxMb": 2}},
+                }
+            }
+        }
+    )
+    seen_max_bytes: list[int] = []
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, local_roots
+        assert media_url == "https://example.test/too-large.pdf"
+        assert account_id == "feishu-bot"
+        seen_max_bytes.append(max_bytes)
+        raise RuntimeError("Feishu media exceeds configured mediaMaxMb")
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_should_not_send"}}
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    with pytest.raises(RuntimeError, match="configured mediaMaxMb"):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="feishu",
+                action="send",
+                params={
+                    "to": "feishu:chat:oc_chat_1",
+                    "media": "https://example.test/too-large.pdf",
+                },
+                account_id="feishu-bot",
+                idempotency_key="idem-feishu-account-media-max",
+            )
+        )
+
+    assert seen_max_bytes == [2 * 1024 * 1024]
+    assert feishu_uploads == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_thread_reply_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
