@@ -20134,6 +20134,369 @@ function logAckFailure(params) {
   params.log(`${params.channel} ack cleanup failed${target}: ${String(params.error)}`);
 }
 
+const DEFAULT_ACK_REACTION = "\u{1F440}";
+const DEFAULT_EMOJIS = {
+  queued: "\u{1F440}",
+  thinking: "\u{1F914}",
+  tool: "\u{1F525}",
+  coding: "\u{1F468}\u200D\u{1F4BB}",
+  web: "\u26A1",
+  done: "\u{1F44D}",
+  error: "\u{1F631}",
+  stallSoft: "\u{1F971}",
+  stallHard: "\u{1F628}",
+  compacting: "\u270D",
+};
+const DEFAULT_TIMING = {
+  debounceMs: 700,
+  stallSoftMs: 10000,
+  stallHardMs: 30000,
+  doneHoldMs: 1500,
+  errorHoldMs: 2500,
+};
+const CODING_TOOL_TOKENS = [
+  "exec",
+  "process",
+  "read",
+  "write",
+  "edit",
+  "session_status",
+  "bash",
+];
+const WEB_TOOL_TOKENS = ["web_search", "web-search", "web_fetch", "web-fetch", "browser"];
+
+function resolveAckReaction(cfg, agentId, opts) {
+  if (opts && opts.channel && opts.accountId) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    const accounts = channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+      ? channelCfg.accounts
+      : {};
+    const accountCfg = accounts[opts.accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "ackReaction")) {
+      return String(accountCfg.ackReaction || "").trim();
+    }
+  }
+  if (opts && opts.channel) {
+    const channelCfg = getChannelConfig(cfg, opts.channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "ackReaction")) {
+      return String(channelCfg.ackReaction || "").trim();
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "ackReaction")) {
+    return String(messages.ackReaction || "").trim();
+  }
+  const identity = resolveAgentIdentity(cfg || {}, agentId) || {};
+  const emoji = normalizeOptionalString(identity.emoji);
+  return emoji || DEFAULT_ACK_REACTION;
+}
+
+function shouldAckReaction(params) {
+  const scope = (params && params.scope) || "group-mentions";
+  if (scope === "off" || scope === "none") {
+    return false;
+  }
+  if (scope === "all") {
+    return true;
+  }
+  if (scope === "direct") {
+    return Boolean(params && params.isDirect);
+  }
+  if (scope === "group-all") {
+    return Boolean(params && params.isGroup);
+  }
+  if (scope === "group-mentions") {
+    if (
+      !params ||
+      !params.isMentionableGroup ||
+      !params.requireMention ||
+      !params.canDetectMention
+    ) {
+      return false;
+    }
+    return params.effectiveWasMentioned === true || params.shouldBypassMention === true;
+  }
+  return false;
+}
+
+function shouldAckReactionForWhatsApp(params) {
+  if (!params || !params.emoji) {
+    return false;
+  }
+  if (params.isDirect) {
+    return params.directEnabled === true;
+  }
+  if (!params.isGroup || params.groupMode === "never") {
+    return false;
+  }
+  if (params.groupMode === "always") {
+    return true;
+  }
+  return shouldAckReaction({
+    scope: "group-mentions",
+    isDirect: false,
+    isGroup: true,
+    isMentionableGroup: true,
+    requireMention: true,
+    canDetectMention: true,
+    effectiveWasMentioned: params.wasMentioned,
+    shouldBypassMention: params.groupActivated,
+  });
+}
+
+function createAckReactionHandle(params) {
+  const ackReactionValue = String((params && params.ackReactionValue) || "").trim();
+  if (!ackReactionValue) {
+    return null;
+  }
+  let sendPromise;
+  try {
+    sendPromise = Promise.resolve(params.send());
+  } catch (err) {
+    sendPromise = Promise.reject(err);
+  }
+  return {
+    ackReactionPromise: sendPromise.then(
+      () => true,
+      (err) => {
+        if (params.onSendError) {
+          params.onSendError(err);
+        }
+        return false;
+      },
+    ),
+    ackReactionValue,
+    remove: params.remove,
+  };
+}
+
+function removeAckReactionAfterReply(params) {
+  if (
+    !params ||
+    !params.removeAfterReply ||
+    !params.ackReactionPromise ||
+    !params.ackReactionValue
+  ) {
+    return;
+  }
+  void params.ackReactionPromise.then((didAck) => {
+    if (!didAck) {
+      return;
+    }
+    Promise.resolve(params.remove()).catch((err) => {
+      if (params.onError) {
+        params.onError(err);
+      }
+    });
+  });
+}
+
+function removeAckReactionHandleAfterReply(params) {
+  const ackReaction = params && params.ackReaction;
+  removeAckReactionAfterReply({
+    removeAfterReply: params && params.removeAfterReply,
+    ackReactionPromise: ackReaction && ackReaction.ackReactionPromise,
+    ackReactionValue: ackReaction && ackReaction.ackReactionValue,
+    remove: (ackReaction && ackReaction.remove) || (async () => {}),
+    onError: params && params.onError,
+  });
+}
+
+function missingTargetMessage(provider, hint) {
+  const normalized = normalizeOptionalString(hint);
+  return `Delivering to ${provider} requires target${normalized ? ` ${normalized}` : ""}`;
+}
+
+function missingTargetError(provider, hint) {
+  return new Error(missingTargetMessage(provider, hint));
+}
+
+function resolveToolEmoji(toolName, emojis) {
+  const selected = { ...DEFAULT_EMOJIS, ...(emojis || {}) };
+  const normalized = normalizeOptionalLowercaseString(toolName) || "";
+  if (!normalized) {
+    return selected.tool;
+  }
+  if (WEB_TOOL_TOKENS.some((token) => normalized.includes(token))) {
+    return selected.web;
+  }
+  if (CODING_TOOL_TOKENS.some((token) => normalized.includes(token))) {
+    return selected.coding;
+  }
+  return selected.tool;
+}
+
+function createStatusReactionController(params) {
+  const enabled = params && params.enabled === true;
+  const adapter = (params && params.adapter) || {};
+  const initialEmoji = (params && params.initialEmoji) || "";
+  const emojis = { ...DEFAULT_EMOJIS, queued: initialEmoji, ...((params && params.emojis) || {}) };
+  const timing = { ...DEFAULT_TIMING, ...((params && params.timing) || {}) };
+  const onError = params && params.onError;
+  let currentEmoji = "";
+  let pendingEmoji = "";
+  let debounceTimer;
+  let stallSoftTimer;
+  let stallHardTimer;
+  let finished = false;
+  let chainPromise = Promise.resolve();
+  const activeEmojis = new Set();
+
+  const clearDebounceTimer = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = undefined;
+    }
+  };
+  const clearAllTimers = () => {
+    clearDebounceTimer();
+    if (stallSoftTimer) {
+      clearTimeout(stallSoftTimer);
+      stallSoftTimer = undefined;
+    }
+    if (stallHardTimer) {
+      clearTimeout(stallHardTimer);
+      stallHardTimer = undefined;
+    }
+  };
+  const enqueue = (fn) => {
+    chainPromise = chainPromise.then(fn, fn);
+    return chainPromise;
+  };
+  const applyEmoji = async (emoji) => {
+    if (!enabled || !emoji) {
+      return;
+    }
+    try {
+      if (!adapter.removeReaction || !activeEmojis.has(emoji)) {
+        await adapter.setReaction(emoji);
+      }
+      activeEmojis.add(emoji);
+      currentEmoji = emoji;
+    } catch (err) {
+      if (onError) {
+        onError(err);
+      }
+    }
+  };
+  const removeActiveEmojis = async (keepEmoji) => {
+    if (!adapter.removeReaction) {
+      return;
+    }
+    for (const emoji of Array.from(activeEmojis)) {
+      if (emoji === keepEmoji) {
+        continue;
+      }
+      try {
+        await adapter.removeReaction(emoji);
+      } catch (err) {
+        if (onError) {
+          onError(err);
+        }
+      } finally {
+        activeEmojis.delete(emoji);
+      }
+    }
+  };
+  const resetStallTimers = () => {
+    if (!enabled) {
+      return;
+    }
+    if (stallSoftTimer) {
+      clearTimeout(stallSoftTimer);
+    }
+    if (stallHardTimer) {
+      clearTimeout(stallHardTimer);
+    }
+    stallSoftTimer = setTimeout(
+      () => scheduleEmoji(emojis.stallSoft, { immediate: true, skipStallReset: true }),
+      timing.stallSoftMs,
+    );
+    stallHardTimer = setTimeout(
+      () => scheduleEmoji(emojis.stallHard, { immediate: true, skipStallReset: true }),
+      timing.stallHardMs,
+    );
+  };
+  function scheduleEmoji(emoji, options) {
+    const opts = options || {};
+    if (!enabled || finished || !emoji) {
+      return;
+    }
+    if (emoji === currentEmoji || emoji === pendingEmoji) {
+      if (!opts.skipStallReset) {
+        resetStallTimers();
+      }
+      return;
+    }
+    pendingEmoji = emoji;
+    clearDebounceTimer();
+    const apply = () => enqueue(async () => {
+      await applyEmoji(emoji);
+      pendingEmoji = "";
+    });
+    if (opts.immediate || timing.debounceMs <= 0) {
+      void apply();
+    } else {
+      debounceTimer = setTimeout(() => {
+        debounceTimer = undefined;
+        void apply();
+      }, timing.debounceMs);
+    }
+    if (!opts.skipStallReset) {
+      resetStallTimers();
+    }
+  }
+  const finishWithEmoji = async (emoji) => {
+    if (!enabled) {
+      return;
+    }
+    finished = true;
+    clearAllTimers();
+    await enqueue(async () => {
+      await applyEmoji(emoji);
+      await removeActiveEmojis(emoji);
+      pendingEmoji = "";
+    });
+  };
+  const clear = async () => {
+    if (!enabled) {
+      return;
+    }
+    finished = true;
+    clearAllTimers();
+    await enqueue(async () => {
+      await removeActiveEmojis();
+      currentEmoji = "";
+      pendingEmoji = "";
+    });
+  };
+  const restoreInitial = async () => {
+    if (!enabled) {
+      return;
+    }
+    clearAllTimers();
+    await enqueue(async () => {
+      await applyEmoji(initialEmoji);
+      await removeActiveEmojis(initialEmoji);
+      pendingEmoji = "";
+    });
+  };
+  return {
+    setQueued: () => scheduleEmoji(emojis.queued, { immediate: true }),
+    setThinking: () => scheduleEmoji(emojis.thinking),
+    setTool: (toolName) => scheduleEmoji(resolveToolEmoji(toolName, emojis)),
+    setCompacting: () => scheduleEmoji(emojis.compacting),
+    cancelPending: () => {
+      clearDebounceTimer();
+      pendingEmoji = "";
+    },
+    setDone: () => finishWithEmoji(emojis.done),
+    setError: () => finishWithEmoji(emojis.error),
+    clear,
+    restoreInitial,
+  };
+}
+
 function resolveTimezone(value) {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
@@ -22933,6 +23296,25 @@ const channelLoggingRuntime = {
   logTypingFailure,
 };
 
+const channelFeedbackRuntime = {
+  CODING_TOOL_TOKENS,
+  DEFAULT_EMOJIS,
+  DEFAULT_TIMING,
+  WEB_TOOL_TOKENS,
+  createAckReactionHandle,
+  createStatusReactionController,
+  logAckFailure,
+  logTypingFailure,
+  missingTargetError,
+  missingTargetMessage,
+  removeAckReactionAfterReply,
+  removeAckReactionHandleAfterReply,
+  resolveAckReaction,
+  resolveToolEmoji,
+  shouldAckReaction,
+  shouldAckReactionForWhatsApp,
+};
+
 const timeRuntime = {
   formatUtcTimestamp,
   formatZonedTimestamp,
@@ -23252,9 +23634,12 @@ const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
     DEFAULT_GROUP_HISTORY_LIMIT,
+    DEFAULT_EMOJIS,
     DEFAULT_MAIN_KEY,
+    DEFAULT_TIMING,
     PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
+    CODING_TOOL_TOKENS,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -23283,6 +23668,7 @@ const genericSdk = new Proxy(
     createAccountActionGate,
     createActionGate,
     createAccountListHelpers,
+    createAckReactionHandle,
     createCachedLazyValueGetter,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
@@ -23301,6 +23687,7 @@ const genericSdk = new Proxy(
     createComputedAccountStatusAdapter,
     createDefaultChannelRuntimeState,
     createDependentCredentialStatusIssueCollector,
+    createStatusReactionController,
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
     createUnionActionGate,
@@ -23369,6 +23756,8 @@ const genericSdk = new Proxy(
     lowercasePreservingWhitespace,
     mediaKindFromMime,
     mergeAccountConfig,
+    missingTargetError,
+    missingTargetMessage,
     normalizeAtHashSlug,
     normalizeAccountId,
     normalizeAgentId,
@@ -23416,6 +23805,9 @@ const genericSdk = new Proxy(
     readStringArrayParam,
     readStringOrNumberParam,
     readStringParam,
+    removeAckReactionAfterReply,
+    removeAckReactionHandleAfterReply,
+    resolveAckReaction,
     resolveAccountEntry,
     resolveAccountWithDefaultFallback,
     resolveConfiguredFromCredentialStatuses,
@@ -23441,6 +23833,7 @@ const genericSdk = new Proxy(
     resolveReactionMessageId,
     resolveBatchedReplyThreadingPolicy,
     resolveChannelSourceReplyDeliveryMode,
+    resolveToolEmoji,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
     resolveTextChunkLimit,
@@ -23459,6 +23852,8 @@ const genericSdk = new Proxy(
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
     shouldComputeCommandAuthorized,
+    shouldAckReaction,
+    shouldAckReactionForWhatsApp,
     stringEnum,
     stringifyToolPayload,
     stripPlainTextToolCallBlocks,
@@ -23466,6 +23861,7 @@ const genericSdk = new Proxy(
     ToolAuthorizationError,
     retryAsync,
     TELEGRAM_RETRY_DEFAULTS,
+    WEB_TOOL_TOKENS,
     waitForTransportReady,
     withTempDownloadPath,
     withNormalizedTimestamp,
@@ -23544,6 +23940,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-logging"
   ) {
     return channelLoggingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-feedback" ||
+    request === "@openclaw/plugin-sdk/channel-feedback"
+  ) {
+    return channelFeedbackRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/time-runtime" ||

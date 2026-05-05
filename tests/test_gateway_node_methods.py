@@ -11271,6 +11271,290 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_feedback_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-feedback.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  CODING_TOOL_TOKENS,
+  DEFAULT_EMOJIS,
+  DEFAULT_TIMING,
+  WEB_TOOL_TOKENS,
+  createAckReactionHandle,
+  createStatusReactionController,
+  missingTargetError,
+  removeAckReactionAfterReply,
+  removeAckReactionHandleAfterReply,
+  resolveAckReaction,
+  resolveToolEmoji,
+  shouldAckReaction,
+  shouldAckReactionForWhatsApp
+} = require("openclaw/plugin-sdk/channel-feedback");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_feedback",
+      description: "Use OpenClaw channel feedback SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            list: [
+              { id: "assistant", identity: { emoji: "agent" } }
+            ]
+          },
+          messages: { ackReaction: "global" },
+          channels: {
+            slack: {
+              ackReaction: "channel",
+              accounts: {
+                work: { ackReaction: "account" }
+              }
+            }
+          }
+        };
+        const ackReactions = [
+          resolveAckReaction(cfg, "assistant", { channel: "slack", accountId: "work" }),
+          resolveAckReaction(cfg, "assistant", { channel: "slack" }),
+          resolveAckReaction(cfg, "assistant"),
+          resolveAckReaction({ agents: cfg.agents }, "assistant")
+        ];
+        const ackGates = [
+          shouldAckReaction({ scope: "off", isDirect: true }),
+          shouldAckReaction({ scope: "all", isDirect: false }),
+          shouldAckReaction({ scope: "direct", isDirect: true }),
+          shouldAckReaction({ scope: "group-all", isGroup: true }),
+          shouldAckReaction({
+            scope: "group-mentions",
+            isMentionableGroup: true,
+            requireMention: true,
+            canDetectMention: true,
+            effectiveWasMentioned: false,
+            shouldBypassMention: true
+          }),
+          shouldAckReaction({
+            scope: "group-mentions",
+            isMentionableGroup: true,
+            requireMention: true,
+            canDetectMention: true,
+            effectiveWasMentioned: false
+          })
+        ];
+        const whatsappGates = [
+          shouldAckReactionForWhatsApp({
+            emoji: "",
+            isDirect: true,
+            isGroup: false,
+            directEnabled: true,
+            groupMode: "always",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: true,
+            isGroup: false,
+            directEnabled: true,
+            groupMode: "mentions",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "never",
+            wasMentioned: true,
+            groupActivated: true
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "always",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "mentions",
+            wasMentioned: false,
+            groupActivated: true
+          })
+        ];
+
+        const ackEvents = [];
+        const handle = createAckReactionHandle({
+          ackReactionValue: " ok ",
+          send: async () => { ackEvents.push("send"); },
+          remove: async () => { ackEvents.push("remove"); }
+        });
+        const ackSent = await handle.ackReactionPromise;
+        removeAckReactionHandleAfterReply({ removeAfterReply: true, ackReaction: handle });
+        await wait(0);
+        removeAckReactionAfterReply({
+          removeAfterReply: false,
+          ackReactionPromise: Promise.resolve(true),
+          ackReactionValue: "nope",
+          remove: async () => { ackEvents.push("unexpected"); }
+        });
+        const failedHandle = createAckReactionHandle({
+          ackReactionValue: "fail",
+          send: async () => { throw new Error("send-boom"); },
+          remove: async () => {},
+          onSendError: (err) => ackEvents.push(`error:${err.message || err}`)
+        });
+        const failedSent = await failedHandle.ackReactionPromise;
+
+        const emojis = {
+          queued: "q",
+          thinking: "t",
+          tool: "tool",
+          coding: "code",
+          web: "web",
+          done: "done",
+          error: "err",
+          stallSoft: "soft",
+          stallHard: "hard",
+          compacting: "compact"
+        };
+        const reactionEvents = [];
+        const controller = createStatusReactionController({
+          enabled: true,
+          initialEmoji: "q",
+          emojis,
+          timing: { debounceMs: 0, stallSoftMs: 10000, stallHardMs: 10000 },
+          adapter: {
+            setReaction: async (emoji) => { reactionEvents.push(`set:${emoji}`); },
+            removeReaction: async (emoji) => { reactionEvents.push(`rm:${emoji}`); }
+          }
+        });
+        controller.setQueued();
+        await wait(0);
+        controller.setThinking();
+        await wait(5);
+        controller.setTool("web_search");
+        await wait(5);
+        controller.setTool("process.exec");
+        await wait(5);
+        await controller.setDone();
+
+        return {
+          ackReactions,
+          ackGates,
+          whatsappGates,
+          ackResult: [ackSent, handle.ackReactionValue, failedSent],
+          ackEvents,
+          toolEmojis: [
+            resolveToolEmoji("browser.open", emojis),
+            resolveToolEmoji("process.exec", emojis),
+            resolveToolEmoji("unknown", emojis),
+            resolveToolEmoji("", emojis)
+          ],
+          reactionEvents,
+          targetError: missingTargetError("slack", "Use channel").message,
+          constants: [
+            Array.isArray(CODING_TOOL_TOKENS),
+            Array.isArray(WEB_TOOL_TOKENS),
+            typeof DEFAULT_EMOJIS.queued,
+            DEFAULT_TIMING.debounceMs
+          ],
+          exportTypes: [
+            typeof createAckReactionHandle,
+            typeof createStatusReactionController,
+            typeof genericSdk.createStatusReactionController
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-feedback-plugin",
+                    "name": "Runtime Channel Feedback Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-feedback-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_feedback"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_feedback"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ackReactions": ["account", "channel", "global", "agent"],
+        "ackGates": [False, True, True, True, True, False],
+        "whatsappGates": [False, True, False, True, True],
+        "ackResult": [True, "ok", False],
+        "ackEvents": ["send", "remove", "error:send-boom"],
+        "toolEmojis": ["web", "code", "tool", "tool"],
+        "reactionEvents": [
+            "set:q",
+            "set:t",
+            "set:web",
+            "set:code",
+            "set:done",
+            "rm:q",
+            "rm:t",
+            "rm:web",
+            "rm:code",
+        ],
+        "targetError": "Delivering to slack requires target Use channel",
+        "constants": [True, True, "string", 700],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_dangerous_name_runtime_helpers(
     tmp_path,
 ) -> None:
