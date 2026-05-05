@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~74.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~74.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin media-mime shim slice is checkpointed in `ad1d6cee`.
+The imported plugin command-detection shim slice is checkpointed in `c0c5e8fa`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +61,37 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Media-mime shim checkpointed in `ad1d6cee` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Command-detection shim checkpointed in `c0c5e8fa` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001TD` Imported command-detection shim
+  - Source: `openclaw-main/src/plugin-sdk/command-detection.ts`,
+    `openclaw-main/src/auto-reply/command-detection.ts`,
+    `openclaw-main/src/auto-reply/commands-registry-list.ts`, and
+    `openclaw-main/src/auto-reply/commands-registry-normalize.ts`
+  - References: `openclaw-main/extensions/feishu/src/monitor.reaction.test.ts`,
+    `openclaw-main/extensions/discord/src/monitor/message-handler.preflight.ts`,
+    `openclaw-main/extensions/whatsapp/src/auto-reply/monitor/runtime-api.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/command-detection` and use `hasControlCommand`,
+    `isControlCommandMessage`, `hasInlineCommandTokens`, and
+    `shouldComputeCommandAuthorized`, preserving bot-addressed slash
+    normalization, full-message control-command matching, argument-aware
+    aliases, command feature gates, inbound metadata stripping, abort-trigger
+    fallback, inline token detection, and generic SDK availability during
+    `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `c0c5e8fa`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused command-detection proof (`1 passed`),
+    adjacent plugin invoke proof (`46 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PLUGIN-001TC` Imported media-mime shim
   - Source: `openclaw-main/src/plugin-sdk/media-mime.ts`,

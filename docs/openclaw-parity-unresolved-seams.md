@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~74.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~74.1% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6916,9 +6916,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~74.0%. Verified with focused media-mime pytest, adjacent
   plugin invoke proof, `ruff check`, and `mypy`; source/test checkpointed in
   `ad1d6cee`.
+- Closed the imported OpenClaw plugin SDK command-detection seam from
+  `src/plugin-sdk/command-detection.ts`,
+  `src/auto-reply/command-detection.ts`,
+  `src/auto-reply/commands-registry-list.ts`, and
+  `src/auto-reply/commands-registry-normalize.ts`: native runtime entries can
+  now import `hasControlCommand`, `isControlCommandMessage`,
+  `hasInlineCommandTokens`, and `shouldComputeCommandAuthorized`, preserving
+  bot-addressed slash normalization, full-message control-command matching,
+  argument-aware aliases, command feature gates, inbound metadata stripping,
+  abort-trigger fallback, inline token detection, and generic SDK fallback
+  behavior through `tools.invoke`. Repo-wide parity is now estimated at ~74.1%.
+  Verified with focused command-detection pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `c0c5e8fa`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
