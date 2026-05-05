@@ -23917,6 +23917,98 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_twitch_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-twitch-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Twitch Native Action Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="oauth:twitch-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "twitch",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "#OpenZues",
+        },
+    )
+    twitch_sends: list[dict[str, object]] = []
+
+    def fake_send_twitch_chat_message(
+        self: OpsMeshService,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self
+        twitch_sends.append(
+            {
+                "username": username,
+                "client_id": client_id,
+                "token": token,
+                "channel": channel,
+                "message": message,
+            }
+        )
+        return "twitch-action-msg-1"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_send_twitch_chat_message",
+        fake_send_twitch_chat_message,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="twitch",
+            action="send",
+            params={"message": "Hello **Twitch**!"},
+            account_id="default",
+            requester_sender_id="twitch-user-1",
+            sender_is_owner=True,
+            session_key="agent:main:twitch:channel:openzues",
+            idempotency_key="idem-twitch-send-action",
+        )
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["channel"] == "twitch"
+    assert result["messageId"] == "twitch-action-msg-1"
+    assert isinstance(result["timestamp"], int)
+    assert twitch_sends == [
+        {
+            "username": "openzues",
+            "client_id": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "message": "Hello Twitch!",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

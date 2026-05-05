@@ -15198,6 +15198,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "twitch" and action == "send":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Twitch route is configured for message.action send."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_twitch_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
         if channel == "matrix" and action in {"edit", "editMessage"}:
@@ -26415,6 +26431,46 @@ class OpsMeshService:
         }
         if remove:
             result["removed"] = True
+        return result
+
+    def _dispatch_twitch_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        raw_message = request.params.get("message")
+        if raw_message is None:
+            raise RuntimeError("Missing required parameter: message")
+        if not isinstance(raw_message, (str, int, float, bool)):
+            raise RuntimeError("Parameter message must be a string, number, or boolean")
+        message = str(raw_message).strip()
+        if not message:
+            raise RuntimeError("Missing required parameter: message")
+        raw_to = request.params.get("to")
+        to: str | None = None
+        if raw_to is not None:
+            if not isinstance(raw_to, (str, int, float, bool)):
+                raise RuntimeError("Parameter to must be a string, number, or boolean")
+            to = str(raw_to).strip() or None
+        event: dict[str, Any] = {"message": message}
+        if to:
+            event["to"] = to
+        native_result = self._post_twitch_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        timestamp = native_result.get("timestamp")
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "twitch",
+            "messageId": str(native_result.get("messageId") or "unknown"),
+            "timestamp": timestamp
+            if isinstance(timestamp, int)
+            else (_timestamp_ms(datetime.now(UTC)) or 0),
+        }
         return result
 
     def _post_msteams_provider_event(
