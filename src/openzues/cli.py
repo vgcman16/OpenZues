@@ -18072,6 +18072,19 @@ function normalizeStringifiedOptionalString(value) {
   return undefined;
 }
 
+function parseFiniteNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -20873,6 +20886,10 @@ const timeRuntime = {
   resolveTimezone,
 };
 
+const numberRuntime = {
+  parseFiniteNumber,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21183,6 +21200,7 @@ const genericSdk = new Proxy(
     normalizeOutboundReplyPayload,
     parseAgentSessionKey,
     parseEnvTemplateSecretRef,
+    parseFiniteNumber,
     parseLegacySecretRefEnvMarker,
     parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
@@ -21290,6 +21308,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/time-runtime"
   ) {
     return timeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/number-runtime" ||
+    request === "@openclaw/plugin-sdk/number-runtime"
+  ) {
+    return numberRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
