@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -134,6 +134,12 @@ may lag behind this tracker.
   `openclaw/plugin-sdk/text-runtime` alias behavior through the bounded native
   Node bridge.
   - Status: checkpointed in `311f37e1`
+
+- [x] Imported plugin runtime tool factory context through `tools.invoke`,
+  preserving `api.registerTool(factory, { name })` discovery and passing
+  OpenClaw-shaped config, workspace, agent/session, sender ownership, and
+  delivery route metadata to request-time factories.
+  - Status: checkpointed in `ef254cbf`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1100,10 +1106,27 @@ may lag behind this tracker.
     in `55e1fb28`, manifest document extractor contract metadata checkpointed
     in `2196c65e`, bundled plugin runtime entry import checkpointed in
     `8cb314f4`, ESM plugin runtime entry import checkpointed in `eb11e22f`,
-    imported CommonJS runtime execution checkpointed in `d80b0252`, and ESM
-    runtime execution checkpointed in `311f37e1`, but deeper plugin SDK
-    execution-context breadth remains.
+    imported CommonJS runtime execution checkpointed in `d80b0252`, ESM
+    runtime execution checkpointed in `311f37e1`, and runtime tool factory
+    context checkpointed in `ef254cbf`, but broader plugin SDK helper/runtime
+    surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin runtime tool factory context.
+  - Source: `openclaw-main/src/plugins/tool-types.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/tools.ts`, and
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ef254cbf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused runtime tool factory-context proof (`1
+    passed`), adjacent plugin invoke proof (`12 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] Imported ESM plugin runtime execution.
   - Source: `openclaw-main/src/plugins/loader.ts`,
