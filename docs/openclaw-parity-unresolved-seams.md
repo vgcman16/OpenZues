@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~73.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~74.0% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6905,9 +6905,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~73.9%. Verified with focused
   command-primitives-runtime pytest, adjacent plugin invoke proof,
   `ruff check`, and `mypy`; source/test checkpointed in `a39876b1`.
+- Closed the imported OpenClaw plugin SDK media-mime seam from
+  `src/plugin-sdk/media-mime.ts`, `src/media/mime.ts`, and
+  `src/media/constants.ts`: native runtime entries can now import `detectMime`,
+  `extensionForMime`, `getFileExtension`, `normalizeMimeType`, and
+  `mediaKindFromMime`, preserving MIME/header normalization, URL/path extension
+  parsing, extension/MIME maps, CAF/PDF/image/ZIP sniffing, generic
+  ZIP/octet-stream precedence, media-kind classification, and generic SDK plus
+  `media-runtime` fallback behavior through `tools.invoke`. Repo-wide parity is
+  now estimated at ~74.0%. Verified with focused media-mime pytest, adjacent
+  plugin invoke proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `ad1d6cee`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
