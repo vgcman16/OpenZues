@@ -9734,7 +9734,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_preserves_manifest_command_aliases or
   plugins_list_json_discovers_openclaw_manifest_load_paths"` (`12 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
-  `mypy src\openzues\cli.py`. Checkpoint pending commit.
+  `mypy src\openzues\cli.py`. Checkpointed in `5fdfb23c`.
 
 ## References
 

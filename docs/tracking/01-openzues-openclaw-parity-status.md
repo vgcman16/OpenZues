@@ -179,7 +179,7 @@ may lag behind this tracker.
 - [x] Manifest external auth provider contract metadata, preserving
   `contracts.externalAuthProviders` in `plugins list --json` records and
   capability strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `5fdfb23c`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -636,7 +636,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/provider-runtime.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `5fdfb23c`.
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts

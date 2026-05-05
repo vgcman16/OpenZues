@@ -5534,7 +5534,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~60.1%; runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   external auth provider contract pytest, adjacent plugin manifest inventory
-  proof, `ruff check`, and `mypy`; checkpoint pending commit.
+  proof, `ruff check`, and `mypy`; checkpointed in `5fdfb23c`.
 - Next repo-wide queue head: rotate to packaging distribution inventory
   validity, Telegram audio/voice routing, canvas shortcode normalization, or
   companion remote-bin discovery based on the strongest source-backed seam.
