@@ -1504,6 +1504,45 @@ def _bluebubbles_media_local_roots(
     return []
 
 
+def _feishu_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    for channel_id in ("feishu", "lark"):
+        channel_config = channels.get(channel_id)
+        if isinstance(channel_config, dict):
+            return channel_config
+    return {}
+
+
+def _feishu_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _feishu_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _feishu_channel_config(snapshot)
+    account_config = _feishu_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
 def _bluebubbles_positive_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -1624,6 +1663,40 @@ def _bluebubbles_allowed_local_media_path(
             return resolved_candidate
     raise RuntimeError(
         f"Local media path is not under any configured mediaLocalRoots entry: {source}"
+    )
+
+
+def _feishu_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.feishu.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local Feishu media paths are disabled by default. "
+            f"Set channels.feishu.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local Feishu media path is not under any configured mediaLocalRoots entry: {source}"
     )
 
 
@@ -12478,6 +12551,15 @@ class OpsMeshService:
         return result
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return snapshot if isinstance(snapshot, dict) else {}
+
+    def _feishu_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:
             return {}
         try:
@@ -27380,7 +27462,39 @@ class OpsMeshService:
         media_url: str,
         *,
         max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
     ) -> tuple[bytes, str, str]:
+        data_match = re.match(
+            r"^data:([^;,]+);base64,(.*)$",
+            media_url,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if data_match:
+            content_type = data_match.group(1).strip().lower()
+            try:
+                media_bytes = base64.b64decode(data_match.group(2).strip(), validate=True)
+            except ValueError as exc:
+                raise RuntimeError("Feishu media data URL is not valid base64.") from exc
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Feishu media exceeds the provider size limit.")
+            filename = _feishu_media_filename(media_url, content_type)
+            return media_bytes, content_type, filename
+
+        local_source_path = _bluebubbles_local_media_source_path(media_url)
+        if local_source_path is not None:
+            allowed_path = _feishu_allowed_local_media_path(
+                local_source_path,
+                source=media_url,
+                local_roots=local_roots or [],
+                account_id=account_id,
+            )
+            media_bytes = allowed_path.read_bytes()
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Feishu media exceeds the provider size limit.")
+            content_type = mimetypes.guess_type(allowed_path.name)[0] or ""
+            return media_bytes, content_type, allowed_path.name
+
         media_bytes, content_type = self._load_discord_media(media_url, max_bytes=max_bytes)
         normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
         filename = _feishu_media_filename(media_url, normalized_content_type)
@@ -27474,9 +27588,21 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         bearer_token = _feishu_bearer_token(secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        account_id = (
+            normalize_optional_account_id(event.get("accountId"))
+            or normalize_optional_account_id((conversation_target or {}).get("account_id"))
+            or DEFAULT_ACCOUNT_ID
+        )
+        config_snapshot = self._feishu_config_snapshot()
         media_bytes, content_type, filename = self._load_feishu_media(
             media_url,
             max_bytes=30 * 1024 * 1024,
+            local_roots=_feishu_media_local_roots(
+                config_snapshot,
+                account_id=account_id,
+            ),
+            account_id=account_id,
         )
         if _feishu_media_is_image(filename, content_type):
             upload = self._request_feishu_multipart_provider_url(
@@ -27566,6 +27692,8 @@ class OpsMeshService:
             }
         if media_url is not None:
             media_event: dict[str, Any] = {"to": target}
+            if request.account_id is not None:
+                media_event["accountId"] = request.account_id
             if action == "thread-reply":
                 reply_to_id = _feishu_action_message_id(request.params, action=action)
                 media_event["replyToId"] = reply_to_id
