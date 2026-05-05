@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import io
@@ -11,6 +12,7 @@ import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 from fastapi.testclient import TestClient
@@ -57,6 +59,8 @@ from openzues.services.memory_protocol import (
 )
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
+    GatewayMSTeamsFeedbackReflectionRequest,
+    GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
@@ -18999,6 +19003,677 @@ async def test_ops_mesh_service_routes_msteams_html_attachment_text_fallback() -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-media-placeholder"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-media-placeholder-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-media-1",
+            "type": "message",
+            "text": " ",
+            "attachments": [
+                {"contentType": "image/png", "name": "diagram.png"},
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "content": {"fileName": "screenshot.jpg", "fileType": "jpg"},
+                },
+            ],
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image> (2 images)")]
+    assert result["text"] == "<media:image> (2 images)"
+    assert result["messageId"] == "inbound-media-placeholder-1"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_preserves_msteams_downloadable_attachment_urls() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-attachment-urls"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-url-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-url-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "name": "photo.png",
+                    "content": {
+                        "downloadUrl": "https://tenant.sharepoint.com/download/photo.png",
+                        "fileType": "png",
+                    },
+                },
+                {
+                    "contentType": "application/pdf",
+                    "name": "brief.pdf",
+                    "contentUrl": "https://files.example.com/brief.pdf",
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["mediaUrls"] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        "https://files.example.com/brief.pdf",
+    ]
+    assert result["text"] == "<media:image>"
+    assert result["messageId"] == "inbound-media-url-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_stages_msteams_downloadable_attachments() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-attachment-stage"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[GatewayMSTeamsInboundMediaFetchRequest] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nopenzues"
+    pdf_bytes = b"%PDF-1.7\nopenzues"
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-stage-1"}
+
+    async def fetch_media(
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        fetch_requests.append(request)
+        filename = str(request.filename or "")
+        if filename == "photo.png":
+            return {
+                "bytes": png_bytes,
+                "contentType": "image/png",
+                "filename": "photo.png",
+            }
+        return {
+            "bytes": pdf_bytes,
+            "contentType": "application/pdf",
+            "filename": "brief.pdf",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+        msteams_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-stage-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "name": "photo.png",
+                    "content": {
+                        "downloadUrl": "https://tenant.sharepoint.com/download/photo.png",
+                        "fileType": "png",
+                    },
+                },
+                {
+                    "contentType": "application/pdf",
+                    "name": "brief.pdf",
+                    "contentUrl": (
+                        "https://graph.microsoft.com/v1.0/chats/chat-1/"
+                        "messages/msg-1/attachments/brief/$value"
+                    ),
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert [request.url for request in fetch_requests] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        (
+            "https://graph.microsoft.com/v1.0/chats/chat-1/"
+            "messages/msg-1/attachments/brief/$value"
+        ),
+    ]
+    assert result["mediaUrls"] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        (
+            "https://graph.microsoft.com/v1.0/chats/chat-1/"
+            "messages/msg-1/attachments/brief/$value"
+        ),
+    ]
+    staged_paths = result["MediaUrls"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 2
+    assert result["MediaUrl"] == staged_paths[0]
+    assert result["MediaPaths"] == staged_paths
+    assert result["MediaTypes"] == ["image/png", "application/pdf"]
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert Path(str(staged_paths[1])).read_bytes() == pdf_bytes
+    assert "gateway-attachments" in str(staged_paths[0])
+    assert result["delivery"] == {"runtime": "session-backed", "media": {"staged": 2}}
+    assert result["messageId"] == "inbound-media-stage-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_stages_msteams_media_with_auth_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Media Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    session_deliveries: list[tuple[str, str]] = []
+    token_calls: list[tuple[str, str, str, str]] = []
+    fetch_calls: list[tuple[str, str | None]] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nauth-fallback"
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-auth-fallback-1"}
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("graph", tenant_id, app_id, app_password))
+        return "graph-access-token"
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("bot", tenant_id, app_id, app_password))
+        return "bot-access-token"
+
+    class FakeMediaResponse:
+        status = 200
+        headers = {"Content-Type": "image/png"}
+
+        def __enter__(self) -> FakeMediaResponse:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            return png_bytes
+
+    def fake_urlopen(request: object, timeout: int = 30) -> FakeMediaResponse:
+        del timeout
+        assert isinstance(request, Request)
+        authorization = request.get_header("Authorization")
+        fetch_calls.append((request.full_url, authorization))
+        if authorization is None:
+            raise HTTPError(
+                request.full_url,
+                401,
+                "Unauthorized",
+                {},
+                io.BytesIO(b"unauthorized"),
+            )
+        if authorization == "Bearer graph-access-token":
+            return FakeMediaResponse()
+        raise HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(b"forbidden"))
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+        canvas_state_dir=tmp_path,
+    )
+    source_url = "https://tenant.sharepoint.com/:i:/r/sites/team/Shared%20Documents/photo.png"
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-auth-fallback-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "19:ops-thread@thread.tacv2",
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "image/png",
+                    "name": "photo.png",
+                    "contentUrl": source_url,
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id="msteams:conversation:19:ops-thread@thread.tacv2",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert token_calls == [("graph", "tenant-id", "teams-app-id", "teams-app-password")]
+    assert len(fetch_calls) == 2
+    assert fetch_calls[0][0].startswith("https://graph.microsoft.com/v1.0/shares/u!")
+    assert fetch_calls == [
+        (fetch_calls[0][0], None),
+        (fetch_calls[0][0], "Bearer graph-access-token"),
+    ]
+    assert result["mediaUrls"] == [source_url]
+    assert result["MediaTypes"] == ["image/png"]
+    staged_paths = result["MediaPaths"]
+    assert isinstance(staged_paths, list)
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert result["delivery"] == {"runtime": "session-backed", "media": {"staged": 1}}
+    assert result["messageId"] == "inbound-media-auth-fallback-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "appId": "teams-app-id",
+                        "tenantId": "tenant-id",
+                        "appPassword": "teams-app-password",
+                        "promptStarters": ["Draft a plan", "Summarize this chat"],
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    provider_requests: list[tuple[str, str, object, str | None, str | None]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bot-framework-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del self
+        provider_requests.append((method, target, payload or {}, secret_header_name, secret_token))
+        return {"id": "welcome-card-message-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "conversation-update-1",
+            "type": "conversationUpdate",
+            "serviceUrl": "https://smba.trafficmanager.net/amer/",
+            "recipient": {"id": "bot-id", "name": "ZuesBot"},
+            "membersAdded": [{"id": "bot-id", "name": "ZuesBot"}],
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert provider_requests[0][0] == "POST"
+    assert provider_requests[0][1] == (
+        "https://smba.trafficmanager.net/amer/v3/conversations/"
+        "a%3Apersonal-dm-conversation/activities"
+    )
+    assert provider_requests[0][3:] == (
+        "Authorization",
+        "Bearer bot-framework-token",
+    )
+    payload = provider_requests[0][2]
+    assert isinstance(payload, dict)
+    assert payload["type"] == "message"
+    attachments = payload["attachments"]
+    assert isinstance(attachments, list)
+    card = attachments[0]["content"]
+    assert card["type"] == "AdaptiveCard"
+    assert card["version"] == "1.5"
+    assert card["body"][0]["text"] == "Hi! I'm ZuesBot."
+    assert [action["title"] for action in card["actions"]] == [
+        "Draft a plan",
+        "Summarize this chat",
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "conversationUpdate",
+        "action": "welcome",
+        "sent": True,
+        "messageId": "welcome-card-message-1",
+        "conversationId": "a:personal-dm-conversation",
+        "conversationType": "personal",
+        "memberId": "bot-id",
+        "welcome": {"kind": "card", "promptStarters": ["Draft a plan", "Summarize this chat"]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_sends_msteams_group_welcome_text_on_bot_added(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "appId": "teams-app-id",
+                        "tenantId": "tenant-id",
+                        "appPassword": "teams-app-password",
+                        "groupWelcomeCard": True,
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    provider_requests: list[tuple[str, str, object, str | None, str | None]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bot-framework-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del self
+        provider_requests.append((method, target, payload or {}, secret_header_name, secret_token))
+        return {"id": "group-welcome-message-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "conversation-update-2",
+            "type": "conversationUpdate",
+            "serviceUrl": "https://smba.trafficmanager.net/amer/",
+            "recipient": {"id": "bot-id", "name": "ZuesBot"},
+            "membersAdded": [{"id": "bot-id", "name": "ZuesBot"}],
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "19:team-thread@thread.tacv2",
+                "conversationType": "channel",
+            },
+        },
+        account_id="default",
+    )
+
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert provider_requests[0] == (
+        "POST",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "19%3Ateam-thread%40thread.tacv2/activities"
+        ),
+        {
+            "type": "message",
+            "text": "Hi! I'm ZuesBot. Mention me with @ZuesBot to get started.",
+        },
+        "Authorization",
+        "Bearer bot-framework-token",
+    )
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "conversationUpdate",
+        "action": "welcome",
+        "sent": True,
+        "messageId": "group-welcome-message-1",
+        "conversationId": "19:team-thread@thread.tacv2",
+        "conversationType": "channel",
+        "memberId": "bot-id",
+        "welcome": {"kind": "text"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-inbound"
@@ -19098,6 +19773,185 @@ async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_sessio
     assert metadata["feedback"]["messageId"] == "bot-message-777"
     assert metadata["feedback"]["comment"] == "Needs a clearer source link."
     assert metadata["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_runs_msteams_feedback_reflection_learning_followup() -> None:
+    conversation_id = "a:personal-dm"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-reflection"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    reflection_requests: list[GatewayMSTeamsFeedbackReflectionRequest] = []
+    followups: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def reflect(
+        request: GatewayMSTeamsFeedbackReflectionRequest,
+    ) -> dict[str, object]:
+        reflection_requests.append(request)
+        return {
+            "learning": "Be more specific and cite the runbook.",
+            "followUp": True,
+            "userMessage": "Thanks, I will tighten the source link next time.",
+        }
+
+    async def deliver_followup(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        followups.append(request)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": "reflection-followup-1",
+        }
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="msteams",
+        deliverer=deliver_followup,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+        msteams_feedback_reflection_service=reflect,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-reflection-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "personal",
+            },
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Too vague."}),
+                },
+                "replyToId": "bot-message-999",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    encoded_session = base64.urlsafe_b64encode(expected_session_key.encode("utf-8")).decode(
+        "ascii"
+    ).rstrip("=")
+    if len(encoded_session) > 120:
+        digest = hashlib.sha256(expected_session_key.encode("utf-8")).hexdigest()
+        encoded_session = f"sha256-{digest}"
+    learnings_path = (
+        tmp_path / "msteams-feedback-learnings" / f"{encoded_session}.learnings.json"
+    )
+
+    assert len(reflection_requests) == 1
+    assert reflection_requests[0].session_key == expected_session_key
+    assert reflection_requests[0].feedback_message_id == "bot-message-999"
+    assert reflection_requests[0].user_comment == "Too vague."
+    assert "previous response wasn't helpful" in reflection_requests[0].prompt
+    assert "Too vague." in reflection_requests[0].prompt
+    assert json.loads(learnings_path.read_text(encoding="utf-8")) == [
+        "Be more specific and cite the runbook."
+    ]
+    assert len(followups) == 1
+    assert followups[0].target == f"conversation:{conversation_id}"
+    assert followups[0].message == "Thanks, I will tighten the source link next time."
+    assert followups[0].session_key == expected_session_key
+    assert result["reflection"] == {
+        "learning": "Be more specific and cite the runbook.",
+        "stored": True,
+        "followUp": {
+            "attempted": True,
+            "sent": True,
+            "messageId": "reflection-followup-1",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_consumes_msteams_feedback_invoke_when_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"msteams": {"feedbackEnabled": False}}}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-invoke-disabled-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {"id": "a:personal-dm", "conversationType": "personal"},
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Do not store this."}),
+                },
+                "replyToId": "bot-message-888",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "message/submitAction",
+        "action": "feedback",
+        "feedback": {
+            "messageId": "bot-message-888",
+            "value": "negative",
+            "comment": "Do not store this.",
+        },
+        "recorded": False,
+        "disabled": True,
+    }
+    assert await database.list_control_chat_messages(limit=10) == []
 
 
 @pytest.mark.asyncio
@@ -19838,6 +20692,152 @@ async def test_ops_mesh_service_blocks_msteams_signin_exchange_for_channel_route
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_msteams_signin_verify_for_group_sender_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "groupPolicy": "allowlist",
+                        "groupAllowFrom": ["owner-aad"],
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        },
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-token",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-blocked-group",
+            "type": "invoke",
+            "name": "signin/verifyState",
+            "channelId": "msteams",
+            "from": {
+                "id": "blocked-group-bf-user",
+                "aadObjectId": "blocked-group-aad",
+                "name": "Blocked Group Sender",
+            },
+            "conversation": {
+                "id": "19:group-chat@thread.v2",
+                "conversationType": "groupChat",
+            },
+            "value": {"state": "112233"},
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/verifyState",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "blocked",
+            "reason": "msteams_signin_group_sender_not_allowlisted",
+            "kind": "verifyState",
+            "statePresent": True,
+            "userId": "blocked-group-aad",
+            "channelId": "msteams",
+            "conversationType": "groupchat",
+            "conversationId": "19:group-chat@thread.v2",
+        },
+    }
+    assert bot_token_calls == []
+    assert user_token_calls == []
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="blocked-group-aad",
+    )
+    assert stored is None
+    assert "112233" not in json.dumps(result)
+    assert "delegated-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20117,6 +21117,135 @@ async def test_ops_mesh_service_message_action_dispatches_msteams_react_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_msteams_react_prefers_stored_delegated_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Delegated React Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "teams:conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    await database.upsert_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+        token="stored-delegated-graph-token",
+        expires_at=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                        }
+                    }
+                }
+            }
+
+    def fail_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        raise AssertionError("app-only graph token should not be fetched")
+
+    graph_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fail_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="react",
+            params={
+                "target": "conversation:19:ops-thread@thread.tacv2",
+                "messageId": "msg-1",
+                "emoji": "like",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key="agent:main:msteams:channel:19:ops-thread@thread.tacv2",
+            idempotency_key="idem-msteams-react-delegated-token",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "react",
+        "reactionType": "like",
+    }
+    assert graph_posts == [
+        (
+            "POST",
+            "https://graph.microsoft.com/beta/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1/setReaction",
+            {"reactionType": "like"},
+            "Authorization",
+            "Bearer stored-delegated-graph-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_probe_channel_account_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -20207,6 +21336,117 @@ async def test_ops_mesh_service_probe_channel_account_uses_msteams_native_route(
         ("bot", "tenant-id", "teams-app-id", "teams-app-password"),
         ("graph", "tenant-id", "teams-app-id", "teams-app-password"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_probe_msteams_reports_delegated_auth_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Delegated Probe Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    jwt_payload = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "scp": "Chat.ReadWrite User.Read",
+                "preferred_username": "user@example.com",
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    expires_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    await database.upsert_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+        token=f"header.{jwt_payload}.sig",
+        expires_at=expires_at,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                        }
+                    }
+                }
+            }
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.probe_channel_account(
+        channel="msteams",
+        account_id="default",
+        timeout_ms=2500,
+    )
+
+    assert result["delegatedAuth"] == {
+        "ok": True,
+        "scopes": ["Chat.ReadWrite", "User.Read"],
+        "userPrincipalName": "user@example.com",
+        "userId": "u1",
+        "expiresAt": expires_at,
+    }
 
 
 @pytest.mark.asyncio

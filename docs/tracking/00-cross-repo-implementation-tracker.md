@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~65.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~66.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,12 +29,13 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams SSO route allowlist authorization slice is checkpointed in
-`5c54430c`.
+The Microsoft Teams inbound media auth-fallback slice is checkpointed in `5460ebf5`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
 - `src/openzues/database.py`
+- `src/openzues/app.py`
+- `src/openzues/services/msteams_webhook_auth.py`
 - `src/openzues/services/gateway_outbound_runtime.py`
 - `src/openzues/services/ops_mesh.py`
 - `src/openzues/services/gateway_channels.py`
@@ -62,9 +63,256 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams SSO route allowlist authorization checkpointed in `5c54430c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams SSO group sender allowlist drops, delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams inbound media auth fallback checkpointed in `5460ebf5` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue delegated auth setup breadth or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BE` Microsoft Teams inbound media auth fallback
+  - Source: `openclaw-main/extensions/msteams/src/attachments/download.ts`,
+    `openclaw-main/extensions/msteams/src/attachments/shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: production Teams media staging first tries unauthenticated fetch,
+    then retries 401/403 media responses with route-backed Graph or Bot
+    Framework bearer credentials when the target URL is in the auth allowlist,
+    preserving Graph-first scope order for Graph/SharePoint URLs.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `5460ebf5`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused inbound media auth-fallback proof
+    (`1 passed`), adjacent Teams inbound proof (`9 passed, 325 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BD` Microsoft Teams feedback reflection learning/follow-up
+  - Source: `openclaw-main/extensions/msteams/src/feedback-reflection.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection-store.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection-prompt.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: negative Teams feedback builds the reflection prompt, runs a
+    fakeable reflection service, stores a bounded session learning file with
+    Windows-safe naming, respects cooldown, and sends personal follow-up
+    messages through the native outbound runtime when requested.
+  - Evidence required: focused runtime test, adjacent Teams invoke/inbound
+    tests, ruff, mypy
+  - Status: checkpointed in `45c4ca7a`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused feedback reflection proof (`1 passed`),
+    adjacent Teams invoke/inbound proof (`16 passed, 317 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001BC` Microsoft Teams inbound media staging
+  - Source: `openclaw-main/extensions/msteams/src/attachments/download.ts`,
+    `openclaw-main/extensions/msteams/src/attachments/remote-media.ts`,
+    `openclaw-main/extensions/msteams/src/attachments/payload.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/inbound-media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Teams downloadable attachments are resolved through a fakeable
+    fetch adapter, host-allowlisted and size-capped, stored under the inbound
+    gateway attachment store, and projected as OpenClaw-style `MediaUrl`,
+    `MediaUrls`, `MediaPath`, `MediaPaths`, and `MediaTypes` metadata while
+    placeholder text continues into session delivery.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `eda4db73`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused inbound media staging proof (`1 passed`),
+    adjacent Teams inbound proof (`8 passed, 324 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PROV-001BB` Microsoft Teams inbound attachment URL metadata
+  - Source: `openclaw-main/extensions/msteams/src/attachments/download.ts`,
+    `openclaw-main/extensions/msteams/src/attachments/shared.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/inbound-media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Teams message attachments with `content.downloadUrl` or
+    `contentUrl` preserve a deduped `mediaUrls` array on native inbound
+    results while placeholder text continues into session delivery.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `2205ca86`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused inbound media URL proof (`1 passed`),
+    adjacent Teams inbound proof (`8 passed, 323 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PROV-001BA` Microsoft Teams delegated-auth probe posture
+  - Source: `openclaw-main/extensions/msteams/src/probe.ts`,
+    `openclaw-main/extensions/msteams/src/token.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/database.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Teams readiness probes include safe `delegatedAuth`
+    status when SSO is configured, using the newest persisted token for the
+    configured connection to project scopes, user principal, user id, and
+    expiry without leaking the bearer.
+  - Evidence required: focused runtime test, adjacent Teams probe/SSO/action
+    tests, ruff, mypy
+  - Status: checkpointed in `2f4e2496`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated-auth probe proof
+    (`1 passed`), adjacent Teams probe/SSO/action proof
+    (`11 passed, 319 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AZ` Microsoft Teams stored delegated-token reaction writes
+  - Source: `openclaw-main/extensions/msteams/src/graph.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/sso-token-store.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: native Teams `react` / `unreact` Graph beta writes prefer a
+    persisted delegated Graph bearer keyed by configured SSO
+    `(connectionName, requester sender id)` and fall back to app-only Graph
+    credentials only when no stored delegated token is available.
+  - Evidence required: focused runtime test, adjacent Teams SSO/action tests,
+    ruff, mypy
+  - Status: checkpointed in `507c90ad`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused delegated-token reaction proof
+    (`1 passed`), adjacent Teams SSO/action proof
+    (`17 passed, 312 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AY` Microsoft Teams feedback-disabled invoke handling
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Teams `message/submitAction` feedback invokes are consumed when
+    `channels.msteams.feedbackEnabled` is false, but do not resolve or persist
+    a session transcript feedback event; native result metadata marks the
+    consume as disabled/unrecorded.
+  - Evidence required: focused runtime test, adjacent Teams invoke/inbound
+    tests, ruff, mypy
+  - Status: checkpointed in `34346a60`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams disabled-feedback proof
+    (`1 passed`), adjacent Teams invoke/inbound proof
+    (`15 passed, 313 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AX` Microsoft Teams group welcome lifecycle
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/welcome-card.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: non-personal `conversationUpdate` events where the bot is in
+    `membersAdded` and `groupWelcomeCard` is enabled POST the
+    `buildGroupWelcomeText`-shaped Bot Framework activity to the conversation
+    activities endpoint and return safe delivery metadata.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `299a8655`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams group welcome proof
+    (`1 passed`), adjacent Teams inbound proof (`7 passed, 320 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AW` Microsoft Teams personal welcome-card lifecycle
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/welcome-card.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: personal `conversationUpdate` events where the bot is in
+    `membersAdded` resolve configured Teams app credentials, fetch a Bot
+    Framework bearer, and POST the Adaptive Card welcome message with
+    configured prompt starters to the conversation activities endpoint.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `72b1e637`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams welcome-card proof
+    (`1 passed`), adjacent Teams inbound proof (`6 passed, 320 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AV` Microsoft Teams attachment-only inbound placeholders
+  - Source: `openclaw-main/extensions/msteams/src/attachments/html.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/message-handler.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: Teams message activities with no text or HTML-text fallback but
+    with attachments route OpenClaw-shaped `<media:image>` /
+    `<media:document>` placeholders into session delivery, using MIME,
+    filename, and Teams file-download metadata to classify images.
+  - Evidence required: focused runtime test, adjacent Teams inbound tests,
+    ruff, mypy
+  - Status: checkpointed in `86f9fa74`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams media placeholder
+    proof (`1 passed`), adjacent Teams inbound proof (`5 passed, 320
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AU` Microsoft Teams Bot Framework webhook JWT validation
+  - Source: `openclaw-main/extensions/msteams/src/sdk.ts`,
+    `openclaw-main/extensions/msteams/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`,
+    `src/openzues/services/msteams_webhook_auth.py`, `tests/test_app.py`,
+    `tests/test_msteams_webhook_auth.py`
+  - Contract: when native Teams app credentials are configured, OpenZues
+    validates `Bearer` webhook tokens before body parsing by resolving
+    issuer-specific JWKS, verifying RS256 signatures, enforcing the OpenClaw
+    Bot Framework/Entra/STS issuer list, accepting `appId`, `api://appId`,
+    and `https://api.botframework.com` audiences, and requiring global
+    audience tokens to carry matching `appid` or `azp`.
+  - Evidence required: focused app/JWT tests, adjacent app tests, ruff, mypy
+  - Status: checkpointed in `b3f911d2`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams JWT app proof
+    (`1 passed`), native validator proof (`3 passed`), adjacent app proof
+    (`6 passed, 209 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AT` Microsoft Teams Bot Framework configured webhook path
+  - Source: `openclaw-main/extensions/msteams/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_app.py`
+  - Contract: when `channels.msteams.webhook.path` is configured, OpenZues
+    registers that POST path at app startup while keeping `/api/messages` as
+    the standard Bot Framework fallback; both paths use the same bearer
+    pre-gate, 1 MiB body limit, JSON activity decode, and Ops Mesh Microsoft
+    Teams inbound dispatch.
+  - Evidence required: focused app test, adjacent app tests, ruff, mypy
+  - Status: checkpointed in `91e854a0`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured webhook
+    path proof (`1 passed`), adjacent app proof (`5 passed, 209 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AS` Microsoft Teams Bot Framework `/api/messages` webhook
+  - Source: `openclaw-main/extensions/msteams/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_app.py`
+  - Contract: standard Bot Framework Teams activity POSTs to `/api/messages`
+    are bearer-gated before JSON parsing, bounded to the upstream 1 MiB body
+    limit, decoded as activity objects, and dispatched through the native Ops
+    Mesh Microsoft Teams inbound handler.
+  - Evidence required: focused app tests, adjacent app tests, ruff, mypy
+  - Status: checkpointed in `b162bc17`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams `/api/messages`
+    proofs (`2 passed`), adjacent app proof (`4 passed, 209 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AR` Microsoft Teams SSO group sender allowlist authorization/drop
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/access.ts`,
+    `openclaw-main/src/security/dm-policy-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: after a non-DM Microsoft Teams sign-in invoke passes route
+    allowlist checks, OpenZues evaluates `groupPolicy` and
+    `groupAllowFrom`/`allowFrom` before SSO dispatch; blocked senders still
+    receive Bot Framework `invokeResponse` status 200, return safe blocked
+    metadata, skip Bot Framework User Token service calls, avoid delegated
+    token persistence, and never return the verify-state magic code.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `a203f34e`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams SSO group sender proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`20 passed, 304
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AQ` Microsoft Teams SSO route allowlist authorization/drop
   - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,

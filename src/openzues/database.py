@@ -2707,6 +2707,27 @@ class Database:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+    async def list_msteams_sso_tokens(
+        self,
+        *,
+        connection_name: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 100))
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT connection_name, user_id, token, expires_at, updated_at
+                FROM msteams_sso_tokens
+                WHERE connection_name = ?
+                ORDER BY updated_at DESC, user_id ASC
+                LIMIT ?
+                """,
+                (connection_name, bounded_limit),
+            )
+            return [dict(row) for row in await cursor.fetchall()]
+
     async def delete_msteams_sso_token(
         self,
         *,

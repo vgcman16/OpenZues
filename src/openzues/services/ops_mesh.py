@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import mimetypes
+import os
 import re
 import secrets
 import socket
@@ -238,6 +239,60 @@ MSTEAMS_REACTION_EMOJIS = {
     "angry": "\U0001f621",
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
+MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
+MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.de",
+    "sharepoint.cn",
+    "sharepoint-df.com",
+    "1drv.ms",
+    "onedrive.com",
+    "teams.microsoft.com",
+    "teams.cdn.office.net",
+    "statics.teams.cdn.office.net",
+    "office.com",
+    "office.net",
+    "asm.skype.com",
+    "ams.skype.com",
+    "media.ams.skype.com",
+    "trafficmanager.net",
+    "blob.core.windows.net",
+    "azureedge.net",
+    "microsoft.com",
+)
+MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST: tuple[str, ...] = (
+    "api.botframework.com",
+    "botframework.com",
+    "smba.trafficmanager.net",
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
+)
+MSTEAMS_GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES: tuple[str, ...] = (
+    ".sharepoint.com",
+    ".sharepoint.us",
+    ".sharepoint.de",
+    ".sharepoint.cn",
+    ".sharepoint-df.com",
+    "1drv.ms",
+    "onedrive.live.com",
+    "onedrive.com",
+)
+MSTEAMS_FEEDBACK_REFLECTION_COOLDOWN_MS = 300_000
+MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS = 500
+MSTEAMS_DEFAULT_PROMPT_STARTERS = (
+    "What can you do?",
+    "Summarize my last meeting",
+    "Help me draft an email",
+)
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -363,6 +418,77 @@ class _MSTeamsFileConsentInvoke:
     upload_id: str
     upload_info: Mapping[str, object] | None
     conversation_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayMSTeamsInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+    activity_id: str | None
+
+
+GatewayMSTeamsInboundMediaFetchService = Callable[
+    [GatewayMSTeamsInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayMSTeamsFeedbackReflectionRequest:
+    prompt: str
+    session_key: str
+    account_id: str | None
+    feedback_message_id: str
+    feedback_value: Literal["negative"]
+    user_comment: str | None
+    conversation_id: str
+    conversation_type: str
+    sender_id: str | None
+    sender_name: str | None
+
+
+GatewayMSTeamsFeedbackReflectionService = Callable[
+    [GatewayMSTeamsFeedbackReflectionRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsInboundMediaCandidate:
+    url: str
+    source_url: str
+    file_hint: str | None
+    content_type_hint: str | None
+    placeholder: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsStagedInboundMedia:
+    source_url: str
+    path: Path
+    content_type: str | None
+    filename: str
+    placeholder: str
+    sha256: str
+    byte_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsFeedbackReflectionResult:
+    learning: str
+    follow_up: bool
+    user_message: str | None
+
+
+class _MSTeamsInboundMediaHttpError(RuntimeError):
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -4107,12 +4233,444 @@ def _msteams_html_attachment_text(activity: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _msteams_attachment_file_name(attachment: Mapping[str, Any]) -> str:
+    name = str(attachment.get("name") or attachment.get("fileName") or "").strip()
+    if name:
+        return name
+    content = attachment.get("content")
+    if isinstance(content, Mapping):
+        return str(content.get("fileName") or content.get("name") or "").strip()
+    return ""
+
+
+def _msteams_attachment_file_type(attachment: Mapping[str, Any]) -> str:
+    file_type = str(attachment.get("fileType") or "").strip()
+    if file_type:
+        return file_type
+    content = attachment.get("content")
+    if isinstance(content, Mapping):
+        return str(content.get("fileType") or "").strip()
+    return ""
+
+
+def _msteams_attachment_is_likely_image(attachment: Mapping[str, Any]) -> bool:
+    content_type = str(attachment.get("contentType") or "").strip().lower()
+    if content_type.startswith("image/"):
+        return True
+    name = _msteams_attachment_file_name(attachment).lower()
+    if name and MSTEAMS_IMAGE_EXT_RE.search(name):
+        return True
+    file_type = _msteams_attachment_file_type(attachment).lower().lstrip(".")
+    return bool(file_type and MSTEAMS_IMAGE_EXT_RE.search(f"x.{file_type}"))
+
+
+def _msteams_attachment_media_url(attachment: Mapping[str, Any]) -> str | None:
+    content = _msteams_inbound_mapping(attachment.get("content"))
+    for candidate in (
+        content.get("downloadUrl"),
+        content.get("download_url"),
+        attachment.get("contentUrl"),
+        attachment.get("content_url"),
+    ):
+        media_url = _msteams_inbound_optional_string(candidate)
+        if media_url is not None:
+            return media_url
+    return None
+
+
+def _msteams_attachment_file_hint(attachment: Mapping[str, Any], media_url: str) -> str | None:
+    name = _msteams_attachment_file_name(attachment)
+    if name:
+        return name
+    content = _msteams_inbound_mapping(attachment.get("content"))
+    file_name = _msteams_inbound_optional_string(content.get("fileName"))
+    if file_name is not None:
+        return file_name
+    unique_id = _msteams_inbound_optional_string(content.get("uniqueId"))
+    file_type = _msteams_inbound_optional_string(content.get("fileType"))
+    if unique_id is not None and file_type is not None:
+        return f"{unique_id}.{file_type.lstrip('.')}"
+    parsed_name = unquote(Path(urlparse(media_url).path).name).strip()
+    return parsed_name or None
+
+
+def _msteams_is_graph_shared_link_url(media_url: str) -> bool:
+    host = str(urlparse(media_url).hostname or "").lower()
+    if not host:
+        return False
+    return any(
+        host == suffix.lstrip(".") or host.endswith(suffix)
+        for suffix in MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES
+    )
+
+
+def _msteams_graph_shares_content_url(media_url: str) -> str | None:
+    if not _msteams_is_graph_shared_link_url(media_url):
+        return None
+    encoded = base64.urlsafe_b64encode(media_url.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{MSTEAMS_GRAPH_ROOT}/shares/u!{encoded}/driveItem/content"
+
+
+def _msteams_attachment_download_candidates(
+    activity: Mapping[str, Any],
+) -> list[_MSTeamsInboundMediaCandidate]:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+    candidates: list[_MSTeamsInboundMediaCandidate] = []
+    seen: set[str] = set()
+    for attachment in raw_attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        source_url = _msteams_attachment_media_url(attachment)
+        if source_url is None or source_url in seen:
+            continue
+        seen.add(source_url)
+        content_type = str(attachment.get("contentType") or "").strip()
+        is_file_download_info = (
+            content_type.lower() == "application/vnd.microsoft.teams.file.download.info"
+        )
+        file_hint = _msteams_attachment_file_hint(attachment, source_url)
+        resolved_url = (
+            source_url
+            if is_file_download_info
+            else _msteams_graph_shares_content_url(source_url) or source_url
+        )
+        content_type_hint = (
+            None
+            if resolved_url != source_url or is_file_download_info
+            else content_type or None
+        )
+        candidates.append(
+            _MSTeamsInboundMediaCandidate(
+                url=resolved_url,
+                source_url=source_url,
+                file_hint=file_hint,
+                content_type_hint=content_type_hint,
+                placeholder=(
+                    "<media:image>"
+                    if _msteams_attachment_is_likely_image(attachment)
+                    else "<media:document>"
+                ),
+            )
+        )
+    return candidates
+
+
+def _msteams_attachment_media_urls(activity: Mapping[str, Any]) -> list[str]:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+    media_urls: list[str] = []
+    for attachment in raw_attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        media_url = _msteams_attachment_media_url(attachment)
+        if media_url is not None and media_url not in media_urls:
+            media_urls.append(media_url)
+    return media_urls
+
+
+def _msteams_normalized_host_suffixes(values: object) -> tuple[str, ...]:
+    if not isinstance(values, list):
+        return MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST
+    suffixes = tuple(
+        str(value).strip().lower().lstrip(".")
+        for value in values
+        if str(value).strip()
+    )
+    return suffixes or MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST
+
+
+def _msteams_media_url_allowed(media_url: str, allow_hosts: tuple[str, ...]) -> bool:
+    parsed = urlparse(media_url)
+    if parsed.scheme.lower() != "https":
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    for suffix in allow_hosts:
+        normalized_suffix = suffix.lower().lstrip(".")
+        if host == normalized_suffix or host.endswith(f".{normalized_suffix}"):
+            return True
+    return False
+
+
+def _msteams_media_auth_url_allowed(media_url: str, auth_allow_hosts: tuple[str, ...]) -> bool:
+    return _msteams_media_url_allowed(media_url, auth_allow_hosts)
+
+
+def _msteams_media_auth_scope_order(media_url: str) -> tuple[Literal["graph", "bot"], ...]:
+    host = str(urlparse(media_url).hostname or "").strip().lower()
+    looks_like_graph = (
+        host.endswith("graph.microsoft.com")
+        or host.endswith("graph.microsoft.us")
+        or host.endswith("graph.microsoft.de")
+        or host.endswith("graph.microsoft.cn")
+        or host.endswith("sharepoint.com")
+        or host.endswith("sharepoint.us")
+        or host.endswith("sharepoint.de")
+        or host.endswith("sharepoint.cn")
+        or host.endswith("1drv.ms")
+        or "sharepoint" in host
+    )
+    return ("graph", "bot") if looks_like_graph else ("bot", "graph")
+
+
+def _msteams_fetch_response_bytes(response: object) -> bytes | None:
+    if isinstance(response, bytes):
+        return response
+    if isinstance(response, bytearray | memoryview):
+        return bytes(response)
+    if not isinstance(response, Mapping):
+        return None
+    for key in ("bytes", "content", "data", "body"):
+        value = response.get(key)
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, bytearray | memoryview):
+            return bytes(value)
+    return None
+
+
+def _msteams_fetch_response_string(response: object, *keys: str) -> str | None:
+    if not isinstance(response, Mapping):
+        return None
+    for key in keys:
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _msteams_staged_media_content_type(
+    response: object,
+    candidate: _MSTeamsInboundMediaCandidate,
+    filename: str,
+) -> str | None:
+    content_type = _msteams_fetch_response_string(
+        response,
+        "contentType",
+        "content_type",
+        "mimeType",
+        "mime_type",
+    )
+    if content_type is not None:
+        return content_type.split(";", 1)[0].strip() or content_type
+    if candidate.content_type_hint:
+        return candidate.content_type_hint.split(";", 1)[0].strip()
+    guessed = mimetypes.guess_type(filename)[0]
+    return guessed
+
+
+def _msteams_staged_media_filename(
+    response: object,
+    candidate: _MSTeamsInboundMediaCandidate,
+    content_type: str | None,
+    index: int,
+) -> str:
+    raw_filename = (
+        _msteams_fetch_response_string(response, "filename", "fileName", "name")
+        or candidate.file_hint
+    )
+    if raw_filename is None:
+        parsed_name = unquote(Path(urlparse(candidate.source_url).path).name).strip()
+        raw_filename = parsed_name or f"attachment-{index}"
+    filename = _safe_slack_file_label(raw_filename, f"attachment-{index}")
+    if "." not in filename and content_type:
+        extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip()) or ""
+        if extension:
+            filename = f"{filename}{extension}"
+    return filename
+
+
+def _msteams_media_payload(
+    staged_media: list[_MSTeamsStagedInboundMedia],
+) -> dict[str, object]:
+    if not staged_media:
+        return {}
+    paths = [str(media.path) for media in staged_media]
+    payload: dict[str, object] = {
+        "MediaPath": paths[0],
+        "MediaUrl": paths[0],
+        "MediaPaths": paths,
+        "MediaUrls": paths,
+    }
+    media_types = [media.content_type for media in staged_media if media.content_type]
+    if len(media_types) == len(staged_media):
+        payload["MediaType"] = media_types[0]
+        payload["MediaTypes"] = media_types
+    return payload
+
+
+def _msteams_staged_media_metadata(
+    staged_media: list[_MSTeamsStagedInboundMedia],
+) -> list[dict[str, object]]:
+    metadata: list[dict[str, object]] = []
+    for media in staged_media:
+        item: dict[str, object] = {
+            "sourceUrl": media.source_url,
+            "path": str(media.path),
+            "filename": media.filename,
+            "placeholder": media.placeholder,
+            "openzuesMediaRef": f"media://inbound/{media.filename}",
+            "openzuesSavedPath": str(media.path),
+            "openzuesSha256": media.sha256,
+            "openzuesByteLength": media.byte_length,
+        }
+        if media.content_type:
+            item["contentType"] = media.content_type
+        metadata.append(item)
+    return metadata
+
+
+def _msteams_feedback_reflection_prompt(
+    *,
+    user_comment: str | None,
+    thumbed_down_response: str | None = None,
+) -> str:
+    parts = ["A user indicated your previous response wasn't helpful."]
+    if thumbed_down_response:
+        response = (
+            f"{thumbed_down_response[:MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS]}..."
+            if len(thumbed_down_response) > MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS
+            else thumbed_down_response
+        )
+        parts.append(f"\nYour response was:\n> {response}")
+    if user_comment:
+        parts.append(f'\nUser\'s comment: "{user_comment}"')
+    parts.append(
+        "\nBriefly reflect: what could you improve? Consider tone, length, "
+        "accuracy, relevance, and specificity. Reply with a single JSON object "
+        'only, no markdown or prose, using this exact shape:\n{"learning":"...",'
+        '"followUp":false,"userMessage":""}\n'
+        "- learning: a short internal adjustment note (1-2 sentences) for your "
+        "future behavior in this conversation.\n"
+        "- followUp: true only if the user needs a direct follow-up message.\n"
+        "- userMessage: only the exact user-facing message to send; empty string "
+        "when followUp is false."
+    )
+    return "\n".join(parts)
+
+
+def _msteams_bool_like(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes"}:
+            return True
+        if normalized in {"false", "no"}:
+            return False
+    return None
+
+
+def _msteams_parse_feedback_reflection_mapping(
+    value: Mapping[str, object],
+) -> _MSTeamsFeedbackReflectionResult | None:
+    learning = _msteams_inbound_optional_string(value.get("learning"))
+    if learning is None:
+        return None
+    user_message = _msteams_inbound_optional_string(value.get("userMessage"))
+    return _MSTeamsFeedbackReflectionResult(
+        learning=learning,
+        follow_up=_msteams_bool_like(value.get("followUp")) or False,
+        user_message=user_message,
+    )
+
+
+def _msteams_parse_feedback_reflection_response(
+    response: object,
+) -> _MSTeamsFeedbackReflectionResult | None:
+    if isinstance(response, Mapping):
+        return _msteams_parse_feedback_reflection_mapping(response)
+    if not isinstance(response, str):
+        return None
+    text = response.strip()
+    if not text:
+        return None
+    candidates = [text]
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+    if fence is not None:
+        candidates.append(fence.group(1).strip())
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, Mapping):
+            result = _msteams_parse_feedback_reflection_mapping(parsed)
+            if result is not None:
+                return result
+    return _MSTeamsFeedbackReflectionResult(
+        learning=text,
+        follow_up=False,
+        user_message=None,
+    )
+
+
+def _msteams_feedback_learning_file(
+    *,
+    storage_root: Path,
+    session_key: str,
+) -> Path:
+    encoded = base64.urlsafe_b64encode(session_key.encode("utf-8")).decode("ascii").rstrip("=")
+    if len(encoded) > 120:
+        encoded = f"sha256-{hashlib.sha256(session_key.encode('utf-8')).hexdigest()}"
+    return storage_root / "msteams-feedback-learnings" / f"{encoded}.learnings.json"
+
+
+def _msteams_store_feedback_learning(
+    *,
+    storage_root: Path,
+    session_key: str,
+    learning: str,
+) -> Path:
+    learning_file = _msteams_feedback_learning_file(
+        storage_root=storage_root,
+        session_key=session_key,
+    )
+    learnings: list[str] = []
+    if learning_file.exists():
+        try:
+            parsed = json.loads(learning_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            parsed = []
+        if isinstance(parsed, list):
+            learnings = [str(item) for item in parsed if isinstance(item, str)]
+    learnings.append(learning)
+    learnings = learnings[-10:]
+    learning_file.parent.mkdir(parents=True, exist_ok=True)
+    learning_file.write_text(json.dumps(learnings, indent=2), encoding="utf-8")
+    return learning_file
+
+
+def _msteams_attachment_placeholder(activity: Mapping[str, Any]) -> str | None:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return None
+    attachments = [
+        attachment for attachment in raw_attachments if isinstance(attachment, Mapping)
+    ]
+    if not attachments:
+        return None
+    image_count = sum(
+        1 for attachment in attachments if _msteams_attachment_is_likely_image(attachment)
+    )
+    if image_count > 0:
+        return f"<media:image>{f' ({image_count} images)' if image_count > 1 else ''}"
+    count = len(attachments)
+    return f"<media:document>{f' ({count} files)' if count > 1 else ''}"
+
+
 def _msteams_inbound_activity_text(activity: Mapping[str, Any]) -> str | None:
     activity_type = str(activity.get("type") or "").strip().lower()
     if activity_type == "message":
         text = str(activity.get("text") or "").strip()
         if not text:
             text = _msteams_html_attachment_text(activity) or ""
+        if not text:
+            text = _msteams_attachment_placeholder(activity) or ""
         text = _msteams_strip_mention_tags(text)
         return text or None
     if (
@@ -4266,6 +4824,112 @@ def _msteams_channel_entry_match(
     return False, {}
 
 
+def _msteams_config_secret_string(value: object) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if not isinstance(value, Mapping):
+        return None
+    raw_value = _msteams_inbound_optional_string(value.get("value"))
+    if raw_value is not None:
+        return raw_value
+    env_name = _msteams_inbound_optional_string(value.get("env"))
+    if env_name:
+        env_value = os.getenv(env_name)
+        if env_value and env_value.strip():
+            return env_value.strip()
+    return None
+
+
+def _msteams_bool_config(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _msteams_prompt_starters(channel_config: Mapping[str, Any]) -> list[str]:
+    raw_starters = channel_config.get("promptStarters")
+    if isinstance(raw_starters, list):
+        starters = [
+            str(starter).strip()
+            for starter in raw_starters
+            if str(starter).strip()
+        ]
+        if starters:
+            return starters
+    return list(MSTEAMS_DEFAULT_PROMPT_STARTERS)
+
+
+def _msteams_welcome_card(
+    *,
+    bot_name: str | None,
+    prompt_starters: list[str],
+) -> dict[str, object]:
+    name = bot_name or "OpenZues"
+    return {
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Hi! I'm {name}.",
+                "weight": "bolder",
+                "size": "medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "I can help you with questions, tasks, and more. "
+                    "Here are some things to try:"
+                ),
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": starter,
+                "data": {"msteams": {"type": "imBack", "value": starter}},
+            }
+            for starter in prompt_starters
+        ],
+    }
+
+
+def _msteams_group_welcome_text(bot_name: str | None) -> str:
+    name = bot_name or "OpenZues"
+    return f"Hi! I'm {name}. Mention me with @{name} to get started."
+
+
+def _msteams_welcome_activity_payload(
+    *,
+    kind: Literal["card", "text"],
+    bot_name: str | None,
+    prompt_starters: list[str],
+) -> dict[str, object]:
+    if kind == "card":
+        return {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": _msteams_welcome_card(
+                        bot_name=bot_name,
+                        prompt_starters=prompt_starters,
+                    ),
+                }
+            ],
+        }
+    return {"type": "message", "text": _msteams_group_welcome_text(bot_name)}
+
+
 def _msteams_signin_route_allowed(
     channel_config: Mapping[str, Any],
     activity: Mapping[str, Any],
@@ -4308,6 +4972,33 @@ def _msteams_signin_route_allowed(
         allow_name_matching=allow_name_matching,
     )
     return channel_matched
+
+
+def _msteams_signin_group_sender_allowed(
+    channel_config: Mapping[str, Any],
+    activity: Mapping[str, Any],
+) -> bool:
+    group_policy = (
+        _msteams_inbound_optional_string(channel_config.get("groupPolicy"))
+        or "allowlist"
+    ).lower()
+    if group_policy == "open":
+        return True
+    if group_policy == "disabled":
+        return False
+    group_allow_from = _msteams_inbound_string_list(channel_config.get("groupAllowFrom"))
+    if not group_allow_from:
+        group_allow_from = _msteams_inbound_string_list(channel_config.get("allowFrom"))
+    if not group_allow_from:
+        return False
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    sender_id, _channel_id = _msteams_signin_user(activity)
+    return _msteams_allowlist_allows_sender(
+        group_allow_from,
+        sender_id=sender_id,
+        sender_name=_msteams_inbound_optional_string(sender.get("name")),
+        allow_name_matching=bool(channel_config.get("dangerouslyAllowNameMatching")),
+    )
 
 
 def _msteams_allowlist_allows_sender(
@@ -4715,6 +5406,37 @@ def _msteams_graph_probe_metadata(token: str) -> dict[str, object]:
         if normalized_scopes:
             metadata["scopes"] = normalized_scopes
     return metadata
+
+
+def _msteams_delegated_auth_probe_metadata(
+    token_row: Mapping[str, Any],
+) -> dict[str, object]:
+    token = _msteams_inbound_optional_string(token_row.get("token"))
+    if token is None:
+        return {"ok": False, "error": "stored delegated token is missing"}
+    metadata = _msteams_graph_probe_metadata(token)
+    delegated: dict[str, object] = {"ok": True}
+    scopes = metadata.get("scopes")
+    if isinstance(scopes, list) and scopes:
+        delegated["scopes"] = [str(scope) for scope in scopes]
+    payload = _msteams_decode_jwt_payload(token)
+    if isinstance(payload, dict):
+        user_principal_name = _msteams_inbound_optional_string(
+            payload.get("preferred_username") or payload.get("upn")
+        )
+        if user_principal_name is not None:
+            delegated["userPrincipalName"] = user_principal_name
+    user_id = _msteams_inbound_optional_string(token_row.get("user_id"))
+    if user_id is not None:
+        delegated["userId"] = user_id
+    expires_at = _msteams_inbound_optional_string(token_row.get("expires_at"))
+    if expires_at is not None:
+        delegated["expiresAt"] = expires_at
+        parsed_expiry = _parse_timestamp(expires_at)
+        if parsed_expiry is not None and parsed_expiry <= datetime.now(UTC):
+            delegated["ok"] = False
+            delegated["error"] = "token expired (will auto-refresh on next use)"
+    return delegated
 
 
 def _signal_base_url(raw_target: str | None) -> str:
@@ -9074,6 +9796,8 @@ class OpsMeshService:
     parity_checkpoint_path: Path | None = None
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
+    msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
+    msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
     canvas_state_dir: Path | None = None
@@ -9087,6 +9811,10 @@ class OpsMeshService:
     _direct_delivery_inflight_lock: asyncio.Lock = field(
         init=False,
         default_factory=asyncio.Lock,
+    )
+    _msteams_feedback_reflection_times: dict[str, float] = field(
+        init=False,
+        default_factory=dict,
     )
 
     async def start(self) -> None:
@@ -9164,6 +9892,415 @@ class OpsMeshService:
             return {}
         return _msteams_channel_config_from_snapshot(snapshot, account_id=account_id)
 
+    def _msteams_media_max_bytes(self) -> int:
+        if self.gateway_config_service is None:
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        if not isinstance(snapshot, Mapping):
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        agents = snapshot.get("agents")
+        defaults = agents.get("defaults") if isinstance(agents, Mapping) else None
+        if isinstance(defaults, Mapping):
+            value = defaults.get("mediaMaxMb")
+            if isinstance(value, int | float) and value > 0:
+                return int(value * 1024 * 1024)
+        return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+
+    def _msteams_media_allow_hosts(
+        self,
+        *,
+        account_id: str | None,
+    ) -> tuple[str, ...]:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        return _msteams_normalized_host_suffixes(channel_config.get("mediaAllowHosts"))
+
+    def _msteams_media_auth_allow_hosts(
+        self,
+        *,
+        account_id: str | None,
+    ) -> tuple[str, ...]:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        values = channel_config.get("mediaAuthAllowHosts")
+        if not isinstance(values, list):
+            return MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST
+        suffixes = tuple(
+            str(value).strip().lower().lstrip(".")
+            for value in values
+            if str(value).strip()
+        )
+        return suffixes or MSTEAMS_DEFAULT_MEDIA_AUTH_HOST_ALLOWLIST
+
+    async def _default_msteams_inbound_media_fetch(
+        self,
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+    ) -> object:
+        try:
+            return await asyncio.to_thread(self._download_msteams_inbound_media_url, request)
+        except _MSTeamsInboundMediaHttpError as exc:
+            if exc.status not in {401, 403}:
+                raise RuntimeError(str(exc)) from exc
+            auth_allow_hosts = self._msteams_media_auth_allow_hosts(
+                account_id=request.account_id
+            )
+            if not _msteams_media_auth_url_allowed(request.url, auth_allow_hosts):
+                raise RuntimeError(str(exc)) from exc
+            credentials = await self._msteams_sso_route_credentials()
+            if credentials is None:
+                raise RuntimeError(str(exc)) from exc
+            route_config, secret_token = credentials
+            for scope in _msteams_media_auth_scope_order(request.url):
+                try:
+                    bearer_token = await asyncio.to_thread(
+                        self._msteams_inbound_media_auth_bearer,
+                        route_config=route_config,
+                        secret_token=secret_token,
+                        scope=scope,
+                    )
+                except Exception:
+                    continue
+                try:
+                    return await asyncio.to_thread(
+                        self._download_msteams_inbound_media_url,
+                        request,
+                        bearer_token,
+                    )
+                except _MSTeamsInboundMediaHttpError:
+                    continue
+            raise RuntimeError(str(exc)) from exc
+
+    def _msteams_inbound_media_auth_bearer(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+        scope: Literal["graph", "bot"],
+    ) -> str:
+        if scope == "graph":
+            return self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            )
+        return self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+
+    def _download_msteams_inbound_media_url(
+        self,
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+        bearer_token: str | None = None,
+    ) -> dict[str, object]:
+        headers = {"User-Agent": "OpenZues-MSTeamsMedia/1.0"}
+        if bearer_token:
+            headers["Authorization"] = bearer_token
+        http_request = Request(
+            request.url,
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                if response.status >= 400:
+                    raise _MSTeamsInboundMediaHttpError(
+                        f"Microsoft Teams media URL returned HTTP {response.status}",
+                        status=int(response.status),
+                    )
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Microsoft Teams media attachment is too large.")
+                content_type = response.headers.get("Content-Type")
+        except HTTPError as exc:
+            raise _MSTeamsInboundMediaHttpError(
+                _http_error_message("Microsoft Teams media URL returned HTTP", exc),
+                status=int(exc.code),
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Microsoft Teams media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type.strip()
+        if request.filename:
+            result["filename"] = request.filename
+        return result
+
+    def _msteams_inbound_media_fetcher(
+        self,
+    ) -> GatewayMSTeamsInboundMediaFetchService | None:
+        if self.msteams_inbound_media_fetch_service is not None:
+            return self.msteams_inbound_media_fetch_service
+        if self.canvas_state_dir is None:
+            return None
+        return self._default_msteams_inbound_media_fetch
+
+    def _save_msteams_inbound_media(
+        self,
+        *,
+        candidate: _MSTeamsInboundMediaCandidate,
+        response: object,
+        media_bytes: bytes,
+        index: int,
+    ) -> _MSTeamsStagedInboundMedia | None:
+        if not media_bytes:
+            return None
+        content_type = _msteams_staged_media_content_type(
+            response,
+            candidate,
+            candidate.file_hint or "",
+        )
+        filename = _msteams_staged_media_filename(
+            response,
+            candidate,
+            content_type,
+            index,
+        )
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        return _MSTeamsStagedInboundMedia(
+            source_url=candidate.source_url,
+            path=stored_path,
+            content_type=content_type,
+            filename=filename,
+            placeholder=candidate.placeholder,
+            sha256=digest,
+            byte_length=len(media_bytes),
+        )
+
+    async def _stage_msteams_inbound_media(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        candidates = _msteams_attachment_download_candidates(activity)
+        if not candidates:
+            return []
+        fetcher = self._msteams_inbound_media_fetcher()
+        if fetcher is None:
+            return []
+        allow_hosts = self._msteams_media_allow_hosts(account_id=account_id)
+        max_bytes = self._msteams_media_max_bytes()
+        staged_media: list[_MSTeamsStagedInboundMedia] = []
+        activity_id = _msteams_inbound_optional_string(activity.get("id"))
+        for index, candidate in enumerate(candidates, start=1):
+            if not _msteams_media_url_allowed(candidate.url, allow_hosts):
+                continue
+            request = GatewayMSTeamsInboundMediaFetchRequest(
+                url=candidate.url,
+                source_url=candidate.source_url,
+                filename=candidate.file_hint,
+                content_type=candidate.content_type_hint,
+                placeholder=candidate.placeholder,
+                max_bytes=max_bytes,
+                account_id=account_id,
+                activity_id=activity_id,
+            )
+            try:
+                response = await fetcher(request)
+            except Exception:
+                continue
+            media_bytes = _msteams_fetch_response_bytes(response)
+            if media_bytes is None or len(media_bytes) > max_bytes:
+                continue
+            staged = self._save_msteams_inbound_media(
+                candidate=candidate,
+                response=response,
+                media_bytes=media_bytes,
+                index=index,
+            )
+            if staged is not None:
+                staged_media.append(staged)
+        return staged_media
+
+    def _msteams_feedback_reflection_cooldown_ms(
+        self,
+        *,
+        account_id: str | None,
+    ) -> int:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        value = channel_config.get("feedbackReflectionCooldownMs")
+        if isinstance(value, int | float) and value >= 0:
+            return int(value)
+        return MSTEAMS_FEEDBACK_REFLECTION_COOLDOWN_MS
+
+    def _msteams_feedback_learning_storage_root(self) -> Path:
+        return (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+
+    def _msteams_feedback_reflection_allowed(
+        self,
+        *,
+        session_key: str,
+        cooldown_ms: int,
+    ) -> bool:
+        if cooldown_ms <= 0:
+            return True
+        now_ms = datetime.now(UTC).timestamp() * 1000
+        last_ms = self._msteams_feedback_reflection_times.get(session_key)
+        return last_ms is None or now_ms - last_ms >= cooldown_ms
+
+    def _record_msteams_feedback_reflection_time(
+        self,
+        *,
+        session_key: str,
+    ) -> None:
+        self._msteams_feedback_reflection_times[session_key] = (
+            datetime.now(UTC).timestamp() * 1000
+        )
+
+    async def _send_msteams_feedback_followup(
+        self,
+        *,
+        context: _MSTeamsInboundSessionContext,
+        account_id: str | None,
+        message: str,
+    ) -> dict[str, object]:
+        followup: dict[str, object] = {"attempted": True, "sent": False}
+        if context.conversation_type.strip().lower() != "personal":
+            followup["reason"] = "not_personal"
+            return followup
+        try:
+            delivery = await self.send_direct_channel_message(
+                channel="msteams",
+                to=f"conversation:{context.conversation_id}",
+                message=message,
+                account_id=account_id,
+                session_key=context.session_key,
+                requester_session_key=context.session_key,
+                requester_account_id=account_id,
+                requester_sender_id=context.sender_id,
+                requester_sender_name=context.sender_name,
+            )
+        except Exception as exc:
+            followup["error"] = str(exc)
+            return followup
+        followup["sent"] = True
+        message_id = _session_delivery_message_id(delivery) or _msteams_inbound_optional_string(
+            delivery.get("message_id")
+        )
+        if message_id is not None:
+            followup["messageId"] = message_id
+        return followup
+
+    async def _run_msteams_feedback_reflection(
+        self,
+        *,
+        context: _MSTeamsInboundSessionContext,
+        account_id: str | None,
+        feedback_payload: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        if self.msteams_feedback_reflection_service is None:
+            return None
+        if feedback_payload.get("value") != "negative":
+            return None
+        cooldown_ms = self._msteams_feedback_reflection_cooldown_ms(account_id=account_id)
+        if not self._msteams_feedback_reflection_allowed(
+            session_key=context.session_key,
+            cooldown_ms=cooldown_ms,
+        ):
+            return {"skipped": "cooldown"}
+        feedback_message_id = _msteams_inbound_optional_string(
+            feedback_payload.get("messageId")
+        )
+        if feedback_message_id is None:
+            feedback_message_id = "unknown"
+        user_comment = _msteams_inbound_optional_string(feedback_payload.get("comment"))
+        prompt = _msteams_feedback_reflection_prompt(user_comment=user_comment)
+        request = GatewayMSTeamsFeedbackReflectionRequest(
+            prompt=prompt,
+            session_key=context.session_key,
+            account_id=account_id,
+            feedback_message_id=feedback_message_id,
+            feedback_value="negative",
+            user_comment=user_comment,
+            conversation_id=context.conversation_id,
+            conversation_type=context.conversation_type,
+            sender_id=context.sender_id,
+            sender_name=context.sender_name,
+        )
+        try:
+            response = await self.msteams_feedback_reflection_service(request)
+        except Exception as exc:
+            return {"error": str(exc)}
+        parsed = _msteams_parse_feedback_reflection_response(response)
+        if parsed is None:
+            return {"skipped": "unstructured"}
+        learning_file = _msteams_store_feedback_learning(
+            storage_root=self._msteams_feedback_learning_storage_root(),
+            session_key=context.session_key,
+            learning=parsed.learning,
+        )
+        self._record_msteams_feedback_reflection_time(session_key=context.session_key)
+        reflection: dict[str, object] = {
+            "learning": parsed.learning,
+            "stored": True,
+            "path": str(learning_file),
+        }
+        if parsed.follow_up and parsed.user_message:
+            reflection["followUp"] = await self._send_msteams_feedback_followup(
+                context=context,
+                account_id=account_id,
+                message=parsed.user_message,
+            )
+        return reflection
+
+    async def _msteams_stored_delegated_graph_secret_token(
+        self,
+        *,
+        account_id: str | None,
+        user_id: str | None,
+    ) -> str | None:
+        normalized_user_id = _msteams_inbound_optional_string(user_id)
+        if normalized_user_id is None:
+            return None
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is None:
+            return None
+        stored = await self.database.get_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=normalized_user_id,
+        )
+        if not isinstance(stored, Mapping):
+            return None
+        token = _msteams_inbound_optional_string(stored.get("token"))
+        if token is None:
+            return None
+        return f"Bearer {token}"
+
+    async def _msteams_delegated_auth_probe(
+        self,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is None:
+            return None
+        try:
+            tokens = await self.database.list_msteams_sso_tokens(
+                connection_name=sso_config.connection_name,
+                limit=1,
+            )
+        except Exception:
+            return {"ok": False, "error": "failed to load delegated tokens"}
+        if not tokens:
+            return {"ok": False, "error": "no delegated tokens found (run setup wizard)"}
+        return _msteams_delegated_auth_probe_metadata(tokens[0])
+
     async def _msteams_sso_route_credentials(
         self,
     ) -> tuple[_MSTeamsRouteConfig, str] | None:
@@ -9213,22 +10350,35 @@ class OpsMeshService:
         if not channel_config:
             return None
         if not _msteams_signin_is_direct_message(activity):
-            if _msteams_signin_route_allowed(channel_config, activity):
+            if not _msteams_signin_route_allowed(channel_config, activity):
+                metadata = dict(base_metadata)
+                metadata.pop("code", None)
+                metadata.pop("message", None)
+                metadata["status"] = "blocked"
+                metadata["reason"] = "msteams_signin_route_not_allowlisted"
+                metadata["conversationType"] = (
+                    _msteams_signin_conversation_type(activity) or "unknown"
+                )
+                conversation_id = _msteams_signin_conversation_id(activity)
+                team_id = _msteams_signin_team_id(activity)
+                if conversation_id is not None:
+                    metadata["conversationId"] = conversation_id
+                if team_id is not None:
+                    metadata["teamId"] = team_id
+                return metadata
+            if _msteams_signin_group_sender_allowed(channel_config, activity):
                 return None
             metadata = dict(base_metadata)
             metadata.pop("code", None)
             metadata.pop("message", None)
             metadata["status"] = "blocked"
-            metadata["reason"] = "msteams_signin_route_not_allowlisted"
+            metadata["reason"] = "msteams_signin_group_sender_not_allowlisted"
             metadata["conversationType"] = (
                 _msteams_signin_conversation_type(activity) or "unknown"
             )
             conversation_id = _msteams_signin_conversation_id(activity)
-            team_id = _msteams_signin_team_id(activity)
             if conversation_id is not None:
                 metadata["conversationId"] = conversation_id
-            if team_id is not None:
-                metadata["teamId"] = team_id
             return metadata
         dm_policy = (
             _msteams_inbound_optional_string(channel_config.get("dmPolicy"))
@@ -9256,6 +10406,160 @@ class OpsMeshService:
             _msteams_signin_conversation_type(activity) or "personal"
         )
         return metadata
+
+    def _msteams_welcome_route_credentials(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        channel_config: Mapping[str, Any],
+    ) -> tuple[_MSTeamsRouteConfig, str] | None:
+        del account_id
+        service_url = _msteams_inbound_optional_string(activity.get("serviceUrl"))
+        conversation_id = _msteams_signin_conversation_id(activity)
+        app_id = _msteams_config_secret_string(channel_config.get("appId"))
+        tenant_id = _msteams_config_secret_string(channel_config.get("tenantId"))
+        app_password = _msteams_config_secret_string(channel_config.get("appPassword"))
+        if (
+            service_url is None
+            or conversation_id is None
+            or app_id is None
+            or tenant_id is None
+            or app_password is None
+        ):
+            return None
+        parsed = urlparse(service_url)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return None
+        path = parsed.path.rstrip("/")
+        if path.lower().endswith("/v3"):
+            path = path[:-3].rstrip("/")
+        clean_service_url = parsed._replace(
+            path=path,
+            query="",
+            fragment="",
+        ).geturl().rstrip("/")
+        return (
+            _MSTeamsRouteConfig(
+                service_url=clean_service_url,
+                app_id=app_id,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                conversation_type=_msteams_signin_conversation_type(activity),
+                graph_chat_id=None,
+                share_point_site_id=None,
+            ),
+            app_password,
+        )
+
+    async def _msteams_send_welcome_activity(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        channel_config: Mapping[str, Any],
+        payload: dict[str, object],
+    ) -> tuple[bool, str | None, str | None]:
+        credentials = self._msteams_welcome_route_credentials(
+            activity,
+            account_id=account_id,
+            channel_config=channel_config,
+        )
+        if credentials is None:
+            return False, None, "msteams_welcome_credentials_unavailable"
+        route_config, app_password = credentials
+
+        def send_activity() -> object:
+            return self._request_json_provider_url(
+                _msteams_activity_endpoint(
+                    service_url=route_config.service_url,
+                    conversation_id=route_config.conversation_id or "",
+                ),
+                method="POST",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=self._msteams_bearer_token(
+                    route_config=route_config,
+                    secret_token=app_password,
+                ),
+            )
+
+        try:
+            result = await asyncio.to_thread(send_activity)
+        except Exception as exc:
+            return False, None, str(exc).strip() or type(exc).__name__
+        return True, _msteams_message_id(result), None
+
+    async def _handle_msteams_conversation_update(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if str(activity.get("type") or "").strip().lower() != "conversationupdate":
+            return None
+        members_added = activity.get("membersAdded")
+        if not isinstance(members_added, list):
+            return None
+        recipient = _msteams_inbound_mapping(activity.get("recipient"))
+        bot_id = _msteams_inbound_optional_string(recipient.get("id"))
+        if bot_id is None:
+            return None
+        matching_member = None
+        for member in members_added:
+            if not isinstance(member, Mapping):
+                continue
+            if _msteams_inbound_optional_string(member.get("id")) == bot_id:
+                matching_member = member
+                break
+        if matching_member is None:
+            return None
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        conversation_type = _msteams_signin_conversation_type(activity) or "personal"
+        is_personal = conversation_type == "personal"
+        if is_personal:
+            if _msteams_bool_config(channel_config.get("welcomeCard"), default=True) is False:
+                return None
+            prompt_starters = _msteams_prompt_starters(channel_config)
+            welcome_kind: Literal["card", "text"] = "card"
+        else:
+            if not _msteams_bool_config(channel_config.get("groupWelcomeCard")):
+                return None
+            prompt_starters = []
+            welcome_kind = "text"
+        bot_name = _msteams_inbound_optional_string(recipient.get("name"))
+        payload = _msteams_welcome_activity_payload(
+            kind=welcome_kind,
+            bot_name=bot_name,
+            prompt_starters=prompt_starters,
+        )
+        sent, message_id, error = await self._msteams_send_welcome_activity(
+            activity,
+            account_id=account_id,
+            channel_config=channel_config,
+            payload=payload,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "conversationUpdate",
+            "action": "welcome",
+            "sent": sent,
+            "conversationId": _msteams_signin_conversation_id(activity) or "unknown",
+            "conversationType": conversation_type,
+            "memberId": bot_id,
+            "welcome": {"kind": welcome_kind},
+        }
+        if prompt_starters:
+            result["welcome"] = {
+                "kind": welcome_kind,
+                "promptStarters": prompt_starters,
+            }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if error is not None:
+            result["error"] = error
+        return result
 
     async def _msteams_handle_signin_token_exchange(
         self,
@@ -9521,21 +10825,39 @@ class OpsMeshService:
                 user_comment = _msteams_inbound_optional_string(
                     parsed_feedback.get("feedbackText")
                 )
-        context = _msteams_inbound_session_context(activity, account_id=account_id)
         feedback_message_id = (
             _msteams_inbound_optional_string(value.get("replyToId"))
             or _msteams_inbound_optional_string(activity.get("replyToId"))
             or "unknown"
         )
-        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
-        if user_comment is not None:
-            content = f"{content}\nComment: {user_comment}"
         feedback_payload: dict[str, object] = {
             "messageId": feedback_message_id,
             "value": feedback_value,
         }
         if user_comment is not None:
             feedback_payload["comment"] = user_comment
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        if (
+            _msteams_bool_config(
+                channel_config.get("feedbackEnabled"),
+                default=True,
+            )
+            is False
+        ):
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "activityType": "invoke",
+                "name": "message/submitAction",
+                "action": "feedback",
+                "feedback": feedback_payload,
+                "recorded": False,
+                "disabled": True,
+            }
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
+        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
+        if user_comment is not None:
+            content = f"{content}\nComment: {user_comment}"
         await self.database.append_control_chat_message(
             role="system",
             content=content,
@@ -9552,6 +10874,11 @@ class OpsMeshService:
                 "conversationTarget": context.conversation_target.model_dump(mode="json"),
             },
         )
+        reflection = await self._run_msteams_feedback_reflection(
+            context=context,
+            account_id=account_id,
+            feedback_payload=feedback_payload,
+        )
         result: dict[str, object] = {
             "ok": True,
             "channel": "msteams",
@@ -9566,6 +10893,12 @@ class OpsMeshService:
             "feedback": feedback_payload,
             "recorded": True,
         }
+        if reflection is not None:
+            result["reflection"] = {
+                key: value
+                for key, value in reflection.items()
+                if key != "path"
+            }
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:
@@ -9590,6 +10923,12 @@ class OpsMeshService:
         )
         if feedback_result is not None:
             return feedback_result
+        conversation_update_result = await self._handle_msteams_conversation_update(
+            activity,
+            account_id=account_id,
+        )
+        if conversation_update_result is not None:
+            return conversation_update_result
         text = _msteams_inbound_activity_text(activity)
         if text is None:
             return {
@@ -9605,8 +10944,16 @@ class OpsMeshService:
             raise GatewayOutboundRuntimeUnavailableError(
                 "Microsoft Teams inbound session delivery is unavailable."
             )
+        media_urls = _msteams_attachment_media_urls(activity)
+        staged_media = await self._stage_msteams_inbound_media(
+            activity,
+            account_id=account_id,
+        )
         delivery_result = await self.session_delivery_service(context.session_key, text)
         message_id = _session_delivery_message_id(delivery_result)
+        delivery: dict[str, object] = {"runtime": "session-backed"}
+        if staged_media:
+            delivery["media"] = {"staged": len(staged_media)}
         result: dict[str, object] = {
             "ok": True,
             "channel": "msteams",
@@ -9618,10 +10965,15 @@ class OpsMeshService:
             "conversationId": context.conversation_id,
             "conversationType": context.conversation_type,
             "conversationTarget": context.conversation_target.model_dump(mode="json"),
-            "delivery": {"runtime": "session-backed"},
+            "delivery": delivery,
         }
         if message_id is not None:
             result["messageId"] = message_id
+        if media_urls:
+            result["mediaUrls"] = media_urls
+        if staged_media:
+            result.update(_msteams_media_payload(staged_media))
+            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:
@@ -11466,12 +12818,18 @@ class OpsMeshService:
                 }
         if route_kind == "msteams":
             try:
-                return await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     self._probe_msteams_provider_route,
                     route,
                     secret_token,
                     timeout_ms,
                 )
+                delegated_auth = await self._msteams_delegated_auth_probe(
+                    account_id=normalized_account_id,
+                )
+                if delegated_auth is not None:
+                    result["delegatedAuth"] = delegated_auth
+                return result
             except Exception as exc:
                 return {
                     "ok": False,
@@ -12672,14 +14030,21 @@ class OpsMeshService:
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
                     f"No native Microsoft Teams route is configured for message.action {action}."
-                )
+            )
             secret_token = await self._notification_route_secret_token(route)
             if action in {"react", "unreact"}:
+                graph_secret_token = (
+                    await self._msteams_stored_delegated_graph_secret_token(
+                        account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                        user_id=request.requester_sender_id,
+                    )
+                    or secret_token
+                )
                 return await asyncio.to_thread(
                     self._dispatch_msteams_react_message_action,
                     route,
                     request,
-                    secret_token,
+                    graph_secret_token,
                 )
             return await asyncio.to_thread(
                 self._dispatch_msteams_reactions_message_action,

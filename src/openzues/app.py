@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -226,6 +226,10 @@ from openzues.services.interference import build_interference
 from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
+from openzues.services.msteams_webhook_auth import (
+    MSTeamsWebhookJwtValidator,
+    build_msteams_webhook_jwt_validator_from_config,
+)
 from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
@@ -250,6 +254,7 @@ CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
 DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
+MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -261,6 +266,32 @@ PLUGIN_DEFAULT_PROMPT_RE = re.compile(
     r"(?:\s+path\s*=\s*(?P<path>.+))?",
     re.IGNORECASE,
 )
+
+
+def _normalize_msteams_webhook_path(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or not normalized.startswith("/"):
+        return None
+    if "?" in normalized or "#" in normalized:
+        return None
+    return normalized.rstrip("/") or "/"
+
+
+def _msteams_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    msteams_config = channels.get("msteams")
+    if not isinstance(msteams_config, Mapping):
+        msteams_config = channels.get("teams")
+    if not isinstance(msteams_config, Mapping):
+        return None
+    webhook = msteams_config.get("webhook")
+    if not isinstance(webhook, Mapping):
+        return None
+    return _normalize_msteams_webhook_path(webhook.get("path"))
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -1904,6 +1935,7 @@ def create_app(
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
     gateway_wake_service: GatewayWakeService | None = None,
+    msteams_webhook_jwt_validator: MSTeamsWebhookJwtValidator | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
@@ -4407,6 +4439,69 @@ def create_app(
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    msteams_webhook_config_snapshot = active_gateway_config_service.build_snapshot()
+    active_msteams_webhook_jwt_validator = (
+        msteams_webhook_jwt_validator
+        if msteams_webhook_jwt_validator is not None
+        else build_msteams_webhook_jwt_validator_from_config(msteams_webhook_config_snapshot)
+    )
+
+    async def dispatch_msteams_messages(request: Request) -> JSONResponse:
+        authorization = str(request.headers.get("authorization") or "")
+        if not authorization.startswith("Bearer "):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        if active_msteams_webhook_jwt_validator is not None:
+            try:
+                valid_token = await active_msteams_webhook_jwt_validator.validate(authorization)
+            except Exception:
+                logger.debug("Microsoft Teams webhook JWT validation failed", exc_info=True)
+                valid_token = False
+            if not valid_token:
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        body = await request.body()
+        if len(body) > MSTEAMS_WEBHOOK_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        try:
+            activity = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+        if not isinstance(activity, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Microsoft Teams activity must be an object.",
+            )
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        result = await active_ops_mesh_service.handle_msteams_inbound_activity(
+            cast(Mapping[str, Any], activity),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
+
+    @fastapi_app.post("/api/messages")
+    async def handle_msteams_messages(request: Request) -> JSONResponse:
+        return await dispatch_msteams_messages(request)
+
+    configured_msteams_webhook_path = _msteams_configured_webhook_path(
+        msteams_webhook_config_snapshot
+    )
+    if (
+        configured_msteams_webhook_path is not None
+        and configured_msteams_webhook_path != "/api/messages"
+    ):
+
+        async def handle_configured_msteams_messages(request: Request) -> JSONResponse:
+            return await dispatch_msteams_messages(request)
+
+        fastapi_app.add_api_route(
+            configured_msteams_webhook_path,
+            handle_configured_msteams_messages,
+            methods=["POST"],
+            include_in_schema=False,
+        )
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

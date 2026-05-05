@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.1% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~66.5% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10774,6 +10774,270 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
   in `5c54430c`.
+
+- Microsoft Teams SSO group sender allowlist authorization now mirrors
+  OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `src/security/dm-policy-shared.ts` group sender gate: after a non-DM Teams
+  sign-in invoke passes the route allowlist, OpenZues evaluates
+  `groupPolicy` plus `groupAllowFrom`/`allowFrom` before SSO dispatch. Blocked
+  group senders still receive the Bot Framework `invokeResponse` status 200,
+  return safe blocked metadata, skip Bot Framework User Token service calls,
+  avoid delegated-token persistence, and do not leak verify-state magic codes.
+  This closes `OZ-PROV-001AR`; repo-wide parity is now estimated at ~65.2%.
+  Remaining Microsoft Teams SSO breadth is delegated-token consumers,
+  feedback reflection, full Bot Framework HTTP inbound wiring, richer inbound
+  media staging, and member lifecycle handling.
+- Verified the Microsoft Teams SSO group sender authorization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_msteams_signin_verify_for_group_sender_allowlist -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`20 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `a203f34e`.
+
+- Microsoft Teams Bot Framework webhook wiring now has the first native
+  FastAPI slice from OpenClaw's `extensions/msteams/src/monitor.ts`: OpenZues
+  exposes the standard `/api/messages` path, rejects requests without a
+  `Bearer` authorization header before JSON body parsing, enforces the
+  1 MiB Teams webhook body limit, accepts activity JSON, and dispatches valid
+  activities through `OpsMeshService.handle_msteams_inbound_activity`. This
+  closes `OZ-PROV-001AS`; repo-wide parity is now estimated at ~65.3%.
+  Later slices closed the configured webhook path and JWT validation gaps;
+  remaining Microsoft Teams HTTP breadth is richer inbound media staging,
+  feedback reflection, and member lifecycle handling.
+- Verified the Microsoft Teams webhook slice with
+  `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_requires_bearer_before_json_body tests\test_app.py::test_msteams_messages_endpoint_dispatches_signin_invoke -q`
+  (`2 passed`), adjacent app proof
+  `python -m pytest tests\test_app.py -q -k "msteams_messages_endpoint or gateway_channels_endpoint_classifies_msteams_native_route or notification_route_operator_form_offers_msteams_native_routes"`
+  (`4 passed, 209 deselected`), `ruff check src\openzues\app.py
+  tests\test_app.py`, and `mypy src\openzues\app.py`. Checkpointed in
+  `b162bc17`.
+
+- Microsoft Teams Bot Framework webhook path aliasing now mirrors OpenClaw's
+  configured-path plus fallback registration from
+  `extensions/msteams/src/monitor.ts`: OpenZues reads
+  `channels.msteams.webhook.path` from the native control UI config at app
+  startup, registers that POST path when it differs from `/api/messages`, and
+  routes both the configured path and the standard fallback through the same
+  bearer pre-gate, 1 MiB body guard, JSON activity decode, and Ops Mesh
+  inbound handler. This closes `OZ-PROV-001AT`; repo-wide parity is now
+  estimated at ~65.4%. Later JWT validation is checkpointed separately;
+  remaining Microsoft Teams HTTP breadth is richer inbound media staging,
+  feedback reflection, and member lifecycle handling.
+- Verified the Microsoft Teams configured webhook-path slice with
+  `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_uses_configured_path_and_fallback -q`
+  (`1 passed`), adjacent app proof
+  `python -m pytest tests\test_app.py -q -k "msteams_messages_endpoint or gateway_channels_endpoint_classifies_msteams_native_route or notification_route_operator_form_offers_msteams_native_routes"`
+  (`5 passed, 209 deselected`), `ruff check src\openzues\app.py
+  tests\test_app.py`, and `mypy src\openzues\app.py`. Checkpointed in
+  `91e854a0`.
+
+- Microsoft Teams Bot Framework webhook JWT validation now mirrors
+  OpenClaw's `createBotFrameworkJwtValidator` path from
+  `extensions/msteams/src/sdk.ts` and `monitor.ts`: when native Teams app
+  credentials are configured, OpenZues validates the `Bearer` token before
+  reading the request body, resolves issuer-specific JWKS for Bot Framework,
+  Entra v2, and tenant-scoped STS issuers, verifies RS256 signatures, accepts
+  audiences `appId`, `api://appId`, and `https://api.botframework.com`, and
+  requires `appid`/`azp` to bind global-audience tokens to the configured app.
+  This closes `OZ-PROV-001AU`; repo-wide parity is now estimated at ~65.5%.
+  Remaining Microsoft Teams HTTP breadth is richer inbound media staging,
+  feedback reflection, and member lifecycle handling.
+- Verified the Microsoft Teams webhook JWT slice with
+  `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_rejects_failed_jwt_before_json_body -q`
+  (`1 passed`), `python -m pytest tests\test_msteams_webhook_auth.py -q`
+  (`3 passed`), adjacent app proof
+  `python -m pytest tests\test_app.py -q -k "msteams_messages_endpoint or gateway_channels_endpoint_classifies_msteams_native_route or notification_route_operator_form_offers_msteams_native_routes"`
+  (`6 passed, 209 deselected`), `ruff check src\openzues\app.py
+  src\openzues\services\msteams_webhook_auth.py tests\test_app.py
+  tests\test_msteams_webhook_auth.py`, and `mypy src\openzues\app.py
+  src\openzues\services\msteams_webhook_auth.py`. Checkpointed in
+  `b3f911d2`.
+
+- Microsoft Teams attachment-only inbound messages now mirror OpenClaw's
+  `buildMSTeamsAttachmentPlaceholder` fallback from
+  `extensions/msteams/src/attachments/html.ts` and
+  `monitor-handler/message-handler.ts`: when a Teams message has no text or
+  HTML text fallback but carries attachments, OpenZues routes
+  `<media:image>` / `<media:document>` placeholders into the session-backed
+  inbound path instead of skipping the activity as textless. Image detection
+  follows OpenClaw's MIME, filename, and Teams file-download metadata checks.
+  This closes `OZ-PROV-001AV`; repo-wide parity is now estimated at ~65.6%.
+  Remaining Microsoft Teams HTTP breadth is downloadable media staging,
+  feedback reflection, and member lifecycle handling.
+- Verified the Microsoft Teams attachment placeholder slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback"`
+  (`5 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `86f9fa74`.
+
+- Microsoft Teams personal welcome-card lifecycle now mirrors OpenClaw's
+  `onMembersAdded` path from `extensions/msteams/src/monitor-handler.ts` and
+  `welcome-card.ts`: when the bot is added to a personal Teams conversation,
+  OpenZues resolves native Teams app credentials from config, obtains a Bot
+  Framework bearer, and posts the Adaptive Card 1.5 welcome message with
+  configured prompt starters through the conversation activities endpoint.
+  This closes `OZ-PROV-001AW`; repo-wide parity was then estimated at ~65.7%.
+  At that checkpoint, remaining Microsoft Teams lifecycle breadth was group welcome proof,
+  downloadable inbound media staging, and feedback reflection follow-up.
+- Verified the Microsoft Teams personal welcome-card slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome"`
+  (`6 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `72b1e637`.
+
+- Microsoft Teams group welcome lifecycle now has focused OpenClaw parity proof
+  for the non-personal `onMembersAdded` branch from
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/welcome-card.ts`: when `groupWelcomeCard` is enabled
+  and the bot is added to a channel/group conversation, OpenZues posts the
+  `buildGroupWelcomeText`-shaped Bot Framework activity through the same native
+  conversation activities endpoint and returns delivery metadata. This closes
+  `OZ-PROV-001AX`; repo-wide parity is now estimated at ~65.8%. Remaining
+  Microsoft Teams lifecycle breadth is downloadable inbound media staging and
+  feedback reflection follow-up.
+- Verified the Microsoft Teams group welcome lifecycle slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_sends_msteams_group_welcome_text_on_bot_added -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback"`
+  (`7 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Proof checkpointed in `299a8655`.
+
+- Microsoft Teams feedback-disabled invoke handling now mirrors the
+  `msteamsCfg?.feedbackEnabled === false` branch in OpenClaw
+  `extensions/msteams/src/monitor-handler.ts`: feedback invokes are still
+  consumed and projected as successful gateway results, but OpenZues skips
+  session transcript persistence when configured feedback handling is disabled.
+  This closes `OZ-PROV-001AY`; repo-wide parity is now estimated at ~65.9%.
+  Remaining Microsoft Teams feedback breadth is background reflection learning
+  and optional personal follow-up delivery.
+- Verified the Microsoft Teams feedback-disabled slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_consumes_msteams_feedback_invoke_when_disabled -q`
+  (`1 passed`), adjacent Teams invoke/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_feedback or msteams_signin or msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card"`
+  (`15 passed, 313 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `34346a60`.
+
+- Microsoft Teams reaction writes now consume stored SSO delegated Graph tokens
+  before falling back to app-only Graph credentials, matching OpenClaw's
+  `resolveGraphToken(..., { preferDelegated: true })` posture from
+  `extensions/msteams/src/graph.ts` and `graph-messages.ts`. Native `react` /
+  `unreact` dispatch looks up the configured SSO `connectionName` and
+  requester sender id in the persisted `(connectionName, userId)` token store,
+  uses that bearer for Graph beta `setReaction` / `unsetReaction`, and avoids
+  fetching an app-only token when a delegated token is available. This closes
+  `OZ-PROV-001AZ`; repo-wide parity is now estimated at ~66.0%.
+- Verified the Microsoft Teams delegated-token reaction slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_msteams_react_prefers_stored_delegated_token -q`
+  (`1 passed`), adjacent Teams SSO/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react or msteams_reactions or msteams_signin or msteams_user_reference_route or msteams_native_route or msteams_feedback"`
+  (`17 passed, 312 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `507c90ad`.
+
+- Microsoft Teams native readiness probes now project delegated-auth posture
+  from persisted SSO tokens when `channels.msteams.sso` is configured, matching
+  the `delegatedAuth` branch in OpenClaw `extensions/msteams/src/probe.ts`.
+  OpenZues lists the newest token for the configured `connectionName`, decodes
+  scopes and user principal metadata, reports token expiry without exposing the
+  bearer, and preserves the existing app/bot Graph probe result. This closes
+  `OZ-PROV-001BA`; repo-wide parity is now estimated at ~66.1%.
+- Verified the Microsoft Teams delegated-auth probe slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_probe_msteams_reports_delegated_auth_status -q`
+  (`1 passed`), adjacent Teams probe/SSO/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_probe or probe_msteams or msteams_signin or msteams_react or msteams_reactions"`
+  (`11 passed, 319 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\database.py`.
+  Checkpointed in `2f4e2496`.
+- Microsoft Teams inbound downloadable attachment URL metadata now preserves
+  OpenClaw attachment download candidates from
+  `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/shared.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: Teams message
+  attachments with `content.downloadUrl` or `contentUrl` still route
+  placeholder text to the session, and the native inbound result includes a
+  deduped `mediaUrls` array so the next download/staging seam can consume the
+  same candidate set. This closes `OZ-PROV-001BB`; repo-wide parity is now
+  estimated at ~66.2%. Remaining Teams media breadth is actual
+  download/store/stage into the session media workspace, feedback reflection
+  learning/follow-up, and delegated auth setup breadth.
+- Verified the Microsoft Teams inbound attachment URL metadata slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_preserves_msteams_downloadable_attachment_urls -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome or msteams_group_welcome"`
+  (`8 passed, 323 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `2205ca86`.
+- Microsoft Teams inbound downloadable media staging now closes the next
+  OpenClaw native media path from
+  `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/remote-media.ts`,
+  `extensions/msteams/src/attachments/payload.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: OpenZues exposes
+  a fakeable `GatewayMSTeamsInboundMediaFetchService`, production-gates default
+  fetches to app-owned storage/config, enforces the Teams media host allowlist
+  and 8 MiB default limit, rewrites SharePoint/OneDrive shared `contentUrl`
+  links through Graph shares while leaving Teams `downloadUrl` values direct,
+  saves downloaded bytes under the inbound gateway attachment store, and
+  projects OpenClaw-style `MediaUrl`, `MediaUrls`, `MediaPath`, `MediaPaths`,
+  and `MediaTypes` metadata alongside the existing session placeholder
+  delivery. This closes `OZ-PROV-001BC`; repo-wide parity is now estimated at
+  ~66.3%. Remaining Teams breadth is feedback reflection learning/follow-up,
+  delegated auth setup breadth, richer Bot Framework/Graph auth fallback depth,
+  and broader channel/provider queue heads.
+- Verified the Microsoft Teams inbound media staging slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_stages_msteams_downloadable_attachments -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome or msteams_group_welcome"`
+  (`8 passed, 324 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `eda4db73`.
+- Microsoft Teams feedback reflection now mirrors OpenClaw
+  `extensions/msteams/src/feedback-reflection.ts`,
+  `extensions/msteams/src/feedback-reflection-store.ts`, and
+  `extensions/msteams/src/feedback-reflection-prompt.ts`: negative Teams
+  feedback builds the native reflection prompt, calls a fakeable reflection
+  service, parses JSON, fenced JSON, or plain-text reflection responses, stores
+  a bounded max-10 learning file with Windows-safe session naming, respects the
+  upstream cooldown, and can send a personal-chat follow-up through the native
+  outbound runtime. This closes `OZ-PROV-001BD`; repo-wide parity is now
+  estimated at ~66.4%. Remaining Teams breadth is delegated auth setup
+  breadth, richer Bot Framework/Graph auth fallback depth, and broader
+  channel/provider queue heads.
+- Verified the Microsoft Teams feedback reflection slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_runs_msteams_feedback_reflection_learning_followup -q`
+  (`1 passed`), adjacent Teams invoke/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_feedback or msteams_signin or msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card"`
+  (`16 passed, 317 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `45c4ca7a`.
+- Microsoft Teams inbound media auth fallback now mirrors OpenClaw
+  `extensions/msteams/src/attachments/download.ts` and
+  `extensions/msteams/src/attachments/shared.ts`: the production default media
+  fetcher first tries the unauthenticated download, then retries 401/403
+  responses with route-backed Graph or Bot Framework bearer credentials when
+  the target URL is in the auth allowlist. Graph and SharePoint URLs prefer
+  Graph scope first, while Bot Framework-style URLs prefer Bot Framework
+  scope first. This closes `OZ-PROV-001BE`; repo-wide parity is now estimated
+  at ~66.5%. Remaining Teams breadth is delegated auth setup breadth and
+  broader channel/provider queue heads.
+- Verified the Microsoft Teams inbound media auth-fallback slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_stages_msteams_media_with_auth_fallback -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome or msteams_group_welcome"`
+  (`9 passed, 325 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `5460ebf5`.
 
 ## References
 

@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.1% overall, with a reasonable
-  band of ~50-66%.
+- Repo-wide OpenClaw parity is estimated at ~66.5% overall, with a reasonable
+  band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -6062,12 +6062,145 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~65.1%. Verified with focused runtime pytest, adjacent Teams
   send/action/provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `5c54430c`.
+- Closed the Microsoft Teams SSO group sender allowlist authorization/drop
+  seam from OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `src/security/dm-policy-shared.ts`: after route allowlist approval, non-DM
+  `signin/verifyState` invokes now evaluate `groupPolicy` and
+  `groupAllowFrom`/`allowFrom` before SSO dispatch, still ACK Teams with
+  `invokeResponse` status 200 on blocked senders, return safe blocked
+  metadata, skip Bot Framework User Token service calls, avoid delegated token
+  persistence, and do not leak the magic-code state. Repo-wide parity is now
+  estimated at ~65.2%. Verified with focused runtime pytest, adjacent Teams
+  send/action/provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `a203f34e`.
+- Closed the first Microsoft Teams Bot Framework webhook wiring seam from
+  OpenClaw `extensions/msteams/src/monitor.ts`: OpenZues now exposes
+  `/api/messages`, rejects requests without a `Bearer` authorization header
+  before JSON parsing, enforces the 1 MiB Teams webhook body limit, accepts
+  activity JSON, and dispatches valid activities into the native Ops Mesh
+  inbound handler. Repo-wide parity is now estimated at ~65.3%. Verified with
+  focused app pytest, adjacent app proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `b162bc17`.
+- Closed the Microsoft Teams Bot Framework configured webhook-path aliasing
+  seam from OpenClaw `extensions/msteams/src/monitor.ts`: OpenZues now reads
+  `channels.msteams.webhook.path` from the native control UI config at app
+  startup, registers that configured POST path when it differs from
+  `/api/messages`, and keeps `/api/messages` as the standard Bot Framework
+  fallback. Both paths share the same bearer pre-gate, body limit, JSON
+  activity decode, safe SSO result projection, and Ops Mesh inbound dispatch.
+  Repo-wide parity is now estimated at ~65.4%. Verified with focused app
+  pytest, adjacent app proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `91e854a0`.
+- Closed the Microsoft Teams Bot Framework JWT validation seam from OpenClaw
+  `extensions/msteams/src/sdk.ts` and `extensions/msteams/src/monitor.ts`:
+  configured Teams webhooks now validate the `Bearer` token before body
+  parsing, resolve issuer-specific JWKS for Bot Framework, Entra v2, and
+  tenant-scoped STS issuers, verify RS256 signatures, enforce the OpenClaw
+  audience list, and require `appid`/`azp` binding for
+  `https://api.botframework.com` audience tokens. Repo-wide parity is now
+  estimated at ~65.5%. Verified with focused app/JWT pytests, adjacent app
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `b3f911d2`.
+- Closed the Microsoft Teams attachment-only inbound placeholder seam from
+  OpenClaw `extensions/msteams/src/attachments/html.ts` and
+  `extensions/msteams/src/monitor-handler/message-handler.ts`: attachment-only
+  Teams messages now route `<media:image>` / `<media:document>` placeholders
+  through the native session delivery path instead of being skipped as
+  textless, with image detection based on MIME type, filename extension, and
+  Teams file-download metadata. Repo-wide parity is now estimated at ~65.6%.
+  Verified with focused runtime pytest, adjacent Teams inbound proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `86f9fa74`.
+- Closed the Microsoft Teams personal welcome-card lifecycle seam from
+  OpenClaw `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/welcome-card.ts`: personal `conversationUpdate`
+  member-add events for the bot now resolve Teams app credentials, fetch a Bot
+  Framework bearer, and post the Adaptive Card welcome card with configured
+  prompt starters through the conversation activities endpoint. Repo-wide
+  parity is now estimated at ~65.7%. Verified with focused runtime pytest,
+  adjacent Teams inbound proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `72b1e637`.
+- Closed the Microsoft Teams group welcome lifecycle seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/welcome-card.ts`: non-personal `conversationUpdate`
+  member-add events for the bot now have verified `groupWelcomeCard` handling
+  that posts the `buildGroupWelcomeText`-shaped Bot Framework activity through
+  the native conversation activities endpoint and returns delivery metadata.
+  Repo-wide parity is now estimated at ~65.8%. Verified with focused runtime
+  pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; proof
+  checkpointed in `299a8655`.
+- Closed the Microsoft Teams feedback-disabled invoke seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts`: `feedbackEnabled: false` now
+  consumes `message/submitAction` feedback invokes without resolving/writing a
+  session transcript event, while returning explicit disabled delivery metadata
+  for the native gateway result. Repo-wide parity is now estimated at ~65.9%.
+  Verified with focused runtime pytest, adjacent Teams invoke/inbound proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `34346a60`.
+- Closed the Microsoft Teams stored delegated-token consumer seam from
+  OpenClaw `extensions/msteams/src/graph.ts` and
+  `extensions/msteams/src/graph-messages.ts`: native `react` / `unreact`
+  dispatch now prefers persisted SSO delegated Graph tokens keyed by
+  `(connectionName, userId)` for the requester before falling back to app-only
+  Graph token acquisition. Repo-wide parity is now estimated at ~66.0%.
+  Verified with focused runtime pytest, adjacent Teams SSO/action proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `507c90ad`.
+- Closed the Microsoft Teams delegated-auth probe posture seam from OpenClaw
+  `extensions/msteams/src/probe.ts`: native readiness probes now include a
+  safe `delegatedAuth` result when SSO is configured, using the newest
+  persisted token for the configured connection to project scopes, user
+  principal, user id, and expiry without leaking the bearer. Repo-wide parity
+  is now estimated at ~66.1%. Verified with focused runtime pytest, adjacent
+  Teams probe/SSO/action proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `2f4e2496`.
+- Closed the Microsoft Teams inbound attachment URL metadata seam from
+  OpenClaw `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/shared.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: native Teams
+  message activities now preserve deduped `content.downloadUrl` and
+  `contentUrl` candidates on the inbound result as `mediaUrls` while retaining
+  the existing `<media:image>` / `<media:document>` placeholder delivery to the
+  session. This is the staging prerequisite, not the full download/store seam.
+  Repo-wide parity is now estimated at ~66.2%. Verified with focused runtime
+  pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `2205ca86`.
+- Closed the Microsoft Teams inbound media staging seam from OpenClaw
+  `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/remote-media.ts`,
+  `extensions/msteams/src/attachments/payload.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: native Teams
+  message attachments can now be fetched through a fakeable/production-gated
+  media fetch adapter, saved under the inbound gateway attachment store, and
+  projected as OpenClaw-style `MediaUrl`, `MediaUrls`, `MediaPath`,
+  `MediaPaths`, and `MediaTypes` result fields while session delivery keeps
+  the existing media placeholder. The slice preserves Teams `downloadUrl`
+  fetches, rewrites SharePoint/OneDrive shared `contentUrl` links through Graph
+  shares, enforces the default Teams host allowlist, and honors the 8 MiB media
+  limit. Repo-wide parity is now estimated at ~66.3%. Verified with focused
+  runtime pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `eda4db73`.
+- Closed the Microsoft Teams feedback reflection learning/follow-up seam from
+  OpenClaw `extensions/msteams/src/feedback-reflection.ts`,
+  `extensions/msteams/src/feedback-reflection-store.ts`, and
+  `extensions/msteams/src/feedback-reflection-prompt.ts`: negative Teams
+  feedback now builds the native reflection prompt, calls a fakeable
+  reflection service, parses JSON/fenced/plain responses, stores bounded
+  session learnings in a Windows-safe companion file, respects cooldown, and
+  sends personal follow-up messages through the native outbound runtime when
+  the reflection result requests it. Repo-wide parity is now estimated at
+  ~66.4%. Verified with focused runtime pytest, adjacent Teams invoke/inbound
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `45c4ca7a`.
+- Closed the Microsoft Teams inbound media auth-fallback seam from OpenClaw
+  `extensions/msteams/src/attachments/download.ts` and
+  `extensions/msteams/src/attachments/shared.ts`: the production default Teams
+  media fetcher now retries 401/403 attachment downloads with native
+  route-backed bearer auth when the target URL is in the media auth allowlist,
+  preferring Graph scope for Graph/SharePoint URLs and Bot Framework scope for
+  Bot Framework-style URLs. Repo-wide parity is now estimated at ~66.5%.
+  Verified with focused runtime pytest, adjacent Teams inbound proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `5460ebf5`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams SSO
-  group sender allowlist drops, delegated-token consumers, full Bot Framework
-  HTTP inbound wiring, feedback reflection follow-up generation,
-  welcome/member lifecycle handling, richer inbound media staging, or another
-  source-backed channel/provider route/action adapter.
+  send/poll/replay metadata gap, starting with Microsoft Teams delegated auth
+  setup breadth or another source-backed channel/provider route/action
+  adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

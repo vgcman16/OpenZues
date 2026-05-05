@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~65.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~66.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -214,6 +214,27 @@ may lag behind this tracker.
   readiness output.
   - Status: checkpointed in `50d05198`
 
+- [x] Microsoft Teams delegated-auth probe posture, preserving OpenClaw's
+  safe `delegatedAuth` status projection for configured stored delegated
+  tokens.
+  - Status: checkpointed in `2f4e2496`
+
+- [x] Microsoft Teams inbound attachment URL metadata, preserving OpenClaw
+  downloadable `content.downloadUrl` / `contentUrl` candidates as deduped
+  native inbound `mediaUrls` while session delivery continues to receive the
+  existing media placeholder.
+  - Status: checkpointed in `2205ca86`
+
+- [x] Microsoft Teams inbound media staging, preserving OpenClaw downloadable
+  attachment fetch/store payload projection through native `MediaUrl(s)`,
+  `MediaPath(s)`, and `MediaType(s)` result metadata.
+  - Status: checkpointed in `eda4db73`
+
+- [x] Microsoft Teams inbound media auth fallback, preserving OpenClaw
+  401/403 retry behavior with Graph-first bearer auth for Graph/SharePoint
+  media URLs and Bot Framework bearer fallback for Bot Framework media URLs.
+  - Status: checkpointed in `5460ebf5`
+
 - [x] Microsoft Teams user-reference routing, preserving OpenClaw
   `msteams:user:<aad-id>` session routing, stored personal conversation id
   resolution, and the non-personal DM leakage guard.
@@ -223,6 +244,11 @@ may lag behind this tracker.
   `setReaction` / `unsetReaction`, delegated token posture, legacy reaction
   type normalization, and `remove=true` result projection.
   - Status: checkpointed in `02ae95da`
+
+- [x] Microsoft Teams stored delegated-token reaction writes, preserving
+  OpenClaw's `preferDelegated` Graph token behavior for `react` / `unreact`
+  when a persisted SSO token exists for the requester.
+  - Status: checkpointed in `507c90ad`
 
 - [x] Microsoft Teams threaded replies, preserving OpenClaw Bot Framework
   channel thread routing via `<conversationId>;messageid=<thread-root>` and
@@ -274,6 +300,15 @@ may lag behind this tracker.
   session routing, and durable feedback metadata.
   - Status: checkpointed in `7a545faf`
 
+- [x] Microsoft Teams feedback-disabled invoke handling, preserving OpenClaw's
+  `feedbackEnabled: false` consume-without-transcript-write branch.
+  - Status: checkpointed in `34346a60`
+
+- [x] Microsoft Teams feedback reflection learning/follow-up, preserving
+  OpenClaw negative-feedback reflection prompting, bounded session learning
+  storage, cooldown, and optional personal-chat follow-up delivery.
+  - Status: checkpointed in `45c4ca7a`
+
 - [x] Microsoft Teams SSO no-config invoke acknowledgement, preserving
   OpenClaw's immediate Bot Framework `invokeResponse` for
   `signin/tokenExchange` and `signin/verifyState` while projecting native
@@ -301,6 +336,42 @@ may lag behind this tracker.
   preserving OpenClaw's nested `channels.msteams.teams` team/channel gate
   before configured sign-in token exchange.
   - Status: checkpointed in `5c54430c`
+
+- [x] Microsoft Teams SSO group sender allowlist authorization/drop handling,
+  preserving OpenClaw's non-DM `groupPolicy` plus
+  `groupAllowFrom`/`allowFrom` sender gate before configured sign-in
+  verify-state dispatch.
+  - Status: checkpointed in `a203f34e`
+
+- [x] Microsoft Teams Bot Framework `/api/messages` webhook dispatch,
+  preserving OpenClaw's bearer pre-gate before JSON parsing and native inbound
+  activity routing into Ops Mesh.
+  - Status: checkpointed in `b162bc17`
+
+- [x] Microsoft Teams Bot Framework configured webhook-path fallback,
+  preserving OpenClaw's `channels.msteams.webhook.path` primary route plus
+  standard `/api/messages` fallback registration.
+  - Status: checkpointed in `91e854a0`
+
+- [x] Microsoft Teams Bot Framework webhook JWT validation, preserving
+  OpenClaw's issuer-specific JWKS, RS256 signature, audience, issuer, and
+  app-id binding checks before webhook body parsing.
+  - Status: checkpointed in `b3f911d2`
+
+- [x] Microsoft Teams attachment-only inbound placeholders, preserving
+  OpenClaw's `<media:image>` / `<media:document>` fallback before deeper
+  attachment download staging.
+  - Status: checkpointed in `86f9fa74`
+
+- [x] Microsoft Teams personal welcome-card lifecycle, preserving OpenClaw's
+  bot-added `conversationUpdate` Adaptive Card welcome send with configured
+  prompt starters.
+  - Status: checkpointed in `72b1e637`
+
+- [x] Microsoft Teams group welcome lifecycle, preserving OpenClaw's
+  non-personal bot-added `conversationUpdate` text welcome send when
+  `groupWelcomeCard` is enabled.
+  - Status: checkpointed in `299a8655`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for

@@ -5243,6 +5243,166 @@ def test_gateway_channels_endpoint_classifies_msteams_native_route(tmp_path) -> 
     assert payload["channelDefaultAccountId"]["msteams"] == "default"
 
 
+def test_msteams_messages_endpoint_requires_bearer_before_json_body(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/messages",
+            content="{",
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_msteams_messages_endpoint_dispatches_signin_invoke(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json={
+                "id": "signin-invoke-app-route",
+                "type": "invoke",
+                "name": "signin/tokenExchange",
+                "channelId": "msteams",
+                "from": {
+                    "id": "user-bf",
+                    "aadObjectId": "user-aad",
+                    "name": "User",
+                },
+                "conversation": {
+                    "id": "a:personal-dm-conversation",
+                    "conversationType": "personal",
+                },
+                "value": {
+                    "id": "exchange-flow-app-route",
+                    "connectionName": "GraphConnection",
+                    "token": "exchangeable-token",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "exchange-flow-app-route",
+            "tokenPresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "exchangeable-token" not in response.text
+
+
+def test_msteams_messages_endpoint_uses_configured_path_and_fallback(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    settings_dir = data_dir / "settings"
+    settings_dir.mkdir(parents=True)
+    (settings_dir / "control-ui-config.json").write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "msteams": {
+                        "webhook": {"path": "/api/msteams/custom/messages"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    activity = {
+        "id": "signin-invoke-configured-route",
+        "type": "invoke",
+        "name": "signin/tokenExchange",
+        "channelId": "msteams",
+        "from": {"id": "user-bf", "aadObjectId": "user-aad"},
+        "conversation": {
+            "id": "a:personal-dm-conversation",
+            "conversationType": "personal",
+        },
+        "value": {
+            "id": "exchange-flow-configured-route",
+            "connectionName": "GraphConnection",
+            "token": "exchangeable-token",
+        },
+    }
+
+    with TestClient(create_app(app_settings)) as client:
+        configured = client.post(
+            "/api/msteams/custom/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json=activity,
+        )
+        fallback = client.post(
+            "/api/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json={**activity, "id": "signin-invoke-fallback-route"},
+        )
+
+    assert configured.status_code == 200
+    assert fallback.status_code == 200
+    assert configured.json()["sso"]["exchangeId"] == "exchange-flow-configured-route"
+    assert fallback.json()["sso"]["exchangeId"] == "exchange-flow-configured-route"
+    assert "exchangeable-token" not in configured.text
+    assert "exchangeable-token" not in fallback.text
+
+
+def test_msteams_messages_endpoint_rejects_failed_jwt_before_json_body(tmp_path) -> None:
+    class FakeMSTeamsWebhookJwtValidator:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def validate(self, auth_header: str) -> bool:
+            self.calls.append(auth_header)
+            return False
+
+    validator = FakeMSTeamsWebhookJwtValidator()
+    data_dir = tmp_path / "data"
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+
+    with TestClient(
+        create_app(app_settings, msteams_webhook_jwt_validator=validator)
+    ) as client:
+        response = client.post(
+            "/api/messages",
+            headers={
+                "Authorization": "Bearer invalid-token",
+                "Content-Type": "application/json",
+            },
+            content="{",
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+    assert validator.calls == ["Bearer invalid-token"]
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
     '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
