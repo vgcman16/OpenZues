@@ -19074,6 +19074,58 @@ def test_routes_create_command_accepts_zalo_native_route(tmp_path, monkeypatch) 
     assert routes[0]["conversation_target"]["channel"] == "zalo"
 
 
+def test_routes_create_command_accepts_feishu_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Feishu Native Gateway",
+            "--kind",
+            "feishu",
+            "--target",
+            "https://open.feishu.cn/open-apis",
+            "--conversation-channel",
+            "feishu",
+            "--conversation-account",
+            "feishu-bot",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "feishu:chat:oc_chat_1",
+            "--secret-token",
+            "tenant-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Feishu Native Gateway"
+    assert payload["kind"] == "feishu"
+    assert payload["target"] == "https://open.feishu.cn/open-apis"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "feishu"
+    assert conversation_target["account_id"] == "feishu-bot"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "feishu:chat:oc_chat_1"
+    assert "feishu:chat:oc_chat_1" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "feishu"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "feishu"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

@@ -250,6 +250,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "discord",
     "whatsapp",
     "zalo",
+    "feishu",
     "line",
     "matrix",
 }
@@ -2932,6 +2933,132 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
+FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
+
+
+def _feishu_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Feishu route is missing a tenant access token secret.")
+    return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+
+def _feishu_api_endpoint(
+    target: str | None,
+    path: str,
+    *,
+    query: Mapping[str, object] | None = None,
+) -> str:
+    base_url = str(target or "").strip() or FEISHU_API_BASE_URL
+    stripped_base = base_url.rstrip("/")
+    stripped_path = path.strip("/")
+    if stripped_base.endswith(f"/{stripped_path}"):
+        endpoint = stripped_base
+    else:
+        endpoint = f"{stripped_base}/{stripped_path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Feishu route target must be an http(s) Open API base URL.")
+    if query:
+        separator = "&" if "?" in endpoint else "?"
+        query_string = urlencode({key: str(value) for key, value in query.items()})
+        endpoint = f"{endpoint}{separator}{query_string}"
+    return endpoint
+
+
+def _feishu_strip_provider_prefix(target: str) -> str:
+    return re.sub(r"^(feishu|lark):", "", target.strip(), flags=re.IGNORECASE).strip()
+
+
+def _feishu_target(raw_target: str | None) -> tuple[str, str] | None:
+    target = _feishu_strip_provider_prefix(str(raw_target or ""))
+    if not target:
+        return None
+    lowered = target.lower()
+    for prefix in ("chat:", "group:", "channel:"):
+        if lowered.startswith(prefix):
+            receive_id = target[len(prefix) :].strip()
+            return (receive_id, "chat_id") if receive_id else None
+    if lowered.startswith("open_id:"):
+        receive_id = target[len("open_id:") :].strip()
+        return (receive_id, "open_id") if receive_id else None
+    for prefix in ("user:", "dm:"):
+        if lowered.startswith(prefix):
+            receive_id = target[len(prefix) :].strip()
+            if not receive_id:
+                return None
+            receive_id_type = "open_id" if receive_id.startswith("ou_") else "user_id"
+            return receive_id, receive_id_type
+    if target.startswith("oc_"):
+        return target, "chat_id"
+    if target.startswith("ou_"):
+        return target, "open_id"
+    return target, "user_id"
+
+
+def _feishu_post_content(text: str) -> str:
+    return json.dumps(
+        {
+            "zh_cn": {
+                "content": [
+                    [
+                        {
+                            "tag": "md",
+                            "text": text,
+                        }
+                    ]
+                ]
+            }
+        },
+        separators=(",", ":"),
+    )
+
+
+def _feishu_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    payload = result.get("data")
+    if not isinstance(payload, dict):
+        return None
+    candidate = payload.get("message_id") or payload.get("messageId")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _feishu_chat_from_result(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        payload = result.get("data")
+        if isinstance(payload, dict):
+            candidate = str(
+                payload.get("chat_id")
+                or payload.get("chatId")
+                or payload.get("receive_id")
+                or ""
+            ).strip()
+            if candidate:
+                return candidate
+    return fallback
+
+
+def _feishu_reply_target_unavailable(result: object) -> bool:
+    if not isinstance(result, dict):
+        return False
+    code = result.get("code")
+    if isinstance(code, int) and code in FEISHU_REPLY_FALLBACK_CODES:
+        return True
+    message = str(result.get("msg") or "").strip().lower()
+    return "withdrawn" in message or "not found" in message
+
+
+def _feishu_assert_success(result: object, error_prefix: str) -> None:
+    if not isinstance(result, dict):
+        raise RuntimeError("Feishu API returned a non-JSON response.")
+    if result.get("code") != 0:
+        detail = str(result.get("msg") or f"code {result.get('code')}").strip()
+        raise RuntimeError(f"{error_prefix}: {detail}")
 
 
 def _line_push_endpoint(target: str | None) -> str:
@@ -9719,6 +9846,8 @@ class OpsMeshService:
             return self._post_whatsapp_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
+        if route_kind == "feishu":
+            return self._post_feishu_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -19132,6 +19261,102 @@ class OpsMeshService:
                 raise RuntimeError("Zalo API response did not include a message id.")
             message_id = chunk_message_id
             delivered_chat = _zalo_chat_from_result(result, delivered_chat)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
+
+    def _post_feishu_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Feishu native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        parsed_target = _feishu_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if parsed_target is None:
+            raise RuntimeError("Feishu route is missing a receive target.")
+        receive_id, receive_id_type = parsed_target
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            raise RuntimeError("Feishu native provider route does not support media sends yet.")
+        text = str(event.get("message") or "").strip()
+        if not text:
+            raise RuntimeError("Feishu route is missing message text.")
+        content = _feishu_post_content(text)
+        message_payload: dict[str, object] = {
+            "content": content,
+            "msg_type": "post",
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        bearer_token = _feishu_bearer_token(secret_token)
+        result: object
+        if reply_to_id:
+            result = self._post_json_webhook(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    f"im/v1/messages/{quote(reply_to_id, safe='')}/reply",
+                ),
+                {
+                    **message_payload,
+                    **({"reply_in_thread": True} if thread_id else {}),
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if _feishu_reply_target_unavailable(result):
+                if thread_id:
+                    raise RuntimeError(
+                        "Feishu thread reply failed: reply target is unavailable and "
+                        "cannot safely fall back to a top-level send."
+                    )
+            else:
+                _feishu_assert_success(result, "Feishu reply failed")
+                message_id = _feishu_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Feishu API response did not include a message id.")
+                delivered_chat = _feishu_chat_from_result(result, receive_id)
+                return {
+                    "runtime": "native-provider-backed",
+                    "messageId": message_id,
+                    "chatId": delivered_chat,
+                    "channelId": delivered_chat,
+                    "replyToId": reply_to_id,
+                }
+        result = self._post_json_webhook(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "im/v1/messages",
+                query={"receive_id_type": receive_id_type},
+            ),
+            {
+                "receive_id": receive_id,
+                **message_payload,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        _feishu_assert_success(result, "Feishu send failed")
+        message_id = _feishu_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Feishu API response did not include a message id.")
+        delivered_chat = _feishu_chat_from_result(result, receive_id)
         return {
             "runtime": "native-provider-backed",
             "messageId": message_id,

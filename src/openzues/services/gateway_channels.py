@@ -34,6 +34,11 @@ _CHANNEL_META = (
         "detailLabel": "Zalo",
     },
     {
+        "id": "feishu",
+        "label": "Feishu/Lark",
+        "detailLabel": "Feishu/Lark",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

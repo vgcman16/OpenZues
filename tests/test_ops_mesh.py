@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import re
 import shutil
 from datetime import UTC, datetime, timedelta
@@ -7711,6 +7712,26 @@ def test_notification_route_create_accepts_zalo_native_route_kind() -> None:
     assert route.conversation_target.channel == "zalo"
 
 
+def test_notification_route_create_accepts_feishu_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Feishu Native Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id="feishu:chat:oc_chat_1",
+        ),
+        secret_token="tenant-access-token",
+    )
+
+    assert route.kind == "feishu"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "feishu"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -14747,11 +14768,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
             {
                 "chat_id": "-100123",
                 "photo": "https://example.com/telegram.png",
-                "caption": (
-                    "Ship native Telegram parity.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/telegram.png"
-                ),
+                "caption": "Ship native Telegram parity.",
             },
         )
     ]
@@ -16371,6 +16388,132 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_rou
         "messageId": "zalo-msg-2",
         "chatId": "dm-chat-1",
         "channelId": "dm-chat-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="Feishu **native** parity.",
+        account_id="feishu-bot",
+        idempotency_key="idem-native-feishu-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id=feishu_target,
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-feishu-send",
+        "channel": "feishu",
+        "messageId": "om_feishu_1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "feishu",
+            "target": feishu_target,
+            "accountId": "feishu-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload["receive_id"] == "oc_chat_1"
+    assert payload["msg_type"] == "post"
+    assert json.loads(str(payload["content"])) == {
+        "zh_cn": {
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": "Feishu **native** parity.",
+                    }
+                ]
+            ]
+        }
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
     }
 
 
