@@ -24274,6 +24274,342 @@ function summarizeMapping(label, mapping, unresolved, runtime) {
   }
 }
 
+const DM_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["allowFrom"]],
+  writePath: ["allowFrom"],
+};
+const GROUP_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["groupAllowFrom"]],
+  writePath: ["groupAllowFrom"],
+};
+const LEGACY_DM_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["allowFrom"], ["dm", "allowFrom"]],
+  writePath: ["allowFrom"],
+  cleanupPaths: [["dm", "allowFrom"]],
+};
+
+function resolveDmGroupAllowlistConfigPaths(scope) {
+  return scope === "dm" ? DM_ALLOWLIST_CONFIG_PATHS : GROUP_ALLOWLIST_CONFIG_PATHS;
+}
+
+function resolveLegacyDmAllowlistConfigPaths(scope) {
+  return scope === "dm" ? LEGACY_DM_ALLOWLIST_CONFIG_PATHS : null;
+}
+
+function readConfiguredAllowlistEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map(String).filter(Boolean);
+}
+
+function collectAllowlistOverridesFromRecord(params) {
+  const overrides = [];
+  for (const [key, value] of Object.entries(params.record || {})) {
+    if (!value) {
+      continue;
+    }
+    const entries = readConfiguredAllowlistEntries(params.resolveEntries(value));
+    if (entries.length === 0) {
+      continue;
+    }
+    overrides.push({ label: params.label(key, value), entries });
+  }
+  return overrides;
+}
+
+function collectNestedAllowlistOverridesFromRecord(params) {
+  const overrides = [];
+  for (const [outerKey, outerValue] of Object.entries(params.record || {})) {
+    if (!outerValue) {
+      continue;
+    }
+    const outerEntries = readConfiguredAllowlistEntries(
+      params.resolveOuterEntries(outerValue),
+    );
+    if (outerEntries.length > 0) {
+      overrides.push({
+        label: params.outerLabel(outerKey, outerValue),
+        entries: outerEntries,
+      });
+    }
+    overrides.push(
+      ...collectAllowlistOverridesFromRecord({
+        record: params.resolveChildren(outerValue),
+        label: (innerKey, innerValue) =>
+          params.innerLabel(outerKey, innerKey, innerValue),
+        resolveEntries: params.resolveInnerEntries,
+      }),
+    );
+  }
+  return overrides;
+}
+
+function createFlatAllowlistOverrideResolver(params) {
+  return (account) =>
+    collectAllowlistOverridesFromRecord({
+      record: params.resolveRecord(account),
+      label: params.label,
+      resolveEntries: params.resolveEntries,
+    });
+}
+
+function createNestedAllowlistOverrideResolver(params) {
+  return (account) =>
+    collectNestedAllowlistOverridesFromRecord({
+      record: params.resolveRecord(account),
+      outerLabel: params.outerLabel,
+      resolveOuterEntries: params.resolveOuterEntries,
+      resolveChildren: params.resolveChildren,
+      innerLabel: params.innerLabel,
+      resolveInnerEntries: params.resolveInnerEntries,
+    });
+}
+
+function createAccountScopedAllowlistNameResolver(params) {
+  return async ({ cfg, accountId, entries }) => {
+    const account = params.resolveAccount({ cfg, accountId });
+    const token = String(params.resolveToken(account) || "").trim();
+    if (!token) {
+      return [];
+    }
+    return await params.resolveNames({ token, entries });
+  };
+}
+
+function isBlockedObjectKey(value) {
+  return ROUTING_BLOCKED_OBJECT_KEYS.has(String(value || ""));
+}
+
+function resolveAccountScopedWriteTarget(parsed, channelId, accountId) {
+  const channels = parsed.channels && typeof parsed.channels === "object" ? parsed.channels : {};
+  parsed.channels = channels;
+  const channel = channels[channelId] && typeof channels[channelId] === "object"
+    ? channels[channelId]
+    : {};
+  channels[channelId] = channel;
+  const normalizedAccountId = normalizeAccountId(accountId);
+  if (isBlockedObjectKey(normalizedAccountId)) {
+    return {
+      target: channel,
+      pathPrefix: `channels.${channelId}`,
+      writeTarget: { kind: "channel", scope: { channelId } },
+    };
+  }
+  const hasAccounts = Boolean(channel.accounts && typeof channel.accounts === "object");
+  const useAccount = normalizedAccountId !== DEFAULT_ACCOUNT_ID || hasAccounts;
+  if (!useAccount) {
+    return {
+      target: channel,
+      pathPrefix: `channels.${channelId}`,
+      writeTarget: { kind: "channel", scope: { channelId } },
+    };
+  }
+  const accounts = channel.accounts && typeof channel.accounts === "object" ? channel.accounts : {};
+  channel.accounts = accounts;
+  const existingAccount = Object.prototype.hasOwnProperty.call(accounts, normalizedAccountId)
+    ? accounts[normalizedAccountId]
+    : undefined;
+  if (!existingAccount || typeof existingAccount !== "object") {
+    accounts[normalizedAccountId] = {};
+  }
+  const account = accounts[normalizedAccountId];
+  return {
+    target: account,
+    pathPrefix: `channels.${channelId}.accounts.${normalizedAccountId}`,
+    writeTarget: {
+      kind: "account",
+      scope: { channelId, accountId: normalizedAccountId },
+    },
+  };
+}
+
+function getNestedValue(root, path) {
+  let current = root;
+  for (const key of path) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function ensureNestedObject(root, path) {
+  let current = root;
+  for (const key of path) {
+    const existing = current[key];
+    if (!existing || typeof existing !== "object") {
+      current[key] = {};
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function setNestedValue(root, path, value) {
+  if (path.length === 0) {
+    return;
+  }
+  if (path.length === 1) {
+    root[path[0]] = value;
+    return;
+  }
+  const parent = ensureNestedObject(root, path.slice(0, -1));
+  parent[path[path.length - 1]] = value;
+}
+
+function deleteNestedValue(root, path) {
+  if (path.length === 0) {
+    return;
+  }
+  if (path.length === 1) {
+    delete root[path[0]];
+    return;
+  }
+  const parent = getNestedValue(root, path.slice(0, -1));
+  if (!parent || typeof parent !== "object") {
+    return;
+  }
+  delete parent[path[path.length - 1]];
+}
+
+function applyAccountScopedAllowlistConfigEdit(params) {
+  const resolvedTarget = resolveAccountScopedWriteTarget(
+    params.parsedConfig,
+    params.channelId,
+    params.accountId,
+  );
+  const existing = [];
+  for (const path of params.paths.readPaths) {
+    const existingRaw = getNestedValue(resolvedTarget.target, path);
+    if (!Array.isArray(existingRaw)) {
+      continue;
+    }
+    for (const entry of existingRaw) {
+      const value = String(entry).trim();
+      if (!value || existing.includes(value)) {
+        continue;
+      }
+      existing.push(value);
+    }
+  }
+
+  const normalizedEntry = params.normalize([params.entry]);
+  if (normalizedEntry.length === 0) {
+    return { kind: "invalid-entry" };
+  }
+
+  const existingNormalized = params.normalize(existing);
+  const shouldMatch = (value) => normalizedEntry.includes(value);
+  let changed = false;
+  let next = existing;
+  const configHasEntry = existingNormalized.some((value) => shouldMatch(value));
+  if (params.action === "add") {
+    if (!configHasEntry) {
+      next = [...existing, String(params.entry || "").trim()];
+      changed = true;
+    }
+  } else {
+    const keep = [];
+    for (const entry of existing) {
+      const normalized = params.normalize([entry]);
+      if (normalized.some((value) => shouldMatch(value))) {
+        changed = true;
+        continue;
+      }
+      keep.push(entry);
+    }
+    next = keep;
+  }
+
+  if (changed) {
+    if (next.length === 0) {
+      deleteNestedValue(resolvedTarget.target, params.paths.writePath);
+    } else {
+      setNestedValue(resolvedTarget.target, params.paths.writePath, next);
+    }
+    for (const path of params.paths.cleanupPaths || []) {
+      deleteNestedValue(resolvedTarget.target, path);
+    }
+  }
+
+  return {
+    kind: "ok",
+    changed,
+    pathLabel: `${resolvedTarget.pathPrefix}.${params.paths.writePath.join(".")}`,
+    writeTarget: resolvedTarget.writeTarget,
+  };
+}
+
+function buildAccountScopedAllowlistConfigEditor(params) {
+  return ({ cfg, parsedConfig, accountId, scope, action, entry }) => {
+    const paths = params.resolvePaths(scope);
+    if (!paths) {
+      return null;
+    }
+    return applyAccountScopedAllowlistConfigEdit({
+      parsedConfig,
+      channelId: params.channelId,
+      accountId,
+      action,
+      entry,
+      normalize: (values) => params.normalize({ cfg, accountId, values }),
+      paths,
+    });
+  };
+}
+
+function buildAccountAllowlistAdapter(params) {
+  return {
+    supportsScope: params.supportsScope,
+    readConfig: ({ cfg, accountId }) =>
+      params.readConfig(params.resolveAccount({ cfg, accountId }), { cfg, accountId }),
+    applyConfigEdit: buildAccountScopedAllowlistConfigEditor({
+      channelId: params.channelId,
+      normalize: params.normalize,
+      resolvePaths: params.resolvePaths,
+    }),
+  };
+}
+
+function buildDmGroupAccountAllowlistAdapter(params) {
+  return buildAccountAllowlistAdapter({
+    channelId: params.channelId,
+    resolveAccount: params.resolveAccount,
+    normalize: params.normalize,
+    supportsScope: ({ scope }) => scope === "dm" || scope === "group" || scope === "all",
+    resolvePaths: resolveDmGroupAllowlistConfigPaths,
+    readConfig: (account, context) => ({
+      dmAllowFrom: readConfiguredAllowlistEntries(params.resolveDmAllowFrom(account, context)),
+      groupAllowFrom: readConfiguredAllowlistEntries(params.resolveGroupAllowFrom(account)),
+      ...(params.resolveDmPolicy ? { dmPolicy: params.resolveDmPolicy(account) ?? undefined } : {}),
+      ...(params.resolveGroupPolicy
+        ? { groupPolicy: params.resolveGroupPolicy(account) ?? undefined }
+        : {}),
+      ...(params.resolveGroupOverrides
+        ? { groupOverrides: params.resolveGroupOverrides(account) }
+        : {}),
+    }),
+  });
+}
+
+function buildLegacyDmAccountAllowlistAdapter(params) {
+  return buildAccountAllowlistAdapter({
+    channelId: params.channelId,
+    resolveAccount: params.resolveAccount,
+    normalize: params.normalize,
+    supportsScope: ({ scope }) => scope === "dm",
+    resolvePaths: resolveLegacyDmAllowlistConfigPaths,
+    readConfig: (account, context) => ({
+      dmAllowFrom: readConfiguredAllowlistEntries(params.resolveDmAllowFrom(account, context)),
+      ...(params.resolveGroupPolicy
+        ? { groupPolicy: params.resolveGroupPolicy(account) ?? undefined }
+        : {}),
+      ...(params.resolveGroupOverrides
+        ? { groupOverrides: params.resolveGroupOverrides(account) }
+        : {}),
+    }),
+  });
+}
+
 const ACCESS_GROUP_ALLOW_FROM_PREFIX = "accessGroup:";
 
 function parseAccessGroupAllowFromEntry(entry) {
@@ -26052,6 +26388,20 @@ const allowFromRuntime = {
   summarizeMapping,
 };
 
+const allowlistConfigEditRuntime = {
+  buildAccountScopedAllowlistConfigEditor,
+  buildDmGroupAccountAllowlistAdapter,
+  buildLegacyDmAccountAllowlistAdapter,
+  collectAllowlistOverridesFromRecord,
+  collectNestedAllowlistOverridesFromRecord,
+  createAccountScopedAllowlistNameResolver,
+  createFlatAllowlistOverrideResolver,
+  createNestedAllowlistOverrideResolver,
+  readConfiguredAllowlistEntries,
+  resolveDmGroupAllowlistConfigPaths,
+  resolveLegacyDmAllowlistConfigPaths,
+};
+
 const accessGroupsRuntime = {
   ACCESS_GROUP_ALLOW_FROM_PREFIX,
   expandAllowFromWithAccessGroups,
@@ -26395,6 +26745,7 @@ const genericSdk = new Proxy(
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
     ...allowFromRuntime,
+    ...allowlistConfigEditRuntime,
     ...accessGroupsRuntime,
     ...directDmRuntime,
     ...channelSendResultRuntime,
@@ -26818,6 +27169,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/allow-from"
   ) {
     return allowFromRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/allowlist-config-edit" ||
+    request === "@openclaw/plugin-sdk/allowlist-config-edit"
+  ) {
+    return allowlistConfigEditRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/access-groups" ||

@@ -9821,6 +9821,382 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_allowlist_config_edit_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-allowlist-config-edit.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildDmGroupAccountAllowlistAdapter,
+  buildLegacyDmAccountAllowlistAdapter,
+  collectAllowlistOverridesFromRecord,
+  collectNestedAllowlistOverridesFromRecord,
+  createAccountScopedAllowlistNameResolver,
+  createFlatAllowlistOverrideResolver,
+  createNestedAllowlistOverrideResolver,
+  readConfiguredAllowlistEntries,
+  resolveDmGroupAllowlistConfigPaths,
+  resolveLegacyDmAllowlistConfigPaths
+} = require("openclaw/plugin-sdk/allowlist-config-edit");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.allowlist_config_edit",
+      description: "Use OpenClaw allowlist config edit SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const flatOverrides = collectAllowlistOverridesFromRecord({
+          record: {
+            room1: { users: ["a", "b"] },
+            room2: { users: [] },
+            room3: null
+          },
+          label: (key) => key,
+          resolveEntries: (value) => value.users
+        });
+        const nestedOverrides = collectNestedAllowlistOverridesFromRecord({
+          record: {
+            guild1: {
+              users: ["owner"],
+              channels: {
+                chan1: { users: ["member"] }
+              }
+            }
+          },
+          outerLabel: (key) => `guild ${key}`,
+          resolveOuterEntries: (value) => value.users,
+          resolveChildren: (value) => value.channels,
+          innerLabel: (outerKey, innerKey) => `guild ${outerKey} / channel ${innerKey}`,
+          resolveInnerEntries: (value) => value.users
+        });
+        const flatResolver = createFlatAllowlistOverrideResolver({
+          resolveRecord: (account) => account.channels,
+          label: (key) => key,
+          resolveEntries: (value) => value.users
+        });
+        const nestedResolver = createNestedAllowlistOverrideResolver({
+          resolveRecord: (account) => account.groups,
+          outerLabel: (groupId) => groupId,
+          resolveOuterEntries: (group) => group.allowFrom,
+          resolveChildren: (group) => group.topics,
+          innerLabel: (groupId, topicId) => `${groupId} topic ${topicId}`,
+          resolveInnerEntries: (topic) => topic.allowFrom
+        });
+        const noTokenResolver = createAccountScopedAllowlistNameResolver({
+          resolveAccount: () => ({ token: "" }),
+          resolveToken: (account) => account.token,
+          resolveNames: async ({ token, entries }) =>
+            entries.map((entry) => ({ input: entry, resolved: true, name: `${token}:${entry}` }))
+        });
+        const tokenResolver = createAccountScopedAllowlistNameResolver({
+          resolveAccount: () => ({ token: " secret " }),
+          resolveToken: (account) => account.token,
+          resolveNames: async ({ token, entries }) =>
+            entries.map((entry) => ({ input: entry, resolved: true, name: `${token}:${entry}` }))
+        });
+        const dmGroupAdapter = buildDmGroupAccountAllowlistAdapter({
+          channelId: "demo",
+          resolveAccount: ({ accountId }) => ({
+            accountId: accountId || "default",
+            dmAllowFrom: ["dm-owner"],
+            groupAllowFrom: ["group-owner"],
+            dmPolicy: "allowlist",
+            groupPolicy: "allowlist",
+            groupOverrides: [{ label: "room-1", entries: ["member-1"] }]
+          }),
+          normalize: ({ values }) => values.map((entry) => String(entry).trim().toLowerCase()),
+          resolveDmAllowFrom: (account) => account.dmAllowFrom,
+          resolveGroupAllowFrom: (account) => account.groupAllowFrom,
+          resolveDmPolicy: (account) => account.dmPolicy,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          resolveGroupOverrides: (account) => account.groupOverrides
+        });
+        const parsedGroup = {};
+        const groupWrite = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedGroup,
+          accountId: "alt",
+          scope: "group",
+          action: "add",
+          entry: " Member-2 "
+        });
+        const groupDuplicate = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedGroup,
+          accountId: "alt",
+          scope: "group",
+          action: "add",
+          entry: "member-2"
+        });
+        const legacyAdapter = buildLegacyDmAccountAllowlistAdapter({
+          channelId: "demo",
+          resolveAccount: ({ accountId }) => ({
+            accountId: accountId || "default",
+            dmAllowFrom: ["owner"],
+            groupPolicy: "allowlist",
+            groupOverrides: [{ label: "group-1", entries: ["member-1"] }]
+          }),
+          normalize: ({ values }) => values.map((entry) => String(entry).trim().toLowerCase()),
+          resolveDmAllowFrom: (account) => account.dmAllowFrom,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          resolveGroupOverrides: (account) => account.groupOverrides
+        });
+        const parsedLegacy = {
+          channels: {
+            demo: {
+              accounts: {
+                alt: {
+                  dm: { allowFrom: ["owner"] }
+                }
+              }
+            }
+          }
+        };
+        const legacyWrite = legacyAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedLegacy,
+          accountId: "alt",
+          scope: "dm",
+          action: "add",
+          entry: "admin"
+        });
+        const defaultParsed = {};
+        const defaultWrite = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: defaultParsed,
+          accountId: "default",
+          scope: "dm",
+          action: "add",
+          entry: "Owner"
+        });
+        return {
+          entries: readConfiguredAllowlistEntries(["owner", 42, ""]),
+          flatOverrides,
+          nestedOverrides,
+          flatResolved: flatResolver({ channels: { room1: { users: ["a"] } } }),
+          nestedResolved: nestedResolver({
+            groups: {
+              g1: { allowFrom: ["owner"], topics: { t1: { allowFrom: ["member"] } } }
+            }
+          }),
+          names: {
+            missingToken: await noTokenResolver({
+              cfg: {},
+              accountId: "alt",
+              scope: "dm",
+              entries: ["a"]
+            }),
+            resolved: await tokenResolver({
+              cfg: {},
+              accountId: "alt",
+              scope: "dm",
+              entries: ["a"]
+            })
+          },
+          dmGroup: {
+            supports: [
+              dmGroupAdapter.supportsScope({ scope: "dm" }),
+              dmGroupAdapter.supportsScope({ scope: "group" }),
+              dmGroupAdapter.supportsScope({ scope: "all" }),
+              dmGroupAdapter.supportsScope({ scope: "unknown" })
+            ],
+            read: dmGroupAdapter.readConfig({ cfg: {}, accountId: "alt" }),
+            groupWrite,
+            groupDuplicate,
+            parsedGroup,
+            defaultWrite,
+            defaultParsed
+          },
+          legacy: {
+            supports: [
+              legacyAdapter.supportsScope({ scope: "dm" }),
+              legacyAdapter.supportsScope({ scope: "group" }),
+              legacyAdapter.supportsScope({ scope: "all" })
+            ],
+            read: legacyAdapter.readConfig({ cfg: {}, accountId: "alt" }),
+            legacyWrite,
+            parsedLegacy
+          },
+          paths: {
+            dm: resolveDmGroupAllowlistConfigPaths("dm"),
+            group: resolveDmGroupAllowlistConfigPaths("group"),
+            legacyDm: resolveLegacyDmAllowlistConfigPaths("dm"),
+            legacyGroup: resolveLegacyDmAllowlistConfigPaths("group")
+          },
+          exportTypes: [
+            typeof buildDmGroupAccountAllowlistAdapter,
+            typeof buildLegacyDmAccountAllowlistAdapter,
+            typeof genericSdk.buildDmGroupAccountAllowlistAdapter
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-allowlist-config-edit-plugin",
+                    "name": "Runtime Allowlist Config Edit Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-allowlist-config-edit-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.allowlist_config_edit"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.allowlist_config_edit"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "entries": ["owner", "42"],
+        "flatOverrides": [{"label": "room1", "entries": ["a", "b"]}],
+        "nestedOverrides": [
+            {"label": "guild guild1", "entries": ["owner"]},
+            {"label": "guild guild1 / channel chan1", "entries": ["member"]},
+        ],
+        "flatResolved": [{"label": "room1", "entries": ["a"]}],
+        "nestedResolved": [
+            {"label": "g1", "entries": ["owner"]},
+            {"label": "g1 topic t1", "entries": ["member"]},
+        ],
+        "names": {
+            "missingToken": [],
+            "resolved": [{"input": "a", "resolved": True, "name": "secret:a"}],
+        },
+        "dmGroup": {
+            "supports": [True, True, True, False],
+            "read": {
+                "dmAllowFrom": ["dm-owner"],
+                "groupAllowFrom": ["group-owner"],
+                "dmPolicy": "allowlist",
+                "groupPolicy": "allowlist",
+                "groupOverrides": [{"label": "room-1", "entries": ["member-1"]}],
+            },
+            "groupWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.accounts.alt.groupAllowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "groupDuplicate": {
+                "kind": "ok",
+                "changed": False,
+                "pathLabel": "channels.demo.accounts.alt.groupAllowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "parsedGroup": {
+                "channels": {
+                    "demo": {
+                        "accounts": {
+                            "alt": {"groupAllowFrom": ["Member-2"]},
+                        }
+                    }
+                }
+            },
+            "defaultWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.allowFrom",
+                "writeTarget": {
+                    "kind": "channel",
+                    "scope": {"channelId": "demo"},
+                },
+            },
+            "defaultParsed": {
+                "channels": {
+                    "demo": {"allowFrom": ["Owner"]},
+                }
+            },
+        },
+        "legacy": {
+            "supports": [True, False, False],
+            "read": {
+                "dmAllowFrom": ["owner"],
+                "groupPolicy": "allowlist",
+                "groupOverrides": [{"label": "group-1", "entries": ["member-1"]}],
+            },
+            "legacyWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.accounts.alt.allowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "parsedLegacy": {
+                "channels": {
+                    "demo": {
+                        "accounts": {
+                            "alt": {
+                                "dm": {},
+                                "allowFrom": ["owner", "admin"],
+                            }
+                        }
+                    }
+                }
+            },
+        },
+        "paths": {
+            "dm": {"readPaths": [["allowFrom"]], "writePath": ["allowFrom"]},
+            "group": {"readPaths": [["groupAllowFrom"]], "writePath": ["groupAllowFrom"]},
+            "legacyDm": {
+                "readPaths": [["allowFrom"], ["dm", "allowFrom"]],
+                "writePath": ["allowFrom"],
+                "cleanupPaths": [["dm", "allowFrom"]],
+            },
+            "legacyGroup": None,
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
