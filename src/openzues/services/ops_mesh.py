@@ -5560,6 +5560,28 @@ def _feishu_message_view(
     return message
 
 
+def _feishu_pin_view(pin: object) -> dict[str, object] | None:
+    if not isinstance(pin, Mapping):
+        return None
+    message_id = str(pin.get("message_id") or "").strip()
+    if not message_id:
+        return None
+    view: dict[str, object] = {"messageId": message_id}
+    chat_id = str(pin.get("chat_id") or "").strip()
+    if chat_id:
+        view["chatId"] = chat_id
+    operator_id = str(pin.get("operator_id") or "").strip()
+    if operator_id:
+        view["operatorId"] = operator_id
+    operator_id_type = str(pin.get("operator_id_type") or "").strip()
+    if operator_id_type:
+        view["operatorIdType"] = operator_id_type
+    create_time = str(pin.get("create_time") or "").strip()
+    if create_time:
+        view["createTime"] = create_time
+    return view
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15434,6 +15456,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_edit_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "pin":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action pin."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_pin_message_action,
                 route,
                 request,
                 secret_token,
@@ -26787,6 +26825,35 @@ class OpsMeshService:
             "action": "edit",
             "messageId": message_id,
             "contentType": content_type,
+        }
+
+    def _dispatch_feishu_pin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _feishu_action_message_id(request.params, action="pin")
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(str(route.get("target") or ""), "im/v1/pins"),
+            method="POST",
+            payload={"message_id": message_id},
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu pin create failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        raw_pin = data.get("pin") if isinstance(data, Mapping) else None
+        pin = _feishu_pin_view(raw_pin)
+        return {
+            "ok": True,
+            "channel": "feishu",
+            "action": "pin",
+            "pin": pin,
         }
 
     def _post_msteams_provider_event(
