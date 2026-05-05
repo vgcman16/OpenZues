@@ -4038,6 +4038,58 @@ def _msteams_poll_vote_from_message_action_params(
     return None
 
 
+_MSTEAMS_MISSING_ACTION_VALUE = object()
+
+
+def _msteams_serialize_adaptive_card_action_value(
+    value: object = _MSTEAMS_MISSING_ACTION_VALUE,
+) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if value is _MSTEAMS_MISSING_ACTION_VALUE:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _msteams_inbound_activity_text(activity: Mapping[str, Any]) -> str | None:
+    activity_type = str(activity.get("type") or "").strip().lower()
+    if activity_type == "message":
+        text = str(activity.get("text") or "").strip()
+        return text or None
+    if (
+        activity_type == "invoke"
+        and str(activity.get("name") or "").strip() == "adaptiveCard/action"
+    ):
+        value = activity.get("value", _MSTEAMS_MISSING_ACTION_VALUE)
+        return _msteams_serialize_adaptive_card_action_value(value)
+    return None
+
+
+def _msteams_normalize_inbound_conversation_id(raw: object) -> str | None:
+    normalized = str(raw or "").strip().split(";", 1)[0].strip()
+    return normalized or None
+
+
+def _msteams_inbound_conversation_message_id(raw: object) -> str | None:
+    match = re.search(r"(?:^|;)messageid=([^;]+)", str(raw or ""), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return unquote(match.group(1)).strip() or None
+
+
+def _msteams_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _msteams_inbound_optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
 def _msteams_normalize_poll_selections(
     *,
     options: list[str],
@@ -8676,6 +8728,101 @@ class OpsMeshService:
     def _session_outbound_runtime_available(self) -> bool:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
+
+    async def handle_msteams_inbound_activity(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        text = _msteams_inbound_activity_text(activity)
+        if text is None:
+            return {
+                "ok": False,
+                "channel": "msteams",
+                "activityType": str(activity.get("type") or "").strip() or None,
+                "name": str(activity.get("name") or "").strip() or None,
+                "skipped": True,
+                "reason": "msteams_inbound_activity_without_message_text",
+            }
+        sender = _msteams_inbound_mapping(activity.get("from"))
+        conversation = _msteams_inbound_mapping(activity.get("conversation"))
+        sender_id = (
+            _msteams_inbound_optional_string(sender.get("aadObjectId"))
+            or _msteams_inbound_optional_string(sender.get("id"))
+        )
+        if sender_id is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Microsoft Teams inbound activity is missing sender id."
+            )
+        sender_name = _msteams_inbound_optional_string(sender.get("name"))
+        raw_conversation_id = conversation.get("id")
+        conversation_id = _msteams_normalize_inbound_conversation_id(raw_conversation_id)
+        if conversation_id is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Microsoft Teams inbound activity is missing conversation id."
+            )
+        conversation_type = str(
+            conversation.get("conversationType") or "personal"
+        ).strip().lower() or "personal"
+        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+        if conversation_type == "personal":
+            peer_kind: ConversationTargetPeerKind = "direct"
+            peer_id = f"msteams:user:{sender_id}"
+            thread_id = None
+        else:
+            peer_kind = "channel" if conversation_type == "channel" else "group"
+            peer_id = f"msteams:conversation:{conversation_id}"
+            thread_id = (
+                _msteams_inbound_conversation_message_id(raw_conversation_id)
+                or _msteams_inbound_optional_string(activity.get("replyToId"))
+                if conversation_type == "channel"
+                else None
+            )
+        conversation_target = ConversationTargetView(
+            channel="msteams",
+            account_id=normalized_account_id,
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+        )
+        base_session_key = build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=conversation_target,
+        )
+        session_key = resolve_thread_session_keys(
+            base_session_key=base_session_key,
+            thread_id=thread_id,
+        ).session_key
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Microsoft Teams inbound session delivery is unavailable."
+            )
+        delivery_result = await self.session_delivery_service(session_key, text)
+        message_id = _session_delivery_message_id(delivery_result)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": str(activity.get("type") or "").strip() or None,
+            "name": str(activity.get("name") or "").strip() or None,
+            "sessionKey": session_key,
+            "text": text,
+            "senderId": sender_id,
+            "conversationId": conversation_id,
+            "conversationType": conversation_type,
+            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed"},
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if thread_id is not None:
+            result["threadId"] = thread_id
+        if sender_name is not None:
+            result["senderName"] = sender_name
+        return result
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:
