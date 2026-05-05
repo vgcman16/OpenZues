@@ -58,6 +58,7 @@ from openzues.services.memory_protocol import (
 )
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
+    GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
     _saved_outbound_delivery_replay_message,
     _serialize_task,
@@ -19142,6 +19143,127 @@ async def test_ops_mesh_service_preserves_msteams_downloadable_attachment_urls()
     ]
     assert result["text"] == "<media:image>"
     assert result["messageId"] == "inbound-media-url-1"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_stages_msteams_downloadable_attachments() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-attachment-stage"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+    fetch_requests: list[GatewayMSTeamsInboundMediaFetchRequest] = []
+    png_bytes = b"\x89PNG\r\n\x1a\nopenzues"
+    pdf_bytes = b"%PDF-1.7\nopenzues"
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-stage-1"}
+
+    async def fetch_media(
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        fetch_requests.append(request)
+        filename = str(request.filename or "")
+        if filename == "photo.png":
+            return {
+                "bytes": png_bytes,
+                "contentType": "image/png",
+                "filename": "photo.png",
+            }
+        return {
+            "bytes": pdf_bytes,
+            "contentType": "application/pdf",
+            "filename": "brief.pdf",
+        }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+        msteams_inbound_media_fetch_service=fetch_media,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-stage-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "name": "photo.png",
+                    "content": {
+                        "downloadUrl": "https://tenant.sharepoint.com/download/photo.png",
+                        "fileType": "png",
+                    },
+                },
+                {
+                    "contentType": "application/pdf",
+                    "name": "brief.pdf",
+                    "contentUrl": (
+                        "https://graph.microsoft.com/v1.0/chats/chat-1/"
+                        "messages/msg-1/attachments/brief/$value"
+                    ),
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert [request.url for request in fetch_requests] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        (
+            "https://graph.microsoft.com/v1.0/chats/chat-1/"
+            "messages/msg-1/attachments/brief/$value"
+        ),
+    ]
+    assert result["mediaUrls"] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        (
+            "https://graph.microsoft.com/v1.0/chats/chat-1/"
+            "messages/msg-1/attachments/brief/$value"
+        ),
+    ]
+    staged_paths = result["MediaUrls"]
+    assert isinstance(staged_paths, list)
+    assert len(staged_paths) == 2
+    assert result["MediaUrl"] == staged_paths[0]
+    assert result["MediaPaths"] == staged_paths
+    assert result["MediaTypes"] == ["image/png", "application/pdf"]
+    assert Path(str(staged_paths[0])).read_bytes() == png_bytes
+    assert Path(str(staged_paths[1])).read_bytes() == pdf_bytes
+    assert "gateway-attachments" in str(staged_paths[0])
+    assert result["delivery"] == {"runtime": "session-backed", "media": {"staged": 2}}
+    assert result["messageId"] == "inbound-media-stage-1"
 
 
 @pytest.mark.asyncio

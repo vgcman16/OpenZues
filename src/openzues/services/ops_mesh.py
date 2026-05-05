@@ -240,6 +240,43 @@ MSTEAMS_REACTION_EMOJIS = {
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
+MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.de",
+    "sharepoint.cn",
+    "sharepoint-df.com",
+    "1drv.ms",
+    "onedrive.com",
+    "teams.microsoft.com",
+    "teams.cdn.office.net",
+    "statics.teams.cdn.office.net",
+    "office.com",
+    "office.net",
+    "asm.skype.com",
+    "ams.skype.com",
+    "media.ams.skype.com",
+    "trafficmanager.net",
+    "blob.core.windows.net",
+    "azureedge.net",
+    "microsoft.com",
+)
+MSTEAMS_GRAPH_ROOT = "https://graph.microsoft.com/v1.0"
+MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES: tuple[str, ...] = (
+    ".sharepoint.com",
+    ".sharepoint.us",
+    ".sharepoint.de",
+    ".sharepoint.cn",
+    ".sharepoint-df.com",
+    "1drv.ms",
+    "onedrive.live.com",
+    "onedrive.com",
+)
 MSTEAMS_DEFAULT_PROMPT_STARTERS = (
     "What can you do?",
     "Summarize my last meeting",
@@ -370,6 +407,44 @@ class _MSTeamsFileConsentInvoke:
     upload_id: str
     upload_info: Mapping[str, object] | None
     conversation_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class GatewayMSTeamsInboundMediaFetchRequest:
+    url: str
+    source_url: str
+    filename: str | None
+    content_type: str | None
+    placeholder: str
+    max_bytes: int
+    account_id: str | None
+    activity_id: str | None
+
+
+GatewayMSTeamsInboundMediaFetchService = Callable[
+    [GatewayMSTeamsInboundMediaFetchRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsInboundMediaCandidate:
+    url: str
+    source_url: str
+    file_hint: str | None
+    content_type_hint: str | None
+    placeholder: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsStagedInboundMedia:
+    source_url: str
+    path: Path
+    content_type: str | None
+    filename: str
+    placeholder: str
+    sha256: str
+    byte_length: int
 
 
 MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -4159,6 +4234,85 @@ def _msteams_attachment_media_url(attachment: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _msteams_attachment_file_hint(attachment: Mapping[str, Any], media_url: str) -> str | None:
+    name = _msteams_attachment_file_name(attachment)
+    if name:
+        return name
+    content = _msteams_inbound_mapping(attachment.get("content"))
+    file_name = _msteams_inbound_optional_string(content.get("fileName"))
+    if file_name is not None:
+        return file_name
+    unique_id = _msteams_inbound_optional_string(content.get("uniqueId"))
+    file_type = _msteams_inbound_optional_string(content.get("fileType"))
+    if unique_id is not None and file_type is not None:
+        return f"{unique_id}.{file_type.lstrip('.')}"
+    parsed_name = unquote(Path(urlparse(media_url).path).name).strip()
+    return parsed_name or None
+
+
+def _msteams_is_graph_shared_link_url(media_url: str) -> bool:
+    host = str(urlparse(media_url).hostname or "").lower()
+    if not host:
+        return False
+    return any(
+        host == suffix.lstrip(".") or host.endswith(suffix)
+        for suffix in MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES
+    )
+
+
+def _msteams_graph_shares_content_url(media_url: str) -> str | None:
+    if not _msteams_is_graph_shared_link_url(media_url):
+        return None
+    encoded = base64.urlsafe_b64encode(media_url.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{MSTEAMS_GRAPH_ROOT}/shares/u!{encoded}/driveItem/content"
+
+
+def _msteams_attachment_download_candidates(
+    activity: Mapping[str, Any],
+) -> list[_MSTeamsInboundMediaCandidate]:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+    candidates: list[_MSTeamsInboundMediaCandidate] = []
+    seen: set[str] = set()
+    for attachment in raw_attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        source_url = _msteams_attachment_media_url(attachment)
+        if source_url is None or source_url in seen:
+            continue
+        seen.add(source_url)
+        content_type = str(attachment.get("contentType") or "").strip()
+        is_file_download_info = (
+            content_type.lower() == "application/vnd.microsoft.teams.file.download.info"
+        )
+        file_hint = _msteams_attachment_file_hint(attachment, source_url)
+        resolved_url = (
+            source_url
+            if is_file_download_info
+            else _msteams_graph_shares_content_url(source_url) or source_url
+        )
+        content_type_hint = (
+            None
+            if resolved_url != source_url or is_file_download_info
+            else content_type or None
+        )
+        candidates.append(
+            _MSTeamsInboundMediaCandidate(
+                url=resolved_url,
+                source_url=source_url,
+                file_hint=file_hint,
+                content_type_hint=content_type_hint,
+                placeholder=(
+                    "<media:image>"
+                    if _msteams_attachment_is_likely_image(attachment)
+                    else "<media:document>"
+                ),
+            )
+        )
+    return candidates
+
+
 def _msteams_attachment_media_urls(activity: Mapping[str, Any]) -> list[str]:
     raw_attachments = activity.get("attachments")
     if not isinstance(raw_attachments, list):
@@ -4171,6 +4325,138 @@ def _msteams_attachment_media_urls(activity: Mapping[str, Any]) -> list[str]:
         if media_url is not None and media_url not in media_urls:
             media_urls.append(media_url)
     return media_urls
+
+
+def _msteams_normalized_host_suffixes(values: object) -> tuple[str, ...]:
+    if not isinstance(values, list):
+        return MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST
+    suffixes = tuple(
+        str(value).strip().lower().lstrip(".")
+        for value in values
+        if str(value).strip()
+    )
+    return suffixes or MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST
+
+
+def _msteams_media_url_allowed(media_url: str, allow_hosts: tuple[str, ...]) -> bool:
+    parsed = urlparse(media_url)
+    if parsed.scheme.lower() != "https":
+        return False
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        return False
+    for suffix in allow_hosts:
+        normalized_suffix = suffix.lower().lstrip(".")
+        if host == normalized_suffix or host.endswith(f".{normalized_suffix}"):
+            return True
+    return False
+
+
+def _msteams_fetch_response_bytes(response: object) -> bytes | None:
+    if isinstance(response, bytes):
+        return response
+    if isinstance(response, bytearray | memoryview):
+        return bytes(response)
+    if not isinstance(response, Mapping):
+        return None
+    for key in ("bytes", "content", "data", "body"):
+        value = response.get(key)
+        if isinstance(value, bytes):
+            return value
+        if isinstance(value, bytearray | memoryview):
+            return bytes(value)
+    return None
+
+
+def _msteams_fetch_response_string(response: object, *keys: str) -> str | None:
+    if not isinstance(response, Mapping):
+        return None
+    for key in keys:
+        value = response.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _msteams_staged_media_content_type(
+    response: object,
+    candidate: _MSTeamsInboundMediaCandidate,
+    filename: str,
+) -> str | None:
+    content_type = _msteams_fetch_response_string(
+        response,
+        "contentType",
+        "content_type",
+        "mimeType",
+        "mime_type",
+    )
+    if content_type is not None:
+        return content_type.split(";", 1)[0].strip() or content_type
+    if candidate.content_type_hint:
+        return candidate.content_type_hint.split(";", 1)[0].strip()
+    guessed = mimetypes.guess_type(filename)[0]
+    return guessed
+
+
+def _msteams_staged_media_filename(
+    response: object,
+    candidate: _MSTeamsInboundMediaCandidate,
+    content_type: str | None,
+    index: int,
+) -> str:
+    raw_filename = (
+        _msteams_fetch_response_string(response, "filename", "fileName", "name")
+        or candidate.file_hint
+    )
+    if raw_filename is None:
+        parsed_name = unquote(Path(urlparse(candidate.source_url).path).name).strip()
+        raw_filename = parsed_name or f"attachment-{index}"
+    filename = _safe_slack_file_label(raw_filename, f"attachment-{index}")
+    if "." not in filename and content_type:
+        extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip()) or ""
+        if extension:
+            filename = f"{filename}{extension}"
+    return filename
+
+
+def _msteams_media_payload(
+    staged_media: list[_MSTeamsStagedInboundMedia],
+) -> dict[str, object]:
+    if not staged_media:
+        return {}
+    paths = [str(media.path) for media in staged_media]
+    payload: dict[str, object] = {
+        "MediaPath": paths[0],
+        "MediaUrl": paths[0],
+        "MediaPaths": paths,
+        "MediaUrls": paths,
+    }
+    media_types = [media.content_type for media in staged_media if media.content_type]
+    if len(media_types) == len(staged_media):
+        payload["MediaType"] = media_types[0]
+        payload["MediaTypes"] = media_types
+    return payload
+
+
+def _msteams_staged_media_metadata(
+    staged_media: list[_MSTeamsStagedInboundMedia],
+) -> list[dict[str, object]]:
+    metadata: list[dict[str, object]] = []
+    for media in staged_media:
+        item: dict[str, object] = {
+            "sourceUrl": media.source_url,
+            "path": str(media.path),
+            "filename": media.filename,
+            "placeholder": media.placeholder,
+            "openzuesMediaRef": f"media://inbound/{media.filename}",
+            "openzuesSavedPath": str(media.path),
+            "openzuesSha256": media.sha256,
+            "openzuesByteLength": media.byte_length,
+        }
+        if media.content_type:
+            item["contentType"] = media.content_type
+        metadata.append(item)
+    return metadata
 
 
 def _msteams_attachment_placeholder(activity: Mapping[str, Any]) -> str | None:
@@ -9324,6 +9610,7 @@ class OpsMeshService:
     parity_checkpoint_path: Path | None = None
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
+    msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
     canvas_state_dir: Path | None = None
@@ -9413,6 +9700,165 @@ class OpsMeshService:
         if not isinstance(snapshot, Mapping):
             return {}
         return _msteams_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _msteams_media_max_bytes(self) -> int:
+        if self.gateway_config_service is None:
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        if not isinstance(snapshot, Mapping):
+            return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+        agents = snapshot.get("agents")
+        defaults = agents.get("defaults") if isinstance(agents, Mapping) else None
+        if isinstance(defaults, Mapping):
+            value = defaults.get("mediaMaxMb")
+            if isinstance(value, int | float) and value > 0:
+                return int(value * 1024 * 1024)
+        return MSTEAMS_DEFAULT_MEDIA_MAX_BYTES
+
+    def _msteams_media_allow_hosts(
+        self,
+        *,
+        account_id: str | None,
+    ) -> tuple[str, ...]:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        return _msteams_normalized_host_suffixes(channel_config.get("mediaAllowHosts"))
+
+    async def _default_msteams_inbound_media_fetch(
+        self,
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+    ) -> object:
+        return await asyncio.to_thread(self._download_msteams_inbound_media_url, request)
+
+    def _download_msteams_inbound_media_url(
+        self,
+        request: GatewayMSTeamsInboundMediaFetchRequest,
+    ) -> dict[str, object]:
+        http_request = Request(
+            request.url,
+            headers={"User-Agent": "OpenZues-MSTeamsMedia/1.0"},
+            method="GET",
+        )
+        try:
+            with urlopen(http_request, timeout=30) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Microsoft Teams media URL returned HTTP {response.status}")
+                media_bytes = response.read(request.max_bytes + 1)
+                if len(media_bytes) > request.max_bytes:
+                    raise RuntimeError("Microsoft Teams media attachment is too large.")
+                content_type = response.headers.get("Content-Type")
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams media URL returned HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Microsoft Teams media URL failed: {exc.reason}") from exc
+        result: dict[str, object] = {"bytes": media_bytes}
+        if content_type:
+            result["contentType"] = content_type.strip()
+        if request.filename:
+            result["filename"] = request.filename
+        return result
+
+    def _msteams_inbound_media_fetcher(
+        self,
+    ) -> GatewayMSTeamsInboundMediaFetchService | None:
+        if self.msteams_inbound_media_fetch_service is not None:
+            return self.msteams_inbound_media_fetch_service
+        if self.canvas_state_dir is None:
+            return None
+        return self._default_msteams_inbound_media_fetch
+
+    def _save_msteams_inbound_media(
+        self,
+        *,
+        candidate: _MSTeamsInboundMediaCandidate,
+        response: object,
+        media_bytes: bytes,
+        index: int,
+    ) -> _MSTeamsStagedInboundMedia | None:
+        if not media_bytes:
+            return None
+        content_type = _msteams_staged_media_content_type(
+            response,
+            candidate,
+            candidate.file_hint or "",
+        )
+        filename = _msteams_staged_media_filename(
+            response,
+            candidate,
+            content_type,
+            index,
+        )
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        return _MSTeamsStagedInboundMedia(
+            source_url=candidate.source_url,
+            path=stored_path,
+            content_type=content_type,
+            filename=filename,
+            placeholder=candidate.placeholder,
+            sha256=digest,
+            byte_length=len(media_bytes),
+        )
+
+    async def _stage_msteams_inbound_media(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> list[_MSTeamsStagedInboundMedia]:
+        candidates = _msteams_attachment_download_candidates(activity)
+        if not candidates:
+            return []
+        fetcher = self._msteams_inbound_media_fetcher()
+        if fetcher is None:
+            return []
+        allow_hosts = self._msteams_media_allow_hosts(account_id=account_id)
+        max_bytes = self._msteams_media_max_bytes()
+        staged_media: list[_MSTeamsStagedInboundMedia] = []
+        activity_id = _msteams_inbound_optional_string(activity.get("id"))
+        for index, candidate in enumerate(candidates, start=1):
+            if not _msteams_media_url_allowed(candidate.url, allow_hosts):
+                continue
+            request = GatewayMSTeamsInboundMediaFetchRequest(
+                url=candidate.url,
+                source_url=candidate.source_url,
+                filename=candidate.file_hint,
+                content_type=candidate.content_type_hint,
+                placeholder=candidate.placeholder,
+                max_bytes=max_bytes,
+                account_id=account_id,
+                activity_id=activity_id,
+            )
+            try:
+                response = await fetcher(request)
+            except Exception:
+                continue
+            media_bytes = _msteams_fetch_response_bytes(response)
+            if media_bytes is None or len(media_bytes) > max_bytes:
+                continue
+            staged = self._save_msteams_inbound_media(
+                candidate=candidate,
+                response=response,
+                media_bytes=media_bytes,
+                index=index,
+            )
+            if staged is not None:
+                staged_media.append(staged)
+        return staged_media
 
     async def _msteams_stored_delegated_graph_secret_token(
         self,
@@ -10089,8 +10535,15 @@ class OpsMeshService:
                 "Microsoft Teams inbound session delivery is unavailable."
             )
         media_urls = _msteams_attachment_media_urls(activity)
+        staged_media = await self._stage_msteams_inbound_media(
+            activity,
+            account_id=account_id,
+        )
         delivery_result = await self.session_delivery_service(context.session_key, text)
         message_id = _session_delivery_message_id(delivery_result)
+        delivery: dict[str, object] = {"runtime": "session-backed"}
+        if staged_media:
+            delivery["media"] = {"staged": len(staged_media)}
         result: dict[str, object] = {
             "ok": True,
             "channel": "msteams",
@@ -10102,12 +10555,15 @@ class OpsMeshService:
             "conversationId": context.conversation_id,
             "conversationType": context.conversation_type,
             "conversationTarget": context.conversation_target.model_dump(mode="json"),
-            "delivery": {"runtime": "session-backed"},
+            "delivery": delivery,
         }
         if message_id is not None:
             result["messageId"] = message_id
         if media_urls:
             result["mediaUrls"] = media_urls
+        if staged_media:
+            result.update(_msteams_media_payload(staged_media))
+            result["stagedMedia"] = _msteams_staged_media_metadata(staged_media)
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:
