@@ -19370,6 +19370,157 @@ async def test_ops_mesh_service_exchanges_msteams_signin_token_when_sso_configur
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_verifies_msteams_signin_state_when_sso_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        }
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-token-3",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-4",
+            "type": "invoke",
+            "name": "signin/verifyState",
+            "channelId": "msteams",
+            "from": {"id": "user-bf", "aadObjectId": "aad-user-guid"},
+            "value": {"state": "112233"},
+        }
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/verifyState",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "verified",
+            "kind": "verifyState",
+            "statePresent": True,
+            "userId": "aad-user-guid",
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "stored": True,
+            "hasExpiry": False,
+        },
+    }
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert user_token_calls == [
+        {
+            "baseUrl": "https://token.example.test",
+            "path": "/api/usertoken/GetToken",
+            "query": {
+                "userId": "aad-user-guid",
+                "connectionName": "GraphConnection",
+                "channelId": "msteams",
+                "code": "112233",
+            },
+            "method": "GET",
+            "bearerToken": "bf-service-token",
+            "body": None,
+        }
+    ]
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="aad-user-guid",
+    )
+    assert stored is not None
+    assert stored["token"] == "delegated-token-3"
+    assert stored["expires_at"] is None
+    assert "112233" not in json.dumps(result)
+    assert "delegated-token-3" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
