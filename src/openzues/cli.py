@@ -226,6 +226,11 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": False,
         "polls": False,
     },
+    "signal": {
+        "chatTypes": ["direct", "group"],
+        "media": True,
+        "polls": False,
+    },
     "zalo": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7382,6 +7387,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "matrix",
     "mattermost",
     "nextcloud-talk",
+    "signal",
     "slack",
     "synology-chat",
     "telegram",
@@ -29290,7 +29296,8 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, nextcloud-talk, synology-chat, mattermost, line, or matrix."
+            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, line, "
+            "or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29354,13 +29361,14 @@ def routes_create_command(
         "nextcloud-talk",
         "synology-chat",
         "mattermost",
+        "signal",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
             "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
-            "line, matrix."
+            "signal, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29378,6 +29386,7 @@ def routes_create_command(
                 "nextcloud-talk",
                 "synology-chat",
                 "mattermost",
+                "signal",
                 "line",
                 "matrix",
             }
@@ -29398,6 +29407,7 @@ def routes_create_command(
                 "nextcloud-talk",
                 "synology-chat",
                 "mattermost",
+                "signal",
                 "line",
                 "matrix",
             ],

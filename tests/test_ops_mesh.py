@@ -7815,6 +7815,25 @@ def test_notification_route_create_accepts_mattermost_native_route_kind() -> Non
     assert route.conversation_target.channel == "mattermost"
 
 
+def test_notification_route_create_accepts_signal_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Signal Native Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="signal",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="signal:+15551234567",
+        ),
+    )
+
+    assert route.kind == "signal"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "signal"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -17228,6 +17247,86 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_mattermost_nati
             None,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-signal"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "signal:+15551234567",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000000}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="signal",
+        to="signal:+15551234567",
+        message="Signal **native** parity.",
+        account_id="default",
+        idempotency_key="idem-native-signal-send",
+    )
+
+    assert result["messageId"] == "1700000000000"
+    assert result["chatId"] == "+15551234567"
+    assert signal_posts[0][0] == "POST"
+    assert signal_posts[0][1] == "http://signal.example.com:8080/api/v1/rpc"
+    payload = signal_posts[0][2]
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["method"] == "send"
+    assert isinstance(payload["id"], str)
+    assert payload["params"] == {
+        "message": "Signal **native** parity.",
+        "recipient": ["+15551234567"],
+    }
 
 
 @pytest.mark.asyncio

@@ -256,6 +256,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "nextcloud-talk",
     "synology-chat",
     "mattermost",
+    "signal",
     "line",
     "matrix",
 }
@@ -3259,6 +3260,50 @@ def _mattermost_result_channel_id(result: object) -> str | None:
     if candidate is None:
         return None
     return str(candidate).strip() or None
+
+
+def _signal_base_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip().rstrip("/")
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Signal route target must be an http(s) base URL.")
+    return target
+
+
+def _signal_rpc_endpoint(raw_target: str | None) -> str:
+    return f"{_signal_base_url(raw_target)}/api/v1/rpc"
+
+
+def _signal_target_params(raw_target: str | None) -> tuple[dict[str, object], str]:
+    target = str(raw_target or "").strip()
+    if not target:
+        raise RuntimeError("Signal recipient is required.")
+    if target.lower().startswith("signal:"):
+        target = target[len("signal:") :].strip()
+    normalized = target.lower()
+    if normalized.startswith("group:"):
+        group_id = target[len("group:") :].strip()
+        if not group_id:
+            raise RuntimeError("Signal group id is required.")
+        return {"groupId": group_id}, group_id
+    if normalized.startswith("username:"):
+        username = target[len("username:") :].strip()
+        if not username:
+            raise RuntimeError("Signal username is required.")
+        return {"username": [username]}, username
+    if normalized.startswith("u:"):
+        username = target.strip()
+        return {"username": [username]}, username
+    return {"recipient": [target]}, target
+
+
+def _signal_rpc_result_timestamp(result: object) -> int | None:
+    if isinstance(result, dict) and isinstance(result.get("result"), dict):
+        timestamp = result["result"].get("timestamp")
+        return timestamp if isinstance(timestamp, int) else None
+    if isinstance(result, dict):
+        timestamp = result.get("timestamp")
+        return timestamp if isinstance(timestamp, int) else None
+    return None
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
@@ -10203,6 +10248,8 @@ class OpsMeshService:
             return self._post_synology_chat_provider_event
         if route_kind == "mattermost":
             return self._post_mattermost_provider_event
+        if route_kind == "signal":
+            return self._post_signal_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -20103,6 +20150,62 @@ class OpsMeshService:
         }
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_signal_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del secret_token
+        if event_type != "gateway/send":
+            raise RuntimeError("Signal native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target_params, chat_id = _signal_target_params(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        message = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not message and not media_urls:
+            raise RuntimeError("Signal send requires text or media.")
+        params: dict[str, object] = {"message": message}
+        if media_urls:
+            params["attachments"] = media_urls
+        params.update(target_params)
+        payload: dict[str, object] = {
+            "jsonrpc": "2.0",
+            "method": "send",
+            "params": params,
+            "id": uuid.uuid4().hex,
+        }
+        result = self._request_json_provider_url(
+            _signal_rpc_endpoint(str(route.get("target") or "")),
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        timestamp = _signal_rpc_result_timestamp(result)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": str(timestamp) if timestamp is not None else "unknown",
+            "chatId": chat_id,
+            "channelId": chat_id,
+        }
+        if timestamp is not None:
+            native_result["timestamp"] = timestamp
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result

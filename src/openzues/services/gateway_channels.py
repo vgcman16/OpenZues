@@ -59,6 +59,11 @@ _CHANNEL_META = (
         "detailLabel": "Mattermost",
     },
     {
+        "id": "signal",
+        "label": "Signal",
+        "detailLabel": "Signal",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",
