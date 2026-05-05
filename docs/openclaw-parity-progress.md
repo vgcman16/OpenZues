@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.0% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.1% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10750,6 +10750,30 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
   in `b9f2f404`.
+
+- Microsoft Teams SSO route-level team/channel allowlist authorization now
+  mirrors OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `extensions/msteams/src/policy.ts` nested Teams route gate: when configured
+  SSO receives `signin/tokenExchange` from a channel/group context and
+  `channels.msteams.teams` is configured but the incoming team/channel does
+  not match the nested allowlist, OpenZues still ACKs the invoke with status
+  200, returns safe blocked metadata with conversation/team identifiers, skips
+  the Bot Framework User Token service, avoids delegated-token persistence,
+  and does not leak the exchange token. This closes `OZ-PROV-001AQ`;
+  repo-wide parity is now estimated at ~65.1%. Remaining Microsoft Teams SSO
+  authorization breadth is group sender allowlist drops, followed by
+  delegated-token consumers, feedback reflection, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and member lifecycle handling.
+- Verified the Microsoft Teams SSO route allowlist authorization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_msteams_signin_exchange_for_channel_route_allowlist -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`19 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `5c54430c`.
 
 ## References
 

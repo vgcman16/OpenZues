@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~65.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~65.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -296,6 +296,11 @@ may lag behind this tracker.
   personal-chat sign-in token exchange before Bot Framework User Token service
   calls or delegated-token persistence.
   - Status: checkpointed in `b9f2f404`
+
+- [x] Microsoft Teams SSO route allowlist authorization/drop handling,
+  preserving OpenClaw's nested `channels.msteams.teams` team/channel gate
+  before configured sign-in token exchange.
+  - Status: checkpointed in `5c54430c`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
