@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~74.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~74.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -314,6 +314,10 @@ may lag behind this tracker.
   config resolution, keyed buffering, forced flushes, saturated-key fallback,
   and non-throwing error reporting.
   - Status: checkpointed in `9ac09500`
+
+- [x] Imported plugin SDK markdown-table-runtime shim for markdown table mode
+  resolution and code/bullet table conversion.
+  - Status: checkpointed in `6e51b8a9`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
