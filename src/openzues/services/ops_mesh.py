@@ -5602,6 +5602,29 @@ def _feishu_pin_view(pin: object) -> dict[str, object] | None:
     return view
 
 
+def _feishu_chat_info_view(chat_id: str, data: object) -> dict[str, object]:
+    chat: Mapping[str, object] = data if isinstance(data, Mapping) else {}
+    view: dict[str, object] = {"chat_id": chat_id}
+    for key in (
+        "name",
+        "description",
+        "owner_id",
+        "tenant_key",
+        "user_count",
+        "chat_mode",
+        "chat_type",
+        "join_message_visibility",
+        "leave_message_visibility",
+        "membership_approval",
+        "moderation_permission",
+        "avatar",
+    ):
+        value = chat.get(key)
+        if value is not None:
+            view[key] = value
+    return view
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15524,6 +15547,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_list_pins_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "channel-info":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action channel-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_channel_info_message_action,
                 route,
                 request,
                 secret_token,
@@ -26999,6 +27038,35 @@ class OpsMeshService:
         if isinstance(page_token_result, str) and page_token_result.strip():
             response["pageToken"] = page_token_result.strip()
         return response
+
+    def _dispatch_feishu_channel_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _feishu_action_chat_id(request, action="channel-info")
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/chats/{quote(chat_id, safe='')}",
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu chat get failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        return {
+            "ok": True,
+            "provider": "feishu",
+            "action": "channel-info",
+            "channel": _feishu_chat_info_view(chat_id, data),
+        }
 
     def _post_msteams_provider_event(
         self,
