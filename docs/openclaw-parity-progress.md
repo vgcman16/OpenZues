@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.1% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.2% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10558,6 +10558,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   and `mypy src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_outbound_runtime.py`. Checkpointed in
   `ad3c8a5c`.
+
+- Microsoft Teams FileConsent accept/upload handling now mirrors OpenClaw's
+  `extensions/msteams/src/file-consent.ts` and
+  `extensions/msteams/src/file-consent-invoke.ts` invoke path: native
+  `message.action` accepts `fileConsent/invoke` payloads, locates the pending
+  upload by `uploadId`, guards conversation mismatches, validates the Teams
+  upload URL against the Microsoft/SharePoint allowlist, uploads the pending
+  media bytes with `Content-Type` and `Content-Range`, replaces the consent
+  card with a FileInfoCard, and persists completion metadata on the saved
+  delivery. This closes `OZ-PROV-001AH`; repo-wide parity is now estimated at
+  ~64.2%. Remaining Microsoft Teams breadth is Graph upload and inbound
+  monitor/session routing.
+- Verified the Microsoft Teams FileConsent accept/upload slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_accepts_msteams_file_consent_upload -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`8 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `709fcf4d`.
 
 ## References
 

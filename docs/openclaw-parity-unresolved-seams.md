@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.2% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5955,10 +5955,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   delivery metadata. Repo-wide parity is now estimated at ~64.1%. Verified
   with focused runtime pytest, adjacent Teams send/action/provider proof,
   `ruff check`, and `mypy`; checkpointed in `ad3c8a5c`.
+- Closed the Microsoft Teams FileConsent accept/upload seam from OpenClaw
+  `extensions/msteams/src/file-consent.ts` and
+  `extensions/msteams/src/file-consent-invoke.ts`: native
+  `message.action` now handles `fileConsent/invoke` accept payloads, locates
+  the saved pending upload by `uploadId`, rejects conversation mismatches
+  before upload, validates Teams-provided upload URLs against the
+  Microsoft/SharePoint allowlist, PUTs the pending media bytes with
+  `Content-Type` and `Content-Range`, replaces the consent card with a
+  FileInfoCard, and persists uploaded file metadata on the saved outbound
+  delivery. Repo-wide parity is now estimated at ~64.2%. Verified with
+  focused runtime pytest, adjacent Teams send/action/provider proof, `ruff
+  check`, and `mypy`; checkpointed in `709fcf4d`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  FileConsent accept/upload, Graph upload, or inbound monitor/session routing,
-  or
+  Graph upload or inbound monitor/session routing, or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
