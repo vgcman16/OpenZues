@@ -20239,6 +20239,280 @@ function applyProviderNativeStreamingUsageCompat(params) {
   return changed ? { ...providerConfig, models } : providerConfig;
 }
 
+function definePluginEntry(options) {
+  const schema = options.configSchema || {};
+  return {
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    ...(options.kind ? { kind: options.kind } : {}),
+    get configSchema() {
+      return typeof schema === "function" ? schema() : schema;
+    },
+    register: options.register || (() => {}),
+  };
+}
+
+function resolveProviderWizardSetup(params) {
+  const auth = params.auth || {};
+  if (auth.wizard === false) {
+    return undefined;
+  }
+  const wizard = auth.wizard || {};
+  const methodId = String(auth.methodId || "").trim();
+  return {
+    choiceId: wizard.choiceId || `${params.providerId}-${methodId}`,
+    choiceLabel: wizard.choiceLabel || auth.label,
+    ...(wizard.choiceHint ? { choiceHint: wizard.choiceHint } : {}),
+    groupId: wizard.groupId || params.providerId,
+    groupLabel: wizard.groupLabel || params.providerLabel,
+    ...((wizard.groupHint || auth.hint) ? { groupHint: wizard.groupHint || auth.hint } : {}),
+    methodId,
+    ...(wizard.onboardingScopes ? { onboardingScopes: wizard.onboardingScopes } : {}),
+    ...(wizard.modelAllowlist ? { modelAllowlist: wizard.modelAllowlist } : {}),
+  };
+}
+
+function resolveProviderEnvVars(params) {
+  const explicit = Array.isArray(params.envVars) ? params.envVars : [];
+  const auth = Array.isArray(params.auth) ? params.auth : [];
+  const combined = [
+    ...explicit,
+    ...auth.map((entry) => entry && entry.envVar).filter(Boolean),
+  ]
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  return combined.length > 0 ? Array.from(new Set(combined)) : undefined;
+}
+
+function createProviderApiKeyAuthMethod(params) {
+  return {
+    id: params.methodId,
+    label: params.label,
+    ...(params.hint ? { hint: params.hint } : {}),
+    kind: "api_key",
+    ...(params.wizard ? { wizard: params.wizard } : {}),
+    run: async () => {
+      throw new Error("Provider API key auth prompts are not available in native shim tests.");
+    },
+    runNonInteractive: async () => null,
+  };
+}
+
+function resolveProviderApiKeyFromContext(ctx, providerId) {
+  if (ctx && typeof ctx.resolveProviderApiKey === "function") {
+    const resolved = ctx.resolveProviderApiKey(providerId) || {};
+    return normalizeOptionalString(resolved.apiKey);
+  }
+  if (ctx && typeof ctx.resolveProviderAuth === "function") {
+    const resolved = ctx.resolveProviderAuth(providerId) || {};
+    return normalizeOptionalString(resolved.apiKey);
+  }
+  return undefined;
+}
+
+async function buildSingleProviderApiKeyCatalog(params) {
+  const providerId = normalizeOptionalLowercaseString(params.providerId) || "";
+  const apiKey = resolveProviderApiKeyFromContext(params.ctx, providerId);
+  if (!apiKey) {
+    return null;
+  }
+  const providers =
+    params.ctx &&
+    params.ctx.config &&
+    params.ctx.config.models &&
+    params.ctx.config.models.providers;
+  const providerKey =
+    params.allowExplicitBaseUrl && providers
+      ? findNormalizedProviderKey(providers, providerId)
+      : undefined;
+  const providerConfig = providerKey ? providers[providerKey] : undefined;
+  const explicitBaseUrl = normalizeOptionalString(providerConfig && providerConfig.baseUrl);
+  return {
+    provider: {
+      ...(await params.buildProvider()),
+      ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
+      apiKey,
+    },
+  };
+}
+
+function defineSingleProviderPluginEntry(options) {
+  return definePluginEntry({
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    ...(options.kind ? { kind: options.kind } : {}),
+    ...(options.configSchema ? { configSchema: options.configSchema } : {}),
+    register(api) {
+      const provider = options.provider;
+      if (provider) {
+        const providerId = provider.id || options.id;
+        const envVars = resolveProviderEnvVars({
+          envVars: provider.envVars,
+          auth: provider.auth,
+        });
+        const auth = (Array.isArray(provider.auth) ? provider.auth : []).map((entry) => {
+          const authParams = { ...entry };
+          delete authParams.wizard;
+          const wizard = resolveProviderWizardSetup({
+            providerId,
+            providerLabel: provider.label,
+            auth: entry,
+          });
+          return createProviderApiKeyAuthMethod({
+            ...authParams,
+            providerId,
+            expectedProviders: entry.expectedProviders || [providerId],
+            ...(wizard ? { wizard } : {}),
+          });
+        });
+        const providerCatalog = provider.catalog || {};
+        const usesCustomCatalog = typeof providerCatalog.run === "function";
+        const catalog = usesCustomCatalog
+          ? {
+              order: providerCatalog.order || "simple",
+              run: providerCatalog.run,
+            }
+          : {
+              order: "simple",
+              run: (ctx) =>
+                buildSingleProviderApiKeyCatalog({
+                  ctx,
+                  providerId,
+                  buildProvider: providerCatalog.buildProvider,
+                  ...(providerCatalog.allowExplicitBaseUrl
+                    ? { allowExplicitBaseUrl: true }
+                    : {}),
+                }),
+            };
+        const staticCatalog = usesCustomCatalog
+          ? providerCatalog.staticRun
+            ? {
+                order: providerCatalog.order || "simple",
+                run: providerCatalog.staticRun,
+              }
+            : undefined
+          : typeof providerCatalog.buildStaticProvider === "function"
+            ? {
+                order: "simple",
+                run: async () => ({ provider: await providerCatalog.buildStaticProvider() }),
+              }
+            : undefined;
+        const omittedProviderKeys = new Set([
+          "id",
+          "label",
+          "docsPath",
+          "aliases",
+          "envVars",
+          "auth",
+          "catalog",
+          "staticCatalog",
+        ]);
+        api.registerProvider({
+          id: providerId,
+          label: provider.label,
+          docsPath: provider.docsPath,
+          ...(provider.aliases ? { aliases: provider.aliases } : {}),
+          ...(envVars ? { envVars } : {}),
+          auth,
+          catalog,
+          ...(staticCatalog ? { staticCatalog } : {}),
+          ...Object.fromEntries(
+            Object.entries(provider).filter(([key]) => !omittedProviderKeys.has(key)),
+          ),
+        });
+      }
+      if (typeof options.register === "function") {
+        options.register(api);
+      }
+    },
+  });
+}
+
+function ensurePluginAllowlisted(cfg, pluginId) {
+  const allow = cfg && cfg.plugins && cfg.plugins.allow;
+  if (!Array.isArray(allow) || allow.includes(pluginId)) {
+    return cfg;
+  }
+  return {
+    ...cfg,
+    plugins: {
+      ...(cfg.plugins || {}),
+      allow: [...allow, pluginId],
+    },
+  };
+}
+
+function enableProviderPluginInConfig(cfg, pluginId) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return { config: cfg, enabled: false, reason: "plugins disabled" };
+  }
+  if (cfg && cfg.plugins && Array.isArray(cfg.plugins.deny)) {
+    if (cfg.plugins.deny.includes(pluginId)) {
+      return { config: cfg, enabled: false, reason: "blocked by denylist" };
+    }
+  }
+  const plugins = (cfg && cfg.plugins) || {};
+  let next = {
+    ...cfg,
+    plugins: {
+      ...plugins,
+      entries: {
+        ...(plugins.entries || {}),
+        [pluginId]: {
+          ...((plugins.entries && plugins.entries[pluginId]) || {}),
+          enabled: true,
+        },
+      },
+    },
+  };
+  next = ensurePluginAllowlisted(next, pluginId);
+  return { config: next, enabled: true };
+}
+
+function buildAuthProfileId(params) {
+  const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
+  const profileName = normalizeOptionalString(params.profileName) || "default";
+  return `${profilePrefix}:${profileName}`;
+}
+
+function buildOauthProviderAuthResult(params) {
+  const email = normalizeOptionalString(params.email);
+  const displayName = normalizeOptionalString(params.displayName);
+  const profileId = buildAuthProfileId({
+    providerId: params.providerId,
+    profilePrefix: params.profilePrefix,
+    profileName: params.profileName || email,
+  });
+  const credential = {
+    type: "oauth",
+    provider: params.providerId,
+    access: params.access,
+    ...(params.refresh ? { refresh: params.refresh } : {}),
+    ...(Number.isFinite(params.expires) ? { expires: params.expires } : {}),
+    ...(email ? { email } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(params.credentialExtra || {}),
+  };
+  return {
+    profiles: [{ profileId, credential }],
+    configPatch:
+      params.configPatch ||
+      {
+        agents: {
+          defaults: {
+            models: {
+              [params.defaultModel]: {},
+            },
+          },
+        },
+      },
+    defaultModel: params.defaultModel,
+    notes: params.notes,
+  };
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -29001,10 +29275,36 @@ const providerCatalogSharedRuntime = {
   applyProviderNativeStreamingUsageCompat,
   buildManifestModelProviderConfig,
   buildPairedProviderApiKeyCatalog: passthrough,
-  buildSingleProviderApiKeyCatalog: passthrough,
+  buildSingleProviderApiKeyCatalog,
   findCatalogTemplate: passthrough,
   readConfiguredProviderCatalogEntries,
   supportsNativeStreamingUsageCompat,
+};
+
+const providerEntryRuntime = {
+  buildSingleProviderApiKeyCatalog,
+  createProviderApiKeyAuthMethod,
+  definePluginEntry,
+  defineSingleProviderPluginEntry,
+};
+
+const providerEnableConfigRuntime = {
+  enablePluginInConfig: enableProviderPluginInConfig,
+  ensurePluginAllowlisted,
+};
+
+const providerWebFetchContractRuntime = {
+  enablePluginInConfig: enableProviderPluginInConfig,
+};
+
+const providerWebSearchContractRuntime = {
+  enablePluginInConfig: enableProviderPluginInConfig,
+  createWebSearchProviderContractFields: passthrough,
+};
+
+const providerAuthResultRuntime = {
+  buildAuthProfileId,
+  buildOauthProviderAuthResult,
 };
 
 const dedupeRuntime = {
@@ -29586,6 +29886,9 @@ const genericSdk = new Proxy(
     ...providerModelIdNormalizeRuntime,
     ...providerModelSharedRuntime,
     ...providerCatalogSharedRuntime,
+    ...providerEntryRuntime,
+    ...providerEnableConfigRuntime,
+    ...providerAuthResultRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -30015,6 +30318,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-catalog-shared"
   ) {
     return providerCatalogSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-entry" ||
+    request === "@openclaw/plugin-sdk/provider-entry"
+  ) {
+    return providerEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-enable-config" ||
+    request === "@openclaw/plugin-sdk/provider-enable-config"
+  ) {
+    return providerEnableConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-fetch-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-fetch-contract"
+  ) {
+    return providerWebFetchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-contract"
+  ) {
+    return providerWebSearchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-result" ||
+    request === "@openclaw/plugin-sdk/provider-auth-result"
+  ) {
+    return providerAuthResultRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||

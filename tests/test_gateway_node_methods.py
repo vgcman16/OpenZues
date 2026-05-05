@@ -11853,6 +11853,426 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_entry_enable_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-entry-enable-auth.cjs"
+    runtime_entry.write_text(
+        """
+const providerEntry = require("openclaw/plugin-sdk/provider-entry");
+const providerEnable = require("openclaw/plugin-sdk/provider-enable-config");
+const webFetchContract = require("openclaw/plugin-sdk/provider-web-fetch-contract");
+const webSearchContract = require("openclaw/plugin-sdk/provider-web-search-contract");
+const authResult = require("openclaw/plugin-sdk/provider-auth-result");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createModel(id, name) {
+  return {
+    id,
+    name,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 8192
+  };
+}
+
+function capture(entry, config) {
+  const captured = { providers: [], webSearchProviders: [] };
+  entry.register({
+    registerProvider: (provider) => captured.providers.push(provider),
+    registerWebSearchProvider: (provider) => captured.webSearchProviders.push(provider)
+  });
+  const provider = captured.providers[0];
+  const ctx = {
+    config: config || {},
+    env: {},
+    resolveProviderApiKey: () => ({ apiKey: "test-key" }),
+    resolveProviderAuth: () => ({ apiKey: "test-key", mode: "api_key", source: "env" })
+  };
+  return Promise.resolve(provider.catalog.run(ctx)).then((catalog) =>
+    Promise.resolve(provider.staticCatalog && provider.staticCatalog.run(ctx)).then(
+      (staticCatalog) => ({ captured, provider, catalog, staticCatalog })
+    )
+  );
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_entry_enable_auth",
+      description: "Use OpenClaw provider entry/enable/auth SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const defaultEntry = providerEntry.defineSingleProviderPluginEntry({
+          id: "demo",
+          name: "Demo Provider",
+          description: "Demo provider plugin",
+          provider: {
+            label: "Demo",
+            docsPath: "/providers/demo",
+            auth: [
+              {
+                methodId: "api-key",
+                label: "Demo API key",
+                hint: "Shared key",
+                optionKey: "demoApiKey",
+                flagName: "--demo-api-key",
+                envVar: "DEMO_API_KEY",
+                promptMessage: "Enter Demo API key",
+                defaultModel: "demo/default"
+              }
+            ],
+            catalog: {
+              buildProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://api.demo.test/v1",
+                models: [createModel("default", "Default")]
+              }),
+              buildStaticProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://api.demo.test/v1",
+                models: [createModel("default", "Default")]
+              })
+            }
+          }
+        });
+        const defaultCaptured = await capture(defaultEntry);
+
+        const overrideEntry = providerEntry.defineSingleProviderPluginEntry({
+          id: "gateway-plugin",
+          name: "Gateway Provider",
+          description: "Gateway provider plugin",
+          provider: {
+            id: "gateway",
+            label: "Gateway",
+            aliases: ["gw"],
+            docsPath: "/providers/gateway",
+            envVars: ["GATEWAY_KEY", "SECONDARY_KEY"],
+            auth: [
+              {
+                methodId: "api-key",
+                label: "Gateway key",
+                hint: "Primary key",
+                optionKey: "gatewayKey",
+                flagName: "--gateway-key",
+                envVar: "GATEWAY_KEY",
+                promptMessage: "Enter Gateway key",
+                wizard: {
+                  groupId: "shared-gateway",
+                  groupLabel: "Shared Gateway"
+                }
+              }
+            ],
+            catalog: {
+              buildProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://gateway.test/v1",
+                models: [createModel("router", "Router")]
+              }),
+              allowExplicitBaseUrl: true
+            },
+            capabilities: {
+              transcriptToolCallIdMode: "strict9"
+            }
+          },
+          register(api) {
+            api.registerWebSearchProvider({ id: "gateway-search", label: "Gateway Search" });
+          }
+        });
+        const overrideCaptured = await capture(overrideEntry, {
+          models: {
+            providers: {
+              gateway: {
+                baseUrl: "https://override.test/v1",
+                models: [createModel("router", "Router")]
+              }
+            }
+          }
+        });
+
+        return {
+          defaultEntry: {
+            id: defaultEntry.id,
+            provider: {
+              id: defaultCaptured.provider.id,
+              label: defaultCaptured.provider.label,
+              docsPath: defaultCaptured.provider.docsPath,
+              envVars: defaultCaptured.provider.envVars,
+              auth: defaultCaptured.provider.auth,
+              catalog: defaultCaptured.catalog,
+              staticCatalog: defaultCaptured.staticCatalog
+            }
+          },
+          overrideEntry: {
+            provider: {
+              id: overrideCaptured.provider.id,
+              label: overrideCaptured.provider.label,
+              aliases: overrideCaptured.provider.aliases,
+              envVars: overrideCaptured.provider.envVars,
+              auth: overrideCaptured.provider.auth,
+              capabilities: overrideCaptured.provider.capabilities,
+              catalog: overrideCaptured.catalog
+            },
+            webSearchCount: overrideCaptured.captured.webSearchProviders.length
+          },
+          enable: [
+            providerEnable.enablePluginInConfig(
+              {
+                plugins: { allow: ["openai"] },
+                channels: { brave: { enabled: false } }
+              },
+              "brave"
+            ),
+            webFetchContract.enablePluginInConfig(
+              { plugins: { deny: ["firecrawl"] } },
+              "firecrawl"
+            ),
+            webSearchContract.enablePluginInConfig({ plugins: { enabled: false } }, "brave")
+          ],
+          oauth: authResult.buildOauthProviderAuthResult({
+            providerId: "demo",
+            defaultModel: "demo/default",
+            access: "access-token",
+            refresh: "refresh-token",
+            expires: 12345,
+            email: "dev@example.com",
+            displayName: "Dev User",
+            profilePrefix: "profiles",
+            credentialExtra: { tenant: "tenant-1" },
+            notes: ["signed in"]
+          }),
+          exportTypes: [
+            typeof providerEntry.defineSingleProviderPluginEntry,
+            typeof providerEnable.enablePluginInConfig,
+            typeof webFetchContract.enablePluginInConfig,
+            typeof webSearchContract.enablePluginInConfig,
+            typeof authResult.buildOauthProviderAuthResult,
+            typeof genericSdk.defineSingleProviderPluginEntry
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-entry-enable-auth-plugin",
+                    "name": "Runtime Provider Entry Enable Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-entry-enable-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_entry_enable_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_entry_enable_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "defaultEntry": {
+            "id": "demo",
+            "provider": {
+                "id": "demo",
+                "label": "Demo",
+                "docsPath": "/providers/demo",
+                "envVars": ["DEMO_API_KEY"],
+                "auth": [
+                    {
+                        "id": "api-key",
+                        "label": "Demo API key",
+                        "hint": "Shared key",
+                        "kind": "api_key",
+                        "wizard": {
+                            "choiceId": "demo-api-key",
+                            "choiceLabel": "Demo API key",
+                            "groupId": "demo",
+                            "groupLabel": "Demo",
+                            "groupHint": "Shared key",
+                            "methodId": "api-key",
+                        },
+                    }
+                ],
+                "catalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "apiKey": "test-key",
+                        "baseUrl": "https://api.demo.test/v1",
+                        "models": [
+                            {
+                                "id": "default",
+                                "name": "Default",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+                "staticCatalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "baseUrl": "https://api.demo.test/v1",
+                        "models": [
+                            {
+                                "id": "default",
+                                "name": "Default",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+            },
+        },
+        "overrideEntry": {
+            "provider": {
+                "id": "gateway",
+                "label": "Gateway",
+                "aliases": ["gw"],
+                "envVars": ["GATEWAY_KEY", "SECONDARY_KEY"],
+                "auth": [
+                    {
+                        "id": "api-key",
+                        "label": "Gateway key",
+                        "hint": "Primary key",
+                        "kind": "api_key",
+                        "wizard": {
+                            "choiceId": "gateway-api-key",
+                            "choiceLabel": "Gateway key",
+                            "groupId": "shared-gateway",
+                            "groupLabel": "Shared Gateway",
+                            "groupHint": "Primary key",
+                            "methodId": "api-key",
+                        },
+                    }
+                ],
+                "capabilities": {"transcriptToolCallIdMode": "strict9"},
+                "catalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "apiKey": "test-key",
+                        "baseUrl": "https://override.test/v1",
+                        "models": [
+                            {
+                                "id": "router",
+                                "name": "Router",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+            },
+            "webSearchCount": 1,
+        },
+        "enable": [
+            {
+                "enabled": True,
+                "config": {
+                    "plugins": {
+                        "allow": ["openai", "brave"],
+                        "entries": {"brave": {"enabled": True}},
+                    },
+                    "channels": {"brave": {"enabled": False}},
+                },
+            },
+            {
+                "enabled": False,
+                "reason": "blocked by denylist",
+                "config": {"plugins": {"deny": ["firecrawl"]}},
+            },
+            {
+                "enabled": False,
+                "reason": "plugins disabled",
+                "config": {"plugins": {"enabled": False}},
+            },
+        ],
+        "oauth": {
+            "profiles": [
+                {
+                    "profileId": "profiles:dev@example.com",
+                    "credential": {
+                        "type": "oauth",
+                        "provider": "demo",
+                        "access": "access-token",
+                        "refresh": "refresh-token",
+                        "expires": 12345,
+                        "email": "dev@example.com",
+                        "displayName": "Dev User",
+                        "tenant": "tenant-1",
+                    },
+                }
+            ],
+            "configPatch": {"agents": {"defaults": {"models": {"demo/default": {}}}}},
+            "defaultModel": "demo/default",
+            "notes": ["signed in"],
+        },
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
