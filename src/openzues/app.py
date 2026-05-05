@@ -226,6 +226,10 @@ from openzues.services.interference import build_interference
 from openzues.services.launch_routing import LaunchRoutingService
 from openzues.services.manager import RuntimeManager, compact_event_payload
 from openzues.services.missions import MissionService
+from openzues.services.msteams_webhook_auth import (
+    MSTeamsWebhookJwtValidator,
+    build_msteams_webhook_jwt_validator_from_config,
+)
 from openzues.services.onboarding import OnboardingService
 from openzues.services.ops_mesh import OpsMeshService, build_ops_mesh
 from openzues.services.playbooks import PlaybookService, summarize_playbook_result
@@ -1931,6 +1935,7 @@ def create_app(
     remote_ops_service: RemoteOpsService | None = None,
     control_chat_service: ControlChatService | None = None,
     gateway_wake_service: GatewayWakeService | None = None,
+    msteams_webhook_jwt_validator: MSTeamsWebhookJwtValidator | None = None,
     control_plane_lease: ControlPlaneLease | None = None,
 ) -> FastAPI:
     active_settings = app_settings or settings
@@ -4435,10 +4440,25 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    msteams_webhook_config_snapshot = active_gateway_config_service.build_snapshot()
+    active_msteams_webhook_jwt_validator = (
+        msteams_webhook_jwt_validator
+        if msteams_webhook_jwt_validator is not None
+        else build_msteams_webhook_jwt_validator_from_config(msteams_webhook_config_snapshot)
+    )
+
     async def dispatch_msteams_messages(request: Request) -> JSONResponse:
         authorization = str(request.headers.get("authorization") or "")
         if not authorization.startswith("Bearer "):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        if active_msteams_webhook_jwt_validator is not None:
+            try:
+                valid_token = await active_msteams_webhook_jwt_validator.validate(authorization)
+            except Exception:
+                logger.debug("Microsoft Teams webhook JWT validation failed", exc_info=True)
+                valid_token = False
+            if not valid_token:
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
         body = await request.body()
         if len(body) > MSTEAMS_WEBHOOK_MAX_BODY_BYTES:
             return JSONResponse({"error": "Payload too large"}, status_code=413)
@@ -4466,7 +4486,7 @@ def create_app(
         return await dispatch_msteams_messages(request)
 
     configured_msteams_webhook_path = _msteams_configured_webhook_path(
-        active_gateway_config_service.build_snapshot()
+        msteams_webhook_config_snapshot
     )
     if (
         configured_msteams_webhook_path is not None

@@ -5370,6 +5370,39 @@ def test_msteams_messages_endpoint_uses_configured_path_and_fallback(tmp_path) -
     assert "exchangeable-token" not in fallback.text
 
 
+def test_msteams_messages_endpoint_rejects_failed_jwt_before_json_body(tmp_path) -> None:
+    class FakeMSTeamsWebhookJwtValidator:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def validate(self, auth_header: str) -> bool:
+            self.calls.append(auth_header)
+            return False
+
+    validator = FakeMSTeamsWebhookJwtValidator()
+    data_dir = tmp_path / "data"
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+
+    with TestClient(
+        create_app(app_settings, msteams_webhook_jwt_validator=validator)
+    ) as client:
+        response = client.post(
+            "/api/messages",
+            headers={
+                "Authorization": "Bearer invalid-token",
+                "Content-Type": "application/json",
+            },
+            content="{",
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+    assert validator.calls == ["Bearer invalid-token"]
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
     '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
