@@ -7564,6 +7564,198 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_actions_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-actions.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  ToolAuthorizationError,
+  assertMediaNotDataUrl,
+  createActionGate,
+  createMessageToolButtonsSchema,
+  createMessageToolCardSchema,
+  createUnionActionGate,
+  jsonResult,
+  listTokenSourcedAccounts,
+  optionalStringEnum,
+  parseAvailableTags,
+  readNumberParam,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+  resolvePollMaxSelections,
+  resolveReactionMessageId,
+  stringEnum,
+  withNormalizedTimestamp
+} = require("openclaw/plugin-sdk/channel-actions");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_actions",
+      description: "Use OpenClaw channel-actions SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        let missingError;
+        try {
+          readStringParam({}, "target", { required: true, label: "Target" });
+        } catch (error) {
+          missingError = error.message;
+        }
+        let dataUrlError;
+        try {
+          assertMediaNotDataUrl(" data:image/png;base64,abc ");
+        } catch (error) {
+          dataUrlError = error.message;
+        }
+        const gate = createActionGate({ send: false, react: true });
+        const unionGate = createUnionActionGate(
+          [{ actions: { send: false } }, { actions: { send: true } }],
+          (account) => createActionGate(account.actions)
+        );
+        const authError = new ToolAuthorizationError("owner only");
+        return {
+          strings: {
+            snake: readStringParam({ message_id: "  abc  " }, "messageId", {
+              required: true
+            }),
+            optional: readStringParam({ blank: "   " }, "blank") ?? null,
+            missingError
+          },
+          stringOrNumber: [
+            readStringOrNumberParam({ messageId: 123 }, "messageId"),
+            readStringOrNumberParam({ messageId: " 456 " }, "messageId")
+          ],
+          numbers: [
+            readNumberParam({ limit: "12px" }, "limit"),
+            readNumberParam({ limit: "12.9" }, "limit", { integer: true }),
+            readNumberParam({ limit: "12px" }, "limit", { strict: true }) ?? null
+          ],
+          arrays: [
+            readStringArrayParam({ tags: [" a ", "", 2, "b"] }, "tags"),
+            readStringArrayParam({ tags: " solo " }, "tags")
+          ],
+          reaction: readReactionParams(
+            { emoji: " +1 ", remove: false },
+            { removeErrorMessage: "emoji required" }
+          ),
+          reactionMessageIds: [
+            resolveReactionMessageId({ args: { message_id: " 456 " } }),
+            resolveReactionMessageId({ args: {}, toolContext: { currentMessageId: 123 } })
+          ],
+          gates: {
+            send: gate("send"),
+            react: gate("react"),
+            edit: gate("edit"),
+            unionSend: unionGate("send")
+          },
+          tokenAccounts: listTokenSourcedAccounts([
+            { id: "a", tokenSource: "config" },
+            { id: "b", tokenSource: "none" },
+            { id: "c" }
+          ]).map((account) => account.id),
+          availableTags: parseAvailableTags([
+            { id: "1", name: "One", moderated: true, emoji_id: "e1" },
+            { name: 2 },
+            { name: "Two", emoji_name: null }
+          ]),
+          jsonResult: jsonResult({ ok: true }).details,
+          timestamp: withNormalizedTimestamp({ status: "ok" }, "1700000000"),
+          dataUrlError,
+          pollMax: [resolvePollMaxSelections(3, true), resolvePollMaxSelections(3, false)],
+          enumSchema: stringEnum(["danger", "success"], { default: "success" }),
+          optionalEnumSchema: optionalStringEnum(["a", "b"]).type,
+          buttonSchema: createMessageToolButtonsSchema().items.items.properties.style.enum,
+          cardSchemaAdditional: createMessageToolCardSchema().additionalProperties,
+          authError: { name: authError.name, status: authError.status }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-actions-plugin",
+                    "name": "Runtime Channel Actions Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-actions-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_actions"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_actions"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "strings": {"snake": "abc", "optional": None, "missingError": "Target required"},
+        "stringOrNumber": ["123", "456"],
+        "numbers": [12, 12, None],
+        "arrays": [["a", "b"], ["solo"]],
+        "reaction": {"emoji": "+1", "remove": False, "isEmpty": False},
+        "reactionMessageIds": ["456", 123],
+        "gates": {"send": False, "react": True, "edit": True, "unionSend": True},
+        "tokenAccounts": ["a", "c"],
+        "availableTags": [
+            {"id": "1", "name": "One", "moderated": True, "emoji_id": "e1"},
+            {"name": "Two", "emoji_name": None},
+        ],
+        "jsonResult": {"ok": True},
+        "timestamp": {
+            "status": "ok",
+            "timestampMs": 1700000000000,
+            "timestampUtc": "2023-11-14T22:13:20.000Z",
+        },
+        "dataUrlError": "data: URLs are not supported for media. Use buffer instead.",
+        "pollMax": [3, 1],
+        "enumSchema": {"type": "string", "enum": ["danger", "success"], "default": "success"},
+        "optionalEnumSchema": "string",
+        "buttonSchema": ["danger", "success", "primary"],
+        "cardSchemaAdditional": True,
+        "authError": {"name": "ToolAuthorizationError", "status": 403},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

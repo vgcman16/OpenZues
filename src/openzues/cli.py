@@ -19062,6 +19062,350 @@ function readBooleanParam(params, key) {
   return undefined;
 }
 
+class ToolInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ToolInputError";
+    this.status = 400;
+  }
+}
+
+class ToolAuthorizationError extends ToolInputError {
+  constructor(message) {
+    super(message);
+    this.name = "ToolAuthorizationError";
+    this.status = 403;
+  }
+}
+
+function toSnakeCaseKey(key) {
+  return lowercasePreservingWhitespace(
+    String(key || "")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2"),
+  );
+}
+
+function resolveSnakeCaseParamKey(params, key) {
+  if (params && Object.prototype.hasOwnProperty.call(params, key)) {
+    return key;
+  }
+  const snakeKey = toSnakeCaseKey(key);
+  if (
+    snakeKey !== key &&
+    params &&
+    Object.prototype.hasOwnProperty.call(params, snakeKey)
+  ) {
+    return snakeKey;
+  }
+  return undefined;
+}
+
+function readSnakeCaseParamRaw(params, key) {
+  const resolvedKey = resolveSnakeCaseParamKey(params, key);
+  return resolvedKey ? params[resolvedKey] : undefined;
+}
+
+function readStringParam(params, key, options = {}) {
+  const required = options.required === true;
+  const trim = options.trim !== false;
+  const label = options.label || key;
+  const allowEmpty = options.allowEmpty === true;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (typeof raw !== "string") {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  const value = trim ? raw.trim() : raw;
+  if (!value && !allowEmpty) {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  return value;
+}
+
+function readStringOrNumberParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return String(raw);
+  }
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    if (value) {
+      return value;
+    }
+  }
+  if (required) {
+    throw new ToolInputError(`${label} required`);
+  }
+  return undefined;
+}
+
+function readNumberParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const integer = options.integer === true;
+  const strict = options.strict === true;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  let value;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    value = raw;
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed) {
+      const parsed = strict ? Number(trimmed) : Number.parseFloat(trimmed);
+      if (Number.isFinite(parsed)) {
+        value = parsed;
+      }
+    }
+  }
+  if (value === undefined) {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  return integer ? Math.trunc(value) : value;
+}
+
+function readStringArrayParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (Array.isArray(raw)) {
+    const values = raw
+      .filter((entry) => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (values.length === 0) {
+      if (required) {
+        throw new ToolInputError(`${label} required`);
+      }
+      return undefined;
+    }
+    return values;
+  }
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    if (!value) {
+      if (required) {
+        throw new ToolInputError(`${label} required`);
+      }
+      return undefined;
+    }
+    return [value];
+  }
+  if (required) {
+    throw new ToolInputError(`${label} required`);
+  }
+  return undefined;
+}
+
+function readReactionParams(params, options) {
+  const emojiKey = (options && options.emojiKey) || "emoji";
+  const removeKey = (options && options.removeKey) || "remove";
+  const remove = typeof params[removeKey] === "boolean" ? params[removeKey] : false;
+  const emoji = readStringParam(params, emojiKey, { required: true, allowEmpty: true });
+  if (remove && !emoji) {
+    throw new ToolInputError(options.removeErrorMessage);
+  }
+  return { emoji, remove, isEmpty: !emoji };
+}
+
+function createActionGate(actions) {
+  return (key, defaultValue = true) => {
+    const value = actions && actions[key];
+    if (value === undefined) {
+      return defaultValue;
+    }
+    return value !== false;
+  };
+}
+
+function createUnionActionGate(accounts, createGate) {
+  const gates = (Array.isArray(accounts) ? accounts : []).map((account) => createGate(account));
+  return (key, defaultValue = true) => gates.some((gate) => gate(key, defaultValue));
+}
+
+function listTokenSourcedAccounts(accounts) {
+  return (Array.isArray(accounts) ? accounts : []).filter(
+    (account) => account && account.tokenSource !== "none",
+  );
+}
+
+function resolveReactionMessageId(params) {
+  return (
+    readStringOrNumberParam((params && params.args) || {}, "messageId") ||
+    (params && params.toolContext && params.toolContext.currentMessageId)
+  );
+}
+
+function stringifyToolPayload(payload) {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  try {
+    const encoded = JSON.stringify(payload, null, 2);
+    if (typeof encoded === "string") {
+      return encoded;
+    }
+  } catch (_error) {
+    // Fall through to String for non-serializable values.
+  }
+  return String(payload);
+}
+
+function textResult(text, details) {
+  return { content: [{ type: "text", text }], details };
+}
+
+function jsonResult(payload) {
+  return textResult(JSON.stringify(payload, null, 2), payload);
+}
+
+function parseAvailableTags(raw) {
+  if (raw === undefined || raw === null || !Array.isArray(raw)) {
+    return undefined;
+  }
+  const result = raw
+    .filter((tag) => tag && typeof tag === "object" && typeof tag.name === "string")
+    .map((tag) => ({
+      ...(typeof tag.id === "string" ? { id: tag.id } : {}),
+      name: tag.name,
+      ...(typeof tag.moderated === "boolean" ? { moderated: tag.moderated } : {}),
+      ...(tag.emoji_id === null || typeof tag.emoji_id === "string"
+        ? { emoji_id: tag.emoji_id }
+        : {}),
+      ...(tag.emoji_name === null || typeof tag.emoji_name === "string"
+        ? { emoji_name: tag.emoji_name }
+        : {}),
+    }));
+  return result.length ? result : undefined;
+}
+
+function normalizeTimestamp(raw) {
+  if (raw == null) {
+    return undefined;
+  }
+  let timestampMs;
+  if (raw instanceof Date) {
+    timestampMs = raw.getTime();
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    timestampMs = raw < 1000000000000 ? Math.round(raw * 1000) : Math.round(raw);
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num)) {
+        if (trimmed.includes(".")) {
+          timestampMs = Math.round(num * 1000);
+        } else if (trimmed.length >= 13) {
+          timestampMs = Math.round(num);
+        } else {
+          timestampMs = Math.round(num * 1000);
+        }
+      }
+    } else {
+      const parsed = Date.parse(trimmed);
+      if (!Number.isNaN(parsed)) {
+        timestampMs = parsed;
+      }
+    }
+  }
+  if (timestampMs === undefined || !Number.isFinite(timestampMs)) {
+    return undefined;
+  }
+  return { timestampMs, timestampUtc: new Date(timestampMs).toISOString() };
+}
+
+function withNormalizedTimestamp(value, rawTimestamp) {
+  const normalized = normalizeTimestamp(rawTimestamp);
+  if (!normalized) {
+    return value;
+  }
+  return {
+    ...value,
+    timestampMs:
+      typeof value.timestampMs === "number" && Number.isFinite(value.timestampMs)
+        ? value.timestampMs
+        : normalized.timestampMs,
+    timestampUtc:
+      typeof value.timestampUtc === "string" && value.timestampUtc.trim()
+        ? value.timestampUtc
+        : normalized.timestampUtc,
+  };
+}
+
+function assertMediaNotDataUrl(media) {
+  const raw = String(media || "").trim();
+  if (/^data:/i.test(raw)) {
+    throw new Error("data: URLs are not supported for media. Use buffer instead.");
+  }
+}
+
+function resolvePollMaxSelections(optionCount, allowMultiselect) {
+  return allowMultiselect ? Math.max(2, optionCount) : 1;
+}
+
+function enumValuesFrom(values) {
+  if (Array.isArray(values)) {
+    return values;
+  }
+  if (values && typeof values === "object") {
+    return Object.values(values).filter((value) => typeof value === "string");
+  }
+  return [];
+}
+
+function stringEnum(values, options = {}) {
+  const enumValues = enumValuesFrom(values);
+  return {
+    type: "string",
+    ...(enumValues.length > 0 ? { enum: [...enumValues] } : {}),
+    ...options,
+  };
+}
+
+function optionalStringEnum(values, options = {}) {
+  return stringEnum(values, options);
+}
+
+function createMessageToolButtonsSchema() {
+  return {
+    type: "array",
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          callback_data: { type: "string" },
+          style: stringEnum(["danger", "success", "primary"]),
+        },
+        required: ["text", "callback_data"],
+      },
+    },
+    description: "Button rows for channels that support button-style actions.",
+  };
+}
+
+function createMessageToolCardSchema() {
+  return {
+    type: "object",
+    additionalProperties: true,
+    description: "Structured card payload for channels that support card-style messages.",
+  };
+}
+
 function isToolPayloadTextBlock(block) {
   return (
     Boolean(block) &&
@@ -20129,6 +20473,30 @@ const booleanParamRuntime = {
   readBooleanParam,
 };
 
+const channelActionsRuntime = {
+  ToolAuthorizationError,
+  assertMediaNotDataUrl,
+  createActionGate,
+  createMessageToolButtonsSchema,
+  createMessageToolCardSchema,
+  createUnionActionGate,
+  jsonResult,
+  listTokenSourcedAccounts,
+  optionalStringEnum,
+  parseAvailableTags,
+  readNumberParam,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+  resolvePollMaxSelections,
+  resolveReactionMessageId,
+  stringEnum,
+  stringifyToolPayload,
+  textResult,
+  withNormalizedTimestamp,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -20180,9 +20548,13 @@ const genericSdk = new Proxy(
     collectErrorGraphCandidates,
     countOutboundMedia,
     createAccountActionGate,
+    createActionGate,
     createAccountListHelpers,
+    createMessageToolButtonsSchema,
+    createMessageToolCardSchema,
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
+    createUnionActionGate,
     chunkMarkdownTextWithMode,
     chunkText,
     chunkTextWithMode,
@@ -20215,6 +20587,7 @@ const genericSdk = new Proxy(
     listBoundAccountIds,
     listCombinedAccountIds,
     listConfiguredAccountIds,
+    listTokenSourcedAccounts,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
     mergeAccountConfig,
@@ -20241,9 +20614,15 @@ const genericSdk = new Proxy(
     parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
     pathExists,
+    parseAvailableTags,
     readBooleanParam,
     readErrorName,
+    readNumberParam,
+    readReactionParams,
     readStringValue,
+    readStringArrayParam,
+    readStringOrNumberParam,
+    readStringParam,
     resolveAccountEntry,
     resolveAccountWithDefaultFallback,
     resolveListedDefaultAccountId,
@@ -20258,6 +20637,8 @@ const genericSdk = new Proxy(
     resolveOutboundMediaUrls,
     resolvePayloadMediaUrls,
     resolvePreferredOpenClawTmpDir,
+    resolvePollMaxSelections,
+    resolveReactionMessageId,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
     resolveTextChunkLimit,
@@ -20272,8 +20653,13 @@ const genericSdk = new Proxy(
     sendPayloadMediaSequenceOrFallback,
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
+    stringEnum,
+    stringifyToolPayload,
     stripPlainTextToolCallBlocks,
+    textResult,
+    ToolAuthorizationError,
     withTempDownloadPath,
+    withNormalizedTimestamp,
   },
   {
     get(target, prop) {
@@ -20351,6 +20737,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/boolean-param"
   ) {
     return booleanParamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-actions" ||
+    request === "@openclaw/plugin-sdk/channel-actions"
+  ) {
+    return channelActionsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
