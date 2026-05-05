@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~76.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~76.4% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, runtime activation doctor posture, and
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
-  command-auth, and channel-setup helper slices.
+  command-auth, channel-setup, and allowlist-config-edit helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7175,9 +7175,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~76.3%. Verified with focused channel-setup pytest,
   adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
   checkpointed in `0b86d5ea`.
+- Closed the imported OpenClaw plugin SDK allowlist-config-edit seam from
+  `src/plugin-sdk/allowlist-config-edit.ts`: native runtime entries can now
+  import DM/group and legacy-DM config path resolution, configured entry
+  coercion, flat/nested override collectors and account-scoped resolvers,
+  token-gated name resolution, account-scoped config editor target selection,
+  add/remove/duplicate edit semantics, top-level/default-account writes, legacy
+  `dm.allowFrom` cleanup, and generic SDK re-exports through `tools.invoke`.
+  Repo-wide parity is now estimated at ~76.4%. Verified with focused
+  allowlist-config-edit pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `37677120`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/allow-from/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
