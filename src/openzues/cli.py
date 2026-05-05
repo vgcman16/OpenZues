@@ -30656,6 +30656,288 @@ const runtimeRuntime = {
   defaultRuntime,
 };
 
+async function nullChannelDirectorySelf(_ctx) {
+  return null;
+}
+
+async function emptyChannelDirectoryList(_ctx) {
+  return [];
+}
+
+function createChannelDirectoryAdapter(params = {}) {
+  return {
+    self: params.self ?? nullChannelDirectorySelf,
+    ...params,
+  };
+}
+
+function createEmptyChannelDirectoryAdapter() {
+  return createChannelDirectoryAdapter({
+    listPeers: emptyChannelDirectoryList,
+    listGroups: emptyChannelDirectoryList,
+  });
+}
+
+function resolveDirectoryQuery(query) {
+  return normalizeLowercaseStringOrEmpty(query);
+}
+
+function resolveDirectoryLimit(limit) {
+  return typeof limit === "number" && limit > 0 ? limit : undefined;
+}
+
+function applyDirectoryQueryAndLimit(ids, params = {}) {
+  const query = resolveDirectoryQuery(params.query);
+  const limit = resolveDirectoryLimit(params.limit);
+  const filtered = Array.from(ids || []).filter((id) =>
+    query ? normalizeLowercaseStringOrEmpty(id).includes(query) : true,
+  );
+  return typeof limit === "number" ? filtered.slice(0, limit) : filtered;
+}
+
+function toDirectoryEntries(kind, ids) {
+  return Array.from(ids || []).map((id) => ({ kind, id }));
+}
+
+function normalizeDirectoryIds(params) {
+  return Array.from(params.rawIds || [])
+    .map((entry) => normalizeOptionalString(entry) || "")
+    .filter((entry) => Boolean(entry) && entry !== "*")
+    .map((entry) => {
+      const normalized =
+        typeof params.normalizeId === "function" ? params.normalizeId(entry) : entry;
+      return normalizeOptionalString(normalized) || "";
+    })
+    .filter(Boolean);
+}
+
+function collectDirectoryIdsFromEntries(params = {}) {
+  return normalizeDirectoryIds({
+    rawIds: Array.from(params.entries || []).map((entry) => String(entry)),
+    normalizeId: params.normalizeId,
+  });
+}
+
+function collectDirectoryIdsFromMapKeys(params = {}) {
+  return normalizeDirectoryIds({
+    rawIds: Object.keys(params.groups || {}),
+    normalizeId: params.normalizeId,
+  });
+}
+
+function dedupeDirectoryIds(ids) {
+  return Array.from(new Set(ids || []));
+}
+
+function collectNormalizedDirectoryIds(params) {
+  const ids = new Set();
+  for (const source of params.sources || []) {
+    for (const value of source || []) {
+      const raw = normalizeOptionalString(value) || "";
+      if (!raw || raw === "*") {
+        continue;
+      }
+      const normalized =
+        typeof params.normalizeId === "function" ? params.normalizeId(raw) : raw;
+      const trimmed = normalizeOptionalString(normalized) || "";
+      if (trimmed) {
+        ids.add(trimmed);
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+function listDirectoryEntriesFromSources(params) {
+  const ids = collectNormalizedDirectoryIds({
+    sources: params.sources || [],
+    normalizeId: params.normalizeId,
+  });
+  return toDirectoryEntries(params.kind, applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listInspectedDirectoryEntriesFromSources(params) {
+  const account = params.inspectAccount(params.cfg, params.accountId);
+  if (!account) {
+    return [];
+  }
+  return listDirectoryEntriesFromSources({
+    kind: params.kind,
+    sources: params.resolveSources(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function createInspectedDirectoryEntriesLister(params) {
+  return async (configParams) =>
+    listInspectedDirectoryEntriesFromSources({
+      ...(configParams || {}),
+      ...params,
+    });
+}
+
+function listResolvedDirectoryEntriesFromSources(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryEntriesFromSources({
+    kind: params.kind,
+    sources: params.resolveSources(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function createResolvedDirectoryEntriesLister(params) {
+  return async (configParams) =>
+    listResolvedDirectoryEntriesFromSources({
+      ...(configParams || {}),
+      ...params,
+    });
+}
+
+function listDirectoryUserEntriesFromAllowFrom(params = {}) {
+  const ids = dedupeDirectoryIds(
+    collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeId,
+    }),
+  );
+  return toDirectoryEntries("user", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryUserEntriesFromAllowFromAndMapKeys(params = {}) {
+  const ids = dedupeDirectoryIds([
+    ...collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeAllowFromId,
+    }),
+    ...collectDirectoryIdsFromMapKeys({
+      groups: params.map,
+      normalizeId: params.normalizeMapKeyId,
+    }),
+  ]);
+  return toDirectoryEntries("user", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryGroupEntriesFromMapKeys(params = {}) {
+  const ids = dedupeDirectoryIds(
+    collectDirectoryIdsFromMapKeys({
+      groups: params.groups,
+      normalizeId: params.normalizeId,
+    }),
+  );
+  return toDirectoryEntries("group", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryGroupEntriesFromMapKeysAndAllowFrom(params = {}) {
+  const ids = dedupeDirectoryIds([
+    ...collectDirectoryIdsFromMapKeys({
+      groups: params.groups,
+      normalizeId: params.normalizeMapKeyId,
+    }),
+    ...collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeAllowFromId,
+    }),
+  ]);
+  return toDirectoryEntries("group", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listResolvedDirectoryUserEntriesFromAllowFrom(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryUserEntriesFromAllowFrom({
+    allowFrom: params.resolveAllowFrom(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function listResolvedDirectoryGroupEntriesFromMapKeys(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryGroupEntriesFromMapKeys({
+    groups: params.resolveGroups(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+async function resolveForwardedDirectoryMethod(params) {
+  const runtime = await params.getRuntime();
+  const method = params.resolve(runtime);
+  if (method) {
+    return method;
+  }
+  throw new Error(params.unavailableMessage || "Runtime method is unavailable");
+}
+
+function createRuntimeDirectoryLiveAdapter(params) {
+  const adapter = {};
+  if (params.self) {
+    adapter.self = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.self,
+        })
+      )(ctx);
+  }
+  if (params.listPeersLive) {
+    adapter.listPeersLive = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listPeersLive,
+        })
+      )(ctx);
+  }
+  if (params.listGroupsLive) {
+    adapter.listGroupsLive = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listGroupsLive,
+        })
+      )(ctx);
+  }
+  if (params.listGroupMembers) {
+    adapter.listGroupMembers = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listGroupMembers,
+        })
+      )(ctx);
+  }
+  return adapter;
+}
+
+const directoryRuntime = {
+  applyDirectoryQueryAndLimit,
+  collectNormalizedDirectoryIds,
+  createChannelDirectoryAdapter,
+  createEmptyChannelDirectoryAdapter,
+  createInspectedDirectoryEntriesLister,
+  createResolvedDirectoryEntriesLister,
+  createRuntimeDirectoryLiveAdapter,
+  emptyChannelDirectoryList,
+  inspectReadOnlyChannelAccount: passthrough,
+  listDirectoryEntriesFromSources,
+  listDirectoryGroupEntriesFromMapKeys,
+  listDirectoryGroupEntriesFromMapKeysAndAllowFrom,
+  listDirectoryUserEntriesFromAllowFrom,
+  listDirectoryUserEntriesFromAllowFromAndMapKeys,
+  listInspectedDirectoryEntriesFromSources,
+  listResolvedDirectoryEntriesFromSources,
+  listResolvedDirectoryGroupEntriesFromMapKeys,
+  listResolvedDirectoryUserEntriesFromAllowFrom,
+  nullChannelDirectorySelf,
+  toDirectoryEntries,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -31361,6 +31643,7 @@ const genericSdk = new Proxy(
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...runtimeRuntime,
+    ...directoryRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31849,6 +32132,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime"
   ) {
     return runtimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/directory-runtime" ||
+    request === "@openclaw/plugin-sdk/directory-runtime"
+  ) {
+    return directoryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

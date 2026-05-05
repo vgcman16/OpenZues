@@ -13788,6 +13788,185 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_directory_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-directory-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const directory = require("openclaw/plugin-sdk/directory-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function stripUserPrefix(entry) {
+  return entry.replace(/^user:/i, "").toLowerCase();
+}
+
+function captureError(fn) {
+  return Promise.resolve()
+    .then(fn)
+    .then(() => ({ ok: true }))
+    .catch((error) => ({ ok: false, message: error && error.message }));
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.directory_runtime",
+      description: "Use OpenClaw directory runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const adapter = directory.createChannelDirectoryAdapter({
+          listPeers: async () => [{ kind: "user", id: "u-1" }]
+        });
+        const emptyAdapter = directory.createEmptyChannelDirectoryAdapter();
+        const resolvedLister = directory.createResolvedDirectoryEntriesLister({
+          kind: "user",
+          resolveAccount: () => ({
+            allowFrom: ["user:Alice", "user:Bob"],
+            extra: ["user:Carla", "user:Alice"]
+          }),
+          resolveSources: (account) => [account.allowFrom, account.extra],
+          normalizeId: stripUserPrefix
+        });
+        const liveAdapter = directory.createRuntimeDirectoryLiveAdapter({
+          getRuntime: () => ({
+            self: async () => ({ kind: "user", id: "self" }),
+            listPeersLive: async () => [{ kind: "user", id: "live-user" }]
+          }),
+          self: (runtime) => runtime.self,
+          listPeersLive: (runtime) => runtime.listPeersLive,
+          listGroupsLive: (runtime) => runtime.listGroupsLive
+        });
+
+        return {
+          exportTypes: [
+            typeof directory.createChannelDirectoryAdapter,
+            typeof directory.listDirectoryEntriesFromSources,
+            typeof directory.createRuntimeDirectoryLiveAdapter,
+            typeof genericSdk.createChannelDirectoryAdapter
+          ],
+          defaults: {
+            self: await adapter.self({ cfg: {}, runtime: {} }),
+            peers: await adapter.listPeers({ cfg: {}, runtime: {} }),
+            emptySelf: await emptyAdapter.self({ cfg: {}, runtime: {} }),
+            emptyPeers: await emptyAdapter.listPeers({ cfg: {}, runtime: {} }),
+            standaloneEmpty: await directory.emptyChannelDirectoryList({ cfg: {}, runtime: {} })
+          },
+          allowFromUsers: directory.listDirectoryUserEntriesFromAllowFrom({
+            allowFrom: ["", "*", "user:Alice", "user:alice", "user:Bob", "user:Carla"],
+            normalizeId: stripUserPrefix,
+            query: "a",
+            limit: 2
+          }),
+          groups: directory.listDirectoryGroupEntriesFromMapKeysAndAllowFrom({
+            groups: { "team/a": {}, "*": {} },
+            allowFrom: ["team/b", "team/a"],
+            query: "team/"
+          }),
+          sources: directory.listDirectoryEntriesFromSources({
+            kind: "user",
+            sources: [["user:alice", "user:bob"], ["user:carla", "user:alice"]],
+            normalizeId: stripUserPrefix,
+            query: "a",
+            limit: 2
+          }),
+          resolved: await resolvedLister({ cfg: {}, query: "a", limit: 2 }),
+          live: {
+            self: await liveAdapter.self({ cfg: {}, runtime: {} }),
+            peers: await liveAdapter.listPeersLive({ cfg: {}, runtime: {} }),
+            missingGroups: await captureError(() =>
+              liveAdapter.listGroupsLive({ cfg: {}, runtime: {} })
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "directory-runtime-plugin",
+                    "name": "Directory Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-directory-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.directory_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.directory_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function"],
+        "defaults": {
+            "self": None,
+            "peers": [{"kind": "user", "id": "u-1"}],
+            "emptySelf": None,
+            "emptyPeers": [],
+            "standaloneEmpty": [],
+        },
+        "allowFromUsers": [
+            {"kind": "user", "id": "alice"},
+            {"kind": "user", "id": "carla"},
+        ],
+        "groups": [
+            {"kind": "group", "id": "team/a"},
+            {"kind": "group", "id": "team/b"},
+        ],
+        "sources": [
+            {"kind": "user", "id": "alice"},
+            {"kind": "user", "id": "carla"},
+        ],
+        "resolved": [
+            {"kind": "user", "id": "alice"},
+            {"kind": "user", "id": "carla"},
+        ],
+        "live": {
+            "self": {"kind": "user", "id": "self"},
+            "peers": [{"kind": "user", "id": "live-user"}],
+            "missingGroups": {"ok": False, "message": "Runtime method is unavailable"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
