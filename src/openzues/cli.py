@@ -18468,6 +18468,216 @@ async function readResponseWithLimit(res, maxBytes, opts = {}) {
   return prefix.buffer;
 }
 
+const DEFAULT_RETRY_CONFIG = {
+  attempts: 3,
+  minDelayMs: 300,
+  maxDelayMs: 30000,
+  jitter: 0,
+};
+
+const TELEGRAM_RETRY_DEFAULTS = {
+  attempts: 3,
+  minDelayMs: 400,
+  maxDelayMs: 30000,
+  jitter: 0.1,
+};
+
+const CHANNEL_API_RETRY_RE = /429|timeout|connect|reset|closed|unavailable|temporarily/i;
+
+function asFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function clampRetryNumber(value, fallback, min, max) {
+  const next = asFiniteNumber(value);
+  if (next === undefined) {
+    return fallback;
+  }
+  const floor = typeof min === "number" ? min : Number.NEGATIVE_INFINITY;
+  const ceiling = typeof max === "number" ? max : Number.POSITIVE_INFINITY;
+  return Math.min(Math.max(next, floor), ceiling);
+}
+
+function resolveRetryConfig(defaults = DEFAULT_RETRY_CONFIG, overrides) {
+  const base = defaults || DEFAULT_RETRY_CONFIG;
+  const attempts = Math.max(
+    1,
+    Math.round(clampRetryNumber(overrides && overrides.attempts, base.attempts, 1)),
+  );
+  const minDelayMs = Math.max(
+    0,
+    Math.round(clampRetryNumber(overrides && overrides.minDelayMs, base.minDelayMs, 0)),
+  );
+  const maxDelayMs = Math.max(
+    minDelayMs,
+    Math.round(clampRetryNumber(overrides && overrides.maxDelayMs, base.maxDelayMs, 0)),
+  );
+  const jitter = clampRetryNumber(overrides && overrides.jitter, base.jitter, 0, 1);
+  return { attempts, minDelayMs, maxDelayMs, jitter };
+}
+
+function generateSecureFraction() {
+  return crypto.randomBytes(6).readUIntBE(0, 6) / 0x1000000000000;
+}
+
+function applyRetryJitter(delayMs, jitter) {
+  if (jitter <= 0) {
+    return delayMs;
+  }
+  const offset = (generateSecureFraction() * 2 - 1) * jitter;
+  return Math.max(0, Math.round(delayMs * (1 + offset)));
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryAsync(fn, attemptsOrOptions = 3, initialDelayMs = 300) {
+  if (typeof attemptsOrOptions === "number") {
+    const attempts = Math.max(1, Math.round(attemptsOrOptions));
+    let lastErr;
+    for (let index = 0; index < attempts; index += 1) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (index === attempts - 1) {
+          break;
+        }
+        const delay = initialDelayMs * 2 ** index;
+        if (delay > 0) {
+          await sleepMs(delay);
+        }
+      }
+    }
+    throw lastErr || new Error("Retry failed");
+  }
+
+  const options = attemptsOrOptions || {};
+  const resolved = resolveRetryConfig(DEFAULT_RETRY_CONFIG, options);
+  const maxAttempts = resolved.attempts;
+  const minDelayMs = resolved.minDelayMs;
+  const maxDelayMs =
+    Number.isFinite(resolved.maxDelayMs) && resolved.maxDelayMs > 0
+      ? resolved.maxDelayMs
+      : Number.POSITIVE_INFINITY;
+  const shouldRetry = options.shouldRetry || (() => true);
+  let lastErr;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts || !shouldRetry(err, attempt)) {
+        break;
+      }
+
+      const retryAfterMs =
+        typeof options.retryAfterMs === "function" ? options.retryAfterMs(err) : undefined;
+      const hasRetryAfter = typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs);
+      const baseDelay = hasRetryAfter
+        ? Math.max(retryAfterMs, minDelayMs)
+        : minDelayMs * 2 ** (attempt - 1);
+      let delay = Math.min(baseDelay, maxDelayMs);
+      delay = applyRetryJitter(delay, resolved.jitter);
+      delay = Math.min(Math.max(delay, minDelayMs), maxDelayMs);
+
+      if (typeof options.onRetry === "function") {
+        options.onRetry({
+          attempt,
+          maxAttempts,
+          delayMs: delay,
+          err,
+          label: options.label,
+        });
+      }
+      if (delay > 0) {
+        await sleepMs(delay);
+      }
+    }
+  }
+
+  throw lastErr || new Error("Retry failed");
+}
+
+function resolveChannelApiShouldRetry(params) {
+  if (!params.shouldRetry) {
+    return (err) => CHANNEL_API_RETRY_RE.test(formatErrorMessage(err));
+  }
+  if (params.strictShouldRetry) {
+    return params.shouldRetry;
+  }
+  return (err) => params.shouldRetry(err) || CHANNEL_API_RETRY_RE.test(formatErrorMessage(err));
+}
+
+function getChannelApiRetryAfterMs(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate =
+    err.parameters && typeof err.parameters === "object"
+      ? err.parameters.retry_after
+      : err.response && typeof err.response === "object" && err.response.parameters
+        ? err.response.parameters.retry_after
+        : err.error && typeof err.error === "object" && err.error.parameters
+          ? err.error.parameters.retry_after
+          : undefined;
+  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate * 1000 : undefined;
+}
+
+function createRateLimitRetryRunner(params) {
+  const retryConfig = resolveRetryConfig(params.defaults, {
+    ...(params.configRetry || {}),
+    ...(params.retry || {}),
+  });
+  return (fn, label) =>
+    retryAsync(fn, {
+      ...retryConfig,
+      label,
+      shouldRetry: params.shouldRetry,
+      retryAfterMs: params.retryAfterMs,
+      onRetry: params.verbose
+        ? (info) => {
+            const labelText = info.label || "request";
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            console.warn(
+              `${params.logLabel} ${labelText} rate limited, retry ` +
+                `${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
+            );
+          }
+        : undefined,
+    });
+}
+
+function createChannelApiRetryRunner(params = {}) {
+  const retryConfig = resolveRetryConfig(TELEGRAM_RETRY_DEFAULTS, {
+    ...(params.configRetry || {}),
+    ...(params.retry || {}),
+  });
+  const shouldRetry = resolveChannelApiShouldRetry(params);
+
+  return (fn, label) =>
+    retryAsync(fn, {
+      ...retryConfig,
+      label,
+      shouldRetry,
+      retryAfterMs: getChannelApiRetryAfterMs,
+      onRetry: params.verbose
+        ? (info) => {
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            console.warn(
+              `channel send retry ${info.attempt}/${maxRetries} for ${
+                info.label || label || "request"
+              } in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
+            );
+          }
+        : undefined,
+    });
+}
+
+const createTelegramRetryRunner = createChannelApiRetryRunner;
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -21309,6 +21519,14 @@ const responseLimitRuntime = {
   readResponseWithLimit,
 };
 
+const retryRuntime = {
+  TELEGRAM_RETRY_DEFAULTS,
+  createRateLimitRetryRunner,
+  createTelegramRetryRunner,
+  resolveRetryConfig,
+  retryAsync,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21546,6 +21764,8 @@ const genericSdk = new Proxy(
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
     createDedupeCache,
+    createRateLimitRetryRunner,
+    createTelegramRetryRunner,
     createAsyncLock,
     createAsyncComputedAccountStatusAdapter,
     createComputedAccountStatusAdapter,
@@ -21638,6 +21858,7 @@ const genericSdk = new Proxy(
     readNumberParam,
     readResponseWithLimit,
     readReactionParams,
+    resolveRetryConfig,
     readStringValue,
     readStringArrayParam,
     readStringOrNumberParam,
@@ -21684,6 +21905,8 @@ const genericSdk = new Proxy(
     stripPlainTextToolCallBlocks,
     textResult,
     ToolAuthorizationError,
+    retryAsync,
+    TELEGRAM_RETRY_DEFAULTS,
     waitForTransportReady,
     withTempDownloadPath,
     withNormalizedTimestamp,
@@ -21792,6 +22015,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/response-limit-runtime"
   ) {
     return responseLimitRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/retry-runtime" ||
+    request === "@openclaw/plugin-sdk/retry-runtime"
+  ) {
+    return retryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||

@@ -6460,6 +6460,210 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-retry-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  TELEGRAM_RETRY_DEFAULTS,
+  createRateLimitRetryRunner,
+  createTelegramRetryRunner,
+  resolveRetryConfig,
+  retryAsync
+} = require("openclaw/plugin-sdk/retry-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.retry",
+      description: "Use OpenClaw retry-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const rounded = resolveRetryConfig(undefined, {
+          attempts: 2.6,
+          minDelayMs: 10.4,
+          maxDelayMs: 9,
+          jitter: 2
+        });
+        const clamped = resolveRetryConfig(undefined, {
+          attempts: 0,
+          minDelayMs: 250,
+          maxDelayMs: 100,
+          jitter: -1
+        });
+
+        let numericCalls = 0;
+        const numericResult = await retryAsync(async () => {
+          numericCalls += 1;
+          if (numericCalls < 2) {
+            throw new Error("fail once");
+          }
+          return "ok";
+        }, 3, 0);
+
+        const retryDelays = [];
+        let optionCalls = 0;
+        const optionResult = await retryAsync(async () => {
+          optionCalls += 1;
+          if (optionCalls < 2) {
+            throw new Error("rate limited");
+          }
+          return "done";
+        }, {
+          attempts: 2,
+          minDelayMs: 0,
+          maxDelayMs: 0,
+          jitter: 0,
+          label: "matrix",
+          retryAfterMs: () => 0,
+          onRetry: (info) => retryDelays.push({
+            attempt: info.attempt,
+            maxAttempts: info.maxAttempts,
+            delayMs: info.delayMs,
+            label: info.label
+          })
+        });
+
+        let stopCalls = 0;
+        let stopMessage = null;
+        try {
+          await retryAsync(async () => {
+            stopCalls += 1;
+            throw new Error("do not retry");
+          }, {
+            attempts: 3,
+            minDelayMs: 0,
+            maxDelayMs: 0,
+            shouldRetry: () => false
+          });
+        } catch (error) {
+          stopMessage = error && error.message;
+        }
+
+        const rateRunner = createRateLimitRetryRunner({
+          defaults: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+          logLabel: "discord",
+          shouldRetry: () => true
+        });
+        let rateCalls = 0;
+        const rateResult = await rateRunner(async () => {
+          rateCalls += 1;
+          if (rateCalls < 2) {
+            throw new Error("429");
+          }
+          return "sent";
+        }, "send");
+
+        const telegramRunner = createTelegramRetryRunner({
+          retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 }
+        });
+        let telegramCalls = 0;
+        const telegramResult = await telegramRunner(async () => {
+          telegramCalls += 1;
+          if (telegramCalls < 2) {
+            const error = new Error("429 retry");
+            error.parameters = { retry_after: 0 };
+            throw error;
+          }
+          return "telegram";
+        }, "send");
+
+        return {
+          rounded,
+          clamped,
+          numericCalls,
+          numericResult,
+          optionCalls,
+          optionResult,
+          retryDelays,
+          stopCalls,
+          stopMessage,
+          rateCalls,
+          rateResult,
+          telegramCalls,
+          telegramResult,
+          telegramDefaults: TELEGRAM_RETRY_DEFAULTS
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-retry-plugin",
+                    "name": "Runtime Retry Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-retry-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.retry"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.retry"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "rounded": {"attempts": 3, "minDelayMs": 10, "maxDelayMs": 10, "jitter": 1},
+        "clamped": {"attempts": 1, "minDelayMs": 250, "maxDelayMs": 250, "jitter": 0},
+        "numericCalls": 2,
+        "numericResult": "ok",
+        "optionCalls": 2,
+        "optionResult": "done",
+        "retryDelays": [{"attempt": 1, "maxAttempts": 2, "delayMs": 0, "label": "matrix"}],
+        "stopCalls": 1,
+        "stopMessage": "do not retry",
+        "rateCalls": 2,
+        "rateResult": "sent",
+        "telegramCalls": 2,
+        "telegramResult": "telegram",
+        "telegramDefaults": {
+            "attempts": 3,
+            "minDelayMs": 400,
+            "maxDelayMs": 30000,
+            "jitter": 0.1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:
