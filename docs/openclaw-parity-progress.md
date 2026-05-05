@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.1% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~66.2% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10959,6 +10959,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py src\openzues\database.py tests\test_ops_mesh.py`,
   and `mypy src\openzues\services\ops_mesh.py src\openzues\database.py`.
   Checkpointed in `2f4e2496`.
+- Microsoft Teams inbound downloadable attachment URL metadata now preserves
+  OpenClaw attachment download candidates from
+  `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/shared.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: Teams message
+  attachments with `content.downloadUrl` or `contentUrl` still route
+  placeholder text to the session, and the native inbound result includes a
+  deduped `mediaUrls` array so the next download/staging seam can consume the
+  same candidate set. This closes `OZ-PROV-001BB`; repo-wide parity is now
+  estimated at ~66.2%. Remaining Teams media breadth is actual
+  download/store/stage into the session media workspace, feedback reflection
+  learning/follow-up, and delegated auth setup breadth.
+- Verified the Microsoft Teams inbound attachment URL metadata slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_preserves_msteams_downloadable_attachment_urls -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome or msteams_group_welcome"`
+  (`8 passed, 323 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `2205ca86`.
 
 ## References
 

@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.2% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6151,10 +6151,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~66.1%. Verified with focused runtime pytest, adjacent
   Teams probe/SSO/action proof, `ruff check`, and `mypy`; source/test
   checkpointed in `2f4e2496`.
+- Closed the Microsoft Teams inbound attachment URL metadata seam from
+  OpenClaw `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/shared.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: native Teams
+  message activities now preserve deduped `content.downloadUrl` and
+  `contentUrl` candidates on the inbound result as `mediaUrls` while retaining
+  the existing `<media:image>` / `<media:document>` placeholder delivery to the
+  session. This is the staging prerequisite, not the full download/store seam.
+  Repo-wide parity is now estimated at ~66.2%. Verified with focused runtime
+  pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `2205ca86`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams feedback
-  reflection learning/follow-up generation, downloadable inbound media staging,
-  delegated auth setup breadth, or another
+  reflection learning/follow-up generation, actual downloadable inbound media
+  download/store/staging, delegated auth setup breadth, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
