@@ -5417,6 +5417,94 @@ def _feishu_action_chat_id(request: GatewayMessageActionDispatchRequest, *, acti
     return parsed[0]
 
 
+def _feishu_presentation_block_text(block: Mapping[str, object]) -> str | None:
+    block_type = str(block.get("type") or "").strip()
+    for key in ("text", "content", "title"):
+        value = block.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if block_type == "buttons":
+        buttons = block.get("buttons")
+        labels = [
+            f"- {label.strip()}"
+            for button in (buttons if isinstance(buttons, list) else [])
+            if isinstance(button, Mapping)
+            and isinstance((label := button.get("label")), str)
+            and label.strip()
+        ]
+        return "\n".join(labels) or None
+    if block_type == "select":
+        lines: list[str] = []
+        placeholder = block.get("placeholder")
+        if isinstance(placeholder, str) and placeholder.strip():
+            lines.append(f"{placeholder.strip()}:")
+        options = block.get("options")
+        for option in options if isinstance(options, list) else []:
+            if not isinstance(option, Mapping):
+                continue
+            label = option.get("label")
+            if isinstance(label, str) and label.strip():
+                lines.append(f"- {label.strip()}")
+        return "\n".join(lines) or None
+    return None
+
+
+def _feishu_presentation_fallback_text(
+    presentation: Mapping[str, object],
+    *,
+    fallback_text: str | None,
+) -> str:
+    blocks = presentation.get("blocks")
+    lines = [
+        text
+        for block in (blocks if isinstance(blocks, list) else [])
+        if isinstance(block, Mapping)
+        if (text := _feishu_presentation_block_text(block))
+    ]
+    if lines:
+        return "\n".join(lines)
+    return fallback_text or ""
+
+
+def _feishu_action_card(params: dict[str, Any]) -> dict[str, object] | None:
+    raw_card = params.get("card")
+    if raw_card is not None:
+        if not isinstance(raw_card, Mapping):
+            raise RuntimeError("Feishu card must be an object.")
+        return dict(raw_card)
+    raw_presentation = params.get("presentation")
+    if raw_presentation is None:
+        return None
+    if not isinstance(raw_presentation, Mapping):
+        raise RuntimeError("Feishu presentation must be an object.")
+    fallback_text = (
+        _message_action_param_string(params, "text")
+        or _message_action_param_string(params, "message")
+    )
+    card: dict[str, object] = {
+        "schema": "2.0",
+        "config": {"width_mode": "fill"},
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": _feishu_presentation_fallback_text(
+                        raw_presentation,
+                        fallback_text=fallback_text,
+                    ),
+                }
+            ]
+        },
+    }
+    title = raw_presentation.get("title")
+    if isinstance(title, str) and title.strip():
+        card["header"] = {
+            "title": {"tag": "plain_text", "content": title.strip()},
+            "template": "blue",
+        }
+    return card
+
+
 def _feishu_action_text(params: dict[str, Any], *, action: str) -> str:
     if params.get("presentation") is not None or params.get("card") is not None:
         raise RuntimeError(f"Feishu {action} card sending is not available.")
@@ -27095,6 +27183,84 @@ class OpsMeshService:
         }
         return result
 
+    def _post_feishu_card_provider_event(
+        self,
+        route: dict[str, Any],
+        event: dict[str, Any],
+        card: dict[str, object],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        receive_target = str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        parsed_target = _feishu_target(receive_target)
+        if parsed_target is None:
+            raise RuntimeError("Feishu action requires a chat/user target.")
+        receive_id, receive_id_type = parsed_target
+        message_payload: dict[str, object] = {
+            "content": json.dumps(card, separators=(",", ":")),
+            "msg_type": "interactive",
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        bearer_token = _feishu_bearer_token(secret_token)
+        result: object
+        if reply_to_id:
+            result = self._post_json_webhook(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    f"im/v1/messages/{quote(reply_to_id, safe='')}/reply",
+                ),
+                {
+                    **message_payload,
+                    **({"reply_in_thread": True} if thread_id else {}),
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if _feishu_reply_target_unavailable(result):
+                if thread_id:
+                    raise RuntimeError(
+                        "Feishu thread reply failed: reply target is unavailable and "
+                        "cannot safely fall back to a top-level send."
+                    )
+            else:
+                _feishu_assert_success(result, "Feishu card reply failed")
+                message_id = _feishu_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Feishu API response did not include a message id.")
+                delivered_chat = _feishu_chat_from_result(result, receive_id)
+                return {
+                    "runtime": "native-provider-backed",
+                    "messageId": message_id,
+                    "chatId": delivered_chat,
+                    "channelId": delivered_chat,
+                    "replyToId": reply_to_id,
+                }
+        result = self._post_json_webhook(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "im/v1/messages",
+                query={"receive_id_type": receive_id_type},
+            ),
+            {
+                "receive_id": receive_id,
+                **message_payload,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        _feishu_assert_success(result, "Feishu card send failed")
+        message_id = _feishu_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Feishu API response did not include a message id.")
+        delivered_chat = _feishu_chat_from_result(result, receive_id)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
+
     def _dispatch_feishu_send_message_action(
         self,
         route: dict[str, Any],
@@ -27103,6 +27269,31 @@ class OpsMeshService:
     ) -> dict[str, object]:
         action = request.action.strip() or "send"
         target = _feishu_action_target(request)
+        card = _feishu_action_card(request.params)
+        media_url = (
+            _message_action_param_raw_string(request.params, "media")
+            or _message_action_param_raw_string(request.params, "mediaUrl")
+        )
+        if card is not None and media_url is not None:
+            raise RuntimeError(f"Feishu {action} does not support card with media.")
+        if card is not None:
+            card_event: dict[str, Any] = {"to": target}
+            if action == "thread-reply":
+                reply_to_id = _feishu_action_message_id(request.params, action=action)
+                card_event["replyToId"] = reply_to_id
+                card_event["threadId"] = reply_to_id
+            native_result = self._post_feishu_card_provider_event(
+                route,
+                card_event,
+                card,
+                secret_token,
+            )
+            return {
+                "ok": True,
+                "channel": "feishu",
+                "action": action,
+                **native_result,
+            }
         text = _feishu_action_text(request.params, action=action)
         event: dict[str, Any] = {
             "to": target,
