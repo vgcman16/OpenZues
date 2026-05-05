@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import codecs
+import hashlib
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1588,6 +1590,104 @@ def test_channels_status_json_reports_msteams_native_probe(
         "graph": {"ok": True},
         "timeoutMs": 2500,
     }
+
+
+def test_setup_msteams_delegated_auth_json_builds_openclaw_auth_url(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Delegated Auth")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams OAuth Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    verifier = "a" * 64
+    state = "b" * 64
+    expected_challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .decode("ascii")
+        .rstrip("=")
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "setup",
+            "msteams-delegated-auth",
+            "--account",
+            "default",
+            "--state",
+            state,
+            "--pkce-verifier",
+            verifier,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "teams-app-password" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["provider"] == "msteams"
+    assert payload["accountId"] == "default"
+    assert payload["tenantId"] == "tenant-id"
+    assert payload["clientId"] == "teams-app-id"
+    assert payload["redirectUri"] == "http://localhost:8086/oauth2callback"
+    assert payload["callbackPort"] == 8086
+    assert payload["callbackPath"] == "/oauth2callback"
+    assert payload["state"] == state
+    assert payload["scopes"] == [
+        "ChatMessage.Send",
+        "ChannelMessage.Send",
+        "Chat.ReadWrite",
+        "offline_access",
+    ]
+    assert payload["pkce"] == {
+        "verifier": verifier,
+        "challenge": expected_challenge,
+        "method": "S256",
+    }
+    assert payload["config"]["delegatedAuth"]["enabled"] is True
+
+    parsed = urlparse(payload["authUrl"])
+    query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+    assert (
+        f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        == "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize"
+    )
+    assert query["client_id"] == "teams-app-id"
+    assert query["response_type"] == "code"
+    assert query["redirect_uri"] == "http://localhost:8086/oauth2callback"
+    assert query["scope"] == "ChatMessage.Send ChannelMessage.Send Chat.ReadWrite offline_access"
+    assert query["code_challenge"] == expected_challenge
+    assert query["code_challenge_method"] == "S256"
+    assert query["state"] == state
+    assert query["prompt"] == "consent"
+    assert verifier not in payload["authUrl"]
+
+    config_path = data_dir / "settings" / "control-ui-config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["channels"]["msteams"]["delegatedAuth"] == {"enabled": True}
 
 
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:

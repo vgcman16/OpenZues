@@ -239,6 +239,10 @@ MSTEAMS_REACTION_EMOJIS = {
     "angry": "\U0001f621",
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
+MSTEAMS_OAUTH_REDIRECT_URI = "http://localhost:8086/oauth2callback"
+MSTEAMS_OAUTH_CALLBACK_PORT = 8086
+MSTEAMS_OAUTH_CALLBACK_PATH = "/oauth2callback"
+MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME = "msteams-delegated"
 MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
     "ChatMessage.Send",
     "ChannelMessage.Send",
@@ -566,6 +570,51 @@ def _msteams_stored_token_scopes(value: object) -> tuple[str, ...]:
         return MSTEAMS_DEFAULT_DELEGATED_SCOPES
     scopes = tuple(str(scope).strip() for scope in parsed if str(scope).strip())
     return scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+
+
+def _msteams_base64url_digest(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _msteams_generate_oauth_state() -> str:
+    return secrets.token_hex(32)
+
+
+def _msteams_generate_pkce_pair(verifier: str | None = None) -> tuple[str, str]:
+    resolved_verifier = verifier.strip() if isinstance(verifier, str) else ""
+    if not resolved_verifier:
+        resolved_verifier = secrets.token_hex(32)
+    challenge = _msteams_base64url_digest(
+        hashlib.sha256(resolved_verifier.encode("ascii")).digest()
+    )
+    return resolved_verifier, challenge
+
+
+def _msteams_build_delegated_auth_url(
+    *,
+    tenant_id: str,
+    client_id: str,
+    challenge: str,
+    state: str,
+    scopes: tuple[str, ...],
+) -> str:
+    endpoint = (
+        "https://login.microsoftonline.com/"
+        f"{quote(tenant_id, safe='')}/oauth2/v2.0/authorize"
+    )
+    query = urlencode(
+        {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": MSTEAMS_OAUTH_REDIRECT_URI,
+            "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "prompt": "consent",
+        }
+    )
+    return f"{endpoint}?{query}"
 
 
 def _requires_secret(auth_scheme: str) -> bool:
@@ -5132,6 +5181,48 @@ def _msteams_sso_config_from_snapshot(
     user_token_base_url = (
         _msteams_inbound_optional_string(
             sso_config.get("userTokenBaseUrl") or sso_config.get("user_token_base_url")
+        )
+        or MSTEAMS_USER_TOKEN_BASE_URL
+    )
+    return _MSTeamsSsoConfig(
+        connection_name=connection_name,
+        user_token_base_url=user_token_base_url,
+    )
+
+
+def _msteams_delegated_auth_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsSsoConfig | None:
+    sso_config = _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
+    if sso_config is not None:
+        return sso_config
+    channel_config = _msteams_channel_config_from_snapshot(
+        snapshot,
+        account_id=account_id,
+    )
+    raw_delegated_auth = channel_config.get("delegatedAuth") or channel_config.get(
+        "delegated_auth"
+    )
+    if isinstance(raw_delegated_auth, Mapping):
+        delegated_auth = _msteams_inbound_mapping(raw_delegated_auth)
+        enabled = _msteams_sso_enabled(delegated_auth.get("enabled"))
+    else:
+        delegated_auth = {}
+        enabled = _msteams_sso_enabled(raw_delegated_auth)
+    if not enabled:
+        return None
+    connection_name = (
+        _msteams_inbound_optional_string(
+            delegated_auth.get("connectionName") or delegated_auth.get("connection_name")
+        )
+        or MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME
+    )
+    user_token_base_url = (
+        _msteams_inbound_optional_string(
+            delegated_auth.get("userTokenBaseUrl")
+            or delegated_auth.get("user_token_base_url")
         )
         or MSTEAMS_USER_TOKEN_BASE_URL
     )
@@ -9911,6 +10002,93 @@ class OpsMeshService:
             return None
         return _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
 
+    def _msteams_delegated_auth_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> _MSTeamsSsoConfig | None:
+        if self.gateway_config_service is None:
+            return None
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return None
+        if not isinstance(snapshot, Mapping):
+            return None
+        return _msteams_delegated_auth_config_from_snapshot(
+            snapshot,
+            account_id=account_id,
+        )
+
+    async def build_msteams_delegated_auth_bootstrap(
+        self,
+        *,
+        account_id: str | None = None,
+        state: str | None = None,
+        pkce_verifier: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        manual: bool = False,
+    ) -> dict[str, object]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        route = await self._provider_route_for_channel_account(
+            channel="msteams",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "No native Microsoft Teams route is configured for delegated auth setup."
+            )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        if not route_config.app_id or not route_config.tenant_id:
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires appId and tenantId "
+                "in the route target."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        secret_value = str(secret_token or "").strip()
+        if not secret_value or secret_value.lower().startswith("bearer "):
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires a route app password secret."
+            )
+        resolved_scopes = tuple(
+            str(scope).strip()
+            for scope in (scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+            if str(scope).strip()
+        ) or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+        resolved_state = str(state or "").strip() or _msteams_generate_oauth_state()
+        verifier, challenge = _msteams_generate_pkce_pair(pkce_verifier)
+        auth_url = _msteams_build_delegated_auth_url(
+            tenant_id=route_config.tenant_id,
+            client_id=route_config.app_id,
+            challenge=challenge,
+            state=resolved_state,
+            scopes=resolved_scopes,
+        )
+        return {
+            "ok": True,
+            "status": "ready",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": normalized_account_id,
+            "tenantId": route_config.tenant_id,
+            "clientId": route_config.app_id,
+            "redirectUri": MSTEAMS_OAUTH_REDIRECT_URI,
+            "callbackPort": MSTEAMS_OAUTH_CALLBACK_PORT,
+            "callbackPath": MSTEAMS_OAUTH_CALLBACK_PATH,
+            "manual": bool(manual),
+            "authUrl": auth_url,
+            "state": resolved_state,
+            "scopes": list(resolved_scopes),
+            "pkce": {
+                "verifier": verifier,
+                "challenge": challenge,
+                "method": "S256",
+            },
+        }
+
     def _msteams_signin_channel_config(
         self,
         *,
@@ -10302,7 +10480,7 @@ class OpsMeshService:
         normalized_user_id = _msteams_inbound_optional_string(user_id)
         if normalized_user_id is None:
             return None
-        sso_config = self._msteams_sso_config(account_id=account_id)
+        sso_config = self._msteams_delegated_auth_config(account_id=account_id)
         if sso_config is None:
             return None
         stored = await self.database.get_msteams_sso_token(
@@ -10494,7 +10672,7 @@ class OpsMeshService:
         *,
         account_id: str | None,
     ) -> dict[str, object] | None:
-        sso_config = self._msteams_sso_config(account_id=account_id)
+        sso_config = self._msteams_delegated_auth_config(account_id=account_id)
         if sso_config is None:
             return None
         try:
