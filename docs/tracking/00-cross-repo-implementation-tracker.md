@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~64.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~65.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams configured SSO verify-state slice is checkpointed in
-`0ecfab4c`.
+The Microsoft Teams SSO DM allowlist authorization slice is checkpointed in
+`b9f2f404`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,9 +62,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams configured SSO verify-state handling checkpointed in `0ecfab4c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams SSO authorization/drop policies, delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams SSO DM allowlist authorization checkpointed in `b9f2f404` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams SSO route-level team/channel allowlist drops, group sender allowlist drops, delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AP` Microsoft Teams SSO DM allowlist authorization/drop
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/access.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: when configured Microsoft Teams SSO receives
+    `signin/tokenExchange` from a personal chat while `dmPolicy="allowlist"`
+    and the sender is not in `allowFrom`, OpenZues still emits a Bot
+    Framework `invokeResponse` status 200, returns safe blocked SSO metadata,
+    skips Bot Framework User Token service calls, avoids delegated-token
+    persistence, and never returns the exchange token.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `b9f2f404`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams SSO DM allowlist proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`18 passed, 304
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AO` Microsoft Teams configured SSO verify-state magic code
   - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
