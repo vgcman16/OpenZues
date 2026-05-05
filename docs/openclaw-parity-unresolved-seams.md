@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.3% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6162,10 +6162,25 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~66.2%. Verified with focused runtime
   pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; source/test
   checkpointed in `2205ca86`.
+- Closed the Microsoft Teams inbound media staging seam from OpenClaw
+  `extensions/msteams/src/attachments/download.ts`,
+  `extensions/msteams/src/attachments/remote-media.ts`,
+  `extensions/msteams/src/attachments/payload.ts`, and
+  `extensions/msteams/src/monitor-handler/inbound-media.ts`: native Teams
+  message attachments can now be fetched through a fakeable/production-gated
+  media fetch adapter, saved under the inbound gateway attachment store, and
+  projected as OpenClaw-style `MediaUrl`, `MediaUrls`, `MediaPath`,
+  `MediaPaths`, and `MediaTypes` result fields while session delivery keeps
+  the existing media placeholder. The slice preserves Teams `downloadUrl`
+  fetches, rewrites SharePoint/OneDrive shared `contentUrl` links through Graph
+  shares, enforces the default Teams host allowlist, and honors the 8 MiB media
+  limit. Repo-wide parity is now estimated at ~66.3%. Verified with focused
+  runtime pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `eda4db73`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams feedback
-  reflection learning/follow-up generation, actual downloadable inbound media
-  download/store/staging, delegated auth setup breadth, or another
+  reflection learning/follow-up generation, delegated auth setup breadth,
+  richer Teams Bot Framework/Graph auth fallback depth, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
