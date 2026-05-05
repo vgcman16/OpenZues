@@ -18144,6 +18144,72 @@ function logAckFailure(params) {
   params.log(`${params.channel} ack cleanup failed${target}: ${String(params.error)}`);
 }
 
+function resolveTimezone(value) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return value;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatUtcTimestamp(date, options) {
+  const yyyy = String(date.getUTCFullYear()).padStart(4, "0");
+  const mm = pad2(date.getUTCMonth() + 1);
+  const dd = pad2(date.getUTCDate());
+  const hh = pad2(date.getUTCHours());
+  const min = pad2(date.getUTCMinutes());
+  if (!(options && options.displaySeconds)) {
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}Z`;
+  }
+  const sec = pad2(date.getUTCSeconds());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}Z`;
+}
+
+function formatZonedTimestamp(date, options) {
+  try {
+    const intlOptions = {
+      timeZone: options && options.timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "short",
+    };
+    if (options && options.displaySeconds) {
+      intlOptions.second = "2-digit";
+    }
+    const parts = new Intl.DateTimeFormat("en-US", intlOptions).formatToParts(date);
+    const pick = (type) => {
+      const part = parts.find((entry) => entry.type === type);
+      return part && part.value;
+    };
+    const yyyy = pick("year");
+    const mm = pick("month");
+    const dd = pick("day");
+    const hh = pick("hour");
+    const min = pick("minute");
+    const sec = options && options.displaySeconds ? pick("second") : undefined;
+    const tzPart = [...parts].reverse().find((entry) => entry.type === "timeZoneName");
+    const tz = tzPart && tzPart.value ? tzPart.value.trim() : undefined;
+    if (!yyyy || !mm || !dd || !hh || !min) {
+      return undefined;
+    }
+    if (options && options.displaySeconds && sec) {
+      return `${yyyy}-${mm}-${dd} ${hh}:${min}:${sec}${tz ? ` ${tz}` : ""}`;
+    }
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}${tz ? ` ${tz}` : ""}`;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
 function lowercasePreservingWhitespace(value) {
   return String(value ?? "").toLowerCase();
 }
@@ -20801,6 +20867,12 @@ const channelLoggingRuntime = {
   logTypingFailure,
 };
 
+const timeRuntime = {
+  formatUtcTimestamp,
+  formatZonedTimestamp,
+  resolveTimezone,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21054,6 +21126,8 @@ const genericSdk = new Proxy(
     deriveLastRoutePolicy,
     extractErrorCode,
     extractToolPayload,
+    formatUtcTimestamp,
+    formatZonedTimestamp,
     formatMatchMetadata,
     formatTextWithAttachmentLinks,
     formatSetExplicitDefaultInstruction,
@@ -21148,6 +21222,7 @@ const genericSdk = new Proxy(
     resolveTextChunkLimit,
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
+    resolveTimezone,
     resolveUserPath,
     sanitizeTempFileName,
     sanitizeAgentId,
@@ -21209,6 +21284,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-logging"
   ) {
     return channelLoggingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/time-runtime" ||
+    request === "@openclaw/plugin-sdk/time-runtime"
+  ) {
+    return timeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||

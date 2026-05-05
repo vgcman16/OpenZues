@@ -7756,6 +7756,105 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_time_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-time-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  formatUtcTimestamp,
+  formatZonedTimestamp,
+  resolveTimezone
+} = require("openclaw/plugin-sdk/time-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.time_runtime",
+      description: "Use OpenClaw time-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const date = new Date("2024-01-15T14:30:45.000Z");
+        return {
+          zones: [
+            resolveTimezone("UTC"),
+            resolveTimezone("America/New_York"),
+            resolveTimezone("Invalid/Timezone") ?? null,
+            resolveTimezone("") ?? null
+          ],
+          utc: [
+            formatUtcTimestamp(date),
+            formatUtcTimestamp(date, { displaySeconds: true })
+          ],
+          zoned: [
+            formatZonedTimestamp(date, { timeZone: "UTC" }),
+            formatZonedTimestamp(date, { timeZone: "UTC", displaySeconds: true }),
+            formatZonedTimestamp(date, { timeZone: "Invalid/Timezone" }) ?? null
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-time-plugin",
+                    "name": "Runtime Time Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-time-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.time_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.time_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "zones": ["UTC", "America/New_York", None, None],
+        "utc": ["2024-01-15T14:30Z", "2024-01-15T14:30:45Z"],
+        "zoned": ["2024-01-15 14:30 UTC", "2024-01-15 14:30:45 UTC", None],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_logging_helpers(
     tmp_path,
 ) -> None:
