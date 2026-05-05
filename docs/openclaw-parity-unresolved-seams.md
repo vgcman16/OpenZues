@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.6% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5569,6 +5569,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~60.5%. Verified with focused update-status pytest, adjacent
   update/package doctor proof, `ruff check`, and `mypy`; checkpointed in
   `e32d4d47`.
+- Closed the update-status git branch channel label seam from OpenClaw
+  `src/infra/update-channels.ts`: native `openzues update status --json` now
+  reads `.git/HEAD` and projects `channel.source="git-branch"` with
+  `dev (<branch>)` labels for branch installs. Repo-wide parity is now
+  estimated at ~60.6%. Verified with focused update-status branch pytest,
+  adjacent update/package doctor proof, `ruff check`, and `mypy`; checkpoint
+  pending commit.
 - Next repo-wide queue head: rotate to companion remote-bin discovery or the
   next provider-specific send/poll/replay metadata gap.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

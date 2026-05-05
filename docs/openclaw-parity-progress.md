@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.5% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.6% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9799,6 +9799,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   package_distribution"` (`3 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
   `e32d4d47`.
+
+- `openzues update status --json` now mirrors OpenClaw's git-branch channel
+  labeling: when a git install exposes `.git/HEAD` pointing at a branch, the
+  channel projection reports `source="git-branch"` and labels the channel as
+  `dev (<branch>)` instead of the generic default. This closes
+  `OZ-PKG-001D`; repo-wide parity is now estimated at ~60.6%.
+- Verified the update status git-branch channel slice with `python -m pytest
+  tests\test_cli.py::test_update_status_json_uses_git_branch_channel_label -q`
+  (`1 passed`), focused pair `python -m pytest
+  tests\test_cli.py::test_update_status_json_includes_openclaw_channel_projection
+  tests\test_cli.py::test_update_status_json_uses_git_branch_channel_label -q`
+  (`2 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_uses_git_branch_channel_label or
+  update_status_json_includes_openclaw_channel_projection or
+  doctor_and_update_status_json_include_hermes_sections or
+  package_distribution"` (`4 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpoint pending
+  commit.
 
 ## References
 

@@ -9365,24 +9365,49 @@ def _openclaw_update_install_kind(root: Path) -> str:
     return "unknown"
 
 
+def _openclaw_update_git_branch(root: Path) -> str | None:
+    head_path = root / ".git" / "HEAD"
+    if not _doctor_path_exists(head_path):
+        return None
+    try:
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/heads/"
+    if not head.startswith(prefix):
+        return None
+    branch = head.removeprefix(prefix).strip()
+    if not branch or branch == "HEAD":
+        return None
+    return branch
+
+
 def _openclaw_update_channel_payload(
     *,
     config_channel: str | None,
     install_kind: str,
+    git_branch: str | None,
 ) -> dict[str, object]:
     if config_channel is not None:
         channel = config_channel
         source = "config"
+        label = f"{channel} (config)"
+    elif install_kind == "git" and git_branch is not None:
+        channel = "dev"
+        source = "git-branch"
+        label = f"{channel} ({git_branch})"
     elif install_kind == "git":
         channel = "dev"
         source = "default"
+        label = f"{channel} ({source})"
     else:
         channel = "stable"
         source = "default"
+        label = f"{channel} ({source})"
     return {
         "value": channel,
         "source": source,
-        "label": f"{channel} ({source})",
+        "label": label,
         "config": config_channel,
     }
 
@@ -9394,6 +9419,7 @@ def _with_openclaw_update_status_projection(
 ) -> dict[str, object]:
     root = _openzues_package_root()
     install_kind = _openclaw_update_install_kind(root)
+    git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
     config_channel = _openclaw_update_config_channel(config_snapshot)
     next_payload = dict(payload)
     next_payload["update"] = {
@@ -9404,6 +9430,7 @@ def _with_openclaw_update_status_projection(
     next_payload["channel"] = _openclaw_update_channel_payload(
         config_channel=config_channel,
         install_kind=install_kind,
+        git_branch=git_branch,
     )
     next_payload["availability"] = {
         "available": False,
