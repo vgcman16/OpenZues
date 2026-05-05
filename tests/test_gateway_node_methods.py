@@ -5931,6 +5931,92 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_executes_imported_openclaw_esm_runtime_entry_tool(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-esm.js"
+    runtime_entry.write_text(
+        """
+import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/text-runtime";
+
+export default {
+  register(api) {
+    api.registerTool({
+      name: "runtime.esm_echo",
+      description: "Echo through an imported ESM runtime entry",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      execute(toolCallId, args) {
+        return {
+          ok: true,
+          toolCallId,
+          normalized: normalizeLowercaseStringOrEmpty(args.message)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-esm-plugin",
+                    "name": "Runtime ESM Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-esm-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.esm_echo"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.esm_echo", "args": {"message": "  HELLO  "}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["normalized"] == "hello"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
