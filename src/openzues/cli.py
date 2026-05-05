@@ -20552,6 +20552,249 @@ async function getRuntimeAuthForModel() {
   return null;
 }
 
+function normalizeApiKeyInput(raw) {
+  const trimmed = normalizeStringifiedOptionalString(raw) || "";
+  if (!trimmed) {
+    return "";
+  }
+  const assignmentMatch = trimmed.match(
+    /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.+)$/,
+  );
+  const valuePart = assignmentMatch ? assignmentMatch[1].trim() : trimmed;
+  const unquoted =
+    valuePart.length >= 2 &&
+    ((valuePart.startsWith('"') && valuePart.endsWith('"')) ||
+      (valuePart.startsWith("'") && valuePart.endsWith("'")) ||
+      (valuePart.startsWith("`") && valuePart.endsWith("`")))
+      ? valuePart.slice(1, -1)
+      : valuePart;
+  const withoutSemicolon = unquoted.endsWith(";") ? unquoted.slice(0, -1) : unquoted;
+  return withoutSemicolon.trim();
+}
+
+function validateApiKeyInput(value) {
+  return normalizeApiKeyInput(value).length > 0 ? undefined : "Required";
+}
+
+function formatApiKeyPreview(raw, opts = {}) {
+  const trimmed = String(raw || "").trim();
+  const ellipsis = "\u2026";
+  if (!trimmed) {
+    return ellipsis;
+  }
+  const head = opts.head === undefined ? 4 : opts.head;
+  const tail = opts.tail === undefined ? 4 : opts.tail;
+  if (trimmed.length <= head + tail) {
+    const shortHead = Math.min(2, trimmed.length);
+    const shortTail = Math.min(2, trimmed.length - shortHead);
+    if (shortTail <= 0) {
+      return `${trimmed.slice(0, shortHead)}${ellipsis}`;
+    }
+    return `${trimmed.slice(0, shortHead)}${ellipsis}${trimmed.slice(-shortTail)}`;
+  }
+  return `${trimmed.slice(0, head)}${ellipsis}${trimmed.slice(-tail)}`;
+}
+
+function normalizeTokenProviderInput(tokenProvider) {
+  return normalizeOptionalLowercaseString(tokenProvider);
+}
+
+function normalizeSecretInputModeInput(secretInputMode) {
+  const normalized = normalizeOptionalLowercaseString(secretInputMode);
+  if (normalized === "plaintext" || normalized === "ref") {
+    return normalized;
+  }
+  return undefined;
+}
+
+async function resolveSecretInputModeForEnvSelection(params) {
+  if (params.explicitMode) {
+    return params.explicitMode;
+  }
+  if (!params.prompter || typeof params.prompter.select !== "function") {
+    return "plaintext";
+  }
+  const copy = params.copy || {};
+  const selected = await params.prompter.select({
+    message: copy.modeMessage || "How do you want to provide this API key?",
+    initialValue: "plaintext",
+    options: [
+      {
+        value: "plaintext",
+        label: copy.plaintextLabel || "Paste API key now",
+        hint: copy.plaintextHint || "Stores the key directly in OpenClaw config",
+      },
+      {
+        value: "ref",
+        label: copy.refLabel || "Use external secret provider",
+        hint:
+          copy.refHint ||
+          "Stores a reference to env or configured external secret providers",
+      },
+    ],
+  });
+  return selected === "ref" ? "ref" : "plaintext";
+}
+
+function resolveProviderIdForAuth(provider) {
+  return normalizeOptionalLowercaseString(provider) || String(provider || "");
+}
+
+function resolveProviderDefaultEnvSecretRef(provider) {
+  const normalized = String(provider || "provider")
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return {
+    source: "env",
+    provider: DEFAULT_SECRET_PROVIDER_ALIAS,
+    id: `${normalized || "PROVIDER"}_API_KEY`,
+  };
+}
+
+function resolveApiKeySecretInput(provider, input, options = {}) {
+  if (options.secretInputMode === "plaintext") {
+    return normalizeSecretInput(input);
+  }
+  const coercedRef = coerceSecretRef(input);
+  if (coercedRef) {
+    return coercedRef;
+  }
+  const normalized = normalizeSecretInputString(input);
+  const inlineEnvRef = parseEnvTemplateSecretRef(normalized);
+  if (inlineEnvRef) {
+    return inlineEnvRef;
+  }
+  if (options.secretInputMode === "ref") {
+    return resolveProviderDefaultEnvSecretRef(provider);
+  }
+  return normalized;
+}
+
+function buildApiKeyCredential(provider, input, metadata, options = {}) {
+  const secretInput = resolveApiKeySecretInput(provider, input, options);
+  if (typeof secretInput === "string") {
+    return {
+      type: "api_key",
+      provider,
+      key: secretInput,
+      ...(metadata ? { metadata } : {}),
+    };
+  }
+  return {
+    type: "api_key",
+    provider,
+    keyRef: secretInput,
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function upsertApiKeyProfile(params) {
+  return params.profileId || buildAuthProfileId({ providerId: params.provider });
+}
+
+function upsertAuthProfile() {
+  return undefined;
+}
+
+function applyAuthProfileConfig(cfg, params) {
+  const auth = (cfg && cfg.auth) || {};
+  const normalizedProvider = resolveProviderIdForAuth(params.provider);
+  const profiles = {
+    ...(auth.profiles || {}),
+    [params.profileId]: {
+      provider: params.provider,
+      mode: params.mode,
+      ...(params.email ? { email: params.email } : {}),
+      ...(params.displayName ? { displayName: params.displayName } : {}),
+    },
+  };
+  const configuredProviderProfiles = Object.entries(auth.profiles || {})
+    .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === normalizedProvider)
+    .map(([profileId, profile]) => ({ profileId, mode: profile.mode }));
+  const matchingProviderOrderEntries = Object.entries(auth.order || {}).filter(
+    ([providerId]) => resolveProviderIdForAuth(providerId) === normalizedProvider,
+  );
+  const existingProviderOrder =
+    matchingProviderOrderEntries.length > 0
+      ? Array.from(new Set(matchingProviderOrderEntries.flatMap(([, order]) => order)))
+      : undefined;
+  const preferProfileFirst = params.preferProfileFirst !== false;
+  const reorderedProviderOrder =
+    existingProviderOrder && preferProfileFirst
+      ? [
+          params.profileId,
+          ...existingProviderOrder.filter((profileId) => profileId !== params.profileId),
+        ]
+      : existingProviderOrder;
+  const hasMixedConfiguredModes = configuredProviderProfiles.some(
+    ({ profileId, mode }) => profileId !== params.profileId && mode !== params.mode,
+  );
+  const derivedProviderOrder =
+    existingProviderOrder === undefined && preferProfileFirst && hasMixedConfiguredModes
+      ? [
+          params.profileId,
+          ...configuredProviderProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId) => profileId !== params.profileId),
+        ]
+      : undefined;
+  const baseOrder =
+    matchingProviderOrderEntries.length > 0
+      ? Object.fromEntries(
+          Object.entries(auth.order || {}).filter(
+            ([providerId]) => resolveProviderIdForAuth(providerId) !== normalizedProvider,
+          ),
+        )
+      : auth.order;
+  const order =
+    existingProviderOrder !== undefined
+      ? {
+          ...baseOrder,
+          [normalizedProvider]: reorderedProviderOrder.includes(params.profileId)
+            ? reorderedProviderOrder
+            : [...reorderedProviderOrder, params.profileId],
+        }
+      : derivedProviderOrder
+        ? { ...baseOrder, [normalizedProvider]: derivedProviderOrder }
+        : baseOrder;
+  return {
+    ...(cfg || {}),
+    auth: {
+      ...auth,
+      profiles,
+      ...(order ? { order } : {}),
+    },
+  };
+}
+
+async function ensureApiKeyFromOptionEnvOrPrompt(params) {
+  const tokenProvider = normalizeTokenProviderInput(params.tokenProvider);
+  const expectedProviders = (Array.isArray(params.expectedProviders)
+    ? params.expectedProviders
+    : []
+  )
+    .map((provider) => normalizeTokenProviderInput(provider))
+    .filter(Boolean);
+  if (params.token && tokenProvider && expectedProviders.includes(tokenProvider)) {
+    const apiKey = params.normalize
+      ? params.normalize(params.token)
+      : normalizeApiKeyInput(params.token);
+    await params.setCredential(apiKey, params.secretInputMode);
+    return apiKey;
+  }
+  throw new Error("API key prompt helpers are unavailable in the native test shim.");
+}
+
+async function ensureApiKeyFromEnvOrPrompt() {
+  throw new Error("API key prompt helpers are unavailable in the native test shim.");
+}
+
+async function promptSecretRefForSetup() {
+  throw new Error("SecretRef setup prompts are unavailable in the native test shim.");
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -29354,6 +29597,24 @@ const providerAuthRuntimeRuntime = {
   waitForLocalOAuthCallback,
 };
 
+const providerAuthApiKeyRuntime = {
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  createProviderApiKeyAuthMethod,
+  ensureApiKeyFromEnvOrPrompt,
+  ensureApiKeyFromOptionEnvOrPrompt,
+  formatApiKeyPreview,
+  normalizeApiKeyInput,
+  normalizeOptionalSecretInput: normalizeSecretInput,
+  normalizeSecretInput,
+  normalizeSecretInputModeInput,
+  promptSecretRefForSetup,
+  resolveSecretInputModeForEnvSelection,
+  upsertApiKeyProfile,
+  upsertAuthProfile,
+  validateApiKeyInput,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -29937,6 +30198,7 @@ const genericSdk = new Proxy(
     ...providerEnableConfigRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
+    ...providerAuthApiKeyRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -30402,6 +30664,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-runtime"
   ) {
     return providerAuthRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-api-key" ||
+    request === "@openclaw/plugin-sdk/provider-auth-api-key"
+  ) {
+    return providerAuthApiKeyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||

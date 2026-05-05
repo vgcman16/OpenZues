@@ -12391,6 +12391,228 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-api-key.cjs"
+    runtime_entry.write_text(
+        """
+const apiKeyAuth = require("openclaw/plugin-sdk/provider-auth-api-key");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_api_key",
+      description: "Use OpenClaw provider auth API-key SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        let selectedPrompt;
+        const selectedMode = await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+          prompter: {
+            select: async (prompt) => {
+              selectedPrompt = {
+                message: prompt.message,
+                initialValue: prompt.initialValue,
+                labels: prompt.options.map((entry) => entry.label)
+              };
+              return "ref";
+            }
+          },
+          copy: {
+            modeMessage: "Mode?",
+            plaintextLabel: "Plain",
+            refLabel: "Ref"
+          }
+        });
+        const authMethod = apiKeyAuth.createProviderApiKeyAuthMethod({
+          providerId: "demo",
+          methodId: "api-key",
+          label: "Demo key",
+          hint: "Primary key",
+          optionKey: "demoKey",
+          flagName: "--demo-key",
+          envVar: "DEMO_API_KEY",
+          promptMessage: "Enter key",
+          wizard: { choiceId: "demo-api-key", methodId: "api-key" }
+        });
+        return {
+          normalize: [
+            apiKeyAuth.normalizeApiKeyInput("export DEMO_API_KEY=' sk-test '"),
+            apiKeyAuth.normalizeApiKeyInput("DEMO_API_KEY=abc;"),
+            apiKeyAuth.normalizeApiKeyInput("`quoted`")
+          ],
+          validate: [
+            apiKeyAuth.validateApiKeyInput("  "),
+            apiKeyAuth.validateApiKeyInput(" ok ") || null
+          ],
+          preview: [
+            apiKeyAuth.formatApiKeyPreview(""),
+            apiKeyAuth.formatApiKeyPreview("abcdef"),
+            apiKeyAuth.formatApiKeyPreview("abcdefghijkl", { head: 3, tail: 2 })
+          ],
+          modes: {
+            explicit: await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+              explicitMode: "ref",
+              prompter: {}
+            }),
+            defaulted: await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+              prompter: {}
+            }),
+            selected: selectedMode,
+            selectedPrompt
+          },
+          credentials: [
+            apiKeyAuth.buildApiKeyCredential("demo", " secret ", { scope: "test" }),
+            apiKeyAuth.buildApiKeyCredential("demo", "${DEMO_API_KEY}"),
+            apiKeyAuth.buildApiKeyCredential(
+              "demo",
+              "${AWS_SECRET_ACCESS_KEY}",
+              undefined,
+              { secretInputMode: "plaintext" }
+            )
+          ],
+          config: apiKeyAuth.applyAuthProfileConfig(
+            { auth: { profiles: { oauth: { provider: "demo", mode: "oauth" } } } },
+            {
+              profileId: "demo:default",
+              provider: "demo",
+              mode: "api_key",
+              email: "dev@example.com",
+              displayName: "Dev User"
+            }
+          ),
+          method: {
+            id: authMethod.id,
+            label: authMethod.label,
+            hint: authMethod.hint,
+            kind: authMethod.kind,
+            wizard: authMethod.wizard
+          },
+          exportTypes: [
+            typeof apiKeyAuth.normalizeApiKeyInput,
+            typeof apiKeyAuth.validateApiKeyInput,
+            typeof apiKeyAuth.formatApiKeyPreview,
+            typeof apiKeyAuth.normalizeSecretInputModeInput,
+            typeof apiKeyAuth.resolveSecretInputModeForEnvSelection,
+            typeof apiKeyAuth.buildApiKeyCredential,
+            typeof apiKeyAuth.applyAuthProfileConfig,
+            typeof apiKeyAuth.createProviderApiKeyAuthMethod,
+            typeof genericSdk.normalizeApiKeyInput
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-api-key-plugin",
+                    "name": "Runtime Provider Auth API Key Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-api-key.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_api_key"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_api_key"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalize": ["sk-test", "abc", "quoted"],
+        "validate": ["Required", None],
+        "preview": ["\u2026", "ab\u2026ef", "abc\u2026kl"],
+        "modes": {
+            "explicit": "ref",
+            "defaulted": "plaintext",
+            "selected": "ref",
+            "selectedPrompt": {
+                "message": "Mode?",
+                "initialValue": "plaintext",
+                "labels": ["Plain", "Ref"],
+            },
+        },
+        "credentials": [
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "key": "secret",
+                "metadata": {"scope": "test"},
+            },
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "keyRef": {"source": "env", "provider": "default", "id": "DEMO_API_KEY"},
+            },
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "key": "${AWS_SECRET_ACCESS_KEY}",
+            },
+        ],
+        "config": {
+            "auth": {
+                "profiles": {
+                    "oauth": {"provider": "demo", "mode": "oauth"},
+                    "demo:default": {
+                        "provider": "demo",
+                        "mode": "api_key",
+                        "email": "dev@example.com",
+                        "displayName": "Dev User",
+                    },
+                },
+                "order": {"demo": ["demo:default", "oauth"]},
+            }
+        },
+        "method": {
+            "id": "api-key",
+            "label": "Demo key",
+            "hint": "Primary key",
+            "kind": "api_key",
+            "wizard": {"choiceId": "demo-api-key", "methodId": "api-key"},
+        },
+        "exportTypes": ["function"] * 9,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
