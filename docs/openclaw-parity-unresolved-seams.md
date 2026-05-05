@@ -5574,8 +5574,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   reads `.git/HEAD` and projects `channel.source="git-branch"` with
   `dev (<branch>)` labels for branch installs. Repo-wide parity is now
   estimated at ~60.6%. Verified with focused update-status branch pytest,
-  adjacent update/package doctor proof, `ruff check`, and `mypy`; checkpoint
-  pending commit.
+  adjacent update/package doctor proof, `ruff check`, and `mypy`; checkpointed
+  in `8673e35d`.
 - Next repo-wide queue head: rotate to companion remote-bin discovery or the
   next provider-specific send/poll/replay metadata gap.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

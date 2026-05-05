@@ -199,7 +199,7 @@ may lag behind this tracker.
 
 - [x] Update status git branch channel label, preserving OpenClaw's
   `dev (<branch>)` channel source projection.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `8673e35d`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -714,7 +714,7 @@ may lag behind this tracker.
     `openclaw-main/src/cli/update-cli/status.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `8673e35d`.
   - Weight: 1
   - Last verified: 2026-05-04, focused update-status pair (`2 passed`),
     adjacent update/package doctor proof (`4 passed`), `ruff check`, and
