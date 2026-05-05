@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -123,6 +123,11 @@ may lag behind this tracker.
   including CommonJS OpenClaw plugin-SDK alias shims and native
   `register`/`activate` tool collection.
   - Status: checkpointed in `8cb314f4`
+
+- [x] Imported CommonJS plugin runtime execution through `tools.invoke`,
+  preserving registered tool `execute(toolCallId, args)` behavior with a
+  bounded native Node bridge.
+  - Status: checkpointed in `d80b0252`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1088,9 +1093,23 @@ may lag behind this tracker.
     checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
     in `55e1fb28`, manifest document extractor contract metadata checkpointed
     in `2196c65e`, bundled plugin runtime entry import checkpointed in
-    `8cb314f4`, and ESM plugin runtime entry import checkpointed in
-    `eb11e22f`, but deeper runtime executor invocation breadth remains.
+    `8cb314f4`, ESM plugin runtime entry import checkpointed in `eb11e22f`,
+    and imported CommonJS runtime execution checkpointed in `d80b0252`, but
+    deeper ESM/context runtime executor breadth remains.
   - Weight: 5
+
+- [x] Imported CommonJS plugin runtime execution.
+  - Source: `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/tools.ts`, and
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d80b0252`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused imported runtime invoke proof (`1
+    passed`), adjacent plugin invoke proof (`10 passed, 803 deselected`),
+    adjacent runtime import proof (`2 passed, 512 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] ESM bundled plugin runtime entry import.
   - Source: `openclaw-main/src/plugins/loader.ts`,
