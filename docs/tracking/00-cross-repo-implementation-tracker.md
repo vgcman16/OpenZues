@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,14 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The companion node presence alive slice is checkpointed in `caded84a`.
+The manifest web-content extractor contract slice is verified and awaiting
+checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/database.py`
-- `src/openzues/services/gateway_node_methods.py`
-- `src/openzues/services/gateway_node_pairing.py`
-- `tests/test_gateway_node_methods.py`
-- `tests/test_gateway_nodes_api.py`
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -52,11 +50,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Package distribution doctor diagnostics checkpointed in `47d73351` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Document extractor contract metadata checkpointed in `2196c65e` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Web-content extractor contract metadata verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001BG` manifest web-content extractor contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/web-content-extractors.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.webContentExtractors` values are
+    normalized, preserved in native plugin records, and projected as
+    `web-content-extractor:<id>` capability strings.
+  - Evidence required: focused plugin list JSON test, adjacent plugin manifest
+    contract projection tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`10 passed`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-COMP-001A` companion `node.presence.alive` lifecycle
   - Source: `openclaw-main/src/gateway/server-node-events.ts`,

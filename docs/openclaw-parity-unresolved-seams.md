@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.9% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5505,9 +5505,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~99.9%. Verified with focused service/API presence tests, adjacent node
   pairing/event API proof, `ruff check`, and `mypy`; checkpointed in
   `caded84a`.
-- Next repo-wide queue head: continue deeper plugin runtime import/activation
-  breadth or rotate to packaging/companion/provider breadth, whichever is the
-  strongest source-backed seam after the next discovery pass.
+- Closed the manifest web-content extractor contract seam from OpenClaw
+  `src/plugins/manifest.ts`,
+  `src/plugins/contracts/inventory/bundled-capability-metadata.ts`, and
+  `src/plugins/web-content-extractors.runtime.ts`: manifest
+  `contracts.webContentExtractors` entries now survive native `plugins list
+  --json` projection and emit `web-content-extractor:<id>` capability strings.
+  Repo-wide parity is now estimated at ~59.9%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  web-content extractor contract pytest, adjacent plugin manifest inventory
+  proof, `ruff check`, and `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: continue plugin manifest/runtime contract breadth
+  with `contracts.migrationProviders` / `contracts.externalAuthProviders`, or
+  rotate to packaging/companion/provider breadth if a stronger source-backed
+  seam is selected after the next discovery pass.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

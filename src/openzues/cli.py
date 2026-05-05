@@ -17980,6 +17980,7 @@ _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "imageGenerationProviders": "image-generation",
     "videoGenerationProviders": "video-generation",
     "musicGenerationProviders": "music-generation",
+    "webContentExtractors": "web-content-extractor",
     "webFetchProviders": "web-fetch",
     "webSearchProviders": "web-search",
     "memoryEmbeddingProviders": "memory-embedding",

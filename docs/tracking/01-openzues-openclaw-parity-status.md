@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~59.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -165,6 +165,11 @@ may lag behind this tracker.
   `contracts.documentExtractors` in `plugins list --json` records and
   capability strings.
   - Status: checkpointed in `2196c65e`
+
+- [x] Manifest web-content extractor contract metadata, preserving
+  `contracts.webContentExtractors` in `plugins list --json` records and
+  capability strings.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -585,6 +590,19 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
     -q` (`1 passed`), adjacent plugin manifest inventory proof (`9 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest web-content extractor contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/web-content-extractors.runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`10 passed`),
     `ruff check`, and `mypy`.
 
 - [x] Package distribution doctor diagnostics.
