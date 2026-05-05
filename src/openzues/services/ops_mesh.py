@@ -9355,6 +9355,29 @@ class OpsMeshService:
             return {}
         return _msteams_channel_config_from_snapshot(snapshot, account_id=account_id)
 
+    async def _msteams_stored_delegated_graph_secret_token(
+        self,
+        *,
+        account_id: str | None,
+        user_id: str | None,
+    ) -> str | None:
+        normalized_user_id = _msteams_inbound_optional_string(user_id)
+        if normalized_user_id is None:
+            return None
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is None:
+            return None
+        stored = await self.database.get_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=normalized_user_id,
+        )
+        if not isinstance(stored, Mapping):
+            return None
+        token = _msteams_inbound_optional_string(stored.get("token"))
+        if token is None:
+            return None
+        return f"Bearer {token}"
+
     async def _msteams_sso_route_credentials(
         self,
     ) -> tuple[_MSTeamsRouteConfig, str] | None:
@@ -13054,14 +13077,21 @@ class OpsMeshService:
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
                     f"No native Microsoft Teams route is configured for message.action {action}."
-                )
+            )
             secret_token = await self._notification_route_secret_token(route)
             if action in {"react", "unreact"}:
+                graph_secret_token = (
+                    await self._msteams_stored_delegated_graph_secret_token(
+                        account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                        user_id=request.requester_sender_id,
+                    )
+                    or secret_token
+                )
                 return await asyncio.to_thread(
                     self._dispatch_msteams_react_message_action,
                     route,
                     request,
-                    secret_token,
+                    graph_secret_token,
                 )
             return await asyncio.to_thread(
                 self._dispatch_msteams_reactions_message_action,
