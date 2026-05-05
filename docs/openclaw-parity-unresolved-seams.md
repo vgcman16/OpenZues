@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.9% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5780,6 +5780,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~62.8%. Verified with focused schema/service/CLI/app pytest,
   adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
   checkpointed in `81491ab7`.
+- Closed the IRC native outbound route seam from OpenClaw
+  `extensions/irc/src/send.ts`, `extensions/irc/src/normalize.ts`, and
+  `extensions/irc/src/client.ts`: native `kind="irc"` routes now accept
+  `irc://`/`ircs://` server URLs, normalize `irc:`, `channel:`, and `user:`
+  targets, append `replyToId` as `[reply:<id>]`, send native IRC `PRIVMSG`
+  payloads through the Python socket runtime, and persist generated message,
+  chat/channel, reply, and media URL fallback metadata. Repo-wide parity is now
+  estimated at ~62.9%. Verified with focused schema/service/CLI/app pytest,
+  adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
+  checkpointed in `8726ab49`.
 - Next repo-wide queue head: rotate to the next provider-specific
   provider-specific send/poll/replay metadata gap, starting with another
   source-backed channel/provider route or action adapter, or packaging/plugin

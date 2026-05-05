@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~62.8% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~62.9% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10273,6 +10273,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_app.py`, and `mypy src\openzues\schemas.py
   src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
   src\openzues\cli.py`. Checkpointed in `81491ab7`.
+
+- IRC native outbound route support now mirrors OpenClaw's
+  `extensions/irc/src/send.ts`, `extensions/irc/src/normalize.ts`, and
+  `extensions/irc/src/client.ts` contract: native `kind="irc"` routes accept
+  `irc://`/`ircs://` server URLs, normalize `irc:`, `channel:`, and `user:`
+  targets, append `replyToId` as `[reply:<id>]`, send native IRC `PRIVMSG`
+  payloads through the Windows-first Python socket runtime, and preserve
+  generated message/chat/channel/reply result metadata. This closes
+  `OZ-PROV-001U`; repo-wide parity is now estimated at ~62.9%.
+- Verified the IRC native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_irc_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route tests\test_cli.py::test_routes_create_command_accepts_irc_native_route tests\test_app.py -q -k "irc_native_route"`
+  (`5 passed, 205 deselected`), adjacent provider route proof (`19 passed, 276
+  deselected`), adjacent CLI route proof (`8 passed, 499 deselected`),
+  adjacent app route proof (`19 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `8726ab49`.
 
 ## References
 
