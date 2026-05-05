@@ -5758,7 +5758,7 @@ def _feishu_collect_text_fragments(value: object) -> list[str]:
 
 def _feishu_message_content(raw_content: str, msg_type: str) -> str:
     if not raw_content:
-        return ""
+        return _feishu_media_placeholder(msg_type) or ""
     try:
         parsed: object = json.loads(raw_content)
     except json.JSONDecodeError:
@@ -5780,7 +5780,84 @@ def _feishu_message_content(raw_content: str, msg_type: str) -> str:
             candidate = parsed.get(key)
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
+    placeholder = _feishu_media_placeholder(msg_type)
+    if placeholder is not None:
+        return placeholder
     return f"[{msg_type or 'unknown'} message]"
+
+
+def _feishu_message_body_content(item: Mapping[str, object]) -> str:
+    body = item.get("body")
+    if not isinstance(body, Mapping):
+        return ""
+    content = body.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _feishu_media_placeholder(msg_type: str) -> str | None:
+    normalized = str(msg_type or "").strip().lower()
+    if normalized == "image":
+        return "<media:image>"
+    if normalized == "file":
+        return "<media:document>"
+    if normalized == "audio":
+        return "<media:audio>"
+    if normalized in {"video", "media"}:
+        return "<media:video>"
+    if normalized == "sticker":
+        return "<media:sticker>"
+    return None
+
+
+def _feishu_message_resource_type(msg_type: str) -> str:
+    return "image" if str(msg_type or "").strip().lower() == "image" else "file"
+
+
+def _feishu_message_media_keys(
+    raw_content: str,
+    msg_type: str,
+) -> dict[str, str]:
+    if not raw_content:
+        return {}
+    try:
+        parsed: object = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    normalized_type = str(msg_type or "").strip().lower()
+    image_key = str(parsed.get("image_key") or "").strip()
+    file_key = str(parsed.get("file_key") or "").strip()
+    file_name = str(parsed.get("file_name") or parsed.get("fileName") or "").strip()
+    keys: dict[str, str] = {}
+    if normalized_type == "image" and image_key:
+        keys["imageKey"] = image_key
+    elif normalized_type in {"file", "audio", "sticker"} and file_key:
+        keys["fileKey"] = file_key
+    elif normalized_type in {"video", "media"}:
+        if file_key:
+            keys["fileKey"] = file_key
+        if image_key:
+            keys["imageKey"] = image_key
+    if file_name:
+        keys["fileName"] = file_name
+    return keys
+
+
+def _feishu_content_disposition_filename(value: str | None) -> str | None:
+    disposition = str(value or "").strip()
+    if not disposition:
+        return None
+    utf8_match = re.search(r"filename\*=UTF-8''([^;]+)", disposition, flags=re.I)
+    if utf8_match:
+        try:
+            return unquote(utf8_match.group(1).strip().strip('"')) or None
+        except Exception:
+            return utf8_match.group(1).strip().strip('"') or None
+    plain_match = re.search(r'filename="?([^";]+)"?', disposition, flags=re.I)
+    if plain_match:
+        return plain_match.group(1).strip() or None
+    return None
 
 
 def _feishu_message_view(
@@ -5789,12 +5866,7 @@ def _feishu_message_view(
     fallback_message_id: str,
 ) -> dict[str, object]:
     msg_type = str(item.get("msg_type") or "text")
-    body = item.get("body")
-    raw_content = ""
-    if isinstance(body, Mapping):
-        content = body.get("content")
-        if isinstance(content, str):
-            raw_content = content
+    raw_content = _feishu_message_body_content(item)
     message: dict[str, object] = {
         "messageId": str(item.get("message_id") or fallback_message_id),
         "chatId": str(item.get("chat_id") or ""),
@@ -24087,6 +24159,38 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_feishu_message_resource_provider_url(
+        self,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        request = Request(
+            target,
+            headers={"Authorization": _feishu_bearer_token(secret_token)},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                resource_bytes = response.read()
+                content_type = response.headers.get("Content-Type")
+                filename = _feishu_content_disposition_filename(
+                    response.headers.get("Content-Disposition")
+                )
+                return (
+                    resource_bytes,
+                    content_type.strip() if content_type else None,
+                    filename,
+                )
+        except HTTPError:
+            raise
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_discord_message_upload(
         self,
         *,
@@ -27913,6 +28017,131 @@ class OpsMeshService:
             **native_result,
         }
 
+    def _download_feishu_message_resource(
+        self,
+        route: dict[str, Any],
+        *,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        message_type: str,
+        placeholder: str,
+        filename_hint: str | None,
+        account_id: str | None,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        def request_resource(download_type: str) -> tuple[bytes, str | None, str | None]:
+            return self._request_feishu_message_resource_provider_url(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    (
+                        f"im/v1/messages/{quote(message_id, safe='')}/resources/"
+                        f"{quote(file_key, safe='')}"
+                    ),
+                    query={"type": download_type},
+                ),
+                secret_token=_feishu_bearer_token(secret_token),
+            )
+
+        download_type = resource_type
+        try:
+            media_bytes, content_type, downloaded_filename = request_resource(resource_type)
+        except HTTPError as exc:
+            if resource_type != "file" or int(exc.code) != 502:
+                raise RuntimeError(
+                    _http_error_message("Feishu message resource download failed", exc)
+                ) from exc
+            try:
+                media_bytes, content_type, downloaded_filename = request_resource("media")
+            except Exception:
+                raise RuntimeError(
+                    _http_error_message("Feishu message resource download failed", exc)
+                ) from exc
+            download_type = "media"
+
+        config_snapshot = self._feishu_config_snapshot()
+        max_bytes = (
+            _feishu_media_max_bytes(
+                config_snapshot,
+                account_id=normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+            )
+            or 30 * FEISHU_MEDIA_MB
+        )
+        if len(media_bytes) > max_bytes:
+            raise RuntimeError("Feishu message resource exceeds the provider size limit.")
+        safe_filename = _safe_slack_file_label(
+            downloaded_filename or filename_hint or file_key,
+            "resource.bin",
+        )
+        if "." not in safe_filename and content_type:
+            extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip()) or ""
+            if extension:
+                safe_filename = f"{safe_filename}{extension}"
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{safe_filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        result: dict[str, object] = {
+            "messageType": message_type,
+            "fileKey": file_key,
+            "resourceType": resource_type,
+            "downloadType": download_type,
+            "placeholder": placeholder,
+            "path": str(stored_path),
+            "filename": safe_filename,
+            "byteLength": len(media_bytes),
+            "sha256": digest,
+        }
+        if content_type:
+            result["contentType"] = content_type
+        return result
+
+    def _feishu_read_message_media(
+        self,
+        route: dict[str, Any],
+        item: Mapping[str, object],
+        *,
+        fallback_message_id: str,
+        account_id: str | None,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        msg_type = str(item.get("msg_type") or "text").strip().lower()
+        placeholder = _feishu_media_placeholder(msg_type)
+        if placeholder is None:
+            return []
+        raw_content = _feishu_message_body_content(item)
+        media_keys = _feishu_message_media_keys(raw_content, msg_type)
+        file_key = media_keys.get("fileKey") or media_keys.get("imageKey")
+        if not file_key:
+            return []
+        message_id = str(item.get("message_id") or fallback_message_id).strip()
+        if not message_id:
+            return []
+        try:
+            return [
+                self._download_feishu_message_resource(
+                    route,
+                    message_id=message_id,
+                    file_key=file_key,
+                    resource_type=_feishu_message_resource_type(msg_type),
+                    message_type=msg_type,
+                    placeholder=placeholder,
+                    filename_hint=media_keys.get("fileName"),
+                    account_id=account_id,
+                    secret_token=secret_token,
+                )
+            ]
+        except Exception:
+            return []
+
     def _dispatch_feishu_read_message_action(
         self,
         route: dict[str, Any],
@@ -27937,11 +28166,29 @@ class OpsMeshService:
                 "content": [{"type": "text", "text": json.dumps({"error": error})}],
                 "details": {"error": error},
             }
+        message = _feishu_message_view(item, fallback_message_id=message_id)
+        media = self._feishu_read_message_media(
+            route,
+            item,
+            fallback_message_id=message_id,
+            account_id=request.account_id,
+            secret_token=secret_token,
+        )
+        if media:
+            message["media"] = media
+            media_paths = [
+                str(entry.get("path") or "").strip()
+                for entry in media
+                if str(entry.get("path") or "").strip()
+            ]
+            if media_paths:
+                message["mediaPaths"] = media_paths
+                message["mediaUrls"] = media_paths
         return {
             "ok": True,
             "channel": "feishu",
             "action": "read",
-            "message": _feishu_message_view(item, fallback_message_id=message_id),
+            "message": message,
         }
 
     def _dispatch_feishu_edit_message_action(

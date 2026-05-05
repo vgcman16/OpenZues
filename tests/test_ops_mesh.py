@@ -18502,6 +18502,170 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_read_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_feishu_read_video_resource_uses_media_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-read-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Read Media Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+    resource_requests: list[tuple[str, str | None, float]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_video_1",
+                        "chat_id": "oc_chat_1",
+                        "chat_type": "group",
+                        "msg_type": "video",
+                        "body": {
+                            "content": json.dumps(
+                                {
+                                    "file_key": "file_key_ios_video",
+                                    "image_key": "img_thumb_should_not_win",
+                                    "file_name": "fallback-name.mp4",
+                                }
+                            )
+                        },
+                    }
+                ]
+            },
+        }
+
+    def fake_request_feishu_message_resource_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        resource_requests.append((target, secret_token, timeout_seconds))
+        if target.endswith("?type=file"):
+            raise HTTPError(target, 502, "Bad Gateway", {}, None)
+        return b"fake-ios-video-data", "video/mp4", "ios-video.mp4"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_message_resource_provider_url",
+        fake_request_feishu_message_resource_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="read",
+            params={"messageId": "om_video_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-read-media-action",
+        )
+    )
+
+    digest = hashlib.sha256(b"fake-ios-video-data").hexdigest()
+    expected_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{digest[:16]}-ios-video.mp4"
+    )
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "read",
+        "message": {
+            "messageId": "om_video_1",
+            "chatId": "oc_chat_1",
+            "chatType": "group",
+            "content": "<media:video>",
+            "contentType": "video",
+            "media": [
+                {
+                    "messageType": "video",
+                    "fileKey": "file_key_ios_video",
+                    "resourceType": "file",
+                    "downloadType": "media",
+                    "placeholder": "<media:video>",
+                    "path": expected_path,
+                    "filename": "ios-video.mp4",
+                    "contentType": "video/mp4",
+                    "byteLength": len(b"fake-ios-video-data"),
+                    "sha256": digest,
+                }
+            ],
+            "mediaPaths": [expected_path],
+            "mediaUrls": [expected_path],
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert resource_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1/resources/file_key_ios_video?type=file",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1/resources/file_key_ios_video?type=media",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+    ]
+    assert Path(expected_path).read_bytes() == b"fake-ios-video-data"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_edit_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
