@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~72.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~72.9% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6811,9 +6811,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   zero-byte token behavior. Repo-wide parity is now estimated at ~72.8%.
   Verified with focused secure-random-runtime pytest, adjacent plugin invoke
   proof, `ruff check`, and `mypy`; source/test checkpointed in `78d458e7`.
+- Closed the imported OpenClaw plugin SDK collection-runtime seam from
+  `src/plugin-sdk/collection-runtime.ts` and `src/infra/map-size.ts`: native
+  runtime entries can now import `pruneMapToMaxSize` and execute bounded map
+  pruning through `tools.invoke`, preserving floored limits, non-positive
+  clears, oldest-entry deletion, and undersized-map no-op behavior. Repo-wide
+  parity is now estimated at ~72.9%. Verified with focused collection-runtime
+  pytest, adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `624e55e4`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
