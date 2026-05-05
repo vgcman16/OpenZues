@@ -1662,6 +1662,63 @@ def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) 
     assert report["actions"] == ["send", "broadcast"]
 
 
+def test_channels_capabilities_json_reports_msteams_poll_support(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send", "gateway/poll"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "msteams",
+            "--account",
+            "default",
+            "--target",
+            "conversation:19:ops-thread@thread.tacv2",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "conversation:19:ops-thread@thread.tacv2"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "msteams"
+    assert report["accountId"] == "default"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert report["support"]["chatTypes"] == ["direct", "group", "channel"]
+    assert report["support"]["media"] is False
+    assert report["support"]["polls"] is True
+    assert report["support"]["threads"] is False
+    assert report["actions"] == ["send", "broadcast", "poll"]
+
+
 def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
     calls: list[tuple[bool | None, int | None]] = []
 

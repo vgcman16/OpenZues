@@ -231,7 +231,7 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "chatTypes": ["direct", "group", "channel"],
         "reply": False,
         "media": False,
-        "polls": False,
+        "polls": True,
         "threads": False,
     },
     "signal": {

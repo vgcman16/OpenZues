@@ -3358,6 +3358,75 @@ def _msteams_message_id(result: object) -> str | None:
     return None
 
 
+def _msteams_poll_card(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+) -> tuple[str, dict[str, object]]:
+    poll_id = str(uuid.uuid4())
+    normalized_max_selections = (
+        math.floor(max_selections) if isinstance(max_selections, int) and max_selections > 1 else 1
+    )
+    capped_max_selections = min(max(1, normalized_max_selections), len(options))
+    hint = (
+        f"Select up to {capped_max_selections} "
+        f"option{'' if capped_max_selections == 1 else 's'}."
+        if capped_max_selections > 1
+        else "Select one option."
+    )
+    card: dict[str, object] = {
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": question,
+                "wrap": True,
+                "weight": "Bolder",
+                "size": "Medium",
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "choices",
+                "isMultiSelect": capped_max_selections > 1,
+                "style": "expanded",
+                "choices": [
+                    {"title": option, "value": str(index)}
+                    for index, option in enumerate(options)
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": hint,
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Vote",
+                "data": {
+                    "openclawPollId": poll_id,
+                    "pollId": poll_id,
+                },
+                "msteams": {
+                    "type": "messageBack",
+                    "text": "openclaw poll vote",
+                    "displayText": "Vote recorded",
+                    "value": {
+                        "openclawPollId": poll_id,
+                        "pollId": poll_id,
+                    },
+                },
+            }
+        ],
+    }
+    return poll_id, card
+
+
 def _signal_base_url(raw_target: str | None) -> str:
     target = str(raw_target or "").strip().rstrip("/")
     if _normalized_http_webhook_url(target) is None:
@@ -20669,45 +20738,75 @@ class OpsMeshService:
         event: dict[str, Any],
         secret_token: str | None,
     ) -> dict[str, object]:
-        if event_type != "gateway/send":
-            raise RuntimeError("Microsoft Teams native provider route does not support polls.")
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
         conversation_id = _msteams_conversation_id(
             str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
         )
-        message = str(event.get("message") or "").strip()
-        raw_media_urls = event.get("mediaUrls")
-        media_urls = _normalize_direct_channel_media_urls(
-            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
-            media_urls=(
-                [str(media_url) for media_url in raw_media_urls]
-                if isinstance(raw_media_urls, list)
-                else None
-            ),
-        )
-        if media_urls:
-            raise RuntimeError(
-                "Microsoft Teams native media delivery requires FileConsentCard or "
-                "Graph upload support and is not available for this route yet."
-            )
-        if not message:
-            raise RuntimeError("Microsoft Teams send requires text.")
-
         route_config = _msteams_route_config(str(route.get("target") or ""))
-        payload: dict[str, object] = {
-            "type": "message",
-            "channelData": {"feedbackLoopEnabled": False},
-            "entities": [
-                {
-                    "type": "https://schema.org/Message",
-                    "@type": "Message",
-                    "@id": "",
-                    "additionalType": ["AIGeneratedContent"],
-                }
-            ],
-        }
-        if message:
-            payload["text"] = message
+        poll_id: str | None = None
+        if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
+            raw_options = event.get("options")
+            options = (
+                [str(option).strip() for option in raw_options if str(option).strip()]
+                if isinstance(raw_options, list)
+                else []
+            )
+            _validate_direct_channel_poll_shape(question, options)
+            _validate_direct_channel_poll_option_count("msteams", options)
+            max_selections = _optional_int_payload_value(event, "maxSelections")
+            _validate_direct_channel_poll_max_selections(options, max_selections)
+            poll_id, card = _msteams_poll_card(
+                question=question,
+                options=options,
+                max_selections=max_selections,
+            )
+            payload: dict[str, object] = {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card,
+                    }
+                ],
+            }
+        elif event_type == "gateway/send":
+            message = str(event.get("message") or "").strip()
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            if media_urls:
+                raise RuntimeError(
+                    "Microsoft Teams native media delivery requires FileConsentCard or "
+                    "Graph upload support and is not available for this route yet."
+                )
+            if not message:
+                raise RuntimeError("Microsoft Teams send requires text.")
+
+            payload = {
+                "type": "message",
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            }
+            if message:
+                payload["text"] = message
+        else:
+            raise RuntimeError("Microsoft Teams native provider route does not support this event.")
         result = self._request_json_provider_url(
             _msteams_activity_endpoint(
                 service_url=route_config.service_url,
@@ -20730,6 +20829,8 @@ class OpsMeshService:
             "channelId": conversation_id,
             "conversationId": conversation_id,
         }
+        if poll_id is not None:
+            native_result["pollId"] = poll_id
         return native_result
 
     def _post_signal_provider_event(

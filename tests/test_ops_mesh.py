@@ -17431,6 +17431,212 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-msteams"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Poll Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id};messageid=old-root",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-poll-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        question="Ship native Teams poll?",
+        options=["Yes", "No", "Later"],
+        max_selections=2,
+        account_id="default",
+        idempotency_key="idem-native-msteams-poll",
+    )
+
+    poll_id = str(result["pollId"])
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="msteams",
+            account_id="default",
+            peer_kind="channel",
+            peer_id=f"msteams:conversation:{conversation_id}",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-msteams-poll",
+        "channel": "msteams",
+        "messageId": "teams-poll-message-123",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "msteams",
+            "target": f"msteams:conversation:{conversation_id}",
+            "accountId": "default",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": conversation_id,
+        "channelId": conversation_id,
+        "conversationId": conversation_id,
+        "pollId": poll_id,
+    }
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities"
+            ),
+            {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": {
+                            "type": "AdaptiveCard",
+                            "version": "1.5",
+                            "body": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Ship native Teams poll?",
+                                    "wrap": True,
+                                    "weight": "Bolder",
+                                    "size": "Medium",
+                                },
+                                {
+                                    "type": "Input.ChoiceSet",
+                                    "id": "choices",
+                                    "isMultiSelect": True,
+                                    "style": "expanded",
+                                    "choices": [
+                                        {"title": "Yes", "value": "0"},
+                                        {"title": "No", "value": "1"},
+                                        {"title": "Later", "value": "2"},
+                                    ],
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Select up to 2 options.",
+                                    "wrap": True,
+                                    "isSubtle": True,
+                                    "spacing": "Small",
+                                },
+                            ],
+                            "actions": [
+                                {
+                                    "type": "Action.Submit",
+                                    "title": "Vote",
+                                    "data": {
+                                        "openclawPollId": poll_id,
+                                        "pollId": poll_id,
+                                    },
+                                    "msteams": {
+                                        "type": "messageBack",
+                                        "text": "openclaw poll vote",
+                                        "displayText": "Vote recorded",
+                                        "value": {
+                                            "openclawPollId": poll_id,
+                                            "pollId": poll_id,
+                                        },
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "teams-poll-message-123",
+        "chatId": conversation_id,
+        "channelId": conversation_id,
+        "conversationId": conversation_id,
+        "pollId": poll_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
