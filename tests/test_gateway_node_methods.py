@@ -7756,6 +7756,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_status_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-status.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  PAIRING_APPROVED_MESSAGE,
+  buildTokenChannelStatusSummary,
+  projectCredentialSnapshotFields,
+  resolveConfiguredFromCredentialStatuses,
+  resolveConfiguredFromRequiredCredentialStatuses
+} = require("openclaw/plugin-sdk/channel-status");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_status",
+      description: "Use OpenClaw channel-status SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const account = {
+          tokenSource: " env ",
+          botTokenSource: " file ",
+          appTokenSource: "",
+          signingSecretSource: " secret ",
+          tokenStatus: "missing",
+          botTokenStatus: "configured_unavailable",
+          appTokenStatus: "available",
+          signingSecretStatus: "nope",
+          userTokenStatus: "missing"
+        };
+        return {
+          pairingApproved: [
+            PAIRING_APPROVED_MESSAGE.includes("OpenClaw access approved"),
+            PAIRING_APPROVED_MESSAGE.includes("Send a message")
+          ],
+          credentialFields: projectCredentialSnapshotFields(account),
+          configured: [
+            resolveConfiguredFromCredentialStatuses(account),
+            resolveConfiguredFromCredentialStatuses({ tokenStatus: "missing" }),
+            resolveConfiguredFromCredentialStatuses({ tokenStatus: "unknown" }) ?? null
+          ],
+          requiredConfigured: [
+            resolveConfiguredFromRequiredCredentialStatuses(account, [
+              "botTokenStatus",
+              "appTokenStatus"
+            ]),
+            resolveConfiguredFromRequiredCredentialStatuses(account, [
+              "tokenStatus",
+              "appTokenStatus"
+            ]),
+            resolveConfiguredFromRequiredCredentialStatuses({}, ["tokenStatus"]) ?? null
+          ],
+          tokenSummary: buildTokenChannelStatusSummary({
+            configured: true,
+            tokenSource: "env",
+            probe: { ok: true },
+            lastProbeAt: 3
+          }, { includeMode: false })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-status-plugin",
+                    "name": "Runtime Channel Status Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-status-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_status"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_status"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "pairingApproved": [True, True],
+        "credentialFields": {
+            "tokenSource": "env",
+            "botTokenSource": "file",
+            "signingSecretSource": "secret",
+            "tokenStatus": "missing",
+            "botTokenStatus": "configured_unavailable",
+            "appTokenStatus": "available",
+            "userTokenStatus": "missing",
+        },
+        "configured": [True, False, None],
+        "requiredConfigured": [True, False, None],
+        "tokenSummary": {
+            "configured": True,
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "tokenSource": "env",
+            "probe": {"ok": True},
+            "lastProbeAt": 3,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_status_helpers(
     tmp_path,
 ) -> None:

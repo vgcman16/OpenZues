@@ -19666,6 +19666,82 @@ function collectStatusIssuesFromLastError(channel, accounts) {
   });
 }
 
+const PAIRING_APPROVED_MESSAGE =
+  "\u2705 OpenClaw access approved. Send a message to start chatting.";
+const CREDENTIAL_STATUS_KEYS = [
+  "tokenStatus",
+  "botTokenStatus",
+  "appTokenStatus",
+  "signingSecretStatus",
+  "userTokenStatus",
+];
+
+function readCredentialStatus(record, key) {
+  const value = record && record[key];
+  return value === "available" || value === "configured_unavailable" || value === "missing"
+    ? value
+    : undefined;
+}
+
+function projectCredentialSnapshotFields(account) {
+  const record = isRecord(account) ? account : null;
+  if (!record) {
+    return {};
+  }
+  const result = {};
+  for (const key of ["tokenSource", "botTokenSource", "appTokenSource", "signingSecretSource"]) {
+    const value = normalizeOptionalString(record[key]);
+    if (value) {
+      result[key] = value;
+    }
+  }
+  for (const key of CREDENTIAL_STATUS_KEYS) {
+    const status = readCredentialStatus(record, key);
+    if (status) {
+      result[key] = status;
+    }
+  }
+  return result;
+}
+
+function resolveConfiguredFromCredentialStatuses(account) {
+  const record = isRecord(account) ? account : null;
+  if (!record) {
+    return undefined;
+  }
+  let sawCredentialStatus = false;
+  for (const key of CREDENTIAL_STATUS_KEYS) {
+    const status = readCredentialStatus(record, key);
+    if (!status) {
+      continue;
+    }
+    sawCredentialStatus = true;
+    if (status !== "missing") {
+      return true;
+    }
+  }
+  return sawCredentialStatus ? false : undefined;
+}
+
+function resolveConfiguredFromRequiredCredentialStatuses(account, requiredKeys) {
+  const record = isRecord(account) ? account : null;
+  if (!record || !Array.isArray(requiredKeys)) {
+    return undefined;
+  }
+  let sawCredentialStatus = false;
+  for (const key of requiredKeys) {
+    const status = readCredentialStatus(record, key);
+    if (!status) {
+      continue;
+    }
+    sawCredentialStatus = true;
+    if (status === "missing") {
+      return false;
+    }
+  }
+  return sawCredentialStatus ? true : undefined;
+}
+
 function isToolPayloadTextBlock(block) {
   return (
     Boolean(block) &&
@@ -20778,6 +20854,19 @@ const statusHelpersRuntime = {
   resolveEnabledConfiguredAccountId,
 };
 
+const channelStatusRuntime = {
+  PAIRING_APPROVED_MESSAGE,
+  buildBaseChannelStatusSummary,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  buildTokenChannelStatusSummary,
+  collectStatusIssuesFromLastError,
+  createDefaultChannelRuntimeState,
+  projectCredentialSnapshotFields,
+  resolveConfiguredFromCredentialStatuses,
+  resolveConfiguredFromRequiredCredentialStatuses,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -20818,6 +20907,7 @@ const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
     DEFAULT_MAIN_KEY,
+    PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
     appendMatchMetadata,
     asString,
@@ -20913,6 +21003,7 @@ const genericSdk = new Proxy(
     parseThreadSessionSuffix,
     pathExists,
     parseAvailableTags,
+    projectCredentialSnapshotFields,
     readBooleanParam,
     readErrorName,
     readNumberParam,
@@ -20923,6 +21014,8 @@ const genericSdk = new Proxy(
     readStringParam,
     resolveAccountEntry,
     resolveAccountWithDefaultFallback,
+    resolveConfiguredFromCredentialStatuses,
+    resolveConfiguredFromRequiredCredentialStatuses,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -21048,6 +21141,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/status-helpers"
   ) {
     return statusHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-status" ||
+    request === "@openclaw/plugin-sdk/channel-status"
+  ) {
+    return channelStatusRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
