@@ -23185,7 +23185,6 @@ def qr_command(
         "gatewayUrl": gateway_url,
         "auth": auth_label,
         "urlSource": url_source,
-        "expiresAtMs": issued.expires_at_ms,
     }
     if json_output:
         _emit_payload(payload, json_output=True)

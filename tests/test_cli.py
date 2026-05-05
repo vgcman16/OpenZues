@@ -190,6 +190,36 @@ def test_qr_remote_requires_explicit_remote_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_json_output_matches_openclaw_setup_code_contract(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--json",
+            "--url",
+            "wss://gateway.example.test:18789",
+            "--token",
+            "override-token",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "override-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert set(payload) == {"setupCode", "gatewayUrl", "auth", "urlSource"}
+    assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "cli.url"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://gateway.example.test:18789"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
