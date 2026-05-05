@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~62.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~62.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Google Chat native provider route slice is checkpointed in `edb67dfc`.
+The Google Chat media/DM provider route slice is checkpointed in `7086dcb3`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -57,9 +57,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Google Chat native outbound route checkpointed in `edb67dfc` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Google Chat media/DM-resolution or provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Google Chat media/DM route checkpointed in `7086dcb3` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001P` Google Chat media and DM-resolution delivery
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.adapters.ts`,
+    `openclaw-main/extensions/googlechat/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: route-backed Google Chat sends resolve `users/...` targets
+    through `spaces:findDirectMessage`, upload media bytes to the Google Chat
+    attachment upload endpoint, send attachment refs in the final message
+    create payload, preserve caller captions, and persist provider
+    `messageId`, chat, media token, media URL, and filename metadata.
+  - Evidence required: focused media/DM tests, adjacent provider route tests,
+    ruff, mypy
+  - Status: checkpointed in `7086dcb3`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused media and DM proofs (`1 passed` each),
+    adjacent provider route proof (`9 passed, 276 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PROV-001O` Google Chat native outbound route
   - Source: `openclaw-main/extensions/googlechat/src/api.ts`,

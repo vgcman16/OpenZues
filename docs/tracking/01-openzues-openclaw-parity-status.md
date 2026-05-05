@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~62.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~62.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -145,6 +145,11 @@ may lag behind this tracker.
   query semantics, bearer auth, provider result metadata, and CLI/app route
   affordances.
   - Status: checkpointed in `edb67dfc`
+
+- [x] Google Chat media and DM-resolution support, preserving OpenClaw
+  `spaces:findDirectMessage`, attachment upload, message attachment refs,
+  caption handling, and ordered media result metadata.
+  - Status: checkpointed in `7086dcb3`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
