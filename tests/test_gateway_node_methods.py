@@ -7139,6 +7139,203 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    existing_file = tmp_path / "existing.txt"
+    existing_file.write_text("present", encoding="utf-8")
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    runtime_entry = tmp_path / "runtime-plugin-account-core.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  createAccountListHelpers,
+  listCombinedAccountIds,
+  listConfiguredAccountIds,
+  normalizeAccountId,
+  normalizeChatType,
+  normalizeE164,
+  normalizeOptionalAccountId,
+  pathExists,
+  resolveAccountEntry,
+  resolveAccountWithDefaultFallback,
+  resolveListedDefaultAccountId,
+  resolveNormalizedAccountEntry,
+  resolveUserPath
+} = require("openclaw/plugin-sdk/account-core");
+const accountResolution = require("openclaw/plugin-sdk/account-resolution");
+const { resolveMergedAccountConfig } = require("openclaw/plugin-sdk/account-resolution-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_core",
+      description: "Use OpenClaw account-core SDK shims",
+      parameters: {
+        type: "object",
+        properties: {
+          existingPath: { type: "string" },
+          missingPath: { type: "string" },
+          homeDir: { type: "string" }
+        }
+      },
+      async execute(_toolCallId, args) {
+        const accounts = {
+          work: { id: "work", token: "" },
+          default: { id: "default", token: "set" }
+        };
+        const resolvePrimary = (id) => accounts[id] || { id, token: "" };
+        const fallback = resolveAccountWithDefaultFallback({
+          accountId: "",
+          normalizeAccountId: (id) => id && id.trim() ? normalizeAccountId(id) : "work",
+          resolvePrimary,
+          hasCredential: (account) => Boolean(account.token),
+          resolveDefaultAccountId: () => "default"
+        });
+        const explicit = resolveAccountWithDefaultFallback({
+          accountId: "work",
+          normalizeAccountId,
+          resolvePrimary,
+          hasCredential: (account) => Boolean(account.token),
+          resolveDefaultAccountId: () => "default"
+        });
+        return {
+          constants: [DEFAULT_ACCOUNT_ID],
+          normalizedAccount: normalizeAccountId(" Router D! "),
+          optionalBlank: normalizeOptionalAccountId(" ") ?? null,
+          configuredIds: listConfiguredAccountIds({
+            accounts: { "Router D": {}, "router-d": {}, "": {} },
+            normalizeAccountId
+          }),
+          combinedIds: listCombinedAccountIds({
+            configuredAccountIds: ["work", "alerts"],
+            additionalAccountIds: ["default", "work"],
+            implicitAccountId: "ops"
+          }),
+          defaultId: resolveListedDefaultAccountId({
+            accountIds: ["alerts", "work"],
+            ambiguousFallbackAccountId: "default"
+          }),
+          entry: resolveAccountEntry({ Default: { ok: true } }, "default"),
+          normalizedEntry: resolveNormalizedAccountEntry(
+            { "Router D": { ok: true } },
+            "router-d",
+            normalizeAccountId
+          ),
+          fallbackIds: [fallback.id, explicit.id],
+          chatTypes: [
+            normalizeChatType("DM"),
+            normalizeChatType("group"),
+            normalizeChatType("room") ?? null
+          ],
+          phone: normalizeE164("whatsapp:+1 (234) 555-0000"),
+          paths: {
+            home: resolveUserPath(
+              "~/openclaw",
+              { OPENCLAW_HOME: args.homeDir },
+              () => args.homeDir
+            ),
+            exists: await pathExists(args.existingPath),
+            missing: await pathExists(args.missingPath)
+          },
+          resolutionFacade: typeof accountResolution.createAccountListHelpers === "function",
+          runtimeMerged: resolveMergedAccountConfig({
+            channelConfig: { enabled: true },
+            accounts: { Work: { name: "Work" } },
+            accountId: "work"
+          }),
+          helperFacade: typeof createAccountListHelpers("x").listAccountIds === "function"
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-core-plugin",
+                    "name": "Runtime Account Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-core-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.account_core",
+            "args": {
+                "existingPath": str(existing_file),
+                "missingPath": str(tmp_path / "missing.txt"),
+                "homeDir": str(home_dir),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": ["default"],
+        "normalizedAccount": "router-d",
+        "optionalBlank": None,
+        "configuredIds": ["router-d"],
+        "combinedIds": ["alerts", "default", "ops", "work"],
+        "defaultId": "default",
+        "entry": {"ok": True},
+        "normalizedEntry": {"ok": True},
+        "fallbackIds": ["default", "work"],
+        "chatTypes": ["direct", "group", None],
+        "phone": "+12345550000",
+        "paths": {
+            "home": str((home_dir / "openclaw").resolve()),
+            "exists": True,
+            "missing": False,
+        },
+        "resolutionFacade": True,
+        "runtimeMerged": {"enabled": True, "name": "Work"},
+        "helperFacade": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

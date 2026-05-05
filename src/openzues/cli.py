@@ -18876,6 +18876,177 @@ function createAccountActionGate(params) {
   };
 }
 
+function listConfiguredAccountIds(params) {
+  const accounts = params && params.accounts;
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return [];
+  }
+  const normalize = typeof (params && params.normalizeAccountId) === "function"
+    ? params.normalizeAccountId
+    : (value) => value;
+  const ids = new Set();
+  for (const key of Object.keys(accounts)) {
+    if (!key) {
+      continue;
+    }
+    ids.add(normalize(key));
+  }
+  return Array.from(ids);
+}
+
+function normalizeChatType(raw) {
+  const value = normalizeOptionalLowercaseString(raw);
+  if (!value) {
+    return undefined;
+  }
+  if (value === "direct" || value === "dm") {
+    return "direct";
+  }
+  if (value === "group") {
+    return "group";
+  }
+  if (value === "channel") {
+    return "channel";
+  }
+  return undefined;
+}
+
+function normalizeE164(number) {
+  const withoutPrefix = String(number || "").replace(/^[a-z][a-z0-9-]*:/i, "").trim();
+  const digits = withoutPrefix.replace(/[^\d+]/g, "");
+  if (digits.startsWith("+")) {
+    return `+${digits.slice(1)}`;
+  }
+  return `+${digits}`;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.promises.access(targetPath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function normalizeHomeValue(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function normalizeSafeHomedir(homedir) {
+  try {
+    return normalizeHomeValue(typeof homedir === "function" ? homedir() : undefined);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function resolveRawOsHomeDir(env, homedir) {
+  const sourceEnv = env || process.env;
+  return (
+    normalizeHomeValue(sourceEnv.HOME) ||
+    normalizeHomeValue(sourceEnv.USERPROFILE) ||
+    normalizeSafeHomedir(homedir)
+  );
+}
+
+function resolveRawHomeDir(env, homedir) {
+  const sourceEnv = env || process.env;
+  const explicitHome = normalizeHomeValue(sourceEnv.OPENCLAW_HOME);
+  if (!explicitHome) {
+    return resolveRawOsHomeDir(sourceEnv, homedir);
+  }
+  if (
+    explicitHome === "~" ||
+    explicitHome.startsWith("~/") ||
+    explicitHome.startsWith("~\\")
+  ) {
+    const fallbackHome = resolveRawOsHomeDir(sourceEnv, homedir);
+    return fallbackHome ? explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome) : undefined;
+  }
+  return explicitHome;
+}
+
+function resolveEffectiveHomeDir(env, homedir = () => os.homedir()) {
+  const raw = resolveRawHomeDir(env || process.env, homedir);
+  return raw ? path.resolve(raw) : undefined;
+}
+
+function resolveRequiredHomeDir(env, homedir = () => os.homedir()) {
+  return resolveEffectiveHomeDir(env || process.env, homedir) || path.resolve(process.cwd());
+}
+
+function expandHomePrefix(input, opts) {
+  if (!input.startsWith("~")) {
+    return input;
+  }
+  const home =
+    normalizeHomeValue(opts && opts.home) ||
+    resolveEffectiveHomeDir(
+      (opts && opts.env) || process.env,
+      (opts && opts.homedir) || (() => os.homedir()),
+    );
+  if (!home) {
+    return input;
+  }
+  return input.replace(/^~(?=$|[\\/])/, home);
+}
+
+function resolveHomeRelativePath(input, opts) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("~")) {
+    const expanded = expandHomePrefix(trimmed, {
+      home: resolveRequiredHomeDir(
+        (opts && opts.env) || process.env,
+        (opts && opts.homedir) || (() => os.homedir()),
+      ),
+      env: opts && opts.env,
+      homedir: opts && opts.homedir,
+    });
+    return path.resolve(expanded);
+  }
+  return path.resolve(trimmed);
+}
+
+function resolveUserPath(input, env = process.env, homedir = () => os.homedir()) {
+  if (!input) {
+    return "";
+  }
+  return resolveHomeRelativePath(input, { env, homedir });
+}
+
+function resolveAccountWithDefaultFallback(params) {
+  const rawAccountId = params && params.accountId;
+  const hasExplicitAccountId = Boolean(
+    typeof rawAccountId === "string" ? rawAccountId.trim() : rawAccountId,
+  );
+  const normalize =
+    typeof (params && params.normalizeAccountId) === "function"
+      ? params.normalizeAccountId
+      : normalizeAccountId;
+  const normalizedAccountId = normalize(rawAccountId);
+  const primary = params.resolvePrimary(normalizedAccountId);
+  if (hasExplicitAccountId || params.hasCredential(primary)) {
+    return primary;
+  }
+  const fallbackId = params.resolveDefaultAccountId();
+  if (fallbackId === normalizedAccountId) {
+    return primary;
+  }
+  const fallback = params.resolvePrimary(fallbackId);
+  if (!params.hasCredential(fallback)) {
+    return primary;
+  }
+  return fallback;
+}
+
 function normalizeMessageChannel(raw) {
   const normalized = normalizeOptionalLowercaseString(raw);
   if (!normalized) {
@@ -19690,6 +19861,32 @@ const accountHelpersRuntime = {
   resolveMergedAccountConfig,
 };
 
+const accountCoreRuntime = {
+  ...accountHelpersRuntime,
+  DEFAULT_ACCOUNT_ID,
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  listCombinedAccountIds,
+  listConfiguredAccountIds,
+  mergeAccountConfig,
+  normalizeAccountId,
+  normalizeChatType,
+  normalizeE164,
+  normalizeOptionalAccountId,
+  pathExists,
+  resolveAccountEntry,
+  resolveAccountWithDefaultFallback,
+  resolveListedDefaultAccountId,
+  resolveMergedAccountConfig,
+  resolveNormalizedAccountEntry,
+  resolveUserPath,
+};
+
+const accountResolutionRuntime = {
+  resolveMergedAccountConfig,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -19774,11 +19971,14 @@ const genericSdk = new Proxy(
     isSubagentSessionKey,
     listBoundAccountIds,
     listCombinedAccountIds,
+    listConfiguredAccountIds,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
     mergeAccountConfig,
     normalizeAccountId,
     normalizeAgentId,
+    normalizeChatType,
+    normalizeE164,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
     normalizeMessageChannel,
@@ -19796,9 +19996,11 @@ const genericSdk = new Proxy(
     parseEnvTemplateSecretRef,
     parseLegacySecretRefEnvMarker,
     parseThreadSessionSuffix,
+    pathExists,
     readErrorName,
     readStringValue,
     resolveAccountEntry,
+    resolveAccountWithDefaultFallback,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -19816,6 +20018,7 @@ const genericSdk = new Proxy(
     resolveTextChunkLimit,
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
+    resolveUserPath,
     sanitizeTempFileName,
     sanitizeAgentId,
     sendMediaWithLeadingCaption,
@@ -19876,6 +20079,20 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/account-helpers"
   ) {
     return accountHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-core" ||
+    request === "@openclaw/plugin-sdk/account-core" ||
+    request === "openclaw/plugin-sdk/account-resolution" ||
+    request === "@openclaw/plugin-sdk/account-resolution"
+  ) {
+    return accountCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-resolution-runtime" ||
+    request === "@openclaw/plugin-sdk/account-resolution-runtime"
+  ) {
+    return accountResolutionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
