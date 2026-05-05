@@ -23417,6 +23417,44 @@ function evaluateSenderGroupAccessForPolicy(params) {
   };
 }
 
+function resolveRuntimeGroupPolicy(params) {
+  const configuredFallbackPolicy = params.configuredFallbackPolicy || "open";
+  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy || "allowlist";
+  const groupPolicy = params.providerConfigPresent
+    ? params.groupPolicy || params.defaultGroupPolicy || configuredFallbackPolicy
+    : params.groupPolicy || missingProviderFallbackPolicy;
+  return {
+    groupPolicy,
+    providerMissingFallbackApplied:
+      !params.providerConfigPresent && params.groupPolicy === undefined,
+  };
+}
+
+function resolveOpenProviderRuntimeGroupPolicy(params) {
+  return resolveRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.groupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+    configuredFallbackPolicy: "open",
+    missingProviderFallbackPolicy: "allowlist",
+  });
+}
+
+function evaluateSenderGroupAccess(params) {
+  const { groupPolicy, providerMissingFallbackApplied } = resolveOpenProviderRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.configuredGroupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+  });
+  return evaluateSenderGroupAccessForPolicy({
+    groupPolicy,
+    providerMissingFallbackApplied,
+    groupAllowFrom: params.groupAllowFrom,
+    senderId: params.senderId,
+    isSenderAllowed: params.isSenderAllowed,
+  });
+}
+
 function resolveGroupAllowFromSources(params) {
   const explicitGroupAllowFrom =
     Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
@@ -26348,6 +26386,7 @@ const channelPolicyRuntime = {
   createScopedDmSecurityResolver,
   evaluateGroupRouteAccessForPolicy,
   evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
   evaluateSenderGroupAccessForPolicy,
   formatPairingApproveHint,
   normalizeAllowFromList,
@@ -26359,8 +26398,19 @@ const channelPolicyRuntime = {
   resolveDmGroupAccessWithLists,
   resolveEffectiveAllowFromLists,
   resolveOpenDmAllowlistAccess,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveRuntimeGroupPolicy,
   resolveSenderScopedGroupPolicy,
   resolveToolsBySender,
+};
+
+const groupAccessRuntime = {
+  evaluateGroupRouteAccessForPolicy,
+  evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
+  evaluateSenderGroupAccessForPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveSenderScopedGroupPolicy,
 };
 
 const allowFromRuntime = {
@@ -26744,6 +26794,7 @@ const genericSdk = new Proxy(
     SILENT_REPLY_TOKEN,
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
+    ...groupAccessRuntime,
     ...allowFromRuntime,
     ...allowlistConfigEditRuntime,
     ...accessGroupsRuntime,
@@ -27163,6 +27214,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-policy"
   ) {
     return channelPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/group-access" ||
+    request === "@openclaw/plugin-sdk/group-access"
+  ) {
+    return groupAccessRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/allow-from" ||

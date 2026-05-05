@@ -10197,6 +10197,303 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_group_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-group-access.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  evaluateGroupRouteAccessForPolicy,
+  evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
+  evaluateSenderGroupAccessForPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveSenderScopedGroupPolicy
+} = require("openclaw/plugin-sdk/group-access");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.group_access",
+      description: "Use OpenClaw group access SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          scopedPolicies: [
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["a"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["a"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: []
+            })
+          ],
+          senderForPolicy: [
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: [],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["123"],
+              senderId: "999",
+              isSenderAllowed: () => false
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              providerMissingFallbackApplied: true,
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            })
+          ],
+          routeAccess: [
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "disabled",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: true
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: false,
+              routeMatched: false
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: false
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "open",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: false
+            })
+          ],
+          matchedAccess: [
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "disabled",
+              allowlistConfigured: true,
+              allowlistMatched: true
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              allowlistConfigured: false,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              requireMatchInput: true,
+              hasMatchInput: false,
+              allowlistConfigured: true,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              allowlistConfigured: true,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "open",
+              allowlistConfigured: false,
+              allowlistMatched: false
+            })
+          ],
+          senderAccess: [
+            evaluateSenderGroupAccess({
+              providerConfigPresent: false,
+              configuredGroupPolicy: undefined,
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "disabled",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "allowlist",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: [],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "allowlist",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "999",
+              isSenderAllowed: () => false
+            })
+          ],
+          fallback: resolveOpenProviderRuntimeGroupPolicy({
+            providerConfigPresent: false,
+            defaultGroupPolicy: "open"
+          }),
+          exportTypes: [
+            typeof evaluateSenderGroupAccess,
+            typeof resolveOpenProviderRuntimeGroupPolicy,
+            typeof genericSdk.evaluateSenderGroupAccess
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-group-access-plugin",
+                    "name": "Runtime Group Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-group-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.group_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.group_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "scopedPolicies": ["disabled", "allowlist", "open"],
+        "senderForPolicy": [
+            {
+                "allowed": False,
+                "groupPolicy": "disabled",
+                "providerMissingFallbackApplied": False,
+                "reason": "disabled",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "empty_allowlist",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "sender_not_allowlisted",
+            },
+            {
+                "allowed": True,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": True,
+                "reason": "allowed",
+            },
+        ],
+        "routeAccess": [
+            {"allowed": False, "groupPolicy": "disabled", "reason": "disabled"},
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "empty_allowlist"},
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "reason": "route_not_allowlisted",
+            },
+            {"allowed": False, "groupPolicy": "open", "reason": "route_disabled"},
+        ],
+        "matchedAccess": [
+            {"allowed": False, "groupPolicy": "disabled", "reason": "disabled"},
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "empty_allowlist"},
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "reason": "missing_match_input",
+            },
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "not_allowlisted"},
+            {"allowed": True, "groupPolicy": "open", "reason": "allowed"},
+        ],
+        "senderAccess": [
+            {
+                "allowed": True,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": True,
+                "reason": "allowed",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "disabled",
+                "providerMissingFallbackApplied": False,
+                "reason": "disabled",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "empty_allowlist",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "sender_not_allowlisted",
+            },
+        ],
+        "fallback": {"groupPolicy": "allowlist", "providerMissingFallbackApplied": True},
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
