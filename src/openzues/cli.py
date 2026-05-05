@@ -18121,6 +18121,102 @@ function createCachedLazyValueGetter(value, fallback) {
   };
 }
 
+const ABORT_TRIGGERS = new Set([
+  "stop",
+  "esc",
+  "abort",
+  "wait",
+  "exit",
+  "interrupt",
+  "halt",
+  "stopp",
+  "pare",
+  "stop openclaw",
+  "openclaw stop",
+  "stop action",
+  "stop current action",
+  "stop run",
+  "stop current run",
+  "stop agent",
+  "stop the agent",
+  "stop don't do anything",
+  "stop dont do anything",
+  "stop do not do anything",
+  "stop doing anything",
+  "do not do that",
+  "please stop",
+  "stop please",
+]);
+const TRAILING_ABORT_PUNCTUATION_RE = /[.!?…,，。;；:：'"’”)\]}]+$/u;
+
+function normalizeCommandBody(raw, options) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  const newline = trimmed.indexOf("\n");
+  const singleLine = newline === -1 ? trimmed : trimmed.slice(0, newline).trim();
+  const colonMatch = singleLine.match(/^\/([^\s:]+)\s*:(.*)$/);
+  const normalized = colonMatch
+    ? (() => {
+        const command = colonMatch[1];
+        const rest = colonMatch[2].trimStart();
+        return rest ? `/${command} ${rest}` : `/${command}`;
+      })()
+    : singleLine;
+  const normalizedBotUsername = normalizeOptionalLowercaseString(
+    options && options.botUsername,
+  );
+  const mentionMatch = normalizedBotUsername
+    ? normalized.match(/^\/([^\s@]+)@([^\s]+)(.*)$/)
+    : null;
+  return mentionMatch &&
+    normalizeLowercaseStringOrEmpty(mentionMatch[2]) === normalizedBotUsername
+    ? `/${mentionMatch[1]}${mentionMatch[3] || ""}`
+    : normalized;
+}
+
+function normalizeAbortTriggerText(text) {
+  return normalizeLowercaseStringOrEmpty(text)
+    .replace(/[’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(TRAILING_ABORT_PUNCTUATION_RE, "")
+    .trim();
+}
+
+function isAbortTrigger(text) {
+  if (!text) {
+    return false;
+  }
+  return ABORT_TRIGGERS.has(normalizeAbortTriggerText(text));
+}
+
+function isAbortRequestText(text, options) {
+  if (!text) {
+    return false;
+  }
+  const normalized = normalizeCommandBody(text, options).trim();
+  if (!normalized) {
+    return false;
+  }
+  const normalizedLower = normalizeLowercaseStringOrEmpty(normalized);
+  return (
+    normalizedLower === "/stop" ||
+    normalizeAbortTriggerText(normalizedLower) === "/stop" ||
+    isAbortTrigger(normalizedLower)
+  );
+}
+
+const BTW_COMMAND_RE = /^\/btw(?::|\s|$)/i;
+
+function isBtwRequestText(text, options) {
+  if (!text) {
+    return false;
+  }
+  const normalized = normalizeCommandBody(text, options).trim();
+  return BTW_COMMAND_RE.test(normalized);
+}
+
 function parseFiniteNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -21524,6 +21620,11 @@ const lazyValueRuntime = {
   createCachedLazyValueGetter,
 };
 
+const commandPrimitivesRuntime = {
+  isAbortRequestText,
+  isBtwRequestText,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -21874,7 +21975,9 @@ const genericSdk = new Proxy(
     hasOutboundReplyContent,
     hasOutboundText,
     isAcpSessionKey,
+    isAbortRequestText,
     isAutoLinkedFileRef,
+    isBtwRequestText,
     isCronSessionKey,
     isDangerousNameMatchingEnabled,
     isNumericTargetId,
@@ -22015,6 +22118,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/lazy-value"
   ) {
     return lazyValueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-primitives-runtime" ||
+    request === "@openclaw/plugin-sdk/command-primitives-runtime"
+  ) {
+    return commandPrimitivesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
