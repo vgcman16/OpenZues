@@ -29,8 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The companion remote macOS bin discovery slice is verified and awaiting
-checkpoint commit.
+The companion remote macOS bin discovery slice is checkpointed in `7dcce35d`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_remote_node_bins.py`
@@ -59,7 +58,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Update status git branch channel label checkpointed in `8673e35d` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery verified; checkpoint pending | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
+| OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send checkpointed in `9e1743fb` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
@@ -82,7 +81,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     discovered `bins`, and expose non-empty bins through paired-node metadata.
   - Evidence required: focused remote-bin node method test, adjacent node
     method/API/pairing refresh tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `7dcce35d`
   - Weight: 1
   - Last verified: 2026-05-04, focused remote-bin pytest (`1 passed`),
     adjacent node method proof (`5 passed`), adjacent node API proof

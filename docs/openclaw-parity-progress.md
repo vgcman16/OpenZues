@@ -9840,8 +9840,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   or gateway_nodes_endpoints_stage_silent_upgrade_for_commandless_reconnect"`
   (`4 passed, 424 deselected`), pairing refresh `python -m pytest
   tests\test_gateway_node_pairing_refresh.py -q` (`5 passed`), `ruff check`
-  on touched source/tests, and `mypy` on touched source modules. Checkpoint
-  pending commit.
+  on touched source/tests, and `mypy` on touched source modules. Checkpointed
+  in `7dcce35d`.
 
 ## References
 

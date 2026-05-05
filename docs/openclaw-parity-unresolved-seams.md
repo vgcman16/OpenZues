@@ -5584,7 +5584,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `bins` on paired-node metadata, and expose discovered bins through
   `node.pair.list`. Repo-wide parity is now estimated at ~60.7%. Verified with
   focused remote-bin pytest, adjacent node method/API/pairing-refresh proof,
-  `ruff check`, and `mypy`; checkpoint pending commit.
+  `ruff check`, and `mypy`; checkpointed in `7dcce35d`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

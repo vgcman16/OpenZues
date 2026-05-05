@@ -204,7 +204,7 @@ may lag behind this tracker.
 - [x] Companion remote macOS bin discovery, preserving OpenClaw's
   `system.which`/`system.run command -v` probe, paired-node `bins`
   persistence, and node-pair metadata exposure.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `7dcce35d`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -765,7 +765,7 @@ may lag behind this tracker.
     `src/openzues/app.py`
   - Test: `tests/test_gateway_node_methods.py`,
     `tests/test_gateway_node_pairing_refresh.py`, `tests/test_gateway_nodes_api.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `7dcce35d`.
   - Weight: 1
   - Last verified: 2026-05-04, focused remote-bin node method test
     (`1 passed`), adjacent node method proof (`5 passed`), adjacent node API
