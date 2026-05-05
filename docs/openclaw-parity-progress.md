@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.4% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~68.5% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11379,6 +11379,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `641c8fc7`.
+- Feishu/Lark read message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="read"` accepts upstream message-id aliases,
+  calls Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+  supports list or single-message API response shapes, parses text/post/card
+  content into the OpenClaw message projection, and returns `{ok, channel,
+  action, message}` or the upstream-shaped not-found error envelope. This
+  closes `OZ-PROV-001BY`; repo-wide parity is now estimated at ~68.5%. The
+  next Feishu message-action seam is `edit`.
+- Verified the Feishu/Lark read action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_read_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`5 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `38f27358`.
 
 ## References
 
