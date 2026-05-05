@@ -18226,6 +18226,127 @@ async function resolveTargetsWithOptionalToken(params) {
   return resolved.map(params.mapResolved);
 }
 
+async function readResponseChunkWithIdleTimeout(reader, chunkTimeoutMs, onIdleTimeout) {
+  let timeoutId;
+  let timedOut = false;
+  return await new Promise((resolve, reject) => {
+    const clear = () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      clear();
+      void reader.cancel().catch(() => undefined);
+      reject(
+        onIdleTimeout
+          ? onIdleTimeout({ chunkTimeoutMs })
+          : new Error(`Media download stalled: no data received for ${chunkTimeoutMs}ms`),
+      );
+    }, chunkTimeoutMs);
+    void reader.read().then(
+      (result) => {
+        clear();
+        if (!timedOut) {
+          resolve(result);
+        }
+      },
+      (error) => {
+        clear();
+        if (!timedOut) {
+          reject(error);
+        }
+      },
+    );
+  });
+}
+
+async function readResponsePrefix(res, maxBytes, opts = {}) {
+  const body = res.body;
+  if (!body || typeof body.getReader !== "function") {
+    const fallback = Buffer.from(await res.arrayBuffer());
+    if (fallback.length > maxBytes) {
+      return {
+        buffer: fallback.subarray(0, maxBytes),
+        size: fallback.length,
+        truncated: true,
+      };
+    }
+    return { buffer: fallback, size: fallback.length, truncated: false };
+  }
+
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  let size = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const result = opts.chunkTimeoutMs
+        ? await readResponseChunkWithIdleTimeout(
+            reader,
+            opts.chunkTimeoutMs,
+            opts.onIdleTimeout,
+          )
+        : await reader.read();
+      if (result.done) {
+        size = total;
+        break;
+      }
+      const value = result.value;
+      if (!value || !value.length) {
+        continue;
+      }
+      const nextTotal = total + value.length;
+      if (nextTotal > maxBytes) {
+        const remaining = maxBytes - total;
+        if (remaining > 0) {
+          chunks.push(value.subarray(0, remaining));
+          total += remaining;
+        }
+        size = nextTotal;
+        truncated = true;
+        try {
+          await reader.cancel();
+        } catch {}
+        break;
+      }
+      chunks.push(value);
+      total = nextTotal;
+      size = total;
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+  return {
+    buffer: Buffer.concat(
+      chunks.map((chunk) => Buffer.from(chunk)),
+      total,
+    ),
+    size,
+    truncated,
+  };
+}
+
+async function readResponseWithLimit(res, maxBytes, opts = {}) {
+  const onOverflow =
+    opts.onOverflow ||
+    ((params) =>
+      new Error(`Content too large: ${params.size} bytes (limit: ${params.maxBytes} bytes)`));
+  const prefix = await readResponsePrefix(res, maxBytes, {
+    chunkTimeoutMs: opts.chunkTimeoutMs,
+    onIdleTimeout: opts.onIdleTimeout,
+  });
+  if (prefix.truncated) {
+    throw onOverflow({ size: prefix.size, maxBytes, res });
+  }
+  return prefix.buffer;
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -21053,6 +21174,10 @@ const targetResolverRuntime = {
   resolveTargetsWithOptionalToken,
 };
 
+const responseLimitRuntime = {
+  readResponseWithLimit,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21378,6 +21503,7 @@ const genericSdk = new Proxy(
     readBooleanParam,
     readErrorName,
     readNumberParam,
+    readResponseWithLimit,
     readReactionParams,
     readStringValue,
     readStringArrayParam,
@@ -21514,6 +21640,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/target-resolver-runtime"
   ) {
     return targetResolverRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/response-limit-runtime" ||
+    request === "@openclaw/plugin-sdk/response-limit-runtime"
+  ) {
+    return responseLimitRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
