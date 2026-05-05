@@ -7184,6 +7184,149 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_detection_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-detection.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  shouldComputeCommandAuthorized
+} = require("openclaw/plugin-sdk/command-detection");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_detection",
+      description: "Use OpenClaw command-detection SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const metaWrapped = [
+          "Conversation info (untrusted metadata):",
+          "```json",
+          "{\\"message_id\\":\\"msg-abc\\",\\"chat_id\\":\\"chat-123\\"}",
+          "```",
+          "",
+          "/model spark"
+        ].join("\\n");
+        const timestampWrapped = [
+          "[Wed 2026-03-11 23:51 PDT] Sender (untrusted metadata):",
+          "```json",
+          "{\\"name\\":\\"Alice\\",\\"id\\":\\"user-1\\"}",
+          "```",
+          "",
+          "/status"
+        ].join("\\n");
+        return {
+          control: [
+            hasControlCommand("send"),
+            hasControlCommand("/commands"),
+            hasControlCommand("/commands:"),
+            hasControlCommand("/status please"),
+            hasControlCommand("/send on"),
+            hasControlCommand("/help@otherbot", undefined, { botUsername: "openclaw" }),
+            hasControlCommand("/help@openclaw", undefined, { botUsername: "openclaw" }),
+            hasControlCommand(metaWrapped),
+            hasControlCommand(timestampWrapped),
+            hasControlCommand("/config show", { commands: { config: false } }),
+            hasControlCommand("/config show", { commands: { config: true } })
+          ],
+          message: [
+            isControlCommandMessage("stop"),
+            isControlCommandMessage("/stop"),
+            isControlCommandMessage("plain text"),
+            shouldComputeCommandAuthorized("hello /status"),
+            shouldComputeCommandAuthorized("plain text")
+          ],
+          inline: [
+            hasInlineCommandTokens("hello /status"),
+            hasInlineCommandTokens("hey /think high"),
+            hasInlineCommandTokens("http://example.com/path"),
+            hasInlineCommandTokens("stop")
+          ],
+          generic: genericSdk.hasControlCommand("/status")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-detection-plugin",
+                    "name": "Runtime Command Detection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-command-detection-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_detection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_detection"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "control": [
+            False,
+            True,
+            True,
+            False,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+        ],
+        "message": [True, True, False, True, False],
+        "inline": [True, True, False, False],
+        "generic": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:

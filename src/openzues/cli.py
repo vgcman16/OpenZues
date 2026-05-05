@@ -18096,6 +18096,65 @@ Object.assign(MIME_BY_EXT, {
   ".htm": "text/html",
   ".xml": "text/xml",
 });
+const CHAT_COMMANDS = [
+  { key: "help", aliases: ["/help"], acceptsArgs: false },
+  { key: "commands", aliases: ["/commands"], acceptsArgs: false },
+  { key: "tools", aliases: ["/tools"], acceptsArgs: true },
+  { key: "skill", aliases: ["/skill"], acceptsArgs: true },
+  { key: "status", aliases: ["/status"], acceptsArgs: false },
+  { key: "diagnostics", aliases: ["/diagnostics"], acceptsArgs: true },
+  { key: "crestodian", aliases: ["/crestodian"], acceptsArgs: true },
+  { key: "tasks", aliases: ["/tasks"], acceptsArgs: false },
+  { key: "allowlist", aliases: ["/allowlist"], acceptsArgs: true },
+  { key: "approve", aliases: ["/approve"], acceptsArgs: true },
+  { key: "context", aliases: ["/context"], acceptsArgs: true },
+  { key: "btw", aliases: ["/btw"], acceptsArgs: true },
+  { key: "export-session", aliases: ["/export-session", "/export"], acceptsArgs: true },
+  { key: "export-trajectory", aliases: ["/export-trajectory", "/trajectory"], acceptsArgs: true },
+  { key: "tts", aliases: ["/tts"], acceptsArgs: true },
+  { key: "whoami", aliases: ["/whoami", "/id"], acceptsArgs: false },
+  { key: "session", aliases: ["/session"], acceptsArgs: true },
+  { key: "subagents", aliases: ["/subagents"], acceptsArgs: true },
+  { key: "acp", aliases: ["/acp"], acceptsArgs: true },
+  { key: "focus", aliases: ["/focus"], acceptsArgs: true },
+  { key: "unfocus", aliases: ["/unfocus"], acceptsArgs: false },
+  { key: "agents", aliases: ["/agents"], acceptsArgs: false },
+  { key: "kill", aliases: ["/kill"], acceptsArgs: true },
+  { key: "steer", aliases: ["/steer", "/tell"], acceptsArgs: true },
+  { key: "config", aliases: ["/config"], acceptsArgs: true, flag: "config" },
+  { key: "mcp", aliases: ["/mcp"], acceptsArgs: true, flag: "mcp" },
+  { key: "plugins", aliases: ["/plugins", "/plugin"], acceptsArgs: true, flag: "plugins" },
+  { key: "debug", aliases: ["/debug"], acceptsArgs: true, flag: "debug" },
+  { key: "usage", aliases: ["/usage"], acceptsArgs: true },
+  { key: "stop", aliases: ["/stop"], acceptsArgs: false },
+  { key: "restart", aliases: ["/restart"], acceptsArgs: false },
+  { key: "activation", aliases: ["/activation"], acceptsArgs: true },
+  { key: "send", aliases: ["/send"], acceptsArgs: true },
+  { key: "reset", aliases: ["/reset"], acceptsArgs: true },
+  { key: "new", aliases: ["/new"], acceptsArgs: true },
+  { key: "compact", aliases: ["/compact"], acceptsArgs: true },
+  { key: "think", aliases: ["/think", "/thinking", "/t"], acceptsArgs: true },
+  { key: "verbose", aliases: ["/verbose", "/v"], acceptsArgs: true },
+  { key: "trace", aliases: ["/trace"], acceptsArgs: true },
+  { key: "fast", aliases: ["/fast"], acceptsArgs: true },
+  { key: "reasoning", aliases: ["/reasoning", "/reason"], acceptsArgs: true },
+  { key: "elevated", aliases: ["/elevated", "/elev"], acceptsArgs: true },
+  { key: "exec", aliases: ["/exec"], acceptsArgs: true, flag: "bash" },
+  { key: "model", aliases: ["/model"], acceptsArgs: true },
+  { key: "models", aliases: ["/models"], acceptsArgs: true },
+  { key: "queue", aliases: ["/queue"], acceptsArgs: true },
+  { key: "bash", aliases: ["/bash"], acceptsArgs: true, flag: "bash" },
+];
+const INBOUND_META_SENTINELS = [
+  "Conversation info (untrusted metadata):",
+  "Sender (untrusted metadata):",
+  "Thread starter (untrusted, for context):",
+  "Replied message (untrusted, for context):",
+  "Forwarded message context (untrusted metadata):",
+  "Chat history since last reply (untrusted, for context):",
+];
+const INBOUND_META_SENTINEL_SET = new Set(INBOUND_META_SENTINELS);
+const LEADING_TIMESTAMP_PREFIX_RE = /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]]*\] */;
 
 function normalizeLowercaseStringOrEmpty(value) {
   return normalizeOptionalLowercaseString(value) || "";
@@ -18263,6 +18322,123 @@ function isBtwRequestText(text, options) {
   }
   const normalized = normalizeCommandBody(text, options).trim();
   return BTW_COMMAND_RE.test(normalized);
+}
+
+function stripInboundMetadata(text) {
+  if (!text) {
+    return text;
+  }
+  const withoutTimestamp = String(text).replace(LEADING_TIMESTAMP_PREFIX_RE, "").trimStart();
+  const lines = withoutTimestamp.split("\n");
+  const result = [];
+  let inMetaBlock = false;
+  let inJsonFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!inMetaBlock && INBOUND_META_SENTINEL_SET.has(trimmed)) {
+      const next = lines[index + 1] || "";
+      if (next.trim() === "```json") {
+        inMetaBlock = true;
+        inJsonFence = false;
+        continue;
+      }
+    }
+    if (inMetaBlock) {
+      if (!inJsonFence && trimmed === "```json") {
+        inJsonFence = true;
+        continue;
+      }
+      if (inJsonFence && trimmed === "```") {
+        inMetaBlock = false;
+        inJsonFence = false;
+      }
+      continue;
+    }
+    result.push(line);
+  }
+  return result.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
+}
+
+function isCommandEnabled(command, cfg) {
+  if (!command.flag || !cfg) {
+    return true;
+  }
+  const commands = cfg && typeof cfg === "object" ? cfg.commands : undefined;
+  return Boolean(commands && commands[command.flag] === true);
+}
+
+function listEnabledChatCommands(cfg) {
+  if (!cfg) {
+    return CHAT_COMMANDS;
+  }
+  return CHAT_COMMANDS.filter((command) => isCommandEnabled(command, cfg));
+}
+
+function hasControlCommand(text, cfg, options) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = String(text).trim();
+  if (!trimmed) {
+    return false;
+  }
+  const stripped = stripInboundMetadata(trimmed);
+  if (!stripped) {
+    return false;
+  }
+  const normalizedBody = normalizeCommandBody(stripped, options);
+  if (!normalizedBody) {
+    return false;
+  }
+  const lowered = normalizeLowercaseStringOrEmpty(normalizedBody);
+  for (const command of listEnabledChatCommands(cfg)) {
+    for (const alias of command.aliases) {
+      const normalized = normalizeOptionalLowercaseString(alias);
+      if (!normalized) {
+        continue;
+      }
+      if (lowered === normalized) {
+        return true;
+      }
+      if (command.acceptsArgs && lowered.startsWith(normalized)) {
+        const nextChar = normalizedBody.charAt(normalized.length);
+        if (nextChar && /\s/.test(nextChar)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isControlCommandMessage(text, cfg, options) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = String(text).trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (hasControlCommand(trimmed, cfg, options)) {
+    return true;
+  }
+  const stripped = stripInboundMetadata(trimmed);
+  const normalized =
+    normalizeOptionalLowercaseString(normalizeCommandBody(stripped, options)) || "";
+  return isAbortTrigger(normalized);
+}
+
+function hasInlineCommandTokens(text) {
+  const body = text || "";
+  if (!String(body).trim()) {
+    return false;
+  }
+  return /(?:^|\s)[/!][a-z]/i.test(String(body));
+}
+
+function shouldComputeCommandAuthorized(text, cfg, options) {
+  return isControlCommandMessage(text, cfg, options) || hasInlineCommandTokens(text);
 }
 
 function normalizeMimeType(mime) {
@@ -21843,6 +22019,13 @@ const commandPrimitivesRuntime = {
   isBtwRequestText,
 };
 
+const commandDetectionRuntime = {
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  shouldComputeCommandAuthorized,
+};
+
 const mediaMimeRuntime = {
   detectMime,
   extensionForMime,
@@ -22199,6 +22382,8 @@ const genericSdk = new Proxy(
     getFileExtension,
     hasNonEmptyString,
     hasConfiguredSecretInput,
+    hasControlCommand,
+    hasInlineCommandTokens,
     KeyedAsyncQueue,
     hasOutboundMedia,
     hasOutboundReplyContent,
@@ -22207,6 +22392,7 @@ const genericSdk = new Proxy(
     isAbortRequestText,
     isAutoLinkedFileRef,
     isBtwRequestText,
+    isControlCommandMessage,
     isCronSessionKey,
     isDangerousNameMatchingEnabled,
     isNumericTargetId,
@@ -22306,6 +22492,7 @@ const genericSdk = new Proxy(
     sendPayloadMediaSequenceOrFallback,
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
+    shouldComputeCommandAuthorized,
     stringEnum,
     stringifyToolPayload,
     stripPlainTextToolCallBlocks,
@@ -22355,6 +22542,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
     return commandPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-detection" ||
+    request === "@openclaw/plugin-sdk/command-detection"
+  ) {
+    return commandDetectionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/media-mime" ||
