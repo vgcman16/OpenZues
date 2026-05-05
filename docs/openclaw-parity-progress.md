@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.2% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.3% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10577,6 +10577,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 304 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `709fcf4d`.
+
+- Microsoft Teams Graph media upload now mirrors OpenClaw's
+  `extensions/msteams/src/graph-upload.ts`, `graph-chat.ts`, and
+  `send.ts` SharePoint file-card branch: native Teams media sends can resolve
+  `sharePointSiteId`, upload pending media bytes to Graph
+  `/sites/{siteId}/drive/root:/OpenClawShared/...:/content`, create an
+  organization sharing link, fetch DriveItem `eTag` / `webDavUrl` / `name`,
+  build a native FileInfoCard, and preserve file-card metadata plus Graph
+  upload metadata in the delivery snapshot. This closes `OZ-PROV-001AI`;
+  repo-wide parity is now estimated at ~64.3%. Remaining Microsoft Teams
+  breadth is inbound monitor/session routing.
+- Verified the Microsoft Teams Graph upload slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_graph_upload -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`9 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `a220db23`.
 
 ## References
 

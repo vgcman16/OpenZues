@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.3% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5967,9 +5967,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   delivery. Repo-wide parity is now estimated at ~64.2%. Verified with
   focused runtime pytest, adjacent Teams send/action/provider proof, `ruff
   check`, and `mypy`; checkpointed in `709fcf4d`.
+- Closed the Microsoft Teams Graph media upload seam from OpenClaw
+  `extensions/msteams/src/graph-upload.ts`,
+  `extensions/msteams/src/graph-chat.ts`, and
+  `extensions/msteams/src/send.ts`: native Teams media sends now resolve
+  `sharePointSiteId`, upload media bytes to Graph
+  `/sites/{siteId}/drive/root:/OpenClawShared/...:/content`, create an
+  organization sharing link, read DriveItem `eTag` / `webDavUrl` / `name`,
+  build the native FileInfoCard, and persist Graph upload item/share metadata
+  alongside provider file-card metadata. Repo-wide parity is now estimated at
+  ~64.3%. Verified with focused runtime pytest, adjacent Teams
+  send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `a220db23`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  Graph upload or inbound monitor/session routing, or
+  inbound monitor/session routing, or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
