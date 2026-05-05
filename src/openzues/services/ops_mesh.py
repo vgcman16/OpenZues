@@ -3566,6 +3566,106 @@ def _msteams_file_info_cards_from_event(
     return [_msteams_file_info_card(entry) for entry in entries]
 
 
+def _msteams_file_consent_entry(event: Mapping[str, Any]) -> Mapping[str, object] | None:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsFileConsent",
+            "msteamsFileConsentCard",
+            "teamsFileConsent",
+            "teamsFileConsentCard",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return cast(Mapping[str, object], value)
+    return None
+
+
+def _msteams_file_consent_size(file_consent: Mapping[str, object]) -> int:
+    for key in ("sizeInBytes", "size", "bytes", "contentLength"):
+        value = file_consent.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, float) and math.isfinite(value) and value >= 0:
+            return math.floor(value)
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            try:
+                parsed = int(trimmed)
+            except ValueError:
+                continue
+            if parsed >= 0:
+                return parsed
+    raise RuntimeError("Microsoft Teams file consent card requires sizeInBytes.")
+
+
+def _msteams_file_consent_context(
+    file_consent: Mapping[str, object],
+    *,
+    filename: str,
+    upload_id: str,
+) -> dict[str, object]:
+    context: dict[str, object] = {"filename": filename, "uploadId": upload_id}
+    raw_context = file_consent.get("context")
+    if isinstance(raw_context, Mapping):
+        for key, value in raw_context.items():
+            if isinstance(key, str) and key not in {"filename", "uploadId"}:
+                context[key] = value
+    return context
+
+
+def _msteams_file_consent_card_from_event(
+    *,
+    event: Mapping[str, Any],
+    media_urls: list[str],
+) -> tuple[dict[str, object], str]:
+    if len(media_urls) != 1:
+        raise RuntimeError("Microsoft Teams FileConsentCard delivery supports one mediaUrl.")
+    file_consent = _msteams_file_consent_entry(event)
+    if file_consent is None:
+        raise RuntimeError(
+            "Microsoft Teams native media delivery requires FileConsentCard or "
+            "Graph upload support and is not available for this route yet."
+        )
+    filename = _msteams_file_info_value(
+        file_consent,
+        "filename",
+        "fileName",
+        "name",
+        "displayName",
+    )
+    if filename is None:
+        raise RuntimeError("Microsoft Teams file consent card requires a filename.")
+    upload_id = _msteams_file_info_value(file_consent, "uploadId", "id")
+    if upload_id is None:
+        upload_id = uuid.uuid4().hex
+    description = _msteams_file_info_value(file_consent, "description")
+    size_in_bytes = _msteams_file_consent_size(file_consent)
+    context = _msteams_file_consent_context(
+        file_consent,
+        filename=filename,
+        upload_id=upload_id,
+    )
+    card: dict[str, object] = {
+        "contentType": "application/vnd.microsoft.teams.card.file.consent",
+        "name": filename,
+        "content": {
+            "description": description or f"File: {filename}",
+            "sizeInBytes": size_in_bytes,
+            "acceptContext": dict(context),
+            "declineContext": dict(context),
+        },
+    }
+    return card, upload_id
+
+
 def _msteams_poll_card(
     *,
     question: str,
@@ -5926,6 +6026,7 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
         "threadId",
         "replyToId",
         "pollId",
+        "pendingUploadId",
         "mediaId",
         "mediaIds",
         "mediaUrl",
@@ -21655,6 +21756,9 @@ class OpsMeshService:
         )
         reply_to_id = str(event.get("replyToId") or "").strip()
         poll_id: str | None = None
+        send_media_urls: list[str] = []
+        send_attachments: list[dict[str, object]] = []
+        pending_upload_id: str | None = None
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             raw_options = event.get("options")
@@ -21694,13 +21798,20 @@ class OpsMeshService:
                     else None
                 ),
             )
-            file_cards: list[dict[str, object]] = []
+            send_media_urls = media_urls
             if media_urls:
-                file_cards = _msteams_file_info_cards_from_event(
-                    event=event,
-                    media_urls=media_urls,
-                )
-            if not message and not file_cards:
+                if _msteams_file_info_entries(event):
+                    send_attachments = _msteams_file_info_cards_from_event(
+                        event=event,
+                        media_urls=media_urls,
+                    )
+                else:
+                    consent_card, pending_upload_id = _msteams_file_consent_card_from_event(
+                        event=event,
+                        media_urls=media_urls,
+                    )
+                    send_attachments = [consent_card]
+            if not message and not send_attachments:
                 raise RuntimeError("Microsoft Teams send requires text or media.")
 
             activity_payload = {
@@ -21715,10 +21826,10 @@ class OpsMeshService:
                     }
                 ],
             }
-            if message:
+            if message and pending_upload_id is None:
                 activity_payload["text"] = message
-            if file_cards:
-                activity_payload["attachments"] = file_cards
+            if send_attachments:
+                activity_payload["attachments"] = send_attachments
         else:
             raise RuntimeError("Microsoft Teams native provider route does not support this event.")
         result = self._request_json_provider_url(
@@ -21752,31 +21863,18 @@ class OpsMeshService:
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
         if event_type == "gateway/send":
-            raw_media_urls = event.get("mediaUrls")
-            media_urls = _normalize_direct_channel_media_urls(
-                media_url=(
-                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
-                ),
-                media_urls=(
-                    [str(media_url) for media_url in raw_media_urls]
-                    if isinstance(raw_media_urls, list)
-                    else None
-                ),
-            )
-            if media_urls:
-                native_result["mediaUrls"] = media_urls
-                file_cards = _msteams_file_info_cards_from_event(
-                    event=event,
-                    media_urls=media_urls,
-                )
+            if send_media_urls:
+                native_result["mediaUrls"] = send_media_urls
                 native_result["filenames"] = [
-                    str(card.get("name") or "").strip()
-                    for card in file_cards
-                    if str(card.get("name") or "").strip()
+                    str(attachment.get("name") or "").strip()
+                    for attachment in send_attachments
+                    if str(attachment.get("name") or "").strip()
                 ]
+                if pending_upload_id is not None:
+                    native_result["pendingUploadId"] = pending_upload_id
                 file_ids: list[str] = []
-                for card in file_cards:
-                    content = card.get("content")
+                for attachment in send_attachments:
+                    content = attachment.get("content")
                     if not isinstance(content, dict):
                         continue
                     unique_id = str(content.get("uniqueId") or "").strip()
