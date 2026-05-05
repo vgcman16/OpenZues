@@ -19066,6 +19066,131 @@ async def test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "appId": "teams-app-id",
+                        "tenantId": "tenant-id",
+                        "appPassword": "teams-app-password",
+                        "promptStarters": ["Draft a plan", "Summarize this chat"],
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    provider_requests: list[tuple[str, str, object, str | None, str | None]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bot-framework-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        del self
+        provider_requests.append((method, target, payload or {}, secret_header_name, secret_token))
+        return {"id": "welcome-card-message-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "conversation-update-1",
+            "type": "conversationUpdate",
+            "serviceUrl": "https://smba.trafficmanager.net/amer/",
+            "recipient": {"id": "bot-id", "name": "ZuesBot"},
+            "membersAdded": [{"id": "bot-id", "name": "ZuesBot"}],
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert provider_requests[0][0] == "POST"
+    assert provider_requests[0][1] == (
+        "https://smba.trafficmanager.net/amer/v3/conversations/"
+        "a%3Apersonal-dm-conversation/activities"
+    )
+    assert provider_requests[0][3:] == (
+        "Authorization",
+        "Bearer bot-framework-token",
+    )
+    payload = provider_requests[0][2]
+    assert isinstance(payload, dict)
+    assert payload["type"] == "message"
+    attachments = payload["attachments"]
+    assert isinstance(attachments, list)
+    card = attachments[0]["content"]
+    assert card["type"] == "AdaptiveCard"
+    assert card["version"] == "1.5"
+    assert card["body"][0]["text"] == "Hi! I'm ZuesBot."
+    assert [action["title"] for action in card["actions"]] == [
+        "Draft a plan",
+        "Summarize this chat",
+    ]
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "conversationUpdate",
+        "action": "welcome",
+        "sent": True,
+        "messageId": "welcome-card-message-1",
+        "conversationId": "a:personal-dm-conversation",
+        "conversationType": "personal",
+        "memberId": "bot-id",
+        "welcome": {"kind": "card", "promptStarters": ["Draft a plan", "Summarize this chat"]},
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-inbound"

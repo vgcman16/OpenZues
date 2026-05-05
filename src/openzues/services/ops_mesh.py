@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import mimetypes
+import os
 import re
 import secrets
 import socket
@@ -239,6 +240,11 @@ MSTEAMS_REACTION_EMOJIS = {
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
+MSTEAMS_DEFAULT_PROMPT_STARTERS = (
+    "What can you do?",
+    "Summarize my last meeting",
+    "Help me draft an email",
+)
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -4316,6 +4322,112 @@ def _msteams_channel_entry_match(
     if "*" in entries:
         return True, _msteams_inbound_mapping(entries.get("*"))
     return False, {}
+
+
+def _msteams_config_secret_string(value: object) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if not isinstance(value, Mapping):
+        return None
+    raw_value = _msteams_inbound_optional_string(value.get("value"))
+    if raw_value is not None:
+        return raw_value
+    env_name = _msteams_inbound_optional_string(value.get("env"))
+    if env_name:
+        env_value = os.getenv(env_name)
+        if env_value and env_value.strip():
+            return env_value.strip()
+    return None
+
+
+def _msteams_bool_config(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _msteams_prompt_starters(channel_config: Mapping[str, Any]) -> list[str]:
+    raw_starters = channel_config.get("promptStarters")
+    if isinstance(raw_starters, list):
+        starters = [
+            str(starter).strip()
+            for starter in raw_starters
+            if str(starter).strip()
+        ]
+        if starters:
+            return starters
+    return list(MSTEAMS_DEFAULT_PROMPT_STARTERS)
+
+
+def _msteams_welcome_card(
+    *,
+    bot_name: str | None,
+    prompt_starters: list[str],
+) -> dict[str, object]:
+    name = bot_name or "OpenZues"
+    return {
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": f"Hi! I'm {name}.",
+                "weight": "bolder",
+                "size": "medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": (
+                    "I can help you with questions, tasks, and more. "
+                    "Here are some things to try:"
+                ),
+                "wrap": True,
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": starter,
+                "data": {"msteams": {"type": "imBack", "value": starter}},
+            }
+            for starter in prompt_starters
+        ],
+    }
+
+
+def _msteams_group_welcome_text(bot_name: str | None) -> str:
+    name = bot_name or "OpenZues"
+    return f"Hi! I'm {name}. Mention me with @{name} to get started."
+
+
+def _msteams_welcome_activity_payload(
+    *,
+    kind: Literal["card", "text"],
+    bot_name: str | None,
+    prompt_starters: list[str],
+) -> dict[str, object]:
+    if kind == "card":
+        return {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": _msteams_welcome_card(
+                        bot_name=bot_name,
+                        prompt_starters=prompt_starters,
+                    ),
+                }
+            ],
+        }
+    return {"type": "message", "text": _msteams_group_welcome_text(bot_name)}
 
 
 def _msteams_signin_route_allowed(
@@ -9349,6 +9461,160 @@ class OpsMeshService:
         )
         return metadata
 
+    def _msteams_welcome_route_credentials(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        channel_config: Mapping[str, Any],
+    ) -> tuple[_MSTeamsRouteConfig, str] | None:
+        del account_id
+        service_url = _msteams_inbound_optional_string(activity.get("serviceUrl"))
+        conversation_id = _msteams_signin_conversation_id(activity)
+        app_id = _msteams_config_secret_string(channel_config.get("appId"))
+        tenant_id = _msteams_config_secret_string(channel_config.get("tenantId"))
+        app_password = _msteams_config_secret_string(channel_config.get("appPassword"))
+        if (
+            service_url is None
+            or conversation_id is None
+            or app_id is None
+            or tenant_id is None
+            or app_password is None
+        ):
+            return None
+        parsed = urlparse(service_url)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return None
+        path = parsed.path.rstrip("/")
+        if path.lower().endswith("/v3"):
+            path = path[:-3].rstrip("/")
+        clean_service_url = parsed._replace(
+            path=path,
+            query="",
+            fragment="",
+        ).geturl().rstrip("/")
+        return (
+            _MSTeamsRouteConfig(
+                service_url=clean_service_url,
+                app_id=app_id,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                conversation_type=_msteams_signin_conversation_type(activity),
+                graph_chat_id=None,
+                share_point_site_id=None,
+            ),
+            app_password,
+        )
+
+    async def _msteams_send_welcome_activity(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        channel_config: Mapping[str, Any],
+        payload: dict[str, object],
+    ) -> tuple[bool, str | None, str | None]:
+        credentials = self._msteams_welcome_route_credentials(
+            activity,
+            account_id=account_id,
+            channel_config=channel_config,
+        )
+        if credentials is None:
+            return False, None, "msteams_welcome_credentials_unavailable"
+        route_config, app_password = credentials
+
+        def send_activity() -> object:
+            return self._request_json_provider_url(
+                _msteams_activity_endpoint(
+                    service_url=route_config.service_url,
+                    conversation_id=route_config.conversation_id or "",
+                ),
+                method="POST",
+                payload=payload,
+                secret_header_name="Authorization",
+                secret_token=self._msteams_bearer_token(
+                    route_config=route_config,
+                    secret_token=app_password,
+                ),
+            )
+
+        try:
+            result = await asyncio.to_thread(send_activity)
+        except Exception as exc:
+            return False, None, str(exc).strip() or type(exc).__name__
+        return True, _msteams_message_id(result), None
+
+    async def _handle_msteams_conversation_update(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if str(activity.get("type") or "").strip().lower() != "conversationupdate":
+            return None
+        members_added = activity.get("membersAdded")
+        if not isinstance(members_added, list):
+            return None
+        recipient = _msteams_inbound_mapping(activity.get("recipient"))
+        bot_id = _msteams_inbound_optional_string(recipient.get("id"))
+        if bot_id is None:
+            return None
+        matching_member = None
+        for member in members_added:
+            if not isinstance(member, Mapping):
+                continue
+            if _msteams_inbound_optional_string(member.get("id")) == bot_id:
+                matching_member = member
+                break
+        if matching_member is None:
+            return None
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        conversation_type = _msteams_signin_conversation_type(activity) or "personal"
+        is_personal = conversation_type == "personal"
+        if is_personal:
+            if _msteams_bool_config(channel_config.get("welcomeCard"), default=True) is False:
+                return None
+            prompt_starters = _msteams_prompt_starters(channel_config)
+            welcome_kind: Literal["card", "text"] = "card"
+        else:
+            if not _msteams_bool_config(channel_config.get("groupWelcomeCard")):
+                return None
+            prompt_starters = []
+            welcome_kind = "text"
+        bot_name = _msteams_inbound_optional_string(recipient.get("name"))
+        payload = _msteams_welcome_activity_payload(
+            kind=welcome_kind,
+            bot_name=bot_name,
+            prompt_starters=prompt_starters,
+        )
+        sent, message_id, error = await self._msteams_send_welcome_activity(
+            activity,
+            account_id=account_id,
+            channel_config=channel_config,
+            payload=payload,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "conversationUpdate",
+            "action": "welcome",
+            "sent": sent,
+            "conversationId": _msteams_signin_conversation_id(activity) or "unknown",
+            "conversationType": conversation_type,
+            "memberId": bot_id,
+            "welcome": {"kind": welcome_kind},
+        }
+        if prompt_starters:
+            result["welcome"] = {
+                "kind": welcome_kind,
+                "promptStarters": prompt_starters,
+            }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if error is not None:
+            result["error"] = error
+        return result
+
     async def _msteams_handle_signin_token_exchange(
         self,
         activity: Mapping[str, Any],
@@ -9682,6 +9948,12 @@ class OpsMeshService:
         )
         if feedback_result is not None:
             return feedback_result
+        conversation_update_result = await self._handle_msteams_conversation_update(
+            activity,
+            account_id=account_id,
+        )
+        if conversation_update_result is not None:
+            return conversation_update_result
         text = _msteams_inbound_activity_text(activity)
         if text is None:
             return {
