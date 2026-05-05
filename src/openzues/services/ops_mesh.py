@@ -252,6 +252,7 @@ MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
 )
 MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS = 300
 MSTEAMS_LIST_PINS_MAX_PAGES = 10
+MSTEAMS_LIST_CHANNELS_MAX_PAGES = 10
 MSTEAMS_SEARCH_DEFAULT_LIMIT = 25
 MSTEAMS_SEARCH_MAX_LIMIT = 50
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
@@ -5601,6 +5602,37 @@ def _msteams_user_profile(result: object) -> dict[str, object]:
         if isinstance(value, str):
             user[key] = value
     return user
+
+
+def _msteams_channel_summary(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    channel: dict[str, object] = {}
+    for key in (
+        "id",
+        "displayName",
+        "description",
+        "membershipType",
+        "webUrl",
+        "createdDateTime",
+    ):
+        value = result.get(key)
+        if isinstance(value, str):
+            channel[key] = value
+    return channel
+
+
+def _msteams_channel_page(result: object) -> tuple[list[dict[str, object]], str | None]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    channels: list[dict[str, object]] = []
+    raw_channels = result.get("value")
+    if isinstance(raw_channels, list):
+        for raw_channel in raw_channels:
+            if isinstance(raw_channel, dict):
+                channels.append(_msteams_channel_summary(raw_channel))
+    next_link = str(result.get("@odata.nextLink") or "").strip() or None
+    return channels, next_link
 
 
 def _msteams_pin_page(result: object) -> tuple[list[dict[str, object]], str | None]:
@@ -14925,6 +14957,29 @@ class OpsMeshService:
             )
             return await asyncio.to_thread(
                 self._dispatch_msteams_member_info_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "channel-list":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action channel-list."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_channel_list_message_action,
                 route,
                 request,
                 graph_secret_token,
@@ -25866,6 +25921,50 @@ class OpsMeshService:
             "channel": "msteams",
             "action": "member-info",
             "user": _msteams_user_profile(result),
+        }
+
+    def _dispatch_msteams_channel_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        team_id = _message_action_param_string(
+            request.params,
+            "teamId",
+            required=True,
+        )
+        if team_id is None:
+            raise RuntimeError("channel-list requires a teamId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        channels: list[dict[str, object]] = []
+        next_url: str | None = (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id, safe='')}/channels?"
+            "$select=id,displayName,description,membershipType"
+        )
+        pages = 0
+        while next_url is not None and pages < MSTEAMS_LIST_CHANNELS_MAX_PAGES:
+            result = self._request_json_provider_url(
+                next_url,
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            page_channels, next_link = _msteams_channel_page(result)
+            channels.extend(page_channels)
+            next_url = next_link
+            pages += 1
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "channel-list",
+            "channels": channels,
+            "truncated": next_url is not None,
         }
 
     def _dispatch_msteams_react_message_action(
