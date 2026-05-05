@@ -17,6 +17,8 @@ import re
 import secrets
 import socket
 import ssl
+import subprocess
+import tempfile
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -161,6 +163,24 @@ BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
 BLUEBUBBLES_MEDIA_MB = 1024 * 1024
 BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+FEISHU_TRANSCODABLE_AUDIO_EXTS = {
+    ".aac",
+    ".aiff",
+    ".alac",
+    ".amr",
+    ".caf",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".oga",
+    ".wav",
+    ".webm",
+    ".wma",
+}
+FEISHU_VOICE_FILE_NAME = "voice.ogg"
+FEISHU_VOICE_SAMPLE_RATE_HZ = 48_000
+FEISHU_VOICE_BITRATE = "64k"
+FEISHU_FFMPEG_MAX_AUDIO_DURATION_SECONDS = 120
 BLUEBUBBLES_REACTION_ALIASES = {
     "heart": "love",
     "love": "love",
@@ -6054,6 +6074,30 @@ def _feishu_media_file_type_and_message_type(
     if extension in {".ppt", ".pptx"}:
         return "ppt", "file"
     return "stream", "file"
+
+
+def _feishu_is_native_voice_audio(filename: str, content_type: str | None) -> bool:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return extension in {".opus", ".ogg"} or normalized_content_type in {
+        "audio/ogg",
+        "audio/opus",
+    }
+
+
+def _feishu_is_likely_transcodable_audio(filename: str, content_type: str | None) -> bool:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return extension in FEISHU_TRANSCODABLE_AUDIO_EXTS or normalized_content_type.startswith(
+        "audio/"
+    )
+
+
+def _feishu_transcode_input_extension(filename: str) -> str:
+    extension = Path(filename).suffix.lower()
+    if extension and len(extension) <= 12 and re.fullmatch(r"\.[a-z0-9]+", extension):
+        return extension
+    return ".audio"
 
 
 def _msteams_action_content(params: dict[str, Any]) -> str:
@@ -27500,6 +27544,88 @@ class OpsMeshService:
         filename = _feishu_media_filename(media_url, normalized_content_type)
         return media_bytes, normalized_content_type, filename
 
+    def _transcode_feishu_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> tuple[bytes, str, str]:
+        del content_type
+        with tempfile.TemporaryDirectory(prefix="openzues-feishu-voice-") as temp_dir:
+            temp_root = Path(temp_dir)
+            input_path = temp_root / f"input{_feishu_transcode_input_extension(filename)}"
+            output_path = temp_root / FEISHU_VOICE_FILE_NAME
+            input_path.write_bytes(media_bytes)
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-sn",
+                "-dn",
+                "-t",
+                str(FEISHU_FFMPEG_MAX_AUDIO_DURATION_SECONDS),
+                "-ar",
+                str(FEISHU_VOICE_SAMPLE_RATE_HZ),
+                "-ac",
+                "1",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                FEISHU_VOICE_BITRATE,
+                str(output_path),
+            ]
+            try:
+                subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=180,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RuntimeError(f"Feishu audioAsVoice transcode failed: {exc}") from exc
+            if not output_path.is_file():
+                raise RuntimeError("Feishu audioAsVoice transcode did not create voice.ogg")
+            return output_path.read_bytes(), "audio/ogg", FEISHU_VOICE_FILE_NAME
+
+    def _prepare_feishu_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+        audio_as_voice: bool,
+    ) -> tuple[bytes, str, str | None]:
+        if _feishu_is_native_voice_audio(filename, content_type):
+            return media_bytes, filename, content_type
+        if not audio_as_voice or not _feishu_is_likely_transcodable_audio(
+            filename,
+            content_type,
+        ):
+            return media_bytes, filename, content_type
+        try:
+            transcoded_bytes, transcoded_content_type, transcoded_filename = (
+                self._transcode_feishu_voice_media(
+                    media_bytes,
+                    filename=filename,
+                    content_type=content_type,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Feishu audioAsVoice transcode failed; sending %s as a file attachment: %s",
+                filename,
+                exc,
+            )
+            return media_bytes, filename, content_type
+        return transcoded_bytes, transcoded_filename, transcoded_content_type
+
     def _post_feishu_media_message_payload(
         self,
         route: dict[str, Any],
@@ -27604,6 +27730,14 @@ class OpsMeshService:
             ),
             account_id=account_id,
         )
+        prepared_content_type: str | None
+        media_bytes, filename, prepared_content_type = self._prepare_feishu_voice_media(
+            media_bytes,
+            filename=filename,
+            content_type=content_type,
+            audio_as_voice=_optional_bool_payload_value(event, "audioAsVoice") is True,
+        )
+        content_type = prepared_content_type or ""
         if _feishu_media_is_image(filename, content_type):
             upload = self._request_feishu_multipart_provider_url(
                 _feishu_api_endpoint(str(route.get("target") or ""), "im/v1/images"),
@@ -27694,6 +27828,11 @@ class OpsMeshService:
             media_event: dict[str, Any] = {"to": target}
             if request.account_id is not None:
                 media_event["accountId"] = request.account_id
+            audio_as_voice = _message_action_param_bool(request.params, "audioAsVoice")
+            if audio_as_voice is None:
+                audio_as_voice = _message_action_param_bool(request.params, "asVoice")
+            if audio_as_voice is not None:
+                media_event["audioAsVoice"] = audio_as_voice
             if action == "thread-reply":
                 reply_to_id = _feishu_action_message_id(request.params, action=action)
                 media_event["replyToId"] = reply_to_id
