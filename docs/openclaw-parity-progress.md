@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.6% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.7% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10461,6 +10461,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`6 passed, 300 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `b88c540d`.
+
+- Microsoft Teams delegated reaction write actions now mirror OpenClaw's
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts` action contract:
+  native `message.action` dispatch accepts `channel="msteams"`,
+  `action="react"`, `emoji`/`reactionType`, and `remove=true` or `unreact`,
+  normalizes legacy Teams reaction type names to lowercase, posts Graph beta
+  `setReaction` / `unsetReaction` requests with delegated Graph token posture,
+  supports chat ids and team/channel Graph targets, and preserves OpenClaw
+  shaped `{ok, channel, action, reactionType, removed?}` results. This closes
+  `OZ-PROV-001AC`; repo-wide parity is now estimated at ~63.7%. Remaining
+  Microsoft Teams breadth is live threaded replies, FileConsentCard/Graph
+  media upload, vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams reaction write slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_react_route -q`
+  (`1 passed`), adjacent Teams/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react_route or msteams_reactions or msteams_user_reference_route or msteams_native_route or msteams_native_probe or signal_react or matrix_reactions_list_route"`
+  (`10 passed, 297 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `02ae95da`.
 
 ## References
 

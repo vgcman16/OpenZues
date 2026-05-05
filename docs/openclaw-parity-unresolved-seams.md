@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.7% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5900,9 +5900,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   stored references retain OpenClaw's DM leakage guard. Repo-wide parity is now
   estimated at ~63.6%. Verified with focused runtime pytest, adjacent
   Teams/provider proof, `ruff check`, and `mypy`; checkpointed in `b88c540d`.
+- Closed the Microsoft Teams delegated reaction write seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts`: native
+  `message.action` now handles `channel="msteams"`, `action="react"`,
+  `emoji`/`reactionType`, `remove=true`, and `unreact`, normalizes legacy
+  Teams reaction type names to lowercase, posts Graph beta `setReaction` /
+  `unsetReaction` requests with delegated Graph token posture, supports chat
+  ids and team/channel Graph targets, and returns OpenClaw-shaped action
+  results. Repo-wide parity is now estimated at ~63.7%. Verified with focused
+  runtime pytest, adjacent Teams/action/provider proof, `ruff check`, and
+  `mypy`; checkpointed in `02ae95da`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  media/thread/delegated-action/vote-invoke breadth or
+  media/thread/vote-invoke breadth or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
