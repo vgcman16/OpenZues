@@ -6460,6 +6460,134 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_global_singleton_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-global-singleton.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createScopedExpiringIdCache,
+  resolveGlobalMap,
+  resolveGlobalSingleton
+} = require("openclaw/plugin-sdk/global-singleton");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.global_singleton",
+      description: "Use OpenClaw global-singleton SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const mapKey = Symbol.for("openzues.test.global-singleton.map");
+        const singletonKey = Symbol.for("openzues.test.global-singleton.value");
+        const scopedStore = new Map();
+        const cache = createScopedExpiringIdCache({
+          store: scopedStore,
+          ttlMs: 100,
+          cleanupThreshold: 1
+        });
+        const mapA = resolveGlobalMap(mapKey);
+        mapA.clear();
+        mapA.set("a", 1);
+        const mapB = resolveGlobalMap(mapKey);
+        delete globalThis[singletonKey];
+        let created = 0;
+        const singletonA = resolveGlobalSingleton(singletonKey, () => {
+          created += 1;
+          return { value: 42 };
+        });
+        const singletonB = resolveGlobalSingleton(singletonKey, () => {
+          created += 1;
+          return { value: 99 };
+        });
+
+        cache.record("room", "m1", 1000);
+        const beforeExpiry = cache.has("room", "m1", 1050);
+        const afterExpiry = cache.has("room", "m1", 1101);
+        cache.record("room", 2, 1200);
+        const coercedId = cache.has("room", "2", 1201);
+        cache.record("room", "old", 1000);
+        cache.record("room", "new", 1202);
+        const cleanupRemovedOld = !cache.has("room", "old", 1202);
+        cache.clear();
+
+        return {
+          globalMap: [mapA === mapB, mapB.get("a")],
+          singleton: [singletonA === singletonB, singletonB.value, created],
+          cache: [
+            beforeExpiry,
+            afterExpiry,
+            coercedId,
+            cleanupRemovedOld,
+            scopedStore.size
+          ],
+          generic: genericSdk.resolveGlobalMap(mapKey) === mapA
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-global-singleton-plugin",
+                    "name": "Runtime Global Singleton Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-global-singleton-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.global_singleton"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.global_singleton"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "globalMap": [True, 1],
+        "singleton": [True, 42, 1],
+        "cache": [True, False, True, True, 0],
+        "generic": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

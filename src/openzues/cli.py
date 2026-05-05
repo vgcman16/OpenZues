@@ -18657,6 +18657,55 @@ function resolveGlobalSingleton(key, create) {
   return created;
 }
 
+function resolveGlobalMap(key) {
+  return resolveGlobalSingleton(key, () => new Map());
+}
+
+function createScopedExpiringIdCache(options) {
+  const ttlMs = Math.max(0, options.ttlMs);
+  const cleanupThreshold = Math.max(1, Math.floor(options.cleanupThreshold));
+
+  const cleanupExpired = (scopeKey, entry, now) => {
+    for (const [id, timestamp] of entry) {
+      if (now - timestamp > ttlMs) {
+        entry.delete(id);
+      }
+    }
+    if (entry.size === 0) {
+      options.store.delete(scopeKey);
+    }
+  };
+
+  return {
+    record(scope, id, now = Date.now()) {
+      const scopeKey = String(scope);
+      const idKey = String(id);
+      let entry = options.store.get(scopeKey);
+      if (!entry) {
+        entry = new Map();
+        options.store.set(scopeKey, entry);
+      }
+      entry.set(idKey, now);
+      if (entry.size > cleanupThreshold) {
+        cleanupExpired(scopeKey, entry, now);
+      }
+    },
+    has(scope, id, now = Date.now()) {
+      const scopeKey = String(scope);
+      const idKey = String(id);
+      const entry = options.store.get(scopeKey);
+      if (!entry) {
+        return false;
+      }
+      cleanupExpired(scopeKey, entry, now);
+      return entry.has(idKey);
+    },
+    clear() {
+      options.store.clear();
+    },
+  };
+}
+
 function createDedupeCache(options) {
   const ttlMs = Math.max(0, options.ttlMs);
   const maxSize = Math.max(0, Math.floor(options.maxSize));
@@ -22076,6 +22125,12 @@ const dedupeRuntime = {
   resolveGlobalDedupeCache,
 };
 
+const globalSingletonRuntime = {
+  createScopedExpiringIdCache,
+  resolveGlobalMap,
+  resolveGlobalSingleton,
+};
+
 const keyedAsyncQueueRuntime = {
   KeyedAsyncQueue,
   enqueueKeyedTask,
@@ -22344,6 +22399,7 @@ const genericSdk = new Proxy(
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
     createDedupeCache,
+    createScopedExpiringIdCache,
     createRateLimitRetryRunner,
     createTelegramRetryRunner,
     createAsyncLock,
@@ -22460,6 +22516,8 @@ const genericSdk = new Proxy(
     resolveConfiguredFromCredentialStatuses,
     resolveConfiguredFromRequiredCredentialStatuses,
     resolveGlobalDedupeCache,
+    resolveGlobalMap,
+    resolveGlobalSingleton,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -22608,6 +22666,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
     return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/global-singleton" ||
+    request === "@openclaw/plugin-sdk/global-singleton"
+  ) {
+    return globalSingletonRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||
