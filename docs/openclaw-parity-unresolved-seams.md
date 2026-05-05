@@ -1,10 +1,10 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-04
+Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.3% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5718,8 +5718,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `pluginId`/`enabled`. Repo-wide parity is now estimated at ~62.2%. Verified
   with focused registry provider-metadata pytest, adjacent registry proof,
   `ruff check`, and `mypy`; checkpointed in `54c2fd49`.
+- Closed the Google Chat native outbound route seam from OpenClaw
+  `extensions/googlechat/src/api.ts`,
+  `extensions/googlechat/src/channel.adapters.ts`, and
+  `extensions/googlechat/src/targets.ts`: native `kind="googlechat"` routes
+  now accept Google Chat provider routes, normalize upstream
+  `googlechat:`/`google-chat:`/`gchat:` space targets, send `{text, thread}`
+  payloads through the Google Chat message-create endpoint with
+  `messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`, attach bearer
+  auth, and persist provider message/chat/thread/reply metadata through direct
+  send results. Repo-wide parity is now estimated at ~62.3%. Verified with
+  focused schema, service, and CLI pytest, adjacent provider/CLI/app route
+  proof, `ruff check`, and `mypy`; checkpointed in `edb67dfc`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap or packaging/plugin breadth seam.
+  Google Chat media/DM-resolution seam, provider-specific send/poll/replay
+  metadata gap, or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

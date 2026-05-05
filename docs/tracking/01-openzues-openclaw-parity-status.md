@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~62.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~62.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -139,6 +139,12 @@ may lag behind this tracker.
   metadata through `plugins registry --refresh --json` and later registry
   inspect payloads.
   - Status: checkpointed in `54c2fd49`
+
+- [x] Google Chat native outbound route support, preserving OpenClaw
+  target-normalization, text/thread message-create payloads, reply fallback
+  query semantics, bearer auth, provider result metadata, and CLI/app route
+  affordances.
+  - Status: checkpointed in `edb67dfc`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for

@@ -2,8 +2,8 @@
 
 ## Snapshot
 
-- Updated: 2026-05-04.
-- Estimated repo-wide parity: ~62.2% overall, with a reasonable band of ~50-63%.
+- Updated: 2026-05-05.
+- Estimated repo-wide parity: ~62.3% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -97,6 +97,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   routes, resolves chat/user/open-id targets, sends OpenClaw-shaped `post`
   markdown payloads through the Feishu message-create endpoint, and preserves
   provider message/chat metadata.
+- Provider-native Google Chat direct text/thread parity now accepts native
+  Google Chat routes, normalizes upstream-style `googlechat:`/`gchat:` space
+  targets, sends OpenClaw-shaped `{text, thread}` message payloads through the
+  Google Chat message-create endpoint with reply fallback query semantics, and
+  preserves provider message, chat, thread, and reply metadata. This slice is
+  checkpointed in `edb67dfc`.
+- Verified the Google Chat native route slice with focused schema, service,
+  and CLI proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime

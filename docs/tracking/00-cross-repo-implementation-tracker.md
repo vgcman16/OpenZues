@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~62.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~62.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,12 +29,17 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The persisted plugin registry provider metadata slice is checkpointed in `54c2fd49`.
+The Google Chat native provider route slice is checkpointed in `edb67dfc`.
 Any follow-up changes should target the next queue head only:
 
+- `src/openzues/services/ops_mesh.py`
 - `src/openzues/cli.py`
-- `src/openzues/services/device_bootstrap_tokens.py`
+- `src/openzues/services/gateway_channels.py`
+- `src/openzues/web/templates/index.html`
+- `src/openzues/web/static/app.js`
+- `tests/test_ops_mesh.py`
 - `tests/test_cli.py`
+- `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -52,9 +57,36 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark native outbound route checkpointed in `d1515da1` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Google Chat native outbound route checkpointed in `edb67dfc` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Google Chat media/DM-resolution or provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001O` Google Chat native outbound route
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.adapters.ts`,
+    `openclaw-main/extensions/googlechat/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="googlechat"` sends dispatch through native
+    Google Chat message-create semantics, normalize upstream
+    `googlechat:`/`google-chat:`/`gchat:` space targets, send
+    `{text, thread}` payloads with reply fallback query semantics, attach
+    bearer auth, and persist provider `messageId`, chat, thread, and reply
+    metadata through the shared direct-send result envelope and route UI/CLI
+    surfaces.
+  - Evidence required: focused schema/service/CLI tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `edb67dfc`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused schema/service/CLI proofs (`1 passed`
+    each), adjacent provider route proof (`7 passed, 276 deselected`),
+    adjacent route-create proof (`3 passed, 499 deselected`), adjacent app
+    route proof (`9 passed, 188 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PLUGIN-001BN` persisted plugin registry provider metadata
   - Source: `openclaw-main/src/plugins/manifest-registry.ts`,
