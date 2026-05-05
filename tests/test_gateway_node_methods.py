@@ -11443,6 +11443,416 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_model_catalog_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-model-catalog.cjs"
+    runtime_entry.write_text(
+        """
+const providerModel = require("openclaw/plugin-sdk/provider-model-shared");
+const providerIds = require("openclaw/plugin-sdk/provider-model-id-normalize");
+const providerCatalog = require("openclaw/plugin-sdk/provider-catalog-shared");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_model_catalog",
+      description: "Use OpenClaw provider model/catalog SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const openaiHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "openai-compatible",
+          sanitizeToolCallIds: false
+        });
+        const anthropicHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "anthropic-by-model"
+        });
+        const nativeAnthropicHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "native-anthropic-by-model"
+        });
+        const googleHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "google-gemini"
+        });
+        const passthroughGeminiHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "passthrough-gemini"
+        });
+        const hybridHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "hybrid-anthropic-openai",
+          anthropicModelDropThinkingBlocks: true
+        });
+
+        const manifestConfig = providerCatalog.buildManifestModelProviderConfig({
+          providerId: "example",
+          catalog: {
+            baseUrl: "https://api.example.test/v1",
+            api: "openai-completions",
+            headers: { "x-provider": "example" },
+            models: [
+              {
+                id: "example-model",
+                name: "Example Model",
+                input: ["text", "image"],
+                reasoning: true,
+                contextWindow: 128000,
+                contextTokens: 64000,
+                maxTokens: 8192,
+                cost: {
+                  input: 1,
+                  output: 2,
+                  cacheRead: 0.25,
+                  cacheWrite: 0.5,
+                  tieredPricing: [
+                    {
+                      input: 0.5,
+                      output: 1,
+                      cacheRead: 0.1,
+                      cacheWrite: 0.2,
+                      range: [0, 1000000]
+                    }
+                  ]
+                },
+                compat: { supportsUsageInStreaming: true }
+              }
+            ]
+          }
+        });
+
+        let missingContextError = "";
+        try {
+          providerCatalog.buildManifestModelProviderConfig({
+            providerId: "example",
+            catalog: {
+              baseUrl: "https://api.example.test/v1",
+              models: [{ id: "missing-context", maxTokens: 8192 }]
+            }
+          });
+        } catch (error) {
+          missingContextError = error.message;
+        }
+
+        return {
+          ids: [
+            providerIds.normalizeGooglePreviewModelId("gemini-3-pro"),
+            providerIds.normalizeGooglePreviewModelId("gemini-3.1-flash-preview"),
+            providerIds.normalizeAntigravityPreviewModelId("gemini-3.1-pro"),
+            providerIds.normalizeNativeXaiModelId("grok-4-fast-reasoning"),
+            providerModel.getModelProviderHint("x-ai/grok-4"),
+            providerModel.isProxyReasoningUnsupportedModelHint("x-ai/grok-4")
+          ],
+          thinking: {
+            opus: providerModel.resolveClaudeThinkingProfile("claude-opus-4.7-20260219"),
+            adaptive: providerModel.resolveClaudeThinkingProfile("claude-sonnet-4-6"),
+            base: providerModel.resolveClaudeThinkingProfile("claude-haiku-4")
+          },
+          replay: {
+            openai: openaiHooks.buildReplayPolicy({
+              provider: "xai",
+              modelApi: "openai-completions",
+              modelId: "google/gemma-4-26b-a4b-it"
+            }),
+            anthropic: anthropicHooks.buildReplayPolicy({
+              provider: "amazon-bedrock",
+              modelApi: "bedrock-converse-stream",
+              modelId: "claude-sonnet-4-6"
+            }),
+            nativeAnthropic: nativeAnthropicHooks.buildReplayPolicy({
+              provider: "anthropic",
+              modelApi: "anthropic-messages",
+              modelId: "claude-sonnet-4-6"
+            }),
+            google: {
+              policy: googleHooks.buildReplayPolicy({
+                provider: "google",
+                modelApi: "google-generative-ai",
+                modelId: "gemini-3.1-pro-preview"
+              }),
+              reasoningMode: googleHooks.resolveReasoningOutputMode({}),
+              sanitized: googleHooks.sanitizeReplayHistory({
+                messages: [{ role: "assistant", content: [{ type: "text", text: "hello" }] }]
+              })
+            },
+            passthroughGemini: passthroughGeminiHooks.buildReplayPolicy({
+              provider: "openrouter",
+              modelApi: "openai-completions",
+              modelId: "gemini-2.5-pro"
+            }),
+            hybrid: hybridHooks.buildReplayPolicy({
+              provider: "minimax",
+              modelApi: "anthropic-messages",
+              modelId: "claude-sonnet-4-6"
+            }),
+            canonical: providerModel.OPENAI_COMPATIBLE_REPLAY_HOOKS.buildReplayPolicy({
+              provider: "xai",
+              modelApi: "openai-completions",
+              modelId: "grok-4"
+            })
+          },
+          catalog: {
+            nativeCompat: [
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-qwen",
+                baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+              }),
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-kimi",
+                baseUrl: "https://api.moonshot.ai/v1"
+              }),
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-proxy",
+                baseUrl: "https://proxy.example.com/v1"
+              })
+            ],
+            applied: providerCatalog.applyProviderNativeStreamingUsageCompat({
+              providerId: "custom-qwen",
+              providerConfig: {
+                api: "openai-completions",
+                baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                models: [
+                  { id: "qwen-plus", compat: {} },
+                  { id: "qwen-max", compat: { supportsUsageInStreaming: false } }
+                ]
+              }
+            }),
+            configured: providerCatalog.readConfiguredProviderCatalogEntries({
+              providerId: "kilocode",
+              config: {
+                models: {
+                  providers: {
+                    kilocode: {
+                      models: [
+                        {
+                          id: "google/gemini-3-pro-preview",
+                          name: "Gemini 3 Pro Preview",
+                          input: ["text", "image", "video", "audio", "bad"],
+                          reasoning: true,
+                          contextWindow: 1048576
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }),
+            manifestConfig,
+            missingContextError
+          },
+          exportTypes: [
+            typeof providerModel.buildProviderReplayFamilyHooks,
+            typeof providerModel.resolveClaudeThinkingProfile,
+            typeof providerIds.normalizeGooglePreviewModelId,
+            typeof providerCatalog.buildManifestModelProviderConfig,
+            typeof providerCatalog.applyProviderNativeStreamingUsageCompat,
+            typeof genericSdk.buildProviderReplayFamilyHooks
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-model-catalog-plugin",
+                    "name": "Runtime Provider Model Catalog Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-model-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_model_catalog"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_model_catalog"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ids": [
+            "gemini-3-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-low",
+            "grok-4-fast",
+            "x-ai",
+            True,
+        ],
+        "thinking": {
+            "opus": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                    {"id": "xhigh"},
+                    {"id": "adaptive"},
+                    {"id": "max"},
+                ],
+                "defaultLevel": "off",
+            },
+            "adaptive": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                    {"id": "adaptive"},
+                ],
+                "defaultLevel": "adaptive",
+            },
+            "base": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                ]
+            },
+        },
+        "replay": {
+            "openai": {
+                "applyAssistantFirstOrderingFix": True,
+                "validateGeminiTurns": True,
+                "validateAnthropicTurns": True,
+                "dropReasoningFromHistory": True,
+            },
+            "anthropic": {
+                "validateAnthropicTurns": True,
+                "repairToolUseResultPairing": True,
+            },
+            "nativeAnthropic": {
+                "sanitizeMode": "full",
+                "preserveNativeAnthropicToolUseIds": True,
+                "preserveSignatures": True,
+                "repairToolUseResultPairing": True,
+                "validateAnthropicTurns": True,
+                "allowSyntheticToolResults": True,
+            },
+            "google": {
+                "policy": {
+                    "validateGeminiTurns": True,
+                    "allowSyntheticToolResults": True,
+                },
+                "reasoningMode": "tagged",
+                "sanitized": [
+                    {"role": "user", "content": "(session bootstrap)"},
+                    {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+                ],
+            },
+            "passthroughGemini": {
+                "applyAssistantFirstOrderingFix": False,
+                "validateGeminiTurns": False,
+                "validateAnthropicTurns": False,
+                "sanitizeThoughtSignatures": {
+                    "allowBase64Only": True,
+                    "includeCamelCase": True,
+                },
+            },
+            "hybrid": {
+                "validateAnthropicTurns": True,
+                "repairToolUseResultPairing": True,
+            },
+            "canonical": {
+                "sanitizeToolCallIds": True,
+                "applyAssistantFirstOrderingFix": True,
+                "validateGeminiTurns": True,
+            },
+        },
+        "catalog": {
+            "nativeCompat": [True, True, False],
+            "applied": {
+                "api": "openai-completions",
+                "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "models": [
+                    {"id": "qwen-plus", "compat": {"supportsUsageInStreaming": True}},
+                    {"id": "qwen-max", "compat": {"supportsUsageInStreaming": False}},
+                ],
+            },
+            "configured": [
+                {
+                    "provider": "kilocode",
+                    "id": "google/gemini-3-pro-preview",
+                    "name": "Gemini 3 Pro Preview",
+                    "contextWindow": 1048576,
+                    "reasoning": True,
+                    "input": ["text", "image", "video", "audio"],
+                }
+            ],
+            "manifestConfig": {
+                "baseUrl": "https://api.example.test/v1",
+                "api": "openai-completions",
+                "headers": {"x-provider": "example"},
+                "models": [
+                    {
+                        "id": "example-model",
+                        "name": "Example Model",
+                        "reasoning": True,
+                        "input": ["text", "image"],
+                        "cost": {
+                            "input": 1,
+                            "output": 2,
+                            "cacheRead": 0.25,
+                            "cacheWrite": 0.5,
+                            "tieredPricing": [
+                                {
+                                    "input": 0.5,
+                                    "output": 1,
+                                    "cacheRead": 0.1,
+                                    "cacheWrite": 0.2,
+                                    "range": [0, 1000000],
+                                }
+                            ],
+                        },
+                        "contextWindow": 128000,
+                        "contextTokens": 64000,
+                        "maxTokens": 8192,
+                        "compat": {"supportsUsageInStreaming": True},
+                    }
+                ],
+            },
+            "missingContextError": "Manifest modelCatalog row missing-context is "
+            "missing contextWindow",
+        },
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

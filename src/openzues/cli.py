@@ -19841,6 +19841,404 @@ async function fetchWithSsrFGuard(params) {
   };
 }
 
+const ANTIGRAVITY_BARE_PRO_IDS = new Set(["gemini-3-pro", "gemini-3.1-pro", "gemini-3-1-pro"]);
+
+function normalizeGooglePreviewModelId(id) {
+  if (id === "gemini-3-pro") {
+    return "gemini-3-pro-preview";
+  }
+  if (id === "gemini-3-flash") {
+    return "gemini-3-flash-preview";
+  }
+  if (id === "gemini-3.1-pro") {
+    return "gemini-3.1-pro-preview";
+  }
+  if (id === "gemini-3.1-flash-lite") {
+    return "gemini-3.1-flash-lite-preview";
+  }
+  if (id === "gemini-3.1-flash" || id === "gemini-3.1-flash-preview") {
+    return "gemini-3-flash-preview";
+  }
+  return id;
+}
+
+function normalizeAntigravityPreviewModelId(id) {
+  return ANTIGRAVITY_BARE_PRO_IDS.has(id) ? `${id}-low` : id;
+}
+
+function normalizeNativeXaiModelId(id) {
+  if (id === "grok-4-fast-reasoning") {
+    return "grok-4-fast";
+  }
+  if (id === "grok-4-1-fast-reasoning") {
+    return "grok-4-1-fast";
+  }
+  if (id === "grok-4.20-experimental-beta-0304-reasoning") {
+    return "grok-4.20-beta-latest-reasoning";
+  }
+  if (id === "grok-4.20-experimental-beta-0304-non-reasoning") {
+    return "grok-4.20-beta-latest-non-reasoning";
+  }
+  if (id === "grok-4.20-reasoning") {
+    return "grok-4.20-beta-latest-reasoning";
+  }
+  if (id === "grok-4.20-non-reasoning") {
+    return "grok-4.20-beta-latest-non-reasoning";
+  }
+  return id;
+}
+
+function getModelProviderHint(modelId) {
+  const trimmed = normalizeOptionalLowercaseString(modelId);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0) {
+    return null;
+  }
+  return trimmed.slice(0, slashIndex) || null;
+}
+
+function isProxyReasoningUnsupportedModelHint(modelId) {
+  return getModelProviderHint(modelId) === "x-ai";
+}
+
+const BASE_CLAUDE_THINKING_LEVELS = [
+  { id: "off" },
+  { id: "minimal" },
+  { id: "low" },
+  { id: "medium" },
+  { id: "high" },
+];
+
+function matchesClaudeModelPrefix(modelId, prefixes) {
+  const lower = normalizeOptionalLowercaseString(modelId);
+  return Boolean(lower && prefixes.some((prefix) => lower.startsWith(prefix)));
+}
+
+function isClaudeOpus47ModelId(modelId) {
+  return matchesClaudeModelPrefix(modelId, ["claude-opus-4-7", "claude-opus-4.7"]);
+}
+
+function isClaudeAdaptiveThinkingDefaultModelId(modelId) {
+  return matchesClaudeModelPrefix(modelId, [
+    "claude-opus-4-6",
+    "claude-opus-4.6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4.6",
+  ]);
+}
+
+function resolveClaudeThinkingProfile(modelId) {
+  if (isClaudeOpus47ModelId(modelId)) {
+    return {
+      levels: [
+        ...BASE_CLAUDE_THINKING_LEVELS,
+        { id: "xhigh" },
+        { id: "adaptive" },
+        { id: "max" },
+      ],
+      defaultLevel: "off",
+    };
+  }
+  if (isClaudeAdaptiveThinkingDefaultModelId(modelId)) {
+    return {
+      levels: [...BASE_CLAUDE_THINKING_LEVELS, { id: "adaptive" }],
+      defaultLevel: "adaptive",
+    };
+  }
+  return { levels: BASE_CLAUDE_THINKING_LEVELS };
+}
+
+function buildOpenAICompatibleReplayPolicy(options = {}, ctx = {}) {
+  const policy = {
+    applyAssistantFirstOrderingFix: true,
+    validateGeminiTurns: true,
+  };
+  if (options.sanitizeToolCallIds !== false) {
+    policy.sanitizeToolCallIds = true;
+  }
+  const modelId = normalizeOptionalLowercaseString(ctx.modelId);
+  if (modelId && (modelId.includes("gemma") || modelId.includes("gemini"))) {
+    policy.dropReasoningFromHistory = true;
+  }
+  if (modelId && (modelId.includes("gemma") || modelId.includes("kimi"))) {
+    policy.validateAnthropicTurns = true;
+  }
+  return policy;
+}
+
+function buildAnthropicReplayPolicyForModel(_modelId) {
+  return {
+    validateAnthropicTurns: true,
+    repairToolUseResultPairing: true,
+  };
+}
+
+function buildNativeAnthropicReplayPolicyForModel(modelId) {
+  return {
+    sanitizeMode: "full",
+    preserveNativeAnthropicToolUseIds: true,
+    preserveSignatures: true,
+    ...buildAnthropicReplayPolicyForModel(modelId),
+    allowSyntheticToolResults: true,
+  };
+}
+
+function buildGoogleGeminiReplayPolicy() {
+  return {
+    validateGeminiTurns: true,
+    allowSyntheticToolResults: true,
+  };
+}
+
+function sanitizeGoogleGeminiReplayHistory(ctx) {
+  const messages = Array.isArray(ctx && ctx.messages) ? ctx.messages : [];
+  if (messages[0] && messages[0].role === "assistant") {
+    return [{ role: "user", content: "(session bootstrap)" }, ...messages];
+  }
+  return messages;
+}
+
+function resolveTaggedReasoningOutputMode() {
+  return "tagged";
+}
+
+function buildPassthroughGeminiSanitizingReplayPolicy(_modelId) {
+  return {
+    applyAssistantFirstOrderingFix: false,
+    validateGeminiTurns: false,
+    validateAnthropicTurns: false,
+    sanitizeThoughtSignatures: {
+      allowBase64Only: true,
+      includeCamelCase: true,
+    },
+  };
+}
+
+function buildHybridAnthropicOrOpenAIReplayPolicy(ctx, _options = {}) {
+  if (String((ctx && ctx.modelApi) || "").includes("anthropic")) {
+    return buildAnthropicReplayPolicyForModel(ctx && ctx.modelId);
+  }
+  return buildOpenAICompatibleReplayPolicy({}, ctx);
+}
+
+function buildProviderReplayFamilyHooks(options) {
+  switch (options.family) {
+    case "openai-compatible": {
+      const policyOptions = { sanitizeToolCallIds: options.sanitizeToolCallIds };
+      return {
+        buildReplayPolicy: (ctx) => buildOpenAICompatibleReplayPolicy(policyOptions, ctx),
+      };
+    }
+    case "anthropic-by-model":
+      return {
+        buildReplayPolicy: (ctx) => buildAnthropicReplayPolicyForModel(ctx && ctx.modelId),
+      };
+    case "native-anthropic-by-model":
+      return {
+        buildReplayPolicy: (ctx) => buildNativeAnthropicReplayPolicyForModel(ctx && ctx.modelId),
+      };
+    case "google-gemini":
+      return {
+        buildReplayPolicy: () => buildGoogleGeminiReplayPolicy(),
+        sanitizeReplayHistory: (ctx) => sanitizeGoogleGeminiReplayHistory(ctx),
+        resolveReasoningOutputMode: () => resolveTaggedReasoningOutputMode(),
+      };
+    case "passthrough-gemini":
+      return {
+        buildReplayPolicy: (ctx) =>
+          buildPassthroughGeminiSanitizingReplayPolicy(ctx && ctx.modelId),
+      };
+    case "hybrid-anthropic-openai":
+      return {
+        buildReplayPolicy: (ctx) => buildHybridAnthropicOrOpenAIReplayPolicy(ctx, options),
+      };
+    default:
+      throw new Error("Unsupported provider replay family");
+  }
+}
+
+const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "openai-compatible",
+});
+const ANTHROPIC_BY_MODEL_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "anthropic-by-model",
+});
+const NATIVE_ANTHROPIC_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "native-anthropic-by-model",
+});
+const PASSTHROUGH_GEMINI_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "passthrough-gemini",
+});
+
+function cloneManifestCatalogTieredCost(tier) {
+  const range = Array.isArray(tier.range) ? tier.range : [];
+  return {
+    input: tier.input,
+    output: tier.output,
+    cacheRead: tier.cacheRead,
+    cacheWrite: tier.cacheWrite,
+    range: range.length === 1 ? [range[0]] : [range[0], range[1]],
+  };
+}
+
+function cloneManifestCatalogCost(cost = {}) {
+  return {
+    input: cost.input || 0,
+    output: cost.output || 0,
+    cacheRead: cost.cacheRead || 0,
+    cacheWrite: cost.cacheWrite || 0,
+    ...(Array.isArray(cost.tieredPricing)
+      ? { tieredPricing: cost.tieredPricing.map(cloneManifestCatalogTieredCost) }
+      : {}),
+  };
+}
+
+function buildManifestCatalogModelInput(model) {
+  if (Array.isArray(model.input) && model.input.includes("document")) {
+    throw new Error(
+      `Manifest modelCatalog row ${model.id} uses unsupported runtime input document`,
+    );
+  }
+  return Array.isArray(model.input)
+    ? model.input.filter((item) => item === "text" || item === "image")
+    : ["text"];
+}
+
+function buildManifestCatalogModel(model) {
+  if (model.contextWindow === undefined) {
+    throw new Error(`Manifest modelCatalog row ${model.id} is missing contextWindow`);
+  }
+  if (model.maxTokens === undefined) {
+    throw new Error(`Manifest modelCatalog row ${model.id} is missing maxTokens`);
+  }
+  return {
+    id: model.id,
+    name: model.name || model.id,
+    ...(model.api ? { api: model.api } : {}),
+    ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}),
+    reasoning: model.reasoning || false,
+    input: buildManifestCatalogModelInput(model),
+    cost: cloneManifestCatalogCost(model.cost || {}),
+    contextWindow: model.contextWindow,
+    ...(model.contextTokens !== undefined ? { contextTokens: model.contextTokens } : {}),
+    maxTokens: model.maxTokens,
+    ...(model.headers ? { headers: { ...model.headers } } : {}),
+    ...(model.compat ? { compat: { ...model.compat } } : {}),
+  };
+}
+
+function buildManifestModelProviderConfig(params) {
+  const catalog = params.catalog || {};
+  if (!catalog.baseUrl) {
+    throw new Error(`Missing modelCatalog.providers.${params.providerId}.baseUrl`);
+  }
+  const rawModels = Array.isArray(catalog.models) ? catalog.models : [];
+  const models = rawModels
+    .filter((model) => model && typeof model === "object" && String(model.id || "").trim())
+    .map(buildManifestCatalogModel);
+  if (rawModels.length !== models.length) {
+    throw new Error(`Invalid modelCatalog.providers.${params.providerId}.models`);
+  }
+  return {
+    baseUrl: catalog.baseUrl,
+    ...(catalog.api ? { api: catalog.api } : {}),
+    ...(catalog.headers ? { headers: { ...catalog.headers } } : {}),
+    models,
+  };
+}
+
+function normalizeConfiguredCatalogModelInput(input) {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+  const normalized = input.filter((item) =>
+    ["text", "image", "audio", "video", "document"].includes(item),
+  );
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function findNormalizedProviderKey(providers, providerId) {
+  const normalized = normalizeOptionalLowercaseString(providerId);
+  return Object.keys(providers || {}).find(
+    (key) => normalizeOptionalLowercaseString(key) === normalized,
+  );
+}
+
+function readConfiguredProviderCatalogEntries(params) {
+  const provider = params.publishedProviderId || params.providerId;
+  const providers = params.config && params.config.models && params.config.models.providers;
+  const providerKey = providers ? findNormalizedProviderKey(providers, params.providerId) : null;
+  const providerConfig = providerKey ? providers[providerKey] : null;
+  const models =
+    providerConfig && Array.isArray(providerConfig.models) ? providerConfig.models : [];
+  const entries = [];
+  for (const model of models) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
+    const id = typeof model.id === "string" ? model.id.trim() : "";
+    if (!id) {
+      continue;
+    }
+    const name = (typeof model.name === "string" ? model.name : id).trim() || id;
+    const contextWindow =
+      typeof model.contextWindow === "number" && model.contextWindow > 0
+        ? model.contextWindow
+        : undefined;
+    const reasoning = typeof model.reasoning === "boolean" ? model.reasoning : undefined;
+    const input = normalizeConfiguredCatalogModelInput(model.input);
+    entries.push({
+      provider,
+      id,
+      name,
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(reasoning !== undefined ? { reasoning } : {}),
+      ...(input ? { input } : {}),
+    });
+  }
+  return entries;
+}
+
+function supportsNativeStreamingUsageCompat(params) {
+  const baseUrl = normalizeOptionalLowercaseString(params.baseUrl);
+  return Boolean(
+    baseUrl &&
+      (baseUrl.includes("dashscope.aliyuncs.com/compatible-mode") ||
+        baseUrl.includes("api.moonshot.ai")),
+  );
+}
+
+function applyProviderNativeStreamingUsageCompat(params) {
+  const providerConfig = params.providerConfig || {};
+  if (
+    !supportsNativeStreamingUsageCompat({
+      providerId: params.providerId,
+      baseUrl: providerConfig.baseUrl,
+    }) ||
+    !Array.isArray(providerConfig.models)
+  ) {
+    return providerConfig;
+  }
+  let changed = false;
+  const models = providerConfig.models.map((model) => {
+    if (model.compat && model.compat.supportsUsageInStreaming !== undefined) {
+      return model;
+    }
+    changed = true;
+    return {
+      ...model,
+      compat: {
+        ...(model.compat || {}),
+        supportsUsageInStreaming: true,
+      },
+    };
+  });
+  return changed ? { ...providerConfig, models } : providerConfig;
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -28551,6 +28949,64 @@ const ssrfRuntime = {
   ssrfPolicyFromHttpBaseUrlAllowedHostname,
 };
 
+const providerModelIdNormalizeRuntime = {
+  normalizeAntigravityPreviewModelId,
+  normalizeGooglePreviewModelId,
+  normalizeNativeXaiModelId,
+};
+
+const providerModelSharedRuntime = {
+  ANTHROPIC_BY_MODEL_REPLAY_HOOKS,
+  DEFAULT_CONTEXT_TOKENS: 128000,
+  NATIVE_ANTHROPIC_REPLAY_HOOKS,
+  OPENAI_COMPATIBLE_REPLAY_HOOKS,
+  PASSTHROUGH_GEMINI_REPLAY_HOOKS,
+  buildAnthropicReplayPolicyForModel,
+  buildGoogleGeminiReplayPolicy,
+  buildHybridAnthropicOrOpenAIReplayPolicy,
+  buildNativeAnthropicReplayPolicyForModel,
+  buildOpenAICompatibleReplayPolicy,
+  buildPassthroughGeminiSanitizingReplayPolicy,
+  buildProviderReplayFamilyHooks,
+  buildStrictAnthropicReplayPolicy: buildAnthropicReplayPolicyForModel,
+  cloneFirstTemplateModel: passthrough,
+  createMoonshotThinkingWrapper: passthrough,
+  getModelProviderHint,
+  hasNativeWebSearchTool: passthrough,
+  hasToolSchemaProfile: passthrough,
+  isClaudeAdaptiveThinkingDefaultModelId,
+  isClaudeOpus47ModelId,
+  isGpt5ModelId: passthrough,
+  isProxyReasoningUnsupportedModelHint,
+  matchesExactOrPrefix: passthrough,
+  normalizeAntigravityPreviewModelId,
+  normalizeGpt5PromptOverlayMode: passthrough,
+  normalizeGooglePreviewModelId,
+  normalizeModelCompat: passthrough,
+  normalizeNativeXaiModelId,
+  normalizeProviderId: normalizeOptionalLowercaseString,
+  renderGpt5PromptOverlay: passthrough,
+  resolveClaudeThinkingProfile,
+  resolveGpt5PromptOverlayMode: passthrough,
+  resolveGpt5SystemPromptContribution: passthrough,
+  resolveMoonshotThinkingType: passthrough,
+  resolveProviderEndpoint: passthrough,
+  resolveTaggedReasoningOutputMode,
+  resolveToolCallArgumentsEncoding: passthrough,
+  resolveUnsupportedToolSchemaKeywords: passthrough,
+  sanitizeGoogleGeminiReplayHistory,
+};
+
+const providerCatalogSharedRuntime = {
+  applyProviderNativeStreamingUsageCompat,
+  buildManifestModelProviderConfig,
+  buildPairedProviderApiKeyCatalog: passthrough,
+  buildSingleProviderApiKeyCatalog: passthrough,
+  findCatalogTemplate: passthrough,
+  readConfiguredProviderCatalogEntries,
+  supportsNativeStreamingUsageCompat,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -29127,6 +29583,9 @@ const genericSdk = new Proxy(
     ...fetchAuthRuntime,
     ...ssrfPolicyRuntime,
     ...ssrfRuntime,
+    ...providerModelIdNormalizeRuntime,
+    ...providerModelSharedRuntime,
+    ...providerCatalogSharedRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -29538,6 +29997,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/ssrf-runtime"
   ) {
     return ssrfRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-model-id-normalize" ||
+    request === "@openclaw/plugin-sdk/provider-model-id-normalize"
+  ) {
+    return providerModelIdNormalizeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-model-shared" ||
+    request === "@openclaw/plugin-sdk/provider-model-shared"
+  ) {
+    return providerModelSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-catalog-shared" ||
+    request === "@openclaw/plugin-sdk/provider-catalog-shared"
+  ) {
+    return providerCatalogSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
