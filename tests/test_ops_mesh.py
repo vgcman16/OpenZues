@@ -16787,6 +16787,108 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_send_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_thread_reply_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-thread-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Thread Reply Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_reply_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="thread-reply",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "messageId": "om_parent_1",
+                "message": "Feishu threaded reply.",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-thread-reply-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "thread-reply",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_reply_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "replyToId": "om_parent_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages/om_parent_1/reply"
+    assert payload["msg_type"] == "post"
+    assert payload["reply_in_thread"] is True
+    assert json.loads(str(payload["content"])) == {
+        "zh_cn": {
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": "Feishu threaded reply.",
+                    }
+                ]
+            ]
+        }
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

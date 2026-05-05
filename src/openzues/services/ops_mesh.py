@@ -5410,6 +5410,18 @@ def _feishu_action_text(params: dict[str, Any], *, action: str) -> str:
     return text
 
 
+def _feishu_action_message_id(params: dict[str, Any], *, action: str) -> str:
+    message_id = (
+        _message_action_param_string(params, "messageId")
+        or _message_action_param_string(params, "message_id")
+        or _message_action_param_string(params, "replyTo")
+        or _message_action_param_string(params, "reply_to")
+    )
+    if message_id is None:
+        raise RuntimeError(f"Feishu {action} requires messageId.")
+    return message_id
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15240,14 +15252,14 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
-        if channel in {"feishu", "lark"} and action == "send":
+        if channel in {"feishu", "lark"} and action in {"send", "thread-reply"}:
             route = await self._provider_route_for_channel_account(
                 channel="feishu",
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Feishu route is configured for message.action send."
+                    f"No native Feishu route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
@@ -26524,13 +26536,18 @@ class OpsMeshService:
         action = request.action.strip() or "send"
         target = _feishu_action_target(request)
         text = _feishu_action_text(request.params, action=action)
+        event: dict[str, Any] = {
+            "to": target,
+            "message": text,
+        }
+        if action == "thread-reply":
+            reply_to_id = _feishu_action_message_id(request.params, action=action)
+            event["replyToId"] = reply_to_id
+            event["threadId"] = reply_to_id
         native_result = self._post_feishu_provider_event(
             route,
             "gateway/send",
-            {
-                "to": target,
-                "message": text,
-            },
+            event,
             secret_token,
         )
         return {
