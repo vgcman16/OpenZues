@@ -20513,6 +20513,45 @@ function buildOauthProviderAuthResult(params) {
   };
 }
 
+function generateOAuthState() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function parseOAuthCallbackInput(input, messages = {}) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) {
+    return { error: "No input provided" };
+  }
+  try {
+    const url = new URL(trimmed);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code) {
+      return { error: "Missing 'code' parameter in URL" };
+    }
+    if (!state) {
+      return { error: messages.missingState || "Missing 'state' parameter in URL" };
+    }
+    return { code, state };
+  } catch {
+    return {
+      error: messages.invalidInput || "Paste the full redirect URL, not just the code.",
+    };
+  }
+}
+
+async function waitForLocalOAuthCallback() {
+  throw new Error("OAuth callback server helpers are unavailable in the native test shim.");
+}
+
+async function resolveApiKeyForProvider() {
+  return null;
+}
+
+async function getRuntimeAuthForModel() {
+  return null;
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -29307,6 +29346,14 @@ const providerAuthResultRuntime = {
   buildOauthProviderAuthResult,
 };
 
+const providerAuthRuntimeRuntime = {
+  generateOAuthState,
+  getRuntimeAuthForModel,
+  parseOAuthCallbackInput,
+  resolveApiKeyForProvider,
+  waitForLocalOAuthCallback,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -29889,6 +29936,7 @@ const genericSdk = new Proxy(
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerAuthResultRuntime,
+    ...providerAuthRuntimeRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -30348,6 +30396,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-result"
   ) {
     return providerAuthResultRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-auth-runtime"
+  ) {
+    return providerAuthRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
