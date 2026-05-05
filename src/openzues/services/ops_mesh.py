@@ -5422,6 +5422,123 @@ def _feishu_action_message_id(params: dict[str, Any], *, action: str) -> str:
     return message_id
 
 
+def _feishu_message_response_item(result: object) -> Mapping[str, object] | None:
+    if not isinstance(result, Mapping):
+        return None
+    code = result.get("code")
+    if code not in (None, 0, "0"):
+        return None
+    data = result.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    items = data.get("items")
+    raw_item: object = data
+    if isinstance(items, list):
+        raw_item = items[0] if items else None
+    if not isinstance(raw_item, Mapping):
+        return None
+    if raw_item.get("body") is None and raw_item.get("message_id") is None:
+        return None
+    return cast(Mapping[str, object], raw_item)
+
+
+def _feishu_collect_text_fragments(value: object) -> list[str]:
+    fragments: list[str] = []
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    if isinstance(value, list):
+        for item in value:
+            fragments.extend(_feishu_collect_text_fragments(item))
+        return fragments
+    if not isinstance(value, Mapping):
+        return fragments
+    for key in ("text", "content", "title"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate.strip():
+            fragments.append(candidate.strip())
+        elif isinstance(candidate, Mapping):
+            nested = candidate.get("content")
+            if isinstance(nested, str) and nested.strip():
+                fragments.append(nested.strip())
+    for key, candidate in value.items():
+        if key in {"text", "content", "title"}:
+            continue
+        if isinstance(candidate, (Mapping, list)):
+            fragments.extend(_feishu_collect_text_fragments(candidate))
+    return fragments
+
+
+def _feishu_message_content(raw_content: str, msg_type: str) -> str:
+    if not raw_content:
+        return ""
+    try:
+        parsed: object = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return raw_content
+    if msg_type == "text":
+        if isinstance(parsed, Mapping):
+            text = parsed.get("text")
+            return text if isinstance(text, str) else "[Text message]"
+        return "[Text message]"
+    if msg_type in {"post", "interactive"}:
+        content = "\n".join(_feishu_collect_text_fragments(parsed)).strip()
+        if content:
+            return content
+        return "[Interactive card]" if msg_type == "interactive" else ""
+    if isinstance(parsed, str):
+        return parsed
+    if isinstance(parsed, Mapping):
+        for key in ("text", "title"):
+            candidate = parsed.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return f"[{msg_type or 'unknown'} message]"
+
+
+def _feishu_message_view(
+    item: Mapping[str, object],
+    *,
+    fallback_message_id: str,
+) -> dict[str, object]:
+    msg_type = str(item.get("msg_type") or "text")
+    body = item.get("body")
+    raw_content = ""
+    if isinstance(body, Mapping):
+        content = body.get("content")
+        if isinstance(content, str):
+            raw_content = content
+    message: dict[str, object] = {
+        "messageId": str(item.get("message_id") or fallback_message_id),
+        "chatId": str(item.get("chat_id") or ""),
+        "content": _feishu_message_content(raw_content, msg_type),
+        "contentType": msg_type,
+    }
+    chat_type = str(item.get("chat_type") or "").strip()
+    if chat_type in {"group", "topic_group", "private", "p2p"}:
+        message["chatType"] = chat_type
+    sender = item.get("sender")
+    if isinstance(sender, Mapping):
+        sender_id = str(sender.get("id") or "").strip()
+        if sender_id:
+            message["senderId"] = sender_id
+            if str(sender.get("id_type") or "").strip() == "open_id":
+                message["senderOpenId"] = sender_id
+        sender_type = str(sender.get("sender_type") or "").strip()
+        if sender_type:
+            message["senderType"] = sender_type
+    create_time = item.get("create_time")
+    if create_time is not None:
+        try:
+            message["createTime"] = int(str(create_time).strip())
+        except ValueError:
+            pass
+    thread_id = str(item.get("thread_id") or "").strip()
+    if thread_id:
+        message["threadId"] = thread_id
+    return message
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15264,6 +15381,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "read":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action read."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_read_message_action,
                 route,
                 request,
                 secret_token,
@@ -26555,6 +26688,37 @@ class OpsMeshService:
             "channel": "feishu",
             "action": action,
             **native_result,
+        }
+
+    def _dispatch_feishu_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _feishu_action_message_id(request.params, action="read")
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/messages/{quote(message_id, safe='')}",
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        item = _feishu_message_response_item(result)
+        if item is None:
+            error = f"Feishu read failed or message not found: {message_id}"
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": json.dumps({"error": error})}],
+                "details": {"error": error},
+            }
+        return {
+            "ok": True,
+            "channel": "feishu",
+            "action": "read",
+            "message": _feishu_message_view(item, fallback_message_id=message_id),
         }
 
     def _post_msteams_provider_event(
