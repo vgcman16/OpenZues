@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.8% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5771,6 +5771,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   metadata. Repo-wide parity is now estimated at ~62.7%. Verified with focused
   schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
   check`, and `mypy`; checkpointed in `44541ef9`.
+- Closed the Signal native outbound route seam from OpenClaw
+  `extensions/signal/src/send.ts` and `extensions/signal/src/client.ts`:
+  native `kind="signal"` routes now accept signal-cli REST base URLs, send
+  JSON-RPC `send` requests to `/api/v1/rpc`, normalize recipient/group/
+  username targets, forward media URLs as attachments, and persist timestamp,
+  chat/channel, and media URL result metadata. Repo-wide parity is now
+  estimated at ~62.8%. Verified with focused schema/service/CLI/app pytest,
+  adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
+  checkpointed in `81491ab7`.
 - Next repo-wide queue head: rotate to the next provider-specific
   provider-specific send/poll/replay metadata gap, starting with another
   source-backed channel/provider route or action adapter, or packaging/plugin

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~62.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~62.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -166,6 +166,11 @@ may lag behind this tracker.
   `/api/v4/posts` channel-id text/reply payloads, bearer bot auth, and provider
   result metadata.
   - Status: checkpointed in `44541ef9`
+
+- [x] Signal native outbound route support, preserving OpenClaw JSON-RPC
+  `send` payloads, recipient/group/username target params, media attachments,
+  and timestamp result metadata.
+  - Status: checkpointed in `81491ab7`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
@@ -1520,7 +1525,8 @@ may lag behind this tracker.
     route checkpointed in `d1515da1`; Google Chat native/media route
     checkpoints in `edb67dfc` and `7086dcb3`; Nextcloud Talk native route
     checkpointed in `a6732846`; Synology Chat native route checkpointed in
-    `b69d5489`; Mattermost native route checkpointed in `44541ef9`
+    `b69d5489`; Mattermost native route checkpointed in `44541ef9`; Signal
+    native route checkpointed in `81491ab7`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.
