@@ -7489,6 +7489,112 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_dedupe_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-dedupe.cjs"
+    runtime_entry.write_text(
+        """
+const { resetInboundDedupe } = require("openclaw/plugin-sdk/reply-dedupe");
+const { resolveGlobalDedupeCache } = require("openclaw/plugin-sdk/dedupe-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_dedupe",
+      description: "Use OpenClaw reply dedupe SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cache = resolveGlobalDedupeCache(Symbol.for("openclaw.inboundDedupeCache"), {
+          ttlMs: 1200000,
+          maxSize: 5000
+        });
+        const inflight = genericSdk.resolveGlobalSingleton(
+          Symbol.for("openclaw.inboundDedupeInflight"),
+          () => new Set()
+        );
+        resetInboundDedupe();
+        const first = cache.check("room:message-1", 1000);
+        const second = cache.check("room:message-1", 1001);
+        inflight.add("room:message-1");
+        const beforeReset = [cache.size(), inflight.size];
+        resetInboundDedupe();
+        const afterReset = [cache.check("room:message-1", 1002), cache.size(), inflight.size];
+        inflight.add("room:message-2");
+        genericSdk.resetInboundDedupe();
+        const genericReset = [cache.size(), inflight.size];
+        return {
+          duplicateFlow: [first, second],
+          beforeReset,
+          afterReset,
+          genericReset,
+          exportTypes: [typeof resetInboundDedupe, typeof genericSdk.resetInboundDedupe]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-dedupe-plugin",
+                    "name": "Runtime Reply Dedupe Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-dedupe-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_dedupe"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_dedupe"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "duplicateFlow": [False, True],
+        "beforeReset": [1, 1],
+        "afterReset": [False, 1, 0],
+        "genericReset": [0, 0],
+        "exportTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

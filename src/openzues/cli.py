@@ -19302,6 +19302,27 @@ function resolveGlobalDedupeCache(key, options) {
   return resolveGlobalSingleton(key, () => createDedupeCache(options));
 }
 
+const DEFAULT_INBOUND_DEDUPE_TTL_MS = 20 * 60000;
+const DEFAULT_INBOUND_DEDUPE_MAX = 5000;
+const INBOUND_DEDUPE_CACHE_KEY = Symbol.for("openclaw.inboundDedupeCache");
+const INBOUND_DEDUPE_INFLIGHT_KEY = Symbol.for("openclaw.inboundDedupeInflight");
+
+function resolveInboundDedupeCache() {
+  return resolveGlobalDedupeCache(INBOUND_DEDUPE_CACHE_KEY, {
+    ttlMs: DEFAULT_INBOUND_DEDUPE_TTL_MS,
+    maxSize: DEFAULT_INBOUND_DEDUPE_MAX,
+  });
+}
+
+function resolveInboundDedupeInFlight() {
+  return resolveGlobalSingleton(INBOUND_DEDUPE_INFLIGHT_KEY, () => new Set());
+}
+
+function resetInboundDedupe() {
+  resolveInboundDedupeCache().clear();
+  resolveInboundDedupeInFlight().clear();
+}
+
 function enqueueKeyedTask(params) {
   if (params.hooks && typeof params.hooks.onEnqueue === "function") {
     params.hooks.onEnqueue();
@@ -22692,6 +22713,10 @@ const dedupeRuntime = {
   resolveGlobalDedupeCache,
 };
 
+const replyDedupeRuntime = {
+  resetInboundDedupe,
+};
+
 const globalSingletonRuntime = {
   createScopedExpiringIdCache,
   resolveGlobalMap,
@@ -23162,6 +23187,7 @@ const genericSdk = new Proxy(
     resolveTimezone,
     resolveTargetsWithOptionalToken,
     resolveUserPath,
+    resetInboundDedupe,
     sanitizeTempFileName,
     sanitizeAgentId,
     sendMediaWithLeadingCaption,
@@ -23286,6 +23312,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
     return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-dedupe" ||
+    request === "@openclaw/plugin-sdk/reply-dedupe"
+  ) {
+    return replyDedupeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/global-singleton" ||
