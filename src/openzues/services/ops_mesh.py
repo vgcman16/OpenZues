@@ -5844,6 +5844,87 @@ def _feishu_message_media_keys(
     return keys
 
 
+def _feishu_post_payload(candidate: object) -> Mapping[str, object] | None:
+    if not isinstance(candidate, Mapping):
+        return None
+    content = candidate.get("content")
+    if isinstance(content, list):
+        return candidate
+    return None
+
+
+def _feishu_resolve_post_payload(parsed: object) -> Mapping[str, object] | None:
+    direct = _feishu_post_payload(parsed)
+    if direct is not None:
+        return direct
+    if not isinstance(parsed, Mapping):
+        return None
+    wrapped_post = parsed.get("post")
+    if isinstance(wrapped_post, Mapping):
+        direct_post = _feishu_post_payload(wrapped_post)
+        if direct_post is not None:
+            return direct_post
+        for value in wrapped_post.values():
+            locale_payload = _feishu_post_payload(value)
+            if locale_payload is not None:
+                return locale_payload
+    for value in parsed.values():
+        locale_payload = _feishu_post_payload(value)
+        if locale_payload is not None:
+            return locale_payload
+    return None
+
+
+def _feishu_post_media_entries(raw_content: str) -> list[dict[str, str]]:
+    if not raw_content:
+        return []
+    try:
+        parsed: object = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return []
+    payload = _feishu_resolve_post_payload(parsed)
+    if payload is None:
+        return []
+    raw_paragraphs = payload.get("content")
+    if not isinstance(raw_paragraphs, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for paragraph in raw_paragraphs:
+        if not isinstance(paragraph, list):
+            continue
+        for element in paragraph:
+            if not isinstance(element, Mapping):
+                continue
+            tag = str(element.get("tag") or "").strip().lower()
+            if tag == "img":
+                image_key = str(element.get("image_key") or "").strip()
+                if image_key:
+                    entries.append(
+                        {
+                            "messageType": "image",
+                            "fileKey": image_key,
+                            "resourceType": "image",
+                            "placeholder": "<media:image>",
+                        }
+                    )
+            elif tag == "media":
+                file_key = str(element.get("file_key") or "").strip()
+                if file_key:
+                    entry = {
+                        "messageType": "media",
+                        "fileKey": file_key,
+                        "resourceType": "file",
+                        "placeholder": "<media:video>",
+                    }
+                    file_name = str(
+                        element.get("file_name") or element.get("fileName") or ""
+                    ).strip()
+                    if file_name:
+                        entry["fileName"] = file_name
+                    entries.append(entry)
+    return entries
+
+
 def _feishu_content_disposition_filename(value: str | None) -> str | None:
     disposition = str(value or "").strip()
     if not disposition:
@@ -28114,10 +28195,33 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> list[dict[str, object]]:
         msg_type = str(item.get("msg_type") or "text").strip().lower()
+        raw_content = _feishu_message_body_content(item)
+        if msg_type == "post":
+            message_id = str(item.get("message_id") or fallback_message_id).strip()
+            if not message_id:
+                return []
+            media: list[dict[str, object]] = []
+            for entry in _feishu_post_media_entries(raw_content):
+                try:
+                    media.append(
+                        self._download_feishu_message_resource(
+                            route,
+                            message_id=message_id,
+                            file_key=entry["fileKey"],
+                            resource_type=entry["resourceType"],
+                            message_type=entry["messageType"],
+                            placeholder=entry["placeholder"],
+                            filename_hint=entry.get("fileName"),
+                            account_id=account_id,
+                            secret_token=secret_token,
+                        )
+                    )
+                except Exception:
+                    continue
+            return media
         placeholder = _feishu_media_placeholder(msg_type)
         if placeholder is None:
             return []
-        raw_content = _feishu_message_body_content(item)
         media_keys = _feishu_message_media_keys(raw_content, msg_type)
         file_key = media_keys.get("fileKey") or media_keys.get("imageKey")
         if not file_key:

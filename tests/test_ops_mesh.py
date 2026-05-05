@@ -18666,6 +18666,183 @@ async def test_ops_mesh_service_feishu_read_video_resource_uses_media_fallback(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_feishu_read_post_hydrates_embedded_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-read-post-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Read Post Media Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    post_content = json.dumps(
+        {
+            "post": {
+                "zh_cn": {
+                    "title": "Launch",
+                    "content": [
+                        [
+                            {"tag": "text", "text": "Look "},
+                            {"tag": "img", "image_key": "img_post_1"},
+                            {
+                                "tag": "media",
+                                "file_key": "file_post_video",
+                                "file_name": "clip.mov",
+                            },
+                        ]
+                    ],
+                }
+            }
+        }
+    )
+    resource_requests: list[tuple[str, str | None, float]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, target, method, payload, secret_header_name, secret_token
+        del extra_headers, timeout_seconds
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_post_1",
+                        "chat_id": "oc_chat_1",
+                        "chat_type": "group",
+                        "msg_type": "post",
+                        "body": {"content": post_content},
+                    }
+                ]
+            },
+        }
+
+    def fake_request_feishu_message_resource_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        resource_requests.append((target, secret_token, timeout_seconds))
+        if "img_post_1" in target:
+            return b"post-image", "image/png", None
+        return b"post-video", "video/mp4", "clip.mp4"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_message_resource_provider_url",
+        fake_request_feishu_message_resource_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="read",
+            params={"messageId": "om_post_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-read-post-media-action",
+        )
+    )
+
+    image_digest = hashlib.sha256(b"post-image").hexdigest()
+    video_digest = hashlib.sha256(b"post-video").hexdigest()
+    image_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{image_digest[:16]}-img_post_1.png"
+    )
+    video_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{video_digest[:16]}-clip.mp4"
+    )
+    assert result["ok"] is True
+    message = result["message"]
+    assert isinstance(message, dict)
+    assert message["messageId"] == "om_post_1"
+    assert message["contentType"] == "post"
+    assert message["media"] == [
+        {
+            "messageType": "image",
+            "fileKey": "img_post_1",
+            "resourceType": "image",
+            "downloadType": "image",
+            "placeholder": "<media:image>",
+            "path": image_path,
+            "filename": "img_post_1.png",
+            "contentType": "image/png",
+            "byteLength": len(b"post-image"),
+            "sha256": image_digest,
+        },
+        {
+            "messageType": "media",
+            "fileKey": "file_post_video",
+            "resourceType": "file",
+            "downloadType": "file",
+            "placeholder": "<media:video>",
+            "path": video_path,
+            "filename": "clip.mp4",
+            "contentType": "video/mp4",
+            "byteLength": len(b"post-video"),
+            "sha256": video_digest,
+        },
+    ]
+    assert message["mediaPaths"] == [image_path, video_path]
+    assert message["mediaUrls"] == [image_path, video_path]
+    assert resource_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_post_1/resources/img_post_1?type=image",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_post_1/resources/file_post_video?type=file",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+    ]
+    assert Path(image_path).read_bytes() == b"post-image"
+    assert Path(video_path).read_bytes() == b"post-video"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_edit_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
