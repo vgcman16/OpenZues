@@ -264,6 +264,32 @@ PLUGIN_DEFAULT_PROMPT_RE = re.compile(
 )
 
 
+def _normalize_msteams_webhook_path(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or not normalized.startswith("/"):
+        return None
+    if "?" in normalized or "#" in normalized:
+        return None
+    return normalized.rstrip("/") or "/"
+
+
+def _msteams_configured_webhook_path(snapshot: Mapping[str, Any]) -> str | None:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, Mapping):
+        return None
+    msteams_config = channels.get("msteams")
+    if not isinstance(msteams_config, Mapping):
+        msteams_config = channels.get("teams")
+    if not isinstance(msteams_config, Mapping):
+        return None
+    webhook = msteams_config.get("webhook")
+    if not isinstance(webhook, Mapping):
+        return None
+    return _normalize_msteams_webhook_path(webhook.get("path"))
+
+
 def _parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -4409,8 +4435,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @fastapi_app.post("/api/messages")
-    async def handle_msteams_messages(request: Request) -> JSONResponse:
+    async def dispatch_msteams_messages(request: Request) -> JSONResponse:
         authorization = str(request.headers.get("authorization") or "")
         if not authorization.startswith("Bearer "):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -4435,6 +4460,28 @@ def create_app(
             account_id=account_id,
         )
         return JSONResponse(result)
+
+    @fastapi_app.post("/api/messages")
+    async def handle_msteams_messages(request: Request) -> JSONResponse:
+        return await dispatch_msteams_messages(request)
+
+    configured_msteams_webhook_path = _msteams_configured_webhook_path(
+        active_gateway_config_service.build_snapshot()
+    )
+    if (
+        configured_msteams_webhook_path is not None
+        and configured_msteams_webhook_path != "/api/messages"
+    ):
+
+        async def handle_configured_msteams_messages(request: Request) -> JSONResponse:
+            return await dispatch_msteams_messages(request)
+
+        fastapi_app.add_api_route(
+            configured_msteams_webhook_path,
+            handle_configured_msteams_messages,
+            methods=["POST"],
+            include_in_schema=False,
+        )
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

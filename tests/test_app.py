@@ -5305,6 +5305,71 @@ def test_msteams_messages_endpoint_dispatches_signin_invoke(tmp_path) -> None:
     assert "exchangeable-token" not in response.text
 
 
+def test_msteams_messages_endpoint_uses_configured_path_and_fallback(tmp_path) -> None:
+    data_dir = tmp_path / "data"
+    settings_dir = data_dir / "settings"
+    settings_dir.mkdir(parents=True)
+    (settings_dir / "control-ui-config.json").write_text(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "test",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "channels": {
+                    "msteams": {
+                        "webhook": {"path": "/api/msteams/custom/messages"},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app_settings = Settings(
+        data_dir=data_dir,
+        db_path=data_dir / "openzues-test.db",
+    )
+    activity = {
+        "id": "signin-invoke-configured-route",
+        "type": "invoke",
+        "name": "signin/tokenExchange",
+        "channelId": "msteams",
+        "from": {"id": "user-bf", "aadObjectId": "user-aad"},
+        "conversation": {
+            "id": "a:personal-dm-conversation",
+            "conversationType": "personal",
+        },
+        "value": {
+            "id": "exchange-flow-configured-route",
+            "connectionName": "GraphConnection",
+            "token": "exchangeable-token",
+        },
+    }
+
+    with TestClient(create_app(app_settings)) as client:
+        configured = client.post(
+            "/api/msteams/custom/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json=activity,
+        )
+        fallback = client.post(
+            "/api/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json={**activity, "id": "signin-invoke-fallback-route"},
+        )
+
+    assert configured.status_code == 200
+    assert fallback.status_code == 200
+    assert configured.json()["sso"]["exchangeId"] == "exchange-flow-configured-route"
+    assert fallback.json()["sso"]["exchangeId"] == "exchange-flow-configured-route"
+    assert "exchangeable-token" not in configured.text
+    assert "exchangeable-token" not in fallback.text
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
     '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
