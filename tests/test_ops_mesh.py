@@ -19672,6 +19672,172 @@ async def test_ops_mesh_service_blocks_msteams_signin_exchange_for_dm_allowlist(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_msteams_signin_exchange_for_channel_route_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "groupPolicy": "allowlist",
+                        "groupAllowFrom": ["blocked-channel-aad"],
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        },
+                        "teams": {
+                            "team-allowlisted": {
+                                "channels": {
+                                    "19:allowlisted@thread.tacv2": {
+                                        "requireMention": False
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-graph-token",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-blocked-channel",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {
+                "id": "blocked-channel-bf-user",
+                "aadObjectId": "blocked-channel-aad",
+                "name": "Blocked Channel Sender",
+            },
+            "conversation": {
+                "id": "19:blocked-channel@thread.tacv2",
+                "conversationType": "channel",
+            },
+            "channelData": {
+                "team": {"id": "team-blocked"},
+                "channel": {"name": "General"},
+            },
+            "value": {
+                "id": "flow-blocked-channel",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "blocked",
+            "reason": "msteams_signin_route_not_allowlisted",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "flow-blocked-channel",
+            "tokenPresent": True,
+            "userId": "blocked-channel-aad",
+            "channelId": "msteams",
+            "conversationType": "channel",
+            "conversationId": "19:blocked-channel@thread.tacv2",
+            "teamId": "team-blocked",
+        },
+    }
+    assert bot_token_calls == []
+    assert user_token_calls == []
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="blocked-channel-aad",
+    )
+    assert stored is None
+    assert "exchangeable-token" not in json.dumps(result)
+    assert "delegated-graph-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

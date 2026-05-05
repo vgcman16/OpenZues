@@ -4189,12 +4189,125 @@ def _msteams_signin_conversation_type(activity: Mapping[str, Any]) -> str | None
     return conversation_type.lower() if conversation_type is not None else None
 
 
+def _msteams_signin_conversation_id(activity: Mapping[str, Any]) -> str | None:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    return _msteams_normalize_inbound_conversation_id(conversation.get("id"))
+
+
 def _msteams_signin_is_direct_message(activity: Mapping[str, Any]) -> bool:
     conversation = _msteams_inbound_mapping(activity.get("conversation"))
     conversation_type = _msteams_signin_conversation_type(activity)
     if conversation_type == "personal":
         return True
     return conversation_type is None and not bool(conversation.get("isGroup"))
+
+
+def _msteams_signin_channel_data(activity: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _msteams_inbound_mapping(activity.get("channelData"))
+
+
+def _msteams_signin_team_id(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    team = _msteams_inbound_mapping(channel_data.get("team"))
+    return _msteams_inbound_optional_string(team.get("id"))
+
+
+def _msteams_signin_team_name(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    team = _msteams_inbound_mapping(channel_data.get("team"))
+    return _msteams_inbound_optional_string(team.get("name"))
+
+
+def _msteams_signin_channel_name(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    channel = _msteams_inbound_mapping(channel_data.get("channel"))
+    return _msteams_inbound_optional_string(channel.get("name"))
+
+
+def _msteams_normalize_channel_slug(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _msteams_channel_key_candidates(*keys: str | None) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for key in keys:
+        normalized = _msteams_inbound_optional_string(key)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(normalized)
+    return candidates
+
+
+def _msteams_channel_entry_match(
+    entries: Mapping[str, Any],
+    *,
+    keys: list[str],
+    allow_name_matching: bool,
+) -> tuple[bool, Mapping[str, Any]]:
+    for key in keys:
+        if key in entries:
+            return True, _msteams_inbound_mapping(entries.get(key))
+    if allow_name_matching:
+        normalized_keys = {
+            _msteams_normalize_channel_slug(key) for key in keys if key.strip()
+        }
+        for entry_key, entry in entries.items():
+            normalized_entry_key = _msteams_normalize_channel_slug(str(entry_key))
+            if normalized_entry_key and normalized_entry_key in normalized_keys:
+                return True, _msteams_inbound_mapping(entry)
+    if "*" in entries:
+        return True, _msteams_inbound_mapping(entries.get("*"))
+    return False, {}
+
+
+def _msteams_signin_route_allowed(
+    channel_config: Mapping[str, Any],
+    activity: Mapping[str, Any],
+) -> bool:
+    teams = _msteams_inbound_mapping(channel_config.get("teams"))
+    if not teams:
+        return True
+    allow_name_matching = bool(channel_config.get("dangerouslyAllowNameMatching"))
+    team_name = _msteams_signin_team_name(activity)
+    team_matched, team_config = _msteams_channel_entry_match(
+        teams,
+        keys=_msteams_channel_key_candidates(
+            _msteams_signin_team_id(activity),
+            team_name if allow_name_matching else None,
+            (
+                _msteams_normalize_channel_slug(team_name)
+                if allow_name_matching and team_name
+                else None
+            ),
+        ),
+        allow_name_matching=allow_name_matching,
+    )
+    if not team_matched:
+        return False
+    channels = _msteams_inbound_mapping(team_config.get("channels"))
+    if not channels:
+        return True
+    channel_name = _msteams_signin_channel_name(activity)
+    channel_matched, _channel_config = _msteams_channel_entry_match(
+        channels,
+        keys=_msteams_channel_key_candidates(
+            _msteams_signin_conversation_id(activity),
+            channel_name if allow_name_matching else None,
+            (
+                _msteams_normalize_channel_slug(channel_name)
+                if allow_name_matching and channel_name
+                else None
+            ),
+        ),
+        allow_name_matching=allow_name_matching,
+    )
+    return channel_matched
 
 
 def _msteams_allowlist_allows_sender(
@@ -9097,8 +9210,26 @@ class OpsMeshService:
         base_metadata: Mapping[str, object],
     ) -> dict[str, object] | None:
         channel_config = self._msteams_signin_channel_config(account_id=account_id)
-        if not channel_config or not _msteams_signin_is_direct_message(activity):
+        if not channel_config:
             return None
+        if not _msteams_signin_is_direct_message(activity):
+            if _msteams_signin_route_allowed(channel_config, activity):
+                return None
+            metadata = dict(base_metadata)
+            metadata.pop("code", None)
+            metadata.pop("message", None)
+            metadata["status"] = "blocked"
+            metadata["reason"] = "msteams_signin_route_not_allowlisted"
+            metadata["conversationType"] = (
+                _msteams_signin_conversation_type(activity) or "unknown"
+            )
+            conversation_id = _msteams_signin_conversation_id(activity)
+            team_id = _msteams_signin_team_id(activity)
+            if conversation_id is not None:
+                metadata["conversationId"] = conversation_id
+            if team_id is not None:
+                metadata["teamId"] = team_id
+            return metadata
         dm_policy = (
             _msteams_inbound_optional_string(channel_config.get("dmPolicy"))
             or "pairing"
