@@ -239,6 +239,13 @@ MSTEAMS_REACTION_EMOJIS = {
     "angry": "\U0001f621",
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
+MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
+    "ChatMessage.Send",
+    "ChannelMessage.Send",
+    "Chat.ReadWrite",
+    "offline_access",
+)
+MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS = 300
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
 MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -543,6 +550,22 @@ def _msteams_token_expired(value: str | None) -> bool:
     else:
         parsed = parsed.astimezone(UTC)
     return parsed <= datetime.now(UTC)
+
+
+def _msteams_stored_token_scopes(value: object) -> tuple[str, ...]:
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [scope for scope in value.split() if scope]
+    elif isinstance(value, list):
+        parsed = value
+    else:
+        parsed = []
+    if not isinstance(parsed, list):
+        return MSTEAMS_DEFAULT_DELEGATED_SCOPES
+    scopes = tuple(str(scope).strip() for scope in parsed if str(scope).strip())
+    return scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES
 
 
 def _requires_secret(auth_scheme: str) -> bool:
@@ -10290,11 +10313,181 @@ class OpsMeshService:
             return None
         expires_at = _msteams_inbound_optional_string(stored.get("expires_at"))
         if _msteams_token_expired(expires_at):
+            refreshed = await self._msteams_refresh_stored_delegated_graph_secret_token(
+                account_id=account_id,
+                user_id=normalized_user_id,
+                sso_config=sso_config,
+                stored=stored,
+            )
+            if refreshed is not None:
+                return refreshed
             return None
         token = _msteams_inbound_optional_string(stored.get("token"))
         if token is None:
             return None
         return f"Bearer {token}"
+
+    async def _msteams_refresh_stored_delegated_graph_secret_token(
+        self,
+        *,
+        account_id: str | None,
+        user_id: str,
+        sso_config: _MSTeamsSsoConfig,
+        stored: Mapping[str, Any],
+    ) -> str | None:
+        del account_id
+        refresh_token = _msteams_inbound_optional_string(stored.get("refresh_token"))
+        if refresh_token is None:
+            return None
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return None
+        route_config, app_password = credentials
+        app_secret = str(app_password or "").strip()
+        if (
+            not route_config.app_id
+            or not route_config.tenant_id
+            or not app_secret
+            or app_secret.lower().startswith("bearer ")
+        ):
+            return None
+        scopes = _msteams_stored_token_scopes(stored.get("scopes_json"))
+        try:
+            refreshed = await asyncio.to_thread(
+                self._msteams_refresh_delegated_graph_token,
+                tenant_id=route_config.tenant_id,
+                app_id=route_config.app_id,
+                app_password=app_secret,
+                refresh_token=refresh_token,
+                scopes=scopes,
+            )
+        except Exception:
+            return None
+        access_token = _msteams_inbound_optional_string(
+            refreshed.get("accessToken") or refreshed.get("access_token")
+        )
+        if access_token is None:
+            return None
+        next_refresh_token = (
+            _msteams_inbound_optional_string(
+                refreshed.get("refreshToken") or refreshed.get("refresh_token")
+            )
+            or refresh_token
+        )
+        expires_at = _msteams_inbound_optional_string(
+            refreshed.get("expiresAt") or refreshed.get("expires_at")
+        )
+        if expires_at is None:
+            expires_in = refreshed.get("expiresIn") or refreshed.get("expires_in")
+            if isinstance(expires_in, int | float) and expires_in > 0:
+                expires_at = (
+                    datetime.now(UTC)
+                    + timedelta(
+                        seconds=max(
+                            0,
+                            int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS,
+                        )
+                    )
+                ).isoformat()
+        raw_scopes = refreshed.get("scopes")
+        if isinstance(raw_scopes, str):
+            next_scopes = tuple(scope for scope in raw_scopes.split() if scope)
+        elif isinstance(raw_scopes, list):
+            next_scopes = tuple(str(scope).strip() for scope in raw_scopes if str(scope).strip())
+        else:
+            next_scopes = scopes
+        user_principal_name = (
+            _msteams_inbound_optional_string(
+                refreshed.get("userPrincipalName") or refreshed.get("user_principal_name")
+            )
+            or _msteams_inbound_optional_string(stored.get("user_principal_name"))
+        )
+        await self.database.upsert_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=user_id,
+            token=access_token,
+            expires_at=expires_at,
+            refresh_token=next_refresh_token,
+            scopes=list(next_scopes),
+            user_principal_name=user_principal_name,
+        )
+        return f"Bearer {access_token}"
+
+    def _msteams_refresh_delegated_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+        refresh_token: str,
+        scopes: tuple[str, ...],
+    ) -> dict[str, object]:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams delegated token refresh HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams delegated token refresh failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response was not JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response was not an object."
+            )
+        access_token = _msteams_inbound_optional_string(payload.get("access_token"))
+        if access_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token refresh response missing access_token."
+            )
+        result: dict[str, object] = {"accessToken": access_token}
+        refresh_token_value = _msteams_inbound_optional_string(payload.get("refresh_token"))
+        if refresh_token_value is not None:
+            result["refreshToken"] = refresh_token_value
+        expires_in = payload.get("expires_in")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            result["expiresAt"] = (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=max(0, int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS)
+                )
+            ).isoformat()
+        scope = _msteams_inbound_optional_string(payload.get("scope"))
+        if scope is not None:
+            result["scopes"] = [part for part in scope.split() if part]
+        else:
+            result["scopes"] = list(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+        return result
 
     async def _msteams_delegated_auth_probe(
         self,
