@@ -5442,6 +5442,56 @@ def _feishu_action_message_id(params: dict[str, Any], *, action: str) -> str:
     return message_id
 
 
+def _feishu_action_member_id_and_type(
+    params: dict[str, Any],
+) -> tuple[str | None, Literal["open_id", "user_id", "union_id"]]:
+    member_id = (
+        _message_action_param_string(params, "memberId")
+        or _message_action_param_string(params, "member_id")
+        or _message_action_param_string(params, "userId")
+        or _message_action_param_string(params, "user_id")
+        or _message_action_param_string(params, "openId")
+        or _message_action_param_string(params, "open_id")
+        or _message_action_param_string(params, "unionId")
+        or _message_action_param_string(params, "union_id")
+    )
+    raw_type = (
+        _message_action_param_string(params, "memberIdType")
+        or _message_action_param_string(params, "member_id_type")
+        or _message_action_param_string(params, "userIdType")
+        or _message_action_param_string(params, "user_id_type")
+    )
+    if raw_type == "open_id":
+        return member_id, "open_id"
+    if raw_type == "user_id":
+        return member_id, "user_id"
+    if raw_type == "union_id":
+        return member_id, "union_id"
+    has_user_id = (
+        _message_action_param_string(params, "userId")
+        or _message_action_param_string(params, "user_id")
+    ) is not None
+    has_open_or_union_id = (
+        _message_action_param_string(params, "openId")
+        or _message_action_param_string(params, "open_id")
+        or _message_action_param_string(params, "unionId")
+        or _message_action_param_string(params, "union_id")
+    ) is not None
+    if has_user_id and not has_open_or_union_id:
+        return member_id, "user_id"
+    has_union_id = (
+        _message_action_param_string(params, "unionId")
+        or _message_action_param_string(params, "union_id")
+    ) is not None
+    has_open_id = (
+        _message_action_param_string(params, "openId")
+        or _message_action_param_string(params, "open_id")
+    ) is not None
+    if has_union_id and not has_open_id:
+        return member_id, "union_id"
+    return member_id, "open_id"
+
+
 def _feishu_action_edit_content(
     params: dict[str, Any],
 ) -> tuple[str, Literal["post", "interactive"]]:
@@ -5620,6 +5670,66 @@ def _feishu_chat_info_view(chat_id: str, data: object) -> dict[str, object]:
         "avatar",
     ):
         value = chat.get(key)
+        if value is not None:
+            view[key] = value
+    return view
+
+
+def _feishu_member_info_view(
+    member_id: str,
+    member_id_type: Literal["open_id", "user_id", "union_id"],
+    data: object,
+) -> dict[str, object]:
+    user: Mapping[str, object] = {}
+    if isinstance(data, Mapping):
+        raw_user = data.get("user")
+        user = raw_user if isinstance(raw_user, Mapping) else data
+    view: dict[str, object] = {
+        "member_id": member_id,
+        "member_id_type": member_id_type,
+    }
+    for key in (
+        "open_id",
+        "user_id",
+        "union_id",
+        "name",
+        "en_name",
+        "nickname",
+        "email",
+        "enterprise_email",
+        "mobile",
+        "mobile_visible",
+        "status",
+        "avatar",
+        "department_ids",
+        "department_path",
+        "leader_user_id",
+        "city",
+        "country",
+        "work_station",
+        "join_time",
+        "is_tenant_manager",
+        "employee_no",
+        "employee_type",
+        "description",
+        "job_title",
+        "geo",
+    ):
+        value = user.get(key)
+        if value is not None:
+            view[key] = value
+    return view
+
+
+def _feishu_chat_member_view(member: object) -> dict[str, object] | None:
+    if not isinstance(member, Mapping):
+        return None
+    member_id = str(member.get("member_id") or "").strip()
+    if not member_id:
+        return None
+    view: dict[str, object] = {"member_id": member_id}
+    for key in ("name", "tenant_key", "member_id_type"):
+        value = member.get(key)
         if value is not None:
             view[key] = value
     return view
@@ -15563,6 +15673,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_channel_info_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "member-info":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action member-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_member_info_message_action,
                 route,
                 request,
                 secret_token,
@@ -27067,6 +27193,91 @@ class OpsMeshService:
             "action": "channel-info",
             "channel": _feishu_chat_info_view(chat_id, data),
         }
+
+    def _dispatch_feishu_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        member_id, member_id_type = _feishu_action_member_id_and_type(request.params)
+        if member_id:
+            result = self._request_json_provider_url(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    f"contact/v3/users/{quote(member_id, safe='')}",
+                    query={
+                        "user_id_type": member_id_type,
+                        "department_id_type": "open_department_id",
+                    },
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_feishu_bearer_token(secret_token),
+            )
+            if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+                raise RuntimeError(
+                    "Feishu user get failed: "
+                    f"{result.get('msg') or result.get('message') or result.get('code')}"
+                )
+            data = result.get("data") if isinstance(result, Mapping) else None
+            return {
+                "ok": True,
+                "channel": "feishu",
+                "action": "member-info",
+                "member": _feishu_member_info_view(member_id, member_id_type, data),
+            }
+
+        try:
+            chat_id = _feishu_action_chat_id(request, action="member-info")
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Feishu member-info requires memberId or chatId/channelId."
+            ) from exc
+        query: dict[str, object] = {"page_size": 50}
+        page_size = _message_action_param_integer(request.params, "pageSize", "page_size")
+        if page_size is not None:
+            query["page_size"] = max(1, min(100, page_size))
+        page_token = (
+            _message_action_param_string(request.params, "pageToken")
+            or _message_action_param_string(request.params, "page_token")
+        )
+        if page_token is not None:
+            query["page_token"] = page_token
+        query["member_id_type"] = member_id_type
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/chats/{quote(chat_id, safe='')}/members",
+                query=query,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu chat members get failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        items = data.get("items") if isinstance(data, Mapping) else None
+        response: dict[str, object] = {
+            "ok": True,
+            "channel": "feishu",
+            "action": "member-info",
+            "chat_id": chat_id,
+            "has_more": bool(data.get("has_more")) if isinstance(data, Mapping) else False,
+            "members": [
+                member
+                for item in (items if isinstance(items, list) else [])
+                if (member := _feishu_chat_member_view(item)) is not None
+            ],
+        }
+        page_token_result = data.get("page_token") if isinstance(data, Mapping) else None
+        if isinstance(page_token_result, str) and page_token_result.strip():
+            response["page_token"] = page_token_result.strip()
+        return response
 
     def _post_msteams_provider_event(
         self,
