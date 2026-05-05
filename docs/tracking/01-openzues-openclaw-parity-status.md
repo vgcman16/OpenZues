@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~74.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~75.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -322,6 +322,52 @@ may lag behind this tracker.
 - [x] Imported plugin SDK reply-history shim for bounded per-thread history
   recording, context assembly, clearing, enabled guards, and LRU key eviction.
   - Status: checkpointed in `738186ae`
+
+- [x] Imported plugin SDK reply-reference shim for reply/thread reference
+  planning, single-use mode detection, and batched threading policy.
+  - Status: checkpointed in `3bdeeac0`
+
+- [x] Imported plugin SDK reply-dedupe shim for resetting shared inbound
+  dedupe cache and in-flight state.
+  - Status: checkpointed in `e3ec8d6c`
+
+- [x] Imported plugin SDK channel-reply-options-runtime shim for reply prefix
+  option construction and typing lifecycle callbacks.
+  - Status: checkpointed in `61357e44`
+
+- [x] Imported plugin SDK channel-reply-pipeline shim for reply pipeline
+  assembly and source reply delivery-mode resolution.
+  - Status: checkpointed in `f9f1bf6a`
+
+- [x] Imported plugin SDK channel-feedback shim for ack reaction gates,
+  cleanup handles, status reaction controllers, and missing-target errors.
+  - Status: checkpointed in `7c188623`
+
+- [x] Imported plugin SDK channel-inbound shim for mention gates, inbound
+  envelopes, location context, inbound path roots, and debouncer wrapping.
+  - Status: checkpointed in `aa9825e0`
+
+- [x] Imported plugin SDK channel-route shim for route identity keys,
+  target/thread normalization, exact route matching, shared-conversation
+  checks, parser-backed target resolution, and generic SDK re-exports.
+  - Status: checkpointed in `0f67c4a0`
+
+- [x] Imported plugin SDK channel-policy shim for DM/group access decisions,
+  command gating, sender/group route policies, tools-by-sender, channel group
+  policy/mention/tool resolution, warning collectors, and generic SDK
+  re-exports.
+  - Status: checkpointed in `9f7b7abd`
+
+- [x] Imported plugin SDK allow-from shim for normalized allowFrom formatting,
+  chat-aware sender matching, simple/compiled allowlist matching, DM/group
+  allowFrom source merging, allowlist resolution summaries, patch helpers, and
+  generic SDK re-exports.
+  - Status: checkpointed in `bc6e1344`
+
+- [x] Imported plugin SDK access-groups shim for allowFrom access-group prefix
+  parsing, message-sender group matching, async membership resolver fallback,
+  matched group projection, allowFrom expansion, and generic SDK re-exports.
+  - Status: checkpointed in `93a4347c`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

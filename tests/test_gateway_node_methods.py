@@ -6952,6 +6952,1412 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildMentionRegexes,
+  createChannelInboundDebouncer,
+  formatInboundEnvelope,
+  formatInboundFromLabel,
+  formatLocationText,
+  implicitMentionKindWhen,
+  matchesMentionPatterns,
+  matchesMentionWithExplicit,
+  mergeInboundPathRoots,
+  normalizeMentionText,
+  resolveEnvelopeFormatOptions,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+  shouldDebounceTextInbound,
+  toLocationContext
+} = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound",
+      description: "Use OpenClaw channel inbound SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            defaults: {
+              envelopeTimezone: "utc",
+              envelopeTimestamp: "off",
+              envelopeElapsed: "off",
+              userTimezone: "America/Chicago"
+            },
+            list: [
+              { id: "assistant", identity: { name: "Zeus Bot" } }
+            ]
+          },
+          messages: {
+            groupChat: { mentionPatterns: ["\\\\bZeus\\\\b"] },
+            inbound: { debounceMs: 5, byChannel: { matrix: 2 } }
+          }
+        };
+        const mentionRegexes = buildMentionRegexes(cfg, "assistant");
+        const mentionChecks = [
+          normalizeMentionText("ZE\\u200bus"),
+          matchesMentionPatterns("hello zeus", mentionRegexes),
+          matchesMentionPatterns("hello other", mentionRegexes),
+          matchesMentionWithExplicit({
+            text: "other",
+            mentionRegexes,
+            explicit: {
+              hasAnyMention: true,
+              canResolveExplicit: true,
+              isExplicitlyMentioned: true
+            }
+          }),
+          matchesMentionWithExplicit({
+            text: "",
+            transcript: "ping zeus",
+            mentionRegexes
+          })
+        ];
+        const nestedDecision = resolveInboundMentionDecision({
+          facts: {
+            canDetectMention: true,
+            wasMentioned: false,
+            hasAnyMention: false,
+            implicitMentionKinds: ["reply_to_bot", "native"]
+          },
+          policy: {
+            isGroup: true,
+            requireMention: true,
+            allowedImplicitMentionKinds: ["reply_to_bot"],
+            allowTextCommands: true,
+            hasControlCommand: false,
+            commandAuthorized: false
+          }
+        });
+        const legacyDecision = resolveMentionGating({
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false
+        });
+        const bypassDecision = resolveMentionGatingWithBypass({
+          isGroup: true,
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false,
+          hasAnyMention: false,
+          allowTextCommands: true,
+          hasControlCommand: true,
+          commandAuthorized: true
+        });
+        const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
+        const envelopes = [
+          formatInboundFromLabel({
+            isGroup: true,
+            groupLabel: "Team",
+            groupId: "G1",
+            directLabel: "Alice"
+          }),
+          formatInboundFromLabel({
+            isGroup: false,
+            directLabel: "Alice",
+            directId: "Alice"
+          }),
+          formatInboundFromLabel({
+            isGroup: false,
+            directLabel: "Alice",
+            directId: "U2"
+          }),
+          formatInboundEnvelope({
+            channel: "slack",
+            from: "Team",
+            senderLabel: "Bob",
+            body: "hello",
+            chatType: "group",
+            envelope: { includeTimestamp: false, includeElapsed: false }
+          }),
+          formatInboundEnvelope({
+            channel: "slack",
+            from: "Alice",
+            body: "hello",
+            chatType: "direct",
+            fromMe: true,
+            envelope: { includeTimestamp: false, includeElapsed: false }
+          })
+        ];
+        const location = {
+          latitude: 12.3456789,
+          longitude: -98.7654321,
+          accuracy: 4.6,
+          name: "HQ",
+          caption: "front door"
+        };
+        const debounceFlushes = [];
+        const wrapped = createChannelInboundDebouncer({
+          cfg,
+          channel: "matrix",
+          debounceMsOverride: 0,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            debounceFlushes.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await wrapped.debouncer.enqueue({ key: "room", id: "a" });
+        await wait(0);
+        const locationText = formatLocationText(location);
+
+        return {
+          mentionChecks,
+          decisions: {
+            nested: [
+              nestedDecision.implicitMention,
+              nestedDecision.matchedImplicitMentionKinds.join(","),
+              nestedDecision.effectiveWasMentioned,
+              nestedDecision.shouldSkip,
+              nestedDecision.shouldBypassMention
+            ],
+            legacy: [
+              legacyDecision.effectiveWasMentioned,
+              legacyDecision.shouldSkip
+            ],
+            bypass: [
+              bypassDecision.effectiveWasMentioned,
+              bypassDecision.shouldSkip,
+              bypassDecision.shouldBypassMention
+            ],
+            implicit: implicitMentionKindWhen("native", true)
+          },
+          envelopeOptions,
+          envelopes,
+          locationTextChecks: [
+            locationText.startsWith("\\u{1F4CD}"),
+            locationText.includes("12.345679, -98.765432"),
+            locationText.includes("\\u00b15m")
+          ],
+          locationContext: toLocationContext(location),
+          roots: mergeInboundPathRoots(
+            ["C:\\\\tmp\\\\*", "/var/data", "/", "relative"],
+            ["/var/data", "/mnt/*/media"]
+          ),
+          debounceChecks: [
+            shouldDebounceTextInbound({ text: "hello", cfg }),
+            shouldDebounceTextInbound({ text: "", cfg }),
+            shouldDebounceTextInbound({ text: "hello", cfg, hasMedia: true }),
+            shouldDebounceTextInbound({ text: "hello", cfg, allowDebounce: false })
+          ],
+          channelDebouncer: [wrapped.debounceMs, debounceFlushes],
+          exportTypes: [
+            typeof buildMentionRegexes,
+            typeof createChannelInboundDebouncer,
+            typeof genericSdk.resolveInboundMentionDecision
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-plugin",
+                    "name": "Runtime Channel Inbound Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-inbound-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_inbound"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_inbound"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "mentionChecks": ["zeus", True, False, True, True],
+        "decisions": {
+            "nested": [True, "reply_to_bot", True, False, False],
+            "legacy": [False, True],
+            "bypass": [True, False, True],
+            "implicit": ["native"],
+        },
+        "envelopeOptions": {
+            "timezone": "utc",
+            "includeTimestamp": False,
+            "includeElapsed": False,
+            "userTimezone": "America/Chicago",
+        },
+        "envelopes": [
+            "Team id:G1",
+            "Alice",
+            "Alice id:U2",
+            "[slack Team] Bob: hello",
+            "[slack Alice] (self): hello",
+        ],
+        "locationTextChecks": [True, True, True],
+        "locationContext": {
+            "LocationLat": 12.3456789,
+            "LocationLon": -98.7654321,
+            "LocationAccuracy": 4.6,
+            "LocationName": "HQ",
+            "LocationSource": "place",
+            "LocationIsLive": False,
+            "LocationCaption": "front door",
+        },
+        "roots": ["C:/tmp/*", "/var/data", "/mnt/*/media"],
+        "debounceChecks": [True, False, False, False],
+        "channelDebouncer": [0, ["a"]],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_route_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-route.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  channelRouteCompactKey,
+  channelRouteDedupeKey,
+  channelRouteIdentityKey,
+  channelRouteKey,
+  channelRouteTargetsMatchExact,
+  channelRouteTargetsShareConversation,
+  channelRoutesMatchExact,
+  channelRoutesShareConversation,
+  channelRouteTarget,
+  channelRouteThreadId,
+  normalizeChannelRouteRef,
+  resolveChannelRouteTargetWithParser,
+  stringifyRouteThreadId
+} = require("openclaw/plugin-sdk/channel-route");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_route",
+      description: "Use OpenClaw channel route SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const normalized = normalizeChannelRouteRef({
+          channel: " Slack ",
+          accountId: " Work ",
+          rawTo: " channel:C1 ",
+          to: " C1 ",
+          threadId: " 171234.567 "
+        });
+        const telegram = normalizeChannelRouteRef({
+          channel: "telegram",
+          to: "-100123",
+          threadId: 42.9
+        });
+        const dedupeLeft = channelRouteDedupeKey({
+          channel: " Telegram ",
+          to: " -100123 ",
+          accountId: " Work ",
+          threadId: 42.9
+        });
+        const dedupeRight = channelRouteDedupeKey({
+          channel: "telegram",
+          to: "-100123",
+          accountId: "work",
+          threadId: "42"
+        });
+        const input = {
+          channel: "telegram",
+          to: "-100123",
+          accountId: "work",
+          threadId: "42"
+        };
+        const parsed = resolveChannelRouteTargetWithParser({
+          channel: "Mock",
+          rawTarget: " room-a:topic:77 ",
+          fallbackThreadId: 11,
+          parseExplicitTarget: (_channel, rawTarget) => {
+            const match = /^(.*):topic:(\\d+)$/.exec(rawTarget);
+            return match
+              ? { to: match[1] || rawTarget, threadId: Number.parseInt(match[2] || "", 10) }
+              : null;
+          }
+        });
+        return {
+          normalized,
+          routeAccessors: [channelRouteTarget(normalized), channelRouteThreadId(normalized)],
+          numeric: [
+            stringifyRouteThreadId(telegram.thread.id),
+            channelRouteCompactKey(telegram),
+            channelRouteKey(telegram)
+          ],
+          compactRaw: channelRouteCompactKey({
+            channel: " Slack ",
+            to: " C1 ",
+            accountId: " Work ",
+            threadId: " 171234.567 "
+          }),
+          dedupeStable: dedupeLeft === dedupeRight,
+          identityAlias: channelRouteIdentityKey(input) === channelRouteDedupeKey(input),
+          exact: [
+            channelRoutesMatchExact({
+              left: normalizeChannelRouteRef({
+                channel: "telegram",
+                to: "-100123",
+                threadId: 42
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "telegram",
+                to: "-100123",
+                threadId: "42"
+              })
+            }),
+            channelRouteTargetsMatchExact({
+              left: {
+                channel: "telegram",
+                to: "-100123",
+                threadId: 42
+              },
+              right: {
+                channel: "telegram",
+                to: "-100123",
+                threadId: "42"
+              }
+            }),
+            channelRouteTargetsMatchExact({
+              left: {
+                channel: "telegram",
+                to: "-100123",
+                accountId: "work"
+              },
+              right: {
+                channel: "telegram",
+                to: "-100123"
+              }
+            })
+          ],
+          share: [
+            channelRoutesShareConversation({
+              left: normalizeChannelRouteRef({
+                channel: "slack",
+                to: "channel:C1",
+                threadId: "171234.567"
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "slack",
+                to: "channel:C1"
+              })
+            }),
+            channelRouteTargetsShareConversation({
+              left: {
+                channel: "slack",
+                to: "channel:C1",
+                threadId: "171234.567"
+              },
+              right: {
+                channel: "slack",
+                to: "channel:C1"
+              }
+            }),
+            channelRoutesShareConversation({
+              left: normalizeChannelRouteRef({
+                channel: "matrix",
+                to: "room:abc",
+                threadId: "root-1"
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "matrix",
+                to: "room:abc",
+                threadId: "root-2"
+              })
+            })
+          ],
+          parsed,
+          exportTypes: [
+            typeof normalizeChannelRouteRef,
+            typeof channelRouteCompactKey,
+            typeof genericSdk.channelRouteCompactKey,
+            typeof genericSdk.resolveChannelRouteTargetWithParser
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-route-plugin",
+                    "name": "Runtime Channel Route Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-route-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_route"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_route"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": {
+            "channel": "slack",
+            "accountId": "work",
+            "target": {"rawTo": "channel:C1", "to": "C1"},
+            "thread": {"id": "171234.567"},
+        },
+        "routeAccessors": ["C1", "171234.567"],
+        "numeric": ["42", "telegram|-100123||42", "telegram|-100123||42"],
+        "compactRaw": "slack|C1|work|171234.567",
+        "dedupeStable": True,
+        "identityAlias": True,
+        "exact": [True, True, False],
+        "share": [True, True, False],
+        "parsed": {
+            "channel": "mock",
+            "rawTo": "room-a:topic:77",
+            "to": "room-a",
+            "threadId": 77,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_policy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-policy.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DM_GROUP_ACCESS_REASON,
+  coerceNativeSetting,
+  createDangerousNameMatchingMutableAllowlistWarningCollector,
+  createRestrictSendersChannelSecurity,
+  evaluateGroupRouteAccessForPolicy,
+  evaluateSenderGroupAccessForPolicy,
+  normalizeAllowFromList,
+  readStoreAllowFromForDmPolicy,
+  resolveChannelGroupPolicy,
+  resolveChannelGroupRequireMention,
+  resolveChannelGroupToolsPolicy,
+  resolveDmGroupAccessWithCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveSenderScopedGroupPolicy,
+  resolveToolsBySender
+} = require("openclaw/plugin-sdk/channel-policy");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_policy",
+      description: "Use OpenClaw channel policy SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const warningCollector = createDangerousNameMatchingMutableAllowlistWarningCollector({
+          channel: "irc",
+          detector: (entry) => !entry.includes("@"),
+          collectLists: (scope) => [
+            {
+              pathLabel: `${scope.prefix}.allowFrom`,
+              list: scope.account.allowFrom
+            }
+          ]
+        });
+        const security = createRestrictSendersChannelSecurity({
+          channelKey: "line",
+          resolveDmPolicy: (account) => account.dmPolicy,
+          resolveDmAllowFrom: (account) => account.allowFrom,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          surface: "LINE groups",
+          openScope: "any member in groups",
+          groupPolicyPath: "channels.line.groupPolicy",
+          groupAllowFromPath: "channels.line.groupAllowFrom",
+          mentionGated: false,
+          policyPathSuffix: "dmPolicy"
+        });
+        const cfg = {
+          channels: {
+            line: {},
+            irc: {
+              allowFrom: ["charlie"],
+              accounts: {
+                alt: {
+                  dangerouslyAllowNameMatching: true,
+                  allowFrom: ["delta"]
+                }
+              }
+            },
+            slack: {
+              groupPolicy: "allowlist",
+              groups: {
+                G1: {
+                  requireMention: false,
+                  tools: { allow: ["read"] },
+                  toolsBySender: {
+                    "id:u1": { allow: ["send"] }
+                  }
+                },
+                "*": {
+                  requireMention: true,
+                  tools: { allow: ["fallback"] }
+                }
+              }
+            }
+          }
+        };
+        const senderAllowed = (allowFrom) => allowFrom.includes("u1");
+        const toolsBySender = {
+          "id:u1": { allow: ["send"] },
+          "username:alice": { allow: ["user"] },
+          "*": { allow: ["wild"] }
+        };
+        const storeReads = [
+          await readStoreAllowFromForDmPolicy({
+            provider: "line",
+            accountId: "default",
+            dmPolicy: "pairing",
+            readStore: async () => ["stored"]
+          }),
+          await readStoreAllowFromForDmPolicy({
+            provider: "line",
+            accountId: "default",
+            dmPolicy: "allowlist",
+            readStore: async () => ["stored"]
+          })
+        ];
+        const groupPolicy = resolveChannelGroupPolicy({
+          cfg,
+          channel: "slack",
+          groupId: "g1",
+          groupIdCaseInsensitive: true
+        });
+        return {
+          normalized: normalizeAllowFromList(["  abc ", 42, "", "   "]),
+          nativeSettings: [
+            coerceNativeSetting(true),
+            coerceNativeSetting(false),
+            coerceNativeSetting("auto"),
+            coerceNativeSetting("on") === undefined
+          ],
+          warnings: warningCollector({ cfg }).map((line) => line.includes("charlie")),
+          scopedDm: security.resolveDmPolicy({
+            cfg,
+            accountId: "default",
+            account: {
+              accountId: "default",
+              dmPolicy: "allowlist",
+              allowFrom: ["line:user:abc"]
+            }
+          }),
+          groupWarnings: security.collectWarnings({
+            cfg,
+            accountId: "default",
+            account: {
+              accountId: "default",
+              groupPolicy: "open"
+            }
+          }),
+          senderPolicy: [
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: []
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["u1"]
+            })
+          ],
+          routeAccess: [
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: false
+            }).reason,
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: false
+            }).reason,
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "open",
+              routeAllowlistConfigured: false,
+              routeMatched: false
+            }).allowed
+          ],
+          senderAccess: [
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"],
+              senderId: "u1",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            }).reason,
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: [],
+              senderId: "u1",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            }).reason
+          ],
+          effectiveLists: resolveEffectiveAllowFromLists({
+            allowFrom: ["u1"],
+            groupAllowFrom: [],
+            storeAllowFrom: ["stored"],
+            dmPolicy: "pairing"
+          }),
+          dmAccess: [
+            resolveDmGroupAccessWithLists({
+              isGroup: true,
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"],
+              allowFrom: [],
+              isSenderAllowed: senderAllowed
+            }),
+            resolveDmGroupAccessWithLists({
+              isGroup: false,
+              dmPolicy: "pairing",
+              allowFrom: [],
+              storeAllowFrom: [],
+              isSenderAllowed: senderAllowed
+            }).decision
+          ],
+          commandGate: resolveDmGroupAccessWithCommandGate({
+            isGroup: true,
+            groupPolicy: "allowlist",
+            allowFrom: ["owner"],
+            groupAllowFrom: [],
+            groupAllowFromFallbackToAllowFrom: false,
+            isSenderAllowed: senderAllowed,
+            command: {
+              useAccessGroups: true,
+              allowTextCommands: true,
+              hasControlCommand: true
+            }
+          }),
+          storeReads,
+          toolsBySender: [
+            resolveToolsBySender({ toolsBySender, senderId: "U1" }),
+            resolveToolsBySender({ toolsBySender, senderUsername: "@Alice" }),
+            resolveToolsBySender({ toolsBySender, senderName: "Other" })
+          ],
+          channelGroup: {
+            allowed: groupPolicy.allowed,
+            allowlistEnabled: groupPolicy.allowlistEnabled,
+            requireMention: resolveChannelGroupRequireMention({
+              cfg,
+              channel: "slack",
+              groupId: "g1",
+              groupIdCaseInsensitive: true
+            }),
+            tools: resolveChannelGroupToolsPolicy({
+              cfg,
+              channel: "slack",
+              groupId: "G1",
+              senderId: "u1"
+            }),
+            defaultTools: resolveChannelGroupToolsPolicy({
+              cfg,
+              channel: "slack",
+              groupId: "missing"
+            })
+          },
+          constants: [
+            DM_GROUP_ACCESS_REASON.GROUP_POLICY_ALLOWED,
+            DM_GROUP_ACCESS_REASON.DM_POLICY_PAIRING_REQUIRED
+          ],
+          exportTypes: [
+            typeof resolveDmGroupAccessWithLists,
+            typeof evaluateSenderGroupAccessForPolicy,
+            typeof genericSdk.resolveDmGroupAccessWithCommandGate,
+            typeof genericSdk.resolveChannelGroupToolsPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-policy-plugin",
+                    "name": "Runtime Channel Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-policy-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": ["abc", "42"],
+        "nativeSettings": [True, False, "auto", True],
+        "warnings": [False, True, False, False],
+        "scopedDm": {
+            "policy": "allowlist",
+            "allowFrom": ["line:user:abc"],
+            "policyPath": "channels.line.dmPolicy",
+            "allowFromPath": "channels.line.",
+            "approveHint": (
+                "Approve via: openclaw pairing list line / "
+                "openclaw pairing approve line <code>"
+            ),
+        },
+        "groupWarnings": [
+            '- LINE groups: groupPolicy="open" allows any member in groups to trigger. '
+            'Set channels.line.groupPolicy="allowlist" + channels.line.groupAllowFrom '
+            "to restrict senders."
+        ],
+        "senderPolicy": ["open", "allowlist", "disabled"],
+        "routeAccess": ["route_disabled", "route_not_allowlisted", True],
+        "senderAccess": ["allowed", "empty_allowlist"],
+        "effectiveLists": {
+            "effectiveAllowFrom": ["u1", "stored"],
+            "effectiveGroupAllowFrom": ["u1"],
+        },
+        "dmAccess": [
+            {
+                "decision": "allow",
+                "reasonCode": "group_policy_allowed",
+                "reason": "groupPolicy=allowlist",
+                "effectiveAllowFrom": [],
+                "effectiveGroupAllowFrom": ["u1"],
+            },
+            "pairing",
+        ],
+        "commandGate": {
+            "decision": "block",
+            "reasonCode": "group_policy_empty_allowlist",
+            "reason": "groupPolicy=allowlist (empty allowlist)",
+            "effectiveAllowFrom": ["owner"],
+            "effectiveGroupAllowFrom": [],
+            "commandAuthorized": False,
+            "shouldBlockControlCommand": True,
+        },
+        "storeReads": [["stored"], []],
+        "toolsBySender": [
+            {"allow": ["send"]},
+            {"allow": ["user"]},
+            {"allow": ["wild"]},
+        ],
+        "channelGroup": {
+            "allowed": True,
+            "allowlistEnabled": True,
+            "requireMention": False,
+            "tools": {"allow": ["send"]},
+            "defaultTools": {"allow": ["fallback"]},
+        },
+        "constants": ["group_policy_allowed", "dm_policy_pairing_required"],
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_allow_from_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-allow-from.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  addAllowlistUserEntriesFromConfigEntry,
+  buildAllowlistResolutionSummary,
+  canonicalizeAllowlistWithResolvedIds,
+  compileAllowlist,
+  firstDefined,
+  formatAllowFromLowercase,
+  formatAllowlistMatchMeta,
+  formatNormalizedAllowFromEntries,
+  isAllowedParsedChatSender,
+  isNormalizedSenderAllowed,
+  isSenderIdAllowed,
+  mapAllowlistResolutionInputs,
+  mapBasicAllowlistResolutionEntries,
+  mergeAllowlist,
+  mergeDmAllowFromSources,
+  patchAllowlistUsersInConfigEntries,
+  resolveAllowlistMatchByCandidates,
+  resolveAllowlistMatchSimple,
+  resolveCompiledAllowlistMatch,
+  resolveGroupAllowFromSources,
+  summarizeMapping
+} = require("openclaw/plugin-sdk/allow-from");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function parseAllowTarget(entry) {
+  const trimmed = entry.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("chat_id:")) {
+    return { kind: "chat_id", chatId: Number.parseInt(trimmed.slice("chat_id:".length), 10) };
+  }
+  if (lower.startsWith("chat_guid:")) {
+    return { kind: "chat_guid", chatGuid: trimmed.slice("chat_guid:".length) };
+  }
+  if (lower.startsWith("chat_identifier:")) {
+    return {
+      kind: "chat_identifier",
+      chatIdentifier: trimmed.slice("chat_identifier:".length)
+    };
+  }
+  return { kind: "handle", handle: lower };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.allow_from",
+      description: "Use OpenClaw allow-from SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const compiled = compileAllowlist(["u1", "*"]);
+        const summary = buildAllowlistResolutionSummary(
+          [
+            { input: "Alice", resolved: true, id: "U1", name: "Alice A" },
+            { input: "Bob", resolved: false, note: "missing" }
+          ],
+          {
+            formatResolved: (entry) => `${entry.input}->${entry.id}`,
+            formatUnresolved: (entry) => `${entry.input}:missing`
+          }
+        );
+        const targetSet = new Set();
+        addAllowlistUserEntriesFromConfigEntry(targetSet, {
+          users: [" Owner ", "*", "", 42]
+        });
+        const logs = [];
+        summarizeMapping("users", summary.mapping, summary.unresolved, {
+          log: (message) => logs.push(message)
+        });
+        const visited = [];
+        const mapped = await mapAllowlistResolutionInputs({
+          inputs: ["one", "two", "three"],
+          mapInput: async (input) => {
+            visited.push(input);
+            return input.toUpperCase();
+          }
+        });
+        return {
+          lower: formatAllowFromLowercase({
+            allowFrom: [" Telegram:UserA ", "tg:UserB", "  "],
+            stripPrefixRe: /^(telegram|tg):/i
+          }),
+          normalized: formatNormalizedAllowFromEntries({
+            allowFrom: ["  @Alice ", "", " @Bob ", "@"],
+            normalizeEntry: (entry) => entry.replace(/^@/, "").toLowerCase()
+          }),
+          normalizedSender: [
+            isNormalizedSenderAllowed({ senderId: "attacker", allowFrom: ["*"] }),
+            isNormalizedSenderAllowed({
+              senderId: "12345",
+              allowFrom: ["ZALO:12345", "zl:777"],
+              stripPrefixRe: /^(zalo|zl):/i
+            }),
+            isNormalizedSenderAllowed({
+              senderId: "999",
+              allowFrom: ["zl:12345"],
+              stripPrefixRe: /^(zalo|zl):/i
+            })
+          ],
+          parsedChat: [
+            isAllowedParsedChatSender({
+              allowFrom: [],
+              sender: "+15551234567",
+              normalizeSender: (sender) => sender,
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["*"],
+              sender: "user@example.com",
+              normalizeSender: (sender) => sender.toLowerCase(),
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["User@Example.com"],
+              sender: "user@example.com",
+              normalizeSender: (sender) => sender.toLowerCase(),
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["chat_id:42"],
+              sender: "+15551234567",
+              chatId: 42,
+              normalizeSender: (sender) => sender,
+              parseAllowTarget
+            })
+          ],
+          compiled: [
+            compiled.wildcard,
+            Array.from(compiled.set).sort(),
+            resolveCompiledAllowlistMatch({
+              compiledAllowlist: compileAllowlist(["u1"]),
+              candidates: [{ value: "u1", source: "id" }]
+            }),
+            resolveAllowlistMatchByCandidates({
+              allowList: ["team"],
+              candidates: [{ value: "team", source: "tag" }]
+            }),
+            resolveAllowlistMatchSimple({
+              allowFrom: ["U1", "Alice"],
+              senderId: "u2",
+              senderName: "Alice",
+              allowNameMatching: true
+            }),
+            formatAllowlistMatchMeta({ matchKey: "u1", matchSource: "id" })
+          ],
+          mergeAndPatch: {
+            merged: mergeAllowlist({ existing: [" Alice ", "alice"], additions: ["U1", "u1"] }),
+            canonicalized: canonicalizeAllowlistWithResolvedIds({
+              existing: ["Alice", "Bob", "*", "alice"],
+              resolvedMap: summary.resolvedMap
+            }),
+            patched: patchAllowlistUsersInConfigEntries({
+              entries: {
+                team: { users: ["Alice", "Bob"] },
+                empty: {}
+              },
+              resolvedMap: summary.resolvedMap,
+              strategy: "canonicalize"
+            }),
+            targetSet: Array.from(targetSet).sort()
+          },
+          summary: {
+            mapping: summary.mapping,
+            unresolved: summary.unresolved,
+            additions: summary.additions,
+            resolvedId: summary.resolvedMap.get("Alice").id,
+            logs
+          },
+          basicEntries: mapBasicAllowlistResolutionEntries([
+            { input: "Alice", resolved: true, id: "U1", name: "Alice A", note: "ok" }
+          ]),
+          mapped: { visited, mapped },
+          sourceLists: {
+            first: firstDefined(undefined, "a", "b"),
+            senderAllowed: [
+              isSenderIdAllowed(
+                { entries: ["u1"], hasWildcard: false, hasEntries: true },
+                "u1",
+                false
+              ),
+              isSenderIdAllowed(
+                { entries: [], hasWildcard: false, hasEntries: false },
+                undefined,
+                true
+              )
+            ],
+            dm: mergeDmAllowFromSources({
+              allowFrom: ["u1"],
+              storeAllowFrom: ["stored"],
+              dmPolicy: "pairing"
+            }),
+            group: resolveGroupAllowFromSources({
+              allowFrom: ["u1"],
+              groupAllowFrom: [],
+              fallbackToAllowFrom: false
+            })
+          },
+          exportTypes: [
+            typeof mergeAllowlist,
+            typeof resolveAllowlistMatchSimple,
+            typeof summarizeMapping,
+            typeof genericSdk.mapAllowlistResolutionInputs
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-allow-from-plugin",
+                    "name": "Runtime Allow From Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-allow-from-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.allow_from"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.allow_from"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "lower": ["usera", "userb"],
+        "normalized": ["alice", "bob"],
+        "normalizedSender": [True, True, False],
+        "parsedChat": [False, True, True, True],
+        "compiled": [
+            True,
+            ["*", "u1"],
+            {"allowed": True, "matchKey": "u1", "matchSource": "id"},
+            {"allowed": True, "matchKey": "team", "matchSource": "tag"},
+            {"allowed": True, "matchKey": "alice", "matchSource": "name"},
+            "matchKey=u1 matchSource=id",
+        ],
+        "mergeAndPatch": {
+            "merged": ["Alice", "U1"],
+            "canonicalized": ["U1", "Bob", "*", "alice"],
+            "patched": {
+                "team": {"users": ["U1", "Bob"]},
+                "empty": {},
+            },
+            "targetSet": ["Owner"],
+        },
+        "summary": {
+            "mapping": ["Alice->U1"],
+            "unresolved": ["Bob:missing"],
+            "additions": ["U1"],
+            "resolvedId": "U1",
+            "logs": ["users resolved: Alice->U1\nusers unresolved: Bob:missing"],
+        },
+        "basicEntries": [
+            {
+                "input": "Alice",
+                "resolved": True,
+                "id": "U1",
+                "name": "Alice A",
+                "note": "ok",
+            }
+        ],
+        "mapped": {
+            "visited": ["one", "two", "three"],
+            "mapped": ["ONE", "TWO", "THREE"],
+        },
+        "sourceLists": {
+            "first": "a",
+            "senderAllowed": [True, True],
+            "dm": ["u1", "stored"],
+            "group": [],
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_access_groups_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-access-groups.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  ACCESS_GROUP_ALLOW_FROM_PREFIX,
+  expandAllowFromWithAccessGroups,
+  parseAccessGroupAllowFromEntry,
+  resolveAccessGroupAllowFromMatches
+} = require("openclaw/plugin-sdk/access-groups");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.access_groups",
+      description: "Use OpenClaw access-groups SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          accessGroups: {
+            admins: {
+              type: "message.senders",
+              members: {
+                "*": ["global-admin"],
+                telegram: ["tg-admin"]
+              }
+            },
+            external: {
+              type: "custom",
+              members: {}
+            },
+            throwing: {
+              type: "custom",
+              members: {}
+            }
+          }
+        };
+        const resolverCalls = [];
+        const resolveMembership = async ({ name, channel, accountId, senderId }) => {
+          resolverCalls.push(`${name}:${channel}:${accountId}:${senderId}`);
+          if (name === "throwing") {
+            throw new Error("membership failed");
+          }
+          return name === "external" && accountId === "default";
+        };
+        const isSenderAllowed = (senderId, allowFrom) => allowFrom.includes(senderId);
+        const matches = await resolveAccessGroupAllowFromMatches({
+          cfg,
+          allowFrom: [
+            "accessGroup:admins",
+            " accessGroup:external ",
+            "accessGroup:missing",
+            "accessGroup:throwing",
+            "accessGroup:admins"
+          ],
+          channel: "telegram",
+          accountId: "default",
+          senderId: "tg-admin",
+          isSenderAllowed,
+          resolveMembership
+        });
+        const expanded = await expandAllowFromWithAccessGroups({
+          cfg,
+          allowFrom: ["accessGroup:admins", "other", "other"],
+          channel: "telegram",
+          accountId: "default",
+          senderId: "tg-admin",
+          isSenderAllowed,
+          resolveMembership
+        });
+        const unmatched = await expandAllowFromWithAccessGroups({
+          cfg,
+          allowFrom: ["accessGroup:external", "accessGroup:throwing"],
+          channel: "telegram",
+          accountId: "secondary",
+          senderId: "nobody",
+          isSenderAllowed,
+          resolveMembership
+        });
+        return {
+          prefix: ACCESS_GROUP_ALLOW_FROM_PREFIX,
+          parsed: [
+            parseAccessGroupAllowFromEntry(" accessGroup: admins "),
+            parseAccessGroupAllowFromEntry("plain-user"),
+            parseAccessGroupAllowFromEntry("accessGroup: ")
+          ],
+          matches,
+          resolverCalls,
+          expanded,
+          unmatched,
+          exportTypes: [
+            typeof resolveAccessGroupAllowFromMatches,
+            typeof expandAllowFromWithAccessGroups,
+            typeof genericSdk.expandAllowFromWithAccessGroups
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-access-groups-plugin",
+                    "name": "Runtime Access Groups Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-access-groups-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.access_groups"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.access_groups"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefix": "accessGroup:",
+        "parsed": ["admins", None, None],
+        "matches": ["accessGroup:admins", "accessGroup:external"],
+        "resolverCalls": [
+            "external:telegram:default:tg-admin",
+            "throwing:telegram:default:tg-admin",
+            "external:telegram:secondary:nobody",
+            "throwing:telegram:secondary:nobody",
+        ],
+        "expanded": ["accessGroup:admins", "other", "tg-admin"],
+        "unmatched": ["accessGroup:external", "accessGroup:throwing"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -7321,6 +8727,678 @@ module.exports = {
         "cleared": [0, 3, 0],
         "eviction": ["b", "c"],
         "genericContext": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_reference_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-reference.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createReplyReferencePlanner,
+  isSingleUseReplyToMode,
+  resolveBatchedReplyThreadingPolicy
+} = require("openclaw/plugin-sdk/reply-reference");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const nullable = (value) => value === undefined ? null : value;
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_reference",
+      description: "Use OpenClaw reply reference SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const first = createReplyReferencePlanner({
+          replyToMode: "first",
+          startId: "parent"
+        });
+        const firstFlow = [
+          nullable(first.peek()),
+          first.hasReplied(),
+          nullable(first.use()),
+          first.hasReplied(),
+          nullable(first.peek()),
+          nullable(first.use())
+        ];
+
+        const all = createReplyReferencePlanner({
+          replyToMode: "all",
+          startId: "parent"
+        });
+        const allFlow = [
+          nullable(all.peek()),
+          all.hasReplied(),
+          nullable(all.use()),
+          all.hasReplied(),
+          nullable(all.use())
+        ];
+
+        const existing = createReplyReferencePlanner({
+          replyToMode: "first",
+          existingId: "thread-1",
+          startId: "parent"
+        });
+        const off = createReplyReferencePlanner({
+          replyToMode: "off",
+          startId: "parent"
+        });
+        const denied = createReplyReferencePlanner({
+          replyToMode: "all",
+          startId: "parent",
+          allowReference: false
+        });
+        const seeded = createReplyReferencePlanner({
+          replyToMode: "batched",
+          startId: "parent",
+          hasReplied: true
+        });
+
+        denied.markSent();
+
+        return {
+          singleUse: [
+            isSingleUseReplyToMode("off"),
+            isSingleUseReplyToMode("all"),
+            isSingleUseReplyToMode("first"),
+            isSingleUseReplyToMode("batched")
+          ],
+          firstFlow,
+          allFlow,
+          existing: [nullable(existing.use()), nullable(existing.use())],
+          off: [nullable(off.use()), off.hasReplied()],
+          denied: [nullable(denied.use()), denied.hasReplied()],
+          seeded: [seeded.hasReplied(), nullable(seeded.use())],
+          policy: [
+            nullable(resolveBatchedReplyThreadingPolicy("first", true)),
+            resolveBatchedReplyThreadingPolicy("batched", true),
+            resolveBatchedReplyThreadingPolicy("batched", false)
+          ],
+          generic: nullable(genericSdk.createReplyReferencePlanner({
+            replyToMode: "first",
+            startId: "parent"
+          }).use())
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-reference-plugin",
+                    "name": "Runtime Reply Reference Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-reference-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_reference"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_reference"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "singleUse": [False, False, True, True],
+        "firstFlow": ["parent", False, "parent", True, None, None],
+        "allFlow": ["parent", False, "parent", True, "parent"],
+        "existing": ["thread-1", None],
+        "off": [None, False],
+        "denied": [None, True],
+        "seeded": [True, None],
+        "policy": [
+            None,
+            {"implicitCurrentMessage": "allow"},
+            {"implicitCurrentMessage": "deny"},
+        ],
+        "generic": "parent",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_dedupe_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-dedupe.cjs"
+    runtime_entry.write_text(
+        """
+const { resetInboundDedupe } = require("openclaw/plugin-sdk/reply-dedupe");
+const { resolveGlobalDedupeCache } = require("openclaw/plugin-sdk/dedupe-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_dedupe",
+      description: "Use OpenClaw reply dedupe SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cache = resolveGlobalDedupeCache(Symbol.for("openclaw.inboundDedupeCache"), {
+          ttlMs: 1200000,
+          maxSize: 5000
+        });
+        const inflight = genericSdk.resolveGlobalSingleton(
+          Symbol.for("openclaw.inboundDedupeInflight"),
+          () => new Set()
+        );
+        resetInboundDedupe();
+        const first = cache.check("room:message-1", 1000);
+        const second = cache.check("room:message-1", 1001);
+        inflight.add("room:message-1");
+        const beforeReset = [cache.size(), inflight.size];
+        resetInboundDedupe();
+        const afterReset = [cache.check("room:message-1", 1002), cache.size(), inflight.size];
+        inflight.add("room:message-2");
+        genericSdk.resetInboundDedupe();
+        const genericReset = [cache.size(), inflight.size];
+        return {
+          duplicateFlow: [first, second],
+          beforeReset,
+          afterReset,
+          genericReset,
+          exportTypes: [typeof resetInboundDedupe, typeof genericSdk.resetInboundDedupe]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-dedupe-plugin",
+                    "name": "Runtime Reply Dedupe Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-dedupe-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_dedupe"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_dedupe"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "duplicateFlow": [False, True],
+        "beforeReset": [1, 1],
+        "afterReset": [False, 1, 0],
+        "genericReset": [0, 0],
+        "exportTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_reply_options_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-reply-options.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createReplyPrefixOptions,
+  createTypingCallbacks
+} = require("openclaw/plugin-sdk/channel-reply-options-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_reply_options",
+      description: "Use OpenClaw channel reply options SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            defaults: { identity: { name: "Default Agent" } },
+            list: [
+              { id: "assistant", identity: { name: "Zeus" } }
+            ]
+          },
+          messages: { responsePrefix: "auto" },
+          channels: {
+            matrix: {
+              responsePrefix: "[matrix]",
+              accounts: {
+                work: { responsePrefix: "[work]" }
+              }
+            }
+          }
+        };
+        const accountPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "matrix",
+          accountId: "work"
+        });
+        const channelPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "matrix"
+        });
+        const globalPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "slack"
+        });
+        accountPrefix.onModelSelected({
+          provider: "anthropic",
+          model: "claude-opus-4-6-20260205",
+          thinkLevel: "high"
+        });
+        const prefixContext = accountPrefix.responsePrefixContextProvider();
+
+        const typingEvents = [];
+        const callbacks = createTypingCallbacks({
+          start: async () => { typingEvents.push("start"); },
+          stop: async () => { typingEvents.push("stop"); },
+          onStartError: (err) => typingEvents.push(`start-error:${err.message || err}`),
+          onStopError: (err) => typingEvents.push(`stop-error:${err.message || err}`),
+          keepaliveIntervalMs: 1000,
+          maxDurationMs: 0
+        });
+        await callbacks.onReplyStart();
+        callbacks.onIdle();
+        callbacks.onCleanup();
+        await wait(0);
+        await callbacks.onReplyStart();
+
+        const errorEvents = [];
+        const errorCallbacks = createTypingCallbacks({
+          start: async () => { throw new Error("boom"); },
+          stop: async () => { throw new Error("stop-boom"); },
+          onStartError: (err) => errorEvents.push(`start:${err.message || err}`),
+          onStopError: (err) => errorEvents.push(`stop:${err.message || err}`),
+          keepaliveIntervalMs: 1000,
+          maxConsecutiveFailures: 1,
+          maxDurationMs: 0
+        });
+        await errorCallbacks.onReplyStart();
+        await wait(0);
+        errorCallbacks.onCleanup();
+        await wait(0);
+
+        return {
+          prefixes: [
+            accountPrefix.responsePrefix,
+            channelPrefix.responsePrefix,
+            globalPrefix.responsePrefix,
+            genericSdk.createReplyPrefixOptions({ cfg, agentId: "assistant" }).responsePrefix
+          ],
+          prefixContext: [
+            prefixContext.identityName,
+            prefixContext.provider,
+            prefixContext.model,
+            prefixContext.modelFull,
+            prefixContext.thinkingLevel
+          ],
+          typingEvents,
+          errorEvents,
+          exportTypes: [
+            typeof createReplyPrefixOptions,
+            typeof createTypingCallbacks,
+            typeof genericSdk.createTypingCallbacks
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-reply-options-plugin",
+                    "name": "Runtime Channel Reply Options Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-reply-options-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_reply_options"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_reply_options"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefixes": ["[work]", "[matrix]", "[Zeus]", "[Zeus]"],
+        "prefixContext": [
+            "Zeus",
+            "anthropic",
+            "claude-opus-4-6",
+            "anthropic/claude-opus-4-6-20260205",
+            "high",
+        ],
+        "typingEvents": ["start", "stop"],
+        "errorEvents": ["start:boom", "stop:stop-boom"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_reply_pipeline_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-reply-pipeline.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createChannelReplyPipeline,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+  resolveChannelSourceReplyDeliveryMode
+} = require("openclaw/plugin-sdk/channel-reply-pipeline");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_reply_pipeline",
+      description: "Use OpenClaw channel reply pipeline SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            list: [
+              { id: "assistant", identity: { name: "Zeus" } }
+            ]
+          },
+          messages: {
+            responsePrefix: "auto",
+            visibleReplies: "message_tool",
+            groupChat: { visibleReplies: "automatic" }
+          },
+          channels: {
+            line: {
+              accounts: {
+                work: { responsePrefix: "[work]" }
+              }
+            }
+          }
+        };
+        const explicitTyping = { marker: "provided" };
+        const pipeline = createChannelReplyPipeline({
+          cfg,
+          agentId: "assistant",
+          channel: "line",
+          accountId: "work",
+          typingCallbacks: explicitTyping,
+          transformReplyPayload: (payload) => ({
+            ...payload,
+            text: `${payload.text}!`
+          })
+        });
+        pipeline.onModelSelected({
+          provider: "openai",
+          model: "gpt-5.4-latest",
+          thinkLevel: "low"
+        });
+        const prefixContext = pipeline.responsePrefixContextProvider();
+        const transformed = pipeline.transformReplyPayload({ text: "hi" });
+
+        const typingEvents = [];
+        const typingPipeline = createChannelReplyPipeline({
+          cfg,
+          agentId: "assistant",
+          typing: {
+            start: async () => { typingEvents.push("start"); },
+            stop: async () => { typingEvents.push("stop"); },
+            keepaliveIntervalMs: 1000,
+            maxDurationMs: 0
+          }
+        });
+        await typingPipeline.typingCallbacks.onReplyStart();
+        typingPipeline.typingCallbacks.onCleanup();
+        await wait(0);
+
+        const modes = [
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "direct" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: { messages: { visibleReplies: "message_tool" } },
+            ctx: { ChatType: "dm" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {
+              messages: {
+                groupChat: { visibleReplies: "automatic" },
+                visibleReplies: "message_tool"
+              }
+            },
+            ctx: { ChatType: "channel" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { CommandSource: "native", ChatType: "group" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" },
+            requested: "message_tool_only",
+            messageToolAvailable: false
+          }),
+          genericSdk.resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" }
+          })
+        ];
+
+        return {
+          prefix: pipeline.responsePrefix,
+          context: [
+            prefixContext.identityName,
+            prefixContext.provider,
+            prefixContext.model,
+            prefixContext.modelFull,
+            prefixContext.thinkingLevel
+          ],
+          transformed,
+          typingSame: pipeline.typingCallbacks === explicitTyping,
+          typingEvents,
+          modes,
+          exportTypes: [
+            typeof createChannelReplyPipeline,
+            typeof createReplyPrefixContext,
+            typeof createReplyPrefixOptions,
+            typeof createTypingCallbacks,
+            typeof resolveChannelSourceReplyDeliveryMode,
+            typeof genericSdk.createChannelReplyPipeline
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-reply-pipeline-plugin",
+                    "name": "Runtime Channel Reply Pipeline Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-reply-pipeline-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_reply_pipeline"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_reply_pipeline"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefix": "[work]",
+        "context": ["Zeus", "openai", "gpt-5.4", "openai/gpt-5.4-latest", "low"],
+        "transformed": {"text": "hi!"},
+        "typingSame": True,
+        "typingEvents": ["start", "stop"],
+        "modes": [
+            "message_tool_only",
+            "automatic",
+            "message_tool_only",
+            "automatic",
+            "automatic",
+            "automatic",
+            "message_tool_only",
+        ],
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
     }
 
 
@@ -10596,6 +12674,290 @@ module.exports = {
         "zalo typing failed: typing denied",
         "irc: drop duplicate",
     ]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_feedback_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-feedback.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  CODING_TOOL_TOKENS,
+  DEFAULT_EMOJIS,
+  DEFAULT_TIMING,
+  WEB_TOOL_TOKENS,
+  createAckReactionHandle,
+  createStatusReactionController,
+  missingTargetError,
+  removeAckReactionAfterReply,
+  removeAckReactionHandleAfterReply,
+  resolveAckReaction,
+  resolveToolEmoji,
+  shouldAckReaction,
+  shouldAckReactionForWhatsApp
+} = require("openclaw/plugin-sdk/channel-feedback");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_feedback",
+      description: "Use OpenClaw channel feedback SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            list: [
+              { id: "assistant", identity: { emoji: "agent" } }
+            ]
+          },
+          messages: { ackReaction: "global" },
+          channels: {
+            slack: {
+              ackReaction: "channel",
+              accounts: {
+                work: { ackReaction: "account" }
+              }
+            }
+          }
+        };
+        const ackReactions = [
+          resolveAckReaction(cfg, "assistant", { channel: "slack", accountId: "work" }),
+          resolveAckReaction(cfg, "assistant", { channel: "slack" }),
+          resolveAckReaction(cfg, "assistant"),
+          resolveAckReaction({ agents: cfg.agents }, "assistant")
+        ];
+        const ackGates = [
+          shouldAckReaction({ scope: "off", isDirect: true }),
+          shouldAckReaction({ scope: "all", isDirect: false }),
+          shouldAckReaction({ scope: "direct", isDirect: true }),
+          shouldAckReaction({ scope: "group-all", isGroup: true }),
+          shouldAckReaction({
+            scope: "group-mentions",
+            isMentionableGroup: true,
+            requireMention: true,
+            canDetectMention: true,
+            effectiveWasMentioned: false,
+            shouldBypassMention: true
+          }),
+          shouldAckReaction({
+            scope: "group-mentions",
+            isMentionableGroup: true,
+            requireMention: true,
+            canDetectMention: true,
+            effectiveWasMentioned: false
+          })
+        ];
+        const whatsappGates = [
+          shouldAckReactionForWhatsApp({
+            emoji: "",
+            isDirect: true,
+            isGroup: false,
+            directEnabled: true,
+            groupMode: "always",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: true,
+            isGroup: false,
+            directEnabled: true,
+            groupMode: "mentions",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "never",
+            wasMentioned: true,
+            groupActivated: true
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "always",
+            wasMentioned: false,
+            groupActivated: false
+          }),
+          shouldAckReactionForWhatsApp({
+            emoji: "ok",
+            isDirect: false,
+            isGroup: true,
+            directEnabled: false,
+            groupMode: "mentions",
+            wasMentioned: false,
+            groupActivated: true
+          })
+        ];
+
+        const ackEvents = [];
+        const handle = createAckReactionHandle({
+          ackReactionValue: " ok ",
+          send: async () => { ackEvents.push("send"); },
+          remove: async () => { ackEvents.push("remove"); }
+        });
+        const ackSent = await handle.ackReactionPromise;
+        removeAckReactionHandleAfterReply({ removeAfterReply: true, ackReaction: handle });
+        await wait(0);
+        removeAckReactionAfterReply({
+          removeAfterReply: false,
+          ackReactionPromise: Promise.resolve(true),
+          ackReactionValue: "nope",
+          remove: async () => { ackEvents.push("unexpected"); }
+        });
+        const failedHandle = createAckReactionHandle({
+          ackReactionValue: "fail",
+          send: async () => { throw new Error("send-boom"); },
+          remove: async () => {},
+          onSendError: (err) => ackEvents.push(`error:${err.message || err}`)
+        });
+        const failedSent = await failedHandle.ackReactionPromise;
+
+        const emojis = {
+          queued: "q",
+          thinking: "t",
+          tool: "tool",
+          coding: "code",
+          web: "web",
+          done: "done",
+          error: "err",
+          stallSoft: "soft",
+          stallHard: "hard",
+          compacting: "compact"
+        };
+        const reactionEvents = [];
+        const controller = createStatusReactionController({
+          enabled: true,
+          initialEmoji: "q",
+          emojis,
+          timing: { debounceMs: 0, stallSoftMs: 10000, stallHardMs: 10000 },
+          adapter: {
+            setReaction: async (emoji) => { reactionEvents.push(`set:${emoji}`); },
+            removeReaction: async (emoji) => { reactionEvents.push(`rm:${emoji}`); }
+          }
+        });
+        controller.setQueued();
+        await wait(0);
+        controller.setThinking();
+        await wait(5);
+        controller.setTool("web_search");
+        await wait(5);
+        controller.setTool("process.exec");
+        await wait(5);
+        await controller.setDone();
+
+        return {
+          ackReactions,
+          ackGates,
+          whatsappGates,
+          ackResult: [ackSent, handle.ackReactionValue, failedSent],
+          ackEvents,
+          toolEmojis: [
+            resolveToolEmoji("browser.open", emojis),
+            resolveToolEmoji("process.exec", emojis),
+            resolveToolEmoji("unknown", emojis),
+            resolveToolEmoji("", emojis)
+          ],
+          reactionEvents,
+          targetError: missingTargetError("slack", "Use channel").message,
+          constants: [
+            Array.isArray(CODING_TOOL_TOKENS),
+            Array.isArray(WEB_TOOL_TOKENS),
+            typeof DEFAULT_EMOJIS.queued,
+            DEFAULT_TIMING.debounceMs
+          ],
+          exportTypes: [
+            typeof createAckReactionHandle,
+            typeof createStatusReactionController,
+            typeof genericSdk.createStatusReactionController
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-feedback-plugin",
+                    "name": "Runtime Channel Feedback Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-feedback-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_feedback"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_feedback"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ackReactions": ["account", "channel", "global", "agent"],
+        "ackGates": [False, True, True, True, True, False],
+        "whatsappGates": [False, True, False, True, True],
+        "ackResult": [True, "ok", False],
+        "ackEvents": ["send", "remove", "error:send-boom"],
+        "toolEmojis": ["web", "code", "tool", "tool"],
+        "reactionEvents": [
+            "set:q",
+            "set:t",
+            "set:web",
+            "set:code",
+            "set:done",
+            "rm:q",
+            "rm:t",
+            "rm:web",
+            "rm:code",
+        ],
+        "targetError": "Delivering to slack requires target Use channel",
+        "constants": [True, True, "string", 700],
+        "exportTypes": ["function", "function", "function"],
+    }
 
 
 @pytest.mark.asyncio
