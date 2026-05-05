@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~73.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~73.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -268,6 +268,10 @@ may lag behind this tracker.
   detection, including protocol stripping, allowed extension matching, dotted
   parent-segment rejection, and the matching `text-runtime` reexport.
   - Status: checkpointed in `bcce41be`
+
+- [x] Imported plugin SDK dedupe-runtime shim for ttl/max-size in-memory
+  dedupe caches and process-global dedupe cache resolution.
+  - Status: checkpointed in `865c9df0`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
