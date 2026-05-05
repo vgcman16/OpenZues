@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~67.5% overall, with a reasonable band of ~50-68%.
+- Estimated repo-wide parity: ~67.6% overall, with a reasonable band of ~50-68%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11225,6 +11225,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`15 passed, 327 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `8aa5f0a6`.
+- Microsoft Teams channel-list actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-teams.ts`, and
+  `extensions/msteams/src/graph-teams.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="channel-list"` trims `teamId`,
+  obtains route-backed Graph credentials with delegated-token preference when
+  available, fetches `/teams/{teamId}/channels` with the upstream `$select`
+  field set, follows bounded `@odata.nextLink` pagination, and returns
+  OpenClaw-shaped `{ok, channel, action, channels, truncated}` results. This
+  closes `OZ-PROV-001BP`; repo-wide parity is now estimated at ~67.6%.
+  Remaining Teams Graph action breadth is channel-info.
+- Verified the Microsoft Teams channel-list action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_channel_list_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_channel_list or msteams_member_info or msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`16 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `cf1b7f18`.
 
 ## References
 
