@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.3% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.4% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10595,6 +10595,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 304 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `a220db23`.
+
+- Microsoft Teams adaptive-card inbound monitor/session routing now mirrors
+  OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `monitor-handler/message-handler.ts`, `monitor-handler/thread-session.ts`,
+  and `inbound.ts` behavior for the first inbound slice: Teams
+  `adaptiveCard/action` invokes are serialized with OpenClaw-compatible
+  compact JSON, `conversation.id` strips `;messageid=...` for the
+  conversation target, channel replies prefer the `messageid` thread root over
+  nested `replyToId`, and the native OpenZues session runtime receives the
+  inbound text on the thread-isolated session key. This closes
+  `OZ-PROV-001AJ`; repo-wide parity is now estimated at ~64.4%. Remaining
+  Microsoft Teams breadth is full Bot Framework HTTP inbound wiring, SSO
+  invoke/token exchange persistence, feedback reflection, richer inbound media
+  staging, and welcome/member lifecycle handling.
+- Verified the Microsoft Teams adaptive-card inbound routing slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`10 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `5462df49`.
 
 ## References
 

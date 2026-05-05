@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.4% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5979,9 +5979,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~64.3%. Verified with focused runtime pytest, adjacent Teams
   send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
   `a220db23`.
+- Closed the Microsoft Teams adaptive-card inbound monitor/session routing seam
+  from OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/message-handler.ts`,
+  `extensions/msteams/src/monitor-handler/thread-session.ts`, and
+  `extensions/msteams/src/inbound.ts`: native OpenZues now accepts the
+  service-level Teams inbound activity path for `adaptiveCard/action`,
+  serializes invoke values as compact JSON, strips `;messageid=...` from the
+  stored conversation target, prefers the thread-root `messageid` over nested
+  `replyToId`, and dispatches the inbound text to the thread-isolated session
+  key. Repo-wide parity is now estimated at ~64.4%. Verified with focused
+  runtime pytest, adjacent Teams send/action/provider proof, `ruff check`,
+  and `mypy`; checkpointed in `5462df49`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams
-  inbound monitor/session routing, or
+  send/poll/replay metadata gap, starting with Microsoft Teams full Bot
+  Framework HTTP inbound wiring, feedback/SSO/member lifecycle breadth, or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
