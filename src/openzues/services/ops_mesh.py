@@ -5392,6 +5392,82 @@ def _msteams_action_content(params: dict[str, Any]) -> str:
     return ""
 
 
+def _msteams_action_upload_file_path(params: dict[str, Any]) -> str:
+    for key in ("filePath", "path", "media"):
+        value = _message_action_param_raw_string(params, key)
+        if value is not None:
+            return value
+    raise RuntimeError("Upload-file requires media, filePath, or path.")
+
+
+def _msteams_action_upload_channel_data(
+    params: dict[str, Any],
+    *,
+    filename: str | None,
+    message: str,
+) -> dict[str, object]:
+    raw_channel_data = params.get("channelData")
+    channel_data: dict[str, object] = (
+        dict(raw_channel_data) if isinstance(raw_channel_data, Mapping) else {}
+    )
+    for key in (
+        "msteamsFileInfo",
+        "msteamsFile",
+        "teamsFileInfo",
+        "teamsFile",
+        "msteamsFileInfos",
+        "msteamsFiles",
+        "teamsFileInfos",
+        "teamsFiles",
+        "msteamsFileConsent",
+        "teamsFileConsent",
+        "fileConsent",
+        "msteamsGraphUpload",
+        "msteamsSharePointUpload",
+        "teamsGraphUpload",
+        "teamsSharePointUpload",
+        "graphUpload",
+    ):
+        value = params.get(key)
+        if isinstance(value, Mapping):
+            channel_data.setdefault(key, dict(value))
+        elif isinstance(value, list):
+            channel_data.setdefault(key, value)
+    if filename and not any(
+        key in channel_data
+        for key in (
+            "msteamsFileInfo",
+            "msteamsFile",
+            "teamsFileInfo",
+            "teamsFile",
+            "msteamsFileInfos",
+            "msteamsFiles",
+            "teamsFileInfos",
+            "teamsFiles",
+            "msteamsFileConsent",
+            "teamsFileConsent",
+            "fileConsent",
+            "msteamsGraphUpload",
+            "msteamsSharePointUpload",
+            "teamsGraphUpload",
+            "teamsSharePointUpload",
+            "graphUpload",
+        )
+    ):
+        size_in_bytes = _optional_int_payload_value(params, "sizeInBytes")
+        if size_in_bytes is not None and size_in_bytes >= 0:
+            file_consent: dict[str, object] = {
+                "filename": filename,
+                "sizeInBytes": size_in_bytes,
+            }
+            if message:
+                file_consent["description"] = message
+            channel_data["msteamsFileConsent"] = file_consent
+        else:
+            channel_data["msteamsGraphUpload"] = {"filename": filename}
+    return channel_data
+
+
 def _msteams_graph_conversation_target(raw_target: str | None) -> str:
     target = str(raw_target or "").strip()
     if not target:
@@ -14859,6 +14935,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_msteams_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "upload-file":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action upload-file."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_upload_file_message_action,
                 route,
                 request,
                 secret_token,
@@ -25821,6 +25913,61 @@ class OpsMeshService:
             "channel": "msteams",
             "conversationId": conversation_id,
         }
+
+    def _dispatch_msteams_upload_file_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        media_url = _msteams_action_upload_file_path(request.params)
+        message = _msteams_action_content(request.params)
+        filename = _message_action_param_string(
+            request.params,
+            "filename",
+        ) or _message_action_param_string(request.params, "title")
+        event: dict[str, Any] = {
+            "to": target,
+            "message": message,
+            "mediaUrl": media_url,
+        }
+        reply_to_id = (
+            _message_action_param_string(request.params, "replyToId")
+            or _message_action_param_string(request.params, "threadId")
+            or _message_action_param_string(request.params, "thread")
+        )
+        if reply_to_id:
+            event["replyToId"] = reply_to_id
+        channel_data = _msteams_action_upload_channel_data(
+            request.params,
+            filename=filename,
+            message=message,
+        )
+        if channel_data:
+            event["channelData"] = channel_data
+        native_result = self._post_msteams_provider_event(
+            route,
+            "gateway/send",
+            event,
+            secret_token,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "upload-file",
+            "messageId": str(native_result.get("messageId") or "unknown"),
+            "conversationId": str(
+                native_result.get("conversationId")
+                or native_result.get("chatId")
+                or native_result.get("channelId")
+                or ""
+            ),
+        }
+        pending_upload_id = str(native_result.get("pendingUploadId") or "").strip()
+        if pending_upload_id:
+            result["pendingUploadId"] = pending_upload_id
+        return result
 
     def _dispatch_msteams_read_message_action(
         self,
