@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~70.5% overall, with a reasonable band of ~50-70%.
+- Estimated repo-wide parity: ~70.6% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -77,6 +77,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - ESM-style bundled plugin runtime entries now use the same native import path
   through a temporary CommonJS transform for common OpenClaw
   `import ... from "openclaw/plugin-sdk/*"` and `export default` syntax.
+- Imported ESM-style OpenClaw plugin runtime tools now have invoke-path proof:
+  `tools.invoke` executes transformed `export default` runtime entries while
+  preserving the OpenClaw plugin-SDK text-runtime alias shim.
 - Plugin manifest provider metadata now preserves OpenClaw provider endpoint
   suffix/Vertex fields plus provider-scoped `modelIdNormalization` and
   `providerRequest` contracts in `plugins list --json` and persisted registry
@@ -2135,7 +2138,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
 - Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/direct-media/read-media/post-media/local-media-root/audio-as-voice/media-max/capabilities/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; broader Feishu inbound receiver/audio transcription and other provider edge cases remain open.
-- Remote marketplace clone/update breadth and deeper runtime plugin activation/import execution breadth beyond the verified CommonJS invoke bridge, including ESM execution proof and richer plugin SDK execution context.
+- Remote marketplace clone/update breadth and deeper runtime plugin activation/import execution breadth beyond the verified CommonJS/ESM invoke bridge, especially richer plugin SDK execution context.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -11724,6 +11727,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`2 passed, 512 deselected`), `ruff check
   src\openzues\cli.py tests\test_gateway_node_methods.py`, and `mypy
   src\openzues\cli.py`. Checkpointed in `d80b0252`.
+- Imported ESM-style OpenClaw plugin runtime tools now have invoke-path proof:
+  a transformed runtime entry using `import ... from
+  "openclaw/plugin-sdk/text-runtime"` and `export default` registers a tool,
+  and `tools.invoke` executes it through the native Node bridge while
+  preserving the SDK alias shim. This closes `OZ-PLUGIN-001RU`; repo-wide
+  parity is now estimated at ~70.6%. The next plugin seam is richer plugin SDK
+  execution context for imported runtime tools.
+- Verified the ESM runtime execution slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_executes_imported_openclaw_esm_runtime_entry_tool -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or plugin_executor"`
+  (`11 passed, 803 deselected`), `ruff check
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `311f37e1`.
 
 ## References
 

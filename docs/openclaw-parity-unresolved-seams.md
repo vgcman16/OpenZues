@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~70.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~70.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6601,9 +6601,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~70.5%. Verified with focused `tools.invoke` pytest,
   adjacent plugin invoke/import proofs, `ruff check`, and `mypy`; source/test
   checkpointed in `d80b0252`.
+- Closed the imported ESM-style OpenClaw plugin runtime execution proof from
+  `src/plugins/loader.ts`, `src/plugins/sdk-alias.ts`,
+  `src/plugins/tools.ts`, and `src/gateway/tools-invoke-shared.ts`: a
+  transformed `export default` runtime entry that imports
+  `openclaw/plugin-sdk/text-runtime` now registers an executable tool and
+  runs through `tools.invoke` via the same native Node bridge, preserving the
+  plugin-SDK alias shim. Repo-wide parity is now estimated at ~70.6%.
+  Verified with focused ESM invoke pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `311f37e1`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  runtime/plugin gap, continuing ESM runtime entry execution and richer plugin
-  SDK execution-context breadth from `src/plugins/tools.ts`,
+  runtime/plugin gap, continuing richer plugin SDK execution-context breadth
+  for imported runtime tools from `src/plugins/tools.ts`,
   `src/plugins/registry.ts`, and `src/gateway/tools-invoke-shared.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
