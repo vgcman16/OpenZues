@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The manifest web-content extractor contract slice is verified and awaiting
-checkpoint commit.
+The manifest web-content extractor contract slice is checkpointed in
+`3b392789`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
@@ -50,7 +50,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Package distribution doctor diagnostics checkpointed in `47d73351` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Web-content extractor contract metadata verified; checkpoint pending | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Web-content extractor contract metadata checkpointed in `3b392789` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -67,7 +67,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     `web-content-extractor:<id>` capability strings.
   - Evidence required: focused plugin list JSON test, adjacent plugin manifest
     contract projection tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `3b392789`
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts

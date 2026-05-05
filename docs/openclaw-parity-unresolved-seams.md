@@ -5514,7 +5514,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~59.9%; runtime/CLI/doctor and
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   web-content extractor contract pytest, adjacent plugin manifest inventory
-  proof, `ruff check`, and `mypy`; checkpoint pending commit.
+  proof, `ruff check`, and `mypy`; checkpointed in `3b392789`.
 - Next repo-wide queue head: continue plugin manifest/runtime contract breadth
   with `contracts.migrationProviders` / `contracts.externalAuthProviders`, or
   rotate to packaging/companion/provider breadth if a stronger source-backed

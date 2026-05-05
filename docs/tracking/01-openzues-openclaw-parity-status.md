@@ -169,7 +169,7 @@ may lag behind this tracker.
 - [x] Manifest web-content extractor contract metadata, preserving
   `contracts.webContentExtractors` in `plugins list --json` records and
   capability strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `3b392789`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -598,7 +598,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/web-content-extractors.runtime.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `3b392789`.
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
