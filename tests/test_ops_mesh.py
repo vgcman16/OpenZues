@@ -18858,6 +18858,147 @@ async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_se
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_message_text_without_mentions() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-message-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-message-2"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-1",
+            "type": "message",
+            "text": "  <at>OpenZues</at> Ship the release notes.  ",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "Ship the release notes.")]
+    assert result["text"] == "Ship the release notes."
+    assert result["messageId"] == "inbound-message-2"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_html_attachment_text_fallback() -> None:
+    conversation_id = "19:group-chat@thread.v2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-html-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-html-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-html-1",
+            "type": "message",
+            "text": " ",
+            "attachments": [
+                {
+                    "contentType": "text/html",
+                    "content": (
+                        '<p><at>OpenZues</at> Review '
+                        '<a href="https://example.test/runbook">runbook</a>'
+                        " &amp; ship.</p>"
+                    ),
+                }
+            ],
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "groupChat",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="group",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Review runbook https://example.test/runbook & ship.")
+    ]
+    assert result["text"] == "Review runbook https://example.test/runbook & ship."
+    assert result["messageId"] == "inbound-html-message-1"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

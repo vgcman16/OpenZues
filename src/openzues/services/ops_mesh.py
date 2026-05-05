@@ -5,6 +5,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import html
 import io
 import ipaddress
 import json
@@ -4055,10 +4056,57 @@ def _msteams_serialize_adaptive_card_action_value(
         return None
 
 
+def _msteams_strip_mention_tags(text: str) -> str:
+    return re.sub(r"<at[^>]*>.*?</at>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+
+def _msteams_html_attachment_text(activity: Mapping[str, Any]) -> str | None:
+    attachments = activity.get("attachments")
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        content_type = str(attachment.get("contentType") or "").strip().lower()
+        if content_type != "text/html":
+            continue
+        content = attachment.get("content")
+        raw = ""
+        if isinstance(content, str):
+            raw = content
+        elif isinstance(content, Mapping):
+            raw = str(content.get("text") or content.get("body") or "")
+        if not raw:
+            continue
+        normalized = re.sub(
+            r"<at[^>]*>.*?</at>",
+            " ",
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        normalized = re.sub(
+            r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+            r"\2 \1",
+            normalized,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        normalized = re.sub(r"<br\s*/?>", "\n", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"</p>", "\n", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<[^>]+>", " ", normalized)
+        normalized = html.unescape(normalized.replace("\xa0", " "))
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def _msteams_inbound_activity_text(activity: Mapping[str, Any]) -> str | None:
     activity_type = str(activity.get("type") or "").strip().lower()
     if activity_type == "message":
         text = str(activity.get("text") or "").strip()
+        if not text:
+            text = _msteams_html_attachment_text(activity) or ""
+        text = _msteams_strip_mention_tags(text)
         return text or None
     if (
         activity_type == "invoke"
