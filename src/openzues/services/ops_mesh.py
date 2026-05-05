@@ -284,6 +284,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "telegram",
     "whatsapp",
     "zalo",
+    "msteams",
     "twitch",
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
@@ -3448,6 +3449,121 @@ def _msteams_message_id(result: object) -> str | None:
         if normalized:
             return normalized
     return None
+
+
+def _msteams_file_info_entries(event: Mapping[str, Any]) -> list[Mapping[str, object]]:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsFileInfo",
+            "msteamsFile",
+            "teamsFileInfo",
+            "teamsFile",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return [cast(Mapping[str, object], value)]
+        for key in (
+            "msteamsFileInfos",
+            "msteamsFiles",
+            "teamsFileInfos",
+            "teamsFiles",
+        ):
+            value = container.get(key)
+            if isinstance(value, list) and all(isinstance(item, Mapping) for item in value):
+                return [cast(Mapping[str, object], item) for item in value]
+    return []
+
+
+def _msteams_file_info_value(
+    file_info: Mapping[str, object],
+    *keys: str,
+) -> str | None:
+    for key in keys:
+        value = file_info.get(key)
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _msteams_file_unique_id(file_info: Mapping[str, object]) -> str:
+    raw_unique_id = _msteams_file_info_value(file_info, "uniqueId", "fileId", "id")
+    if raw_unique_id:
+        unique_id = raw_unique_id.strip("\"'").replace("{", "").replace("}", "").strip()
+        if unique_id:
+            return unique_id
+    raw_etag = _msteams_file_info_value(file_info, "eTag", "etag")
+    if raw_etag is None:
+        raise RuntimeError("Microsoft Teams file info card requires eTag or uniqueId.")
+    unique_id = (
+        raw_etag.strip("\"'")
+        .replace("{", "")
+        .replace("}", "")
+        .split(",", maxsplit=1)[0]
+        .strip()
+    )
+    if not unique_id:
+        raise RuntimeError("Microsoft Teams file info card requires a unique file id.")
+    return unique_id
+
+
+def _msteams_file_type(filename: str) -> str:
+    last_dot = filename.rfind(".")
+    if last_dot < 0 or last_dot == len(filename) - 1:
+        return ""
+    return filename[last_dot + 1 :].strip().lower()
+
+
+def _msteams_file_info_card(file_info: Mapping[str, object]) -> dict[str, object]:
+    filename = _msteams_file_info_value(
+        file_info,
+        "name",
+        "filename",
+        "fileName",
+        "displayName",
+    )
+    if filename is None:
+        raise RuntimeError("Microsoft Teams file info card requires a filename.")
+    content_url = _msteams_file_info_value(
+        file_info,
+        "webDavUrl",
+        "webDavURL",
+        "contentUrl",
+        "contentURL",
+    )
+    if _normalized_http_webhook_url(content_url) is None:
+        raise RuntimeError("Microsoft Teams file info card requires an HTTP webDavUrl.")
+    return {
+        "contentType": "application/vnd.microsoft.teams.card.file.info",
+        "contentUrl": str(content_url),
+        "name": filename,
+        "content": {
+            "uniqueId": _msteams_file_unique_id(file_info),
+            "fileType": _msteams_file_type(filename),
+        },
+    }
+
+
+def _msteams_file_info_cards_from_event(
+    *,
+    event: Mapping[str, Any],
+    media_urls: list[str],
+) -> list[dict[str, object]]:
+    entries = _msteams_file_info_entries(event)
+    if not entries:
+        raise RuntimeError(
+            "Microsoft Teams native media delivery requires FileConsentCard or "
+            "Graph upload support and is not available for this route yet."
+        )
+    if len(entries) != len(media_urls):
+        raise RuntimeError(
+            "Microsoft Teams file info card metadata must match the mediaUrls count."
+        )
+    return [_msteams_file_info_card(entry) for entry in entries]
 
 
 def _msteams_poll_card(
@@ -21301,7 +21417,7 @@ class OpsMeshService:
                 options=options,
                 max_selections=max_selections,
             )
-            payload: dict[str, object] = {
+            activity_payload: dict[str, object] = {
                 "type": "message",
                 "attachments": [
                     {
@@ -21323,15 +21439,16 @@ class OpsMeshService:
                     else None
                 ),
             )
+            file_cards: list[dict[str, object]] = []
             if media_urls:
-                raise RuntimeError(
-                    "Microsoft Teams native media delivery requires FileConsentCard or "
-                    "Graph upload support and is not available for this route yet."
+                file_cards = _msteams_file_info_cards_from_event(
+                    event=event,
+                    media_urls=media_urls,
                 )
-            if not message:
-                raise RuntimeError("Microsoft Teams send requires text.")
+            if not message and not file_cards:
+                raise RuntimeError("Microsoft Teams send requires text or media.")
 
-            payload = {
+            activity_payload = {
                 "type": "message",
                 "channelData": {"feedbackLoopEnabled": False},
                 "entities": [
@@ -21344,7 +21461,9 @@ class OpsMeshService:
                 ],
             }
             if message:
-                payload["text"] = message
+                activity_payload["text"] = message
+            if file_cards:
+                activity_payload["attachments"] = file_cards
         else:
             raise RuntimeError("Microsoft Teams native provider route does not support this event.")
         result = self._request_json_provider_url(
@@ -21357,7 +21476,7 @@ class OpsMeshService:
                 ),
             ),
             method="POST",
-            payload=payload,
+            payload=activity_payload,
             secret_header_name="Authorization",
             secret_token=self._msteams_bearer_token(
                 route_config=route_config,
@@ -21377,6 +21496,39 @@ class OpsMeshService:
             native_result["pollId"] = poll_id
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
+        if event_type == "gateway/send":
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            if media_urls:
+                native_result["mediaUrls"] = media_urls
+                file_cards = _msteams_file_info_cards_from_event(
+                    event=event,
+                    media_urls=media_urls,
+                )
+                native_result["filenames"] = [
+                    str(card.get("name") or "").strip()
+                    for card in file_cards
+                    if str(card.get("name") or "").strip()
+                ]
+                file_ids: list[str] = []
+                for card in file_cards:
+                    content = card.get("content")
+                    if not isinstance(content, dict):
+                        continue
+                    unique_id = str(content.get("uniqueId") or "").strip()
+                    if unique_id:
+                        file_ids.append(unique_id)
+                if file_ids:
+                    native_result["fileIds"] = file_ids
         return native_result
 
     def _post_signal_provider_event(
