@@ -14984,6 +14984,29 @@ class OpsMeshService:
                 request,
                 graph_secret_token,
             )
+        if channel == "msteams" and action == "channel-info":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action channel-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_channel_info_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
         if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -25965,6 +25988,37 @@ class OpsMeshService:
             "action": "channel-list",
             "channels": channels,
             "truncated": next_url is not None,
+        }
+
+    def _dispatch_msteams_channel_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        team_id = _message_action_param_string(request.params, "teamId")
+        channel_id = _message_action_param_string(request.params, "channelId")
+        if team_id is None or channel_id is None:
+            raise RuntimeError("channel-info requires teamId and channelId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            (
+                "https://graph.microsoft.com/v1.0/teams/"
+                f"{quote(team_id, safe='')}/channels/{quote(channel_id, safe='')}?"
+                "$select=id,displayName,description,membershipType,webUrl,createdDateTime"
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "channel-info",
+            "channelInfo": _msteams_channel_summary(result),
         }
 
     def _dispatch_msteams_react_message_action(
