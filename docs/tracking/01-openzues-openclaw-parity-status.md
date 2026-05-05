@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -146,6 +146,12 @@ may lag behind this tracker.
   `normalizeStringifiedOptionalString`, and `hasNonEmptyString` for imported
   runtime tools.
   - Status: checkpointed in `91918c38`
+
+- [x] Imported plugin SDK error-runtime helper shim for common error
+  formatting and extraction helpers, preserving `formatErrorMessage`,
+  `formatUncaughtError`, `extractErrorCode`, and `readErrorName` for imported
+  runtime tools.
+  - Status: checkpointed in `7888c8de`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1114,10 +1120,21 @@ may lag behind this tracker.
     `8cb314f4`, ESM plugin runtime entry import checkpointed in `eb11e22f`,
     imported CommonJS runtime execution checkpointed in `d80b0252`, ESM
     runtime execution checkpointed in `311f37e1`, and runtime tool factory
-    context checkpointed in `ef254cbf`, and text-runtime helper shim
-    checkpointed in `91918c38`, but broader plugin SDK helper/runtime surface
-    breadth remains.
+    context checkpointed in `ef254cbf`, text-runtime helper shim checkpointed
+    in `91918c38`, and error-runtime helper shim checkpointed in `7888c8de`,
+    but broader plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK error-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/error-runtime.ts` and
+    `openclaw-main/src/infra/errors.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `7888c8de`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused error-runtime helper proof (`1
+    passed`), adjacent plugin invoke proof (`14 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] Imported plugin SDK text-runtime helper shim.
   - Source: `openclaw-main/src/plugin-sdk/text-runtime.ts` and
