@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The QR invalid URL preflight slice is checkpointed in `f21c799c`.
+The QR remote fail-closed preflight slice is checkpointed in `12dee789`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
@@ -51,10 +51,26 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | ESM runtime entry import checkpointed in `eb11e22f` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | QR invalid URL preflight checkpointed in `f21c799c` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code JSON/human/remote breadth |
+| OZ-COMP-001 | Companion apps/nodes parity | QR remote preflight checkpointed in `12dee789` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code JSON/human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark native outbound route checkpointed in `d1515da1` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-COMP-001E` QR remote fail-closed preflight
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --setup-code-only --remote` refuses to issue a
+    bootstrap token unless a concrete remote URL source is supplied, returning
+    the upstream `qr --remote requires gateway.remote.url (or
+    gateway.tailscale.mode=serve/funnel).` diagnostic.
+  - Evidence required: focused remote-preflight CLI test, adjacent QR tests,
+    ruff, mypy
+  - Status: checkpointed in `12dee789`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused remote-preflight QR proof (`1 passed`),
+    adjacent QR proof (`3 passed, 496 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-COMP-001D` QR invalid URL preflight
   - Source: `openclaw-main/src/cli/qr-cli.test.ts`,
