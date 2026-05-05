@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.5% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5877,6 +5877,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   reaction summary objects. Repo-wide parity is now estimated at ~63.4%.
   Verified with focused runtime pytest, adjacent action/provider proof, `ruff
   check`, and `mypy`; checkpointed in `4996cf5c`.
+- Closed the Microsoft Teams native readiness probe seam from OpenClaw
+  `extensions/msteams/src/probe.ts`, `extensions/msteams/src/token.ts`,
+  `extensions/msteams/src/token-response.ts`, and
+  `extensions/msteams/src/sdk.ts`: native `kind="msteams"` routes now
+  participate in `channels status --probe`, validate Bot Framework app-token
+  posture from route `appId`/`tenantId` plus secret, attempt Graph app-token
+  posture discovery, project optional Graph token roles/scopes when JWT
+  payloads expose them, and return native-provider readiness metadata through
+  runtime and CLI probe envelopes. Repo-wide parity is now estimated at
+  ~63.5%. Verified with focused runtime/CLI pytest, adjacent runtime/CLI
+  proof, `ruff check`, and `mypy`; checkpointed in `50d05198`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams stored
   conversation-reference, media/thread/delegated-action/vote-invoke breadth or

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.4% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.5% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10413,6 +10413,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 295 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `4996cf5c`.
+
+- Microsoft Teams native readiness probe support now mirrors OpenClaw's
+  `extensions/msteams/src/probe.ts`, `extensions/msteams/src/token.ts`,
+  `extensions/msteams/src/token-response.ts`, and
+  `extensions/msteams/src/sdk.ts` account-token posture: native
+  `kind="msteams"` routes participate in `channels status --probe`, validate
+  Bot Framework app credentials from route `appId`/`tenantId` plus secret,
+  attempt Graph app-token posture discovery, project optional roles/scopes
+  when token payloads expose them, and return OpenZues native-provider
+  readiness metadata through runtime and CLI probe envelopes. This closes
+  `OZ-PROV-001AA`; repo-wide parity is now estimated at ~63.5%. Remaining
+  Microsoft Teams breadth is stored conversation/user target lookup, live
+  threaded replies, FileConsentCard/Graph media upload, delegated write
+  actions, vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams readiness probe slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_probe_channel_account_uses_msteams_native_route -q`
+  (`1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_channels_status_json_reports_msteams_native_probe -q`
+  (`1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or msteams_reactions or probe_channel_account_uses_msteams_native_route or signal_react or matrix_reactions_list_route"`
+  (`8 passed, 297 deselected`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_native_probe or msteams_poll_support or channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or line_native_probe"`
+  (`3 passed, 508 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpointed in `50d05198`.
 
 ## References
 
