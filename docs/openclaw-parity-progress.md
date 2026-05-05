@@ -12990,6 +12990,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`74 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `1bbd7ed9`.
+- Imported OpenClaw plugin runtime entries now have source-backed webhook
+  helper breadth from `src/plugin-sdk/webhook-path.ts`,
+  `src/plugin-sdk/webhook-memory-guards.ts`,
+  `src/plugin-sdk/webhook-request-guards.ts`, and
+  `src/plugin-sdk/webhook-targets.ts`: path normalization/resolution,
+  in-memory fixed-window rate limits, bounded counters, anomaly tracking,
+  JSON content-type checks, request guard rejection responses, in-flight
+  request limiting, route target registration/lifecycle cleanup, request-path
+  target resolution, request pipeline dispatch/release behavior, sync/async
+  single-target matching, auth rejection responses, non-POST rejection, scoped
+  SDK aliases, and generic SDK re-exports are now available through
+  `tools.invoke`. This closes `OZ-PLUGIN-001UG`; repo-wide parity is now
+  estimated at ~77.0%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the webhook helper shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_webhook_helpers -q`
+  (`1 passed`), adjacent imported-plugin/runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw or plugin_executor"`
+  (`75 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `98a00cc5`.
 
 ## References
 

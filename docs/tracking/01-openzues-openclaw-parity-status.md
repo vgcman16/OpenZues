@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~76.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~77.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -443,6 +443,15 @@ may lag behind this tracker.
   pagination keyboards, stored model override lookup, scoped/unscoped SDK
   aliases, and generic SDK re-exports.
   - Status: checkpointed in `1bbd7ed9`
+
+- [x] Imported plugin SDK webhook helper shim for path normalization/resolution,
+  fixed-window rate limits, bounded counters, anomaly tracking, JSON
+  content-type checks, request guard rejection responses, in-flight request
+  limits, target registration/lifecycle cleanup, request-path target
+  resolution, request pipeline dispatch/release behavior, sync/async
+  single-target matching, auth rejection responses, non-POST rejection,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `98a00cc5`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
