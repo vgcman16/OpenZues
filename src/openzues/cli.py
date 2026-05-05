@@ -93,6 +93,7 @@ from openzues.services.gateway_plugin_activation import (
     resolve_manifest_activation_plans,
 )
 from openzues.services.gateway_plugin_runtime import (
+    GatewayPluginExecutor,
     GatewayPluginRuntimeExecutorSpec,
     build_plugin_runtime_executor_specs_from_active_registry,
 )
@@ -18210,9 +18211,18 @@ async function activatePlugin(plugin) {
       pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
       source: "openclaw-plugin",
       names,
+      runtimeEntrySource: entryPath,
       description:
         definition && typeof definition === "object" && typeof definition.description === "string"
           ? definition.description
+          : undefined,
+      parameters:
+        definition && typeof definition === "object" && definition.parameters
+          ? definition.parameters
+          : undefined,
+      execute:
+        definition && typeof definition === "object" && typeof definition.execute === "function"
+          ? definition.execute
           : undefined,
     });
   };
@@ -18236,6 +18246,22 @@ async function activatePlugin(plugin) {
 }
 
 (async () => {
+  if (context.executeTool) {
+    const result = await activatePlugin(context.plugin || {});
+    if (!result) {
+      throw new Error("OpenClaw plugin runtime execution failed: plugin did not activate");
+    }
+    const toolName = String(context.toolName || "").trim();
+    const tool = result.tools.find((entry) => entry.names.includes(toolName));
+    if (!tool || typeof tool.execute !== "function") {
+      throw new Error(`OpenClaw plugin runtime tool is not executable: ${toolName}`);
+    }
+    const output = await Promise.resolve(
+      tool.execute(String(context.toolCallId || ""), context.args || {}),
+    );
+    process.stdout.write(JSON.stringify({ result: output === undefined ? null : output }));
+    return;
+  }
   const tools = [];
   const importedPluginIds = [];
   for (const plugin of Array.isArray(context.plugins) ? context.plugins : []) {
@@ -18306,14 +18332,77 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
 
 
 async def _native_plugin_runtime_executor(
-    tool: str,
+    tool_call_id: str,
     _args: dict[str, Any],
 ) -> dict[str, object]:
     return {
         "ok": False,
-        "tool": tool,
+        "toolCallId": tool_call_id,
         "error": "OpenClaw plugin runtime execution is not available in this native loader.",
     }
+
+
+def _execute_native_plugin_runtime_tool(
+    *,
+    plugin: dict[str, object],
+    tool: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+) -> object:
+    if shutil.which("node") is None:
+        raise RuntimeError("Node.js is required to execute OpenClaw plugin runtimes.")
+    with tempfile.TemporaryDirectory(prefix="openzues-plugin-runtime-exec-") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        loader_path = tmp_path / "loader.cjs"
+        context_path = tmp_path / "context.json"
+        loader_path.write_text(_NATIVE_PLUGIN_RUNTIME_LOADER_JS, encoding="utf-8")
+        context_path.write_text(
+            json.dumps(
+                {
+                    "executeTool": True,
+                    "plugin": plugin,
+                    "toolName": tool,
+                    "toolCallId": tool_call_id,
+                    "args": args,
+                },
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            ["node", str(loader_path), str(context_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "unknown error").strip()
+        raise RuntimeError(detail[:1000])
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("plugin runtime executor returned invalid JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("plugin runtime executor returned a non-object payload")
+    return payload.get("result")
+
+
+def _native_plugin_runtime_executor_factory(
+    *,
+    plugin: dict[str, object],
+    tool: str,
+) -> GatewayPluginExecutor:
+    async def execute(tool_call_id: str, args: dict[str, Any]) -> object:
+        return await asyncio.to_thread(
+            _execute_native_plugin_runtime_tool,
+            plugin=plugin,
+            tool=tool,
+            tool_call_id=tool_call_id,
+            args=args,
+        )
+
+    return execute
 
 
 def _native_plugin_runtime_specs_from_loader_payload(
@@ -18330,6 +18419,10 @@ def _native_plugin_runtime_specs_from_loader_payload(
         if not isinstance(entry, Mapping):
             continue
         plugin_id = _optional_cli_string(entry.get("pluginId", entry.get("plugin_id")))
+        plugin_name = _optional_cli_string(entry.get("pluginName", entry.get("plugin_name")))
+        runtime_entry_source = _optional_cli_string(
+            entry.get("runtimeEntrySource", entry.get("runtime_entry_source"))
+        )
         raw_names = entry.get("names")
         names = _string_list_or_none(raw_names)
         if not names:
@@ -18343,15 +18436,32 @@ def _native_plugin_runtime_specs_from_loader_payload(
             if key in seen:
                 continue
             seen.add(key)
+            plugin_context: dict[str, object] = {
+                "id": plugin_id or "",
+                "pluginId": plugin_id or "",
+                "name": plugin_name or plugin_id or "",
+                "pluginName": plugin_name or plugin_id or "",
+                "status": "loaded",
+            }
+            if runtime_entry_source is not None:
+                plugin_context["runtimeEntrySource"] = runtime_entry_source
+            executor = (
+                _native_plugin_runtime_executor_factory(
+                    plugin=plugin_context,
+                    tool=tool_name,
+                )
+                if runtime_entry_source is not None
+                else _native_plugin_runtime_executor
+            )
+            parameters = entry.get("parameters")
             specs.append(
                 GatewayPluginRuntimeExecutorSpec(
                     tool=tool_name,
-                    executor=_native_plugin_runtime_executor,
+                    executor=executor,
                     plugin_id=plugin_id,
-                    plugin_name=_optional_cli_string(
-                        entry.get("pluginName", entry.get("plugin_name"))
-                    ),
+                    plugin_name=plugin_name,
                     description=_optional_cli_string(entry.get("description")),
+                    parameters=parameters if isinstance(parameters, Mapping) else None,
                     source=_optional_cli_string(entry.get("source")) or "openclaw-plugin",
                 )
             )

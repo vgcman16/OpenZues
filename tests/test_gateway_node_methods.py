@@ -17,6 +17,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import openzues.cli as cli_module
 from openzues.database import Database, utcnow
 from openzues.schemas import (
     ConversationTargetView,
@@ -5849,6 +5850,84 @@ async def test_tools_invoke_runs_configured_plugin_executor(tmp_path) -> None:
     assert payload == {"ok": True, "result": {"ok": True, "mode": "ok"}}
     assert observed_calls[0][0].startswith("http-")
     assert observed_calls[0][1] == {"mode": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_executes_imported_openclaw_runtime_entry_tool(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin.cjs"
+    runtime_entry.write_text(
+        """
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.echo",
+      description: "Echo through an imported runtime entry",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      async execute(toolCallId, args) {
+        return { ok: true, toolCallId, echoed: args.message };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-entry-plugin",
+                    "name": "Runtime Entry Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.echo"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.echo", "args": {"message": "hello"}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["echoed"] == "hello"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
 
 
 @pytest.mark.asyncio
