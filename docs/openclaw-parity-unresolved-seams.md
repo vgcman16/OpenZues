@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.2% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5535,9 +5535,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   external auth provider contract pytest, adjacent plugin manifest inventory
   proof, `ruff check`, and `mypy`; checkpointed in `5fdfb23c`.
+- Closed the canvas shortcode text normalization seam from OpenClaw
+  `src/chat/canvas-render.ts`: native shortcode extraction now collapses
+  triple-or-more newlines and trims visible assistant text after valid
+  `[embed ...]` removals while preserving fenced and invalid-target shortcodes.
+  Repo-wide parity is now estimated at ~60.2%; browser/canvas/nodes/voice
+  bounded command family remains ~99%. Verified with focused canvas-render
+  pytest, adjacent control-chat canvas preview proof, `ruff check`, and
+  `mypy`; checkpoint pending commit.
 - Next repo-wide queue head: rotate to packaging distribution inventory
-  validity, Telegram audio/voice routing, canvas shortcode normalization, or
-  companion remote-bin discovery based on the strongest source-backed seam.
+  validity, Telegram audio/voice routing, or companion remote-bin discovery
+  based on the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

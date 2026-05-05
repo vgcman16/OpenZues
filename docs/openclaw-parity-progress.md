@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.1% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.2% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9735,6 +9735,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths"` (`12 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `5fdfb23c`.
+
+- Canvas shortcode extraction now matches OpenClaw's final assistant-text
+  normalization: after valid `[embed ...]` shortcodes are removed, visible text
+  collapses triple-or-more newlines to a single blank line and trims leading/
+  trailing whitespace, while fenced shortcodes and invalid targets remain
+  visible. This closes `OZ-CANVAS-001A`; repo-wide parity is now estimated at
+  ~60.2%, while the browser/canvas/nodes/voice bounded command family remains
+  ~99%.
+- Verified the canvas shortcode normalization slice with `python -m pytest
+  tests\test_gateway_canvas_render.py::test_extract_canvas_shortcodes_trims_and_collapses_removed_embed_gap
+  -q` (`1 passed`), `python -m pytest tests\test_gateway_canvas_render.py -q`
+  (`4 passed`), adjacent `python -m pytest tests\test_app.py -q -k
+  "canvas_embed_previews"` (`1 passed, 194 deselected`), `ruff check
+  src\openzues\services\gateway_canvas_render.py
+  tests\test_gateway_canvas_render.py tests\test_app.py`, and `mypy
+  src\openzues\services\gateway_canvas_render.py
+  src\openzues\services\control_chat.py`. Checkpoint pending commit.
 
 ## References
 

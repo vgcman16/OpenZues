@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -180,6 +180,10 @@ may lag behind this tracker.
   `contracts.externalAuthProviders` in `plugins list --json` records and
   capability strings.
   - Status: checkpointed in `5fdfb23c`
+
+- [x] Canvas shortcode text normalization, preserving OpenClaw's visible
+  assistant-message cleanup after valid `[embed ...]` removals.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -642,6 +646,16 @@ may lag behind this tracker.
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts
     -q` (`1 passed`), adjacent plugin manifest inventory proof (`12 passed`),
     `ruff check`, and `mypy`.
+
+- [x] Canvas shortcode text normalization.
+  - Source: `openclaw-main/src/chat/canvas-render.ts`
+  - Target: `src/openzues/services/gateway_canvas_render.py`
+  - Test: `tests/test_gateway_canvas_render.py`, `tests/test_app.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
+    full canvas-render tests (`4 passed`), adjacent control-chat canvas preview
+    proof (`1 passed, 194 deselected`), `ruff check`, and `mypy`.
 
 - [x] Package distribution doctor diagnostics.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,

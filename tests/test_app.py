@@ -8481,7 +8481,7 @@ def test_control_chat_view_extracts_canvas_embed_previews(tmp_path) -> None:
 
         view = asyncio.run(client.app.state.control_chat_service.build_view(dashboard))
 
-    assert view.messages[0].content == "Here is the preview.\n"
+    assert view.messages[0].content == "Here is the preview."
     assert view.messages[0].canvas_previews == [
         {
             "kind": "canvas",
