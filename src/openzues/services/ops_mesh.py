@@ -343,6 +343,7 @@ class _MSTeamsRouteConfig:
     tenant_id: str | None
     conversation_id: str | None
     conversation_type: str | None
+    graph_chat_id: str | None
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -3332,12 +3333,16 @@ def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
         str(query.get("conversationtype") or query.get("conversation_type") or "").strip()
         or None
     )
+    graph_chat_id = (
+        str(query.get("graphchatid") or query.get("graph_chat_id") or "").strip() or None
+    )
     return _MSTeamsRouteConfig(
         service_url=service_url,
         app_id=query.get("appid") or None,
         tenant_id=query.get("tenantid") or None,
         conversation_id=conversation_id,
         conversation_type=conversation_type,
+        graph_chat_id=graph_chat_id,
     )
 
 
@@ -3400,6 +3405,10 @@ def _msteams_resolve_route_conversation_id(
             "The bot must receive a DM from this user before it can send proactively."
         )
     return conversation_id
+
+
+def _msteams_graph_compatible_conversation_id(conversation_id: str) -> bool:
+    return conversation_id.startswith("19:") or "@thread" in conversation_id
 
 
 def _msteams_activity_endpoint(
@@ -3556,6 +3565,62 @@ def _msteams_graph_message_endpoint(
         "https://graph.microsoft.com/v1.0/chats/"
         f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
     )
+
+
+def _msteams_graph_conversation_target_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    raw_target: str | None,
+) -> str:
+    user_id = _msteams_user_target_id(raw_target)
+    if user_id is None:
+        return _msteams_graph_conversation_target(raw_target)
+    if route_config.graph_chat_id:
+        return _msteams_graph_conversation_target(route_config.graph_chat_id)
+    if route_config.conversation_id and _msteams_graph_compatible_conversation_id(
+        route_config.conversation_id
+    ):
+        return _msteams_graph_conversation_target(route_config.conversation_id)
+    raise RuntimeError(
+        "Microsoft Teams user Graph actions require a stored Graph conversation reference."
+    )
+
+
+def _msteams_graph_beta_reaction_endpoint(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    message_id: str,
+    action: Literal["setReaction", "unsetReaction"],
+) -> str:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/beta/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}/{action}"
+        )
+    return (
+        "https://graph.microsoft.com/beta/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}/{action}"
+    )
+
+
+def _msteams_reaction_type(raw_reaction: str | None) -> str:
+    normalized = str(raw_reaction or "").strip()
+    if not normalized:
+        raise RuntimeError("React requires an emoji (reaction type).")
+    lowered = normalized.lower()
+    if lowered in MSTEAMS_REACTION_EMOJIS:
+        return lowered
+    return normalized
 
 
 def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
@@ -11059,16 +11124,23 @@ class OpsMeshService:
                 route,
                 request,
             )
-        if channel == "msteams" and action == "reactions":
+        if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
                 account_id=request.account_id or DEFAULT_ACCOUNT_ID,
             )
             if route is None:
                 raise GatewayOutboundRuntimeUnavailableError(
-                    "No native Microsoft Teams route is configured for message.action reactions."
+                    f"No native Microsoft Teams route is configured for message.action {action}."
                 )
             secret_token = await self._notification_route_secret_token(route)
+            if action in {"react", "unreact"}:
+                return await asyncio.to_thread(
+                    self._dispatch_msteams_react_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
             return await asyncio.to_thread(
                 self._dispatch_msteams_reactions_message_action,
                 route,
@@ -21121,6 +21193,63 @@ class OpsMeshService:
             "ok": True,
             "reactions": _msteams_reaction_summaries(result),
         }
+
+    def _dispatch_msteams_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams react requires a messageId.")
+        raw_reaction = _message_action_param_string(
+            request.params,
+            "emoji",
+            allow_empty=True,
+        ) or _message_action_param_string(
+            request.params,
+            "reactionType",
+            allow_empty=True,
+        )
+        reaction_type = _msteams_reaction_type(raw_reaction)
+        remove = (
+            request.action.strip().lower() == "unreact"
+            or _message_action_param_bool(request.params, "remove") is True
+        )
+        graph_action: Literal["setReaction", "unsetReaction"] = (
+            "unsetReaction" if remove else "setReaction"
+        )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        self._request_json_provider_url(
+            _msteams_graph_beta_reaction_endpoint(
+                route_config=route_config,
+                target=target,
+                message_id=message_id,
+                action=graph_action,
+            ),
+            method="POST",
+            payload={"reactionType": reaction_type},
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "react",
+            "reactionType": str(raw_reaction or "").strip(),
+        }
+        if remove:
+            result["removed"] = True
+        return result
 
     def _post_msteams_provider_event(
         self,
