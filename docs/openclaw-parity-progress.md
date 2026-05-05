@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.6% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~68.7% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11412,6 +11412,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `2203efa7`.
+- Feishu/Lark pin message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="pin"` accepts upstream message-id aliases,
+  POSTs Feishu `im/v1/pins` with route-backed bearer auth, normalizes Feishu
+  pin metadata, and returns OpenClaw-shaped `{ok, channel, action, pin}`
+  results. This closes `OZ-PROV-001CA`; repo-wide parity is now estimated at
+  ~68.7%. The next Feishu message-action seam is `unpin`.
+- Verified the Feishu/Lark pin action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_pin_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`7 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `1615bdf6`.
 
 ## References
 
