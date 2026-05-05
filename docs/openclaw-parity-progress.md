@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~59.9% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.0% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9689,6 +9689,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_discovers_openclaw_manifest_load_paths"` (`10 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `3b392789`.
+
+- Manifest migration provider contracts are now preserved in native
+  `plugins list --json`: `contracts.migrationProviders` entries project into
+  plugin records and capability strings as `migration-provider:<id>`, matching
+  OpenClaw's manifest normalization, bundled contract inventory, and migration
+  provider runtime discovery contracts. This closes `OZ-PLUGIN-001BH`;
+  repo-wide parity is now estimated at ~60.0%, while the active
+  plugin/runtime/CLI bounded path remains ~99.9%.
+- Verified the migration provider contract metadata slice with `python -m
+  pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_migration_provider_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "migration_provider_contracts or web_content_extractor_contracts or
+  document_extractor_contracts or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`11 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpoint pending commit.
 
 ## References
 

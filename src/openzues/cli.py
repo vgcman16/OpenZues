@@ -17983,6 +17983,7 @@ _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "webContentExtractors": "web-content-extractor",
     "webFetchProviders": "web-fetch",
     "webSearchProviders": "web-search",
+    "migrationProviders": "migration-provider",
     "memoryEmbeddingProviders": "memory-embedding",
 }
 
