@@ -10671,6 +10671,264 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_windows_spawn_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-windows-spawn.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const {
+  applyWindowsSpawnProgramPolicy,
+  materializeWindowsSpawnProgram,
+  resolveWindowsExecutablePath,
+  resolveWindowsSpawnProgram,
+  resolveWindowsSpawnProgramCandidate
+} = require("openclaw/plugin-sdk/windows-spawn");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function summarizeProgram(program) {
+  return {
+    command: path.basename(program.command),
+    leadingArgv: (program.leadingArgv || []).map((entry) => path.basename(entry)),
+    resolution: program.resolution,
+    shell: program.shell ?? null,
+    windowsHide: program.windowsHide ?? null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.windows_spawn",
+      description: "Use OpenClaw Windows spawn SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const dir = args.tmpDir;
+        fs.mkdirSync(dir, { recursive: true });
+        const jsPath = path.join(dir, "tool.js");
+        const exePath = path.join(dir, "tool.exe");
+        const shimPath = path.join(dir, "wrapper.cmd");
+        const unresolvedPath = path.join(dir, "plain.cmd");
+        const packageDir = path.join(dir, "node_modules", "pkg");
+        const packageBinDir = path.join(packageDir, "bin");
+        const packageEntry = path.join(packageBinDir, "cli.cjs");
+        const packageShim = path.join(dir, "pkg.cmd");
+        fs.writeFileSync(jsPath, "console.log('tool')\\n", "utf8");
+        fs.writeFileSync(exePath, "", "utf8");
+        fs.writeFileSync(shimPath, "@ECHO off\\r\\n\\\"%~dp0\\\\tool.js\\\" %*\\r\\n", "utf8");
+        fs.writeFileSync(unresolvedPath, "@ECHO off\\r\\necho wrapper\\r\\n", "utf8");
+        fs.mkdirSync(packageBinDir, { recursive: true });
+        fs.writeFileSync(packageEntry, "console.log('pkg')\\n", "utf8");
+        fs.writeFileSync(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({ bin: { pkg: "bin/cli.cjs" } }),
+          "utf8"
+        );
+        fs.writeFileSync(packageShim, "@ECHO off\\r\\necho pkg\\r\\n", "utf8");
+
+        const env = { PATH: dir, PATHEXT: ".EXE;.CMD;.BAT;.JS" };
+        let closedError = "";
+        try {
+          resolveWindowsSpawnProgram({
+            command: unresolvedPath,
+            platform: "win32",
+            env,
+            execPath: "C:\\\\node\\\\node.exe"
+          });
+        } catch (error) {
+          closedError = error.message;
+        }
+        const shellFallback = resolveWindowsSpawnProgram({
+          command: unresolvedPath,
+          platform: "win32",
+          env,
+          execPath: "C:\\\\node\\\\node.exe",
+          allowShellFallback: true
+        });
+        const invocation = materializeWindowsSpawnProgram(shellFallback, [
+          "--cwd",
+          "C:\\\\safe & calc.exe"
+        ]);
+
+        return {
+          direct: summarizeProgram(
+            resolveWindowsSpawnProgram({
+              command: "plain",
+              platform: "linux",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          resolvedExecutable: path.basename(
+            resolveWindowsExecutablePath("tool", {
+              PATH: dir,
+              PATHEXT: ".EXE;.CMD"
+            })
+          ),
+          jsCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: jsPath,
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          shimCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: shimPath,
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          packageCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: packageShim,
+              packageName: "pkg",
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          closedErrorContains: closedError.includes("without shell execution"),
+          shellFallback: summarizeProgram(shellFallback),
+          invocation: {
+            command: path.basename(invocation.command),
+            argv: invocation.argv,
+            resolution: invocation.resolution,
+            shell: invocation.shell ?? null,
+            windowsHide: invocation.windowsHide ?? null
+          },
+          policyDirect: applyWindowsSpawnProgramPolicy({
+            candidate: {
+              command: "cmd",
+              leadingArgv: ["arg"],
+              resolution: "direct",
+              windowsHide: true
+            }
+          }),
+          exportTypes: [
+            typeof resolveWindowsSpawnProgram,
+            typeof resolveWindowsSpawnProgramCandidate,
+            typeof materializeWindowsSpawnProgram,
+            typeof genericSdk.resolveWindowsSpawnProgram
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-windows-spawn-plugin",
+                    "name": "Runtime Windows Spawn Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-windows-spawn-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.windows_spawn"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.windows_spawn", "args": {"tmpDir": str(tmp_path / "spawn")}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "direct": {
+            "command": "plain",
+            "leadingArgv": [],
+            "resolution": "direct",
+            "shell": None,
+            "windowsHide": None,
+        },
+        "resolvedExecutable": "tool.EXE",
+        "jsCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["tool.js"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "shimCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["tool.js"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "packageCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["cli.cjs"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "closedErrorContains": True,
+        "shellFallback": {
+            "command": "plain.cmd",
+            "leadingArgv": [],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "invocation": {
+            "command": "plain.cmd",
+            "argv": ["--cwd", "C:\\safe & calc.exe"],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "policyDirect": {
+            "command": "cmd",
+            "leadingArgv": ["arg"],
+            "resolution": "direct",
+            "windowsHide": True,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
