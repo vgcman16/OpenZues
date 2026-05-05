@@ -5384,6 +5384,32 @@ def _msteams_action_target(request: GatewayMessageActionDispatchRequest) -> str:
     return target
 
 
+def _feishu_action_target(request: GatewayMessageActionDispatchRequest) -> str:
+    target = (
+        _message_action_param_string(request.params, "to")
+        or _message_action_param_string(request.params, "target")
+    )
+    tool_context = request.tool_context or {}
+    if target is None and isinstance(tool_context, dict):
+        target = _message_action_param_string(tool_context, "currentChannelId")
+    if target is None:
+        raise RuntimeError(f"Feishu {request.action.strip() or 'send'} requires a target (to).")
+    return target
+
+
+def _feishu_action_text(params: dict[str, Any], *, action: str) -> str:
+    if params.get("presentation") is not None or params.get("card") is not None:
+        raise RuntimeError(f"Feishu {action} card sending is not available.")
+    if params.get("media") is not None or params.get("mediaUrl") is not None:
+        raise RuntimeError("Feishu media sending is not available.")
+    text = _message_action_param_string(params, "text", allow_empty=True)
+    if text is None:
+        text = _message_action_param_string(params, "message", allow_empty=True)
+    if text is None or not text.strip():
+        raise RuntimeError(f"Feishu {action} requires text/message, media, or card.")
+    return text
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15210,6 +15236,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_twitch_send_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "send":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action send."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_send_message_action,
                 route,
                 request,
                 secret_token,
@@ -26472,6 +26514,31 @@ class OpsMeshService:
             else (_timestamp_ms(datetime.now(UTC)) or 0),
         }
         return result
+
+    def _dispatch_feishu_send_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        action = request.action.strip() or "send"
+        target = _feishu_action_target(request)
+        text = _feishu_action_text(request.params, action=action)
+        native_result = self._post_feishu_provider_event(
+            route,
+            "gateway/send",
+            {
+                "to": target,
+                "message": text,
+            },
+            secret_token,
+        )
+        return {
+            "ok": True,
+            "channel": "feishu",
+            "action": action,
+            **native_result,
+        }
 
     def _post_msteams_provider_event(
         self,
