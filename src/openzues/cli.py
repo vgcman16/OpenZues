@@ -24490,6 +24490,90 @@ function createPreCryptoDirectDmAuthorizer(params) {
   };
 }
 
+async function dispatchInboundDirectDmWithRuntime(params) {
+  const channelRuntime = params.runtime && params.runtime.channel;
+  if (!channelRuntime) {
+    throw new Error("direct-DM runtime requires runtime.channel");
+  }
+  const route = channelRuntime.routing.resolveAgentRoute({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  const sessionStore =
+    params.cfg && params.cfg.session ? params.cfg.session.store : undefined;
+  const storePath = channelRuntime.session.resolveStorePath(sessionStore, {
+    agentId: route.agentId,
+  });
+  const envelopeOptions = channelRuntime.reply.resolveEnvelopeFormatOptions(params.cfg);
+  const previousTimestamp = channelRuntime.session.readSessionUpdatedAt({
+    storePath,
+    sessionKey: route.sessionKey,
+  });
+  const body = channelRuntime.reply.formatAgentEnvelope({
+    channel: params.channelLabel,
+    from: params.conversationLabel,
+    body: params.rawBody,
+    timestamp: params.timestamp,
+    previousTimestamp,
+    envelope: envelopeOptions,
+  });
+  const ctxPayload = channelRuntime.reply.finalizeInboundContext({
+    Body: body,
+    BodyForAgent: params.bodyForAgent ?? params.rawBody,
+    RawBody: params.rawBody,
+    CommandBody: params.commandBody ?? params.rawBody,
+    From: params.senderAddress,
+    To: params.recipientAddress,
+    SessionKey: route.sessionKey,
+    AccountId: route.accountId ?? params.accountId,
+    ChatType: "direct",
+    ConversationLabel: params.conversationLabel,
+    SenderId: params.senderId,
+    Provider: params.provider ?? params.channel,
+    Surface: params.surface ?? params.channel,
+    MessageSid: params.messageId,
+    MessageSidFull: params.messageId,
+    Timestamp: params.timestamp,
+    CommandAuthorized: params.commandAuthorized,
+    OriginatingChannel: params.originatingChannel ?? params.channel,
+    OriginatingTo: params.originatingTo ?? params.recipientAddress,
+    ...(params.extraContext || {}),
+  });
+  try {
+    await channelRuntime.session.recordInboundSession({
+      cfg: params.cfg,
+      channel: params.channel,
+      accountId: route.accountId ?? params.accountId,
+      agentId: route.agentId,
+      routeSessionKey: route.sessionKey,
+      storePath,
+      ctxPayload,
+    });
+  } catch (error) {
+    if (typeof params.onRecordError === "function") {
+      params.onRecordError(error);
+    }
+  }
+  try {
+    await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: params.cfg,
+      dispatcherOptions: {
+        deliver: params.deliver,
+        onError: params.onDispatchError,
+      },
+      replyOptions: {},
+    });
+  } catch (error) {
+    if (typeof params.onDispatchError === "function") {
+      params.onDispatchError(error, { kind: "reply_dispatch" });
+    }
+  }
+  return { route, storePath, ctxPayload };
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -25384,6 +25468,7 @@ const channelInboundRuntime = {
   buildMentionRegexes,
   createChannelInboundDebouncer,
   createDirectDmPreCryptoGuardPolicy,
+  dispatchInboundDirectDmWithRuntime,
   createInboundDebouncer,
   formatInboundEnvelope,
   formatInboundFromLabel,
@@ -25490,6 +25575,12 @@ const directDmAccessRuntime = {
 
 const directDmGuardPolicyRuntime = {
   createDirectDmPreCryptoGuardPolicy,
+};
+
+const directDmRuntime = {
+  ...directDmAccessRuntime,
+  ...directDmGuardPolicyRuntime,
+  dispatchInboundDirectDmWithRuntime,
 };
 
 const markdownTableRuntime = {
@@ -25764,8 +25855,7 @@ const genericSdk = new Proxy(
     ...channelPolicyRuntime,
     ...allowFromRuntime,
     ...accessGroupsRuntime,
-    ...directDmAccessRuntime,
-    ...directDmGuardPolicyRuntime,
+    ...directDmRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26201,6 +26291,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/direct-dm-guard-policy"
   ) {
     return directDmGuardPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/direct-dm" ||
+    request === "@openclaw/plugin-sdk/direct-dm"
+  ) {
+    return directDmRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

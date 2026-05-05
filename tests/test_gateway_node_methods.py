@@ -8691,6 +8691,224 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDirectDmPreCryptoGuardPolicy,
+  dispatchInboundDirectDmWithRuntime,
+  resolveInboundDirectDmAccessWithRuntime
+} = require("openclaw/plugin-sdk/direct-dm");
+const channelInbound = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm",
+      description: "Use OpenClaw direct-DM SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const delivered = [];
+        const runtime = {
+          channel: {
+            routing: {
+              resolveAgentRoute: ({ accountId, peer }) => {
+                calls.push(`route:${peer.id}`);
+                return {
+                  agentId: "agent-main",
+                  accountId,
+                  sessionKey: `dm:${peer.id}`
+                };
+              }
+            },
+            session: {
+              resolveStorePath: (store, { agentId }) => {
+                calls.push(`store:${agentId}:${store.type}`);
+                return "/tmp/direct-dm-session-store";
+              },
+              readSessionUpdatedAt: ({ sessionKey }) => {
+                calls.push(`updated:${sessionKey}`);
+                return 1234;
+              },
+              recordInboundSession: async ({ routeSessionKey, ctxPayload }) => {
+                calls.push(`record:${routeSessionKey}:${ctxPayload.Body}`);
+              }
+            },
+            reply: {
+              resolveEnvelopeFormatOptions: () => ({ mode: "agent" }),
+              formatAgentEnvelope: ({ body, previousTimestamp }) =>
+                `env:${body}:${previousTimestamp}`,
+              finalizeInboundContext: (ctx) => ctx,
+              dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
+                calls.push("dispatch");
+                await dispatcherOptions.deliver({ text: "reply text" });
+              }
+            }
+          }
+        };
+        const result = await dispatchInboundDirectDmWithRuntime({
+          cfg: { session: { store: { type: "jsonl" } } },
+          runtime,
+          channel: "nostr",
+          channelLabel: "Nostr",
+          accountId: "default",
+          peer: { kind: "direct", id: "sender-1" },
+          senderId: "sender-1",
+          senderAddress: "nostr:sender-1",
+          recipientAddress: "nostr:bot-1",
+          conversationLabel: "sender-1",
+          rawBody: "hello world",
+          messageId: "event-123",
+          timestamp: 1710000000000,
+          commandAuthorized: true,
+          provider: "nostr",
+          surface: "direct-dm",
+          deliver: async (payload) => {
+            delivered.push(payload);
+          },
+          onRecordError: (err) => {
+            calls.push(`record-error:${err.message}`);
+          },
+          onDispatchError: (err, info) => {
+            calls.push(`dispatch-error:${info.kind}:${err.message}`);
+          }
+        });
+        return {
+          route: result.route,
+          storePath: result.storePath,
+          ctxPayload: {
+            Body: result.ctxPayload.Body,
+            BodyForAgent: result.ctxPayload.BodyForAgent,
+            RawBody: result.ctxPayload.RawBody,
+            CommandBody: result.ctxPayload.CommandBody,
+            From: result.ctxPayload.From,
+            To: result.ctxPayload.To,
+            SessionKey: result.ctxPayload.SessionKey,
+            AccountId: result.ctxPayload.AccountId,
+            ChatType: result.ctxPayload.ChatType,
+            ConversationLabel: result.ctxPayload.ConversationLabel,
+            SenderId: result.ctxPayload.SenderId,
+            Provider: result.ctxPayload.Provider,
+            Surface: result.ctxPayload.Surface,
+            MessageSid: result.ctxPayload.MessageSid,
+            MessageSidFull: result.ctxPayload.MessageSidFull,
+            Timestamp: result.ctxPayload.Timestamp,
+            CommandAuthorized: result.ctxPayload.CommandAuthorized,
+            OriginatingChannel: result.ctxPayload.OriginatingChannel,
+            OriginatingTo: result.ctxPayload.OriginatingTo
+          },
+          calls,
+          delivered,
+          guard: createDirectDmPreCryptoGuardPolicy({ maxFutureSkewSec: 30 }).maxFutureSkewSec,
+          accessType: typeof resolveInboundDirectDmAccessWithRuntime,
+          exportTypes: [
+            typeof dispatchInboundDirectDmWithRuntime,
+            typeof channelInbound.dispatchInboundDirectDmWithRuntime,
+            typeof genericSdk.dispatchInboundDirectDmWithRuntime
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-plugin",
+                    "name": "Runtime Direct DM Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "route": {
+            "agentId": "agent-main",
+            "accountId": "default",
+            "sessionKey": "dm:sender-1",
+        },
+        "storePath": "/tmp/direct-dm-session-store",
+        "ctxPayload": {
+            "Body": "env:hello world:1234",
+            "BodyForAgent": "hello world",
+            "RawBody": "hello world",
+            "CommandBody": "hello world",
+            "From": "nostr:sender-1",
+            "To": "nostr:bot-1",
+            "SessionKey": "dm:sender-1",
+            "AccountId": "default",
+            "ChatType": "direct",
+            "ConversationLabel": "sender-1",
+            "SenderId": "sender-1",
+            "Provider": "nostr",
+            "Surface": "direct-dm",
+            "MessageSid": "event-123",
+            "MessageSidFull": "event-123",
+            "Timestamp": 1710000000000,
+            "CommandAuthorized": True,
+            "OriginatingChannel": "nostr",
+            "OriginatingTo": "nostr:bot-1",
+        },
+        "calls": [
+            "route:sender-1",
+            "store:agent-main:jsonl",
+            "updated:dm:sender-1",
+            "record:dm:sender-1:env:hello world:1234",
+            "dispatch",
+        ],
+        "delivered": [{"text": "reply text"}],
+        "guard": 30,
+        "accessType": "function",
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
