@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~63.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~63.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams native outbound route slice is checkpointed in `79258ec2`.
+The Microsoft Teams native poll slice is checkpointed in `b0ad5491`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -59,9 +59,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams native route checkpointed in `79258ec2` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams stored conversation/media/thread breadth or next provider-specific send/poll/replay gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams native poll checkpointed in `b0ad5491` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams stored conversation/media/thread/action/vote breadth or next provider-specific send/poll/replay gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001Y` Microsoft Teams native polls
+  - Source: `openclaw-main/extensions/msteams/src/polls.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/outbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/cli.py`,
+    `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Contract: route-backed `kind="msteams"` accepts `gateway/poll`, validates
+    question/options/max selections, builds Adaptive Card 1.5 choice-set
+    payloads with OpenClaw `openclawPollId` / `pollId` submit metadata and
+    Teams `messageBack` action data, posts through Bot Framework proactive
+    activities, returns `pollId`, `messageId`, and conversation metadata, and
+    advertises `poll` through CLI channel capabilities.
+  - Evidence required: focused runtime/CLI tests, adjacent provider/CLI tests,
+    ruff, mypy
+  - Status: checkpointed in `b0ad5491`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams poll proof (`1
+    passed`), focused CLI capability proof (`1 passed`), adjacent provider
+    route proof (`11 passed, 292 deselected`), adjacent CLI proof (`3 passed,
+    507 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001X` Microsoft Teams native outbound route
   - Source: `openclaw-main/extensions/msteams/src/outbound.ts`,

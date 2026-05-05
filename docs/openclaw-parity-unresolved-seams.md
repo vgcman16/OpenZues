@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.3% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -144,6 +144,16 @@ schema/service/CLI/app proofs, adjacent native-route proof, `ruff check`, and
 conversation-reference lookup for `user:` targets, live threaded replies,
 FileConsentCard/Graph media upload, polls, reactions/actions, monitor/inbound
 breadth, and route readiness/doctor depth.
+
+Provider-native Microsoft Teams polls are now landed for the OpenClaw Adaptive
+Card outbound slice: native `kind="msteams"` `gateway/poll` routes validate
+question/options, build Adaptive Card 1.5 choice-set payloads with
+`openclawPollId` / `pollId` submit metadata and Teams `messageBack` action
+data, post through Bot Framework proactive activities, return poll/message/
+conversation metadata, and report `poll` in CLI channel capabilities. Verified
+on 2026-05-05 with focused runtime/CLI proofs, adjacent provider/CLI proofs,
+`ruff check`, and `mypy`; checkpointed in `b0ad5491`. Remaining poll breadth
+is invoke-based vote extraction/storage and inbound notification handling.
 
 Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
 session extension mutation path: admin-scoped callers can patch only registered
@@ -5838,11 +5848,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~63.2%. Verified with focused schema/service/CLI/app
   pytest, adjacent provider route proof, `ruff check`, and `mypy`;
   checkpointed in `79258ec2`.
+- Closed the Microsoft Teams native poll seam from OpenClaw
+  `extensions/msteams/src/polls.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/outbound.ts`: native `kind="msteams"` routes now
+  accept `gateway/poll`, build Bot Framework Adaptive Card 1.5 choice-set
+  payloads with `openclawPollId` / `pollId` submit metadata, return provider
+  `pollId`, `messageId`, and conversation metadata, and advertise poll support
+  through the CLI channel capabilities surface. Repo-wide parity is now
+  estimated at ~63.3%. Verified with focused runtime/CLI pytest, adjacent
+  provider/CLI proof, `ruff check`, and `mypy`; checkpointed in `b0ad5491`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams stored
-  conversation-reference, media/thread/action breadth or another source-backed
-  channel/provider route/action adapter, or packaging/plugin breadth seam if
-  provider discovery proves no smaller route slice.
+  conversation-reference, media/thread/action/vote-invoke breadth or another
+  source-backed channel/provider route/action adapter, or packaging/plugin
+  breadth seam if provider discovery proves no smaller route slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

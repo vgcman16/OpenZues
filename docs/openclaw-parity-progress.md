@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.2% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.3% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10367,6 +10367,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\schemas.py src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_channels.py src\openzues\cli.py`.
   Checkpointed in `79258ec2`.
+
+- Microsoft Teams native poll support now mirrors OpenClaw's
+  `extensions/msteams/src/polls.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/outbound.ts` Adaptive Card send contract: native
+  `kind="msteams"` routes accept `gateway/poll`, validate question/options
+  with the provider option limit, build an Adaptive Card 1.5 `Input.ChoiceSet`
+  with OpenClaw `openclawPollId` / `pollId` submit metadata and Teams
+  `messageBack` action data, post it through the Bot Framework conversation
+  activities endpoint, return `pollId`, `messageId`, and conversation
+  metadata, and advertise `poll` as a CLI channel capability. This closes
+  `OZ-PROV-001Y`; repo-wide parity is now estimated at ~63.3%. Poll vote
+  ingestion/storage through Teams invoke handling remains a follow-up inbound
+  seam.
+- Verified the Microsoft Teams native poll slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route -q`
+  (`1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_channels_capabilities_json_reports_msteams_poll_support -q`
+  (`1 passed`), adjacent provider route proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or twitch_native_route or irc_native_route or signal_native_route or mattermost_native_route"`
+  (`11 passed, 292 deselected`), adjacent CLI capability/route proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_poll_support or routes_create_command_accepts_msteams_native_route or channels_capabilities_json_reports_zalo_support"`
+  (`3 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\cli.py`. Checkpointed in
+  `b0ad5491`.
 
 ## References
 
