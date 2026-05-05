@@ -11128,6 +11128,321 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_fetch_ssrf_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-fetch-ssrf-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const fetchAuth = require("openclaw/plugin-sdk/fetch-auth");
+const requestUrl = require("openclaw/plugin-sdk/request-url");
+const ssrfPolicy = require("openclaw/plugin-sdk/ssrf-policy");
+const ssrfRuntime = require("openclaw/plugin-sdk/ssrf-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.fetch_ssrf_helpers",
+      description: "Use OpenClaw fetch/SSRF SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const fetchCalls = [];
+        const tokenCalls = [];
+        const response = await fetchAuth.fetchWithBearerAuthScopeFallback({
+          url: "https://graph.microsoft.com/v1.0/me",
+          scopes: ["scope-a", "scope-b"],
+          fetchFn: async (url, init) => {
+            const headers = new Headers(init && init.headers);
+            fetchCalls.push({
+              url,
+              authorization: headers.get("authorization")
+            });
+            if (fetchCalls.length === 1) {
+              return new Response("unauthorized", { status: 401 });
+            }
+            return new Response("ok", { status: 200 });
+          },
+          tokenProvider: {
+            getAccessToken: async (scope) => {
+              tokenCalls.push(scope);
+              return `token-${tokenCalls.length}`;
+            }
+          }
+        });
+
+        let httpsError = "";
+        try {
+          await fetchAuth.fetchWithBearerAuthScopeFallback({
+            url: "http://example.com/file",
+            scopes: [],
+            requireHttps: true,
+            fetchFn: async () => new Response("never", { status: 200 })
+          });
+        } catch (error) {
+          httpsError = error.message;
+        }
+
+        const noAttachCalls = [];
+        const noAttachResponse = await fetchAuth.fetchWithBearerAuthScopeFallback({
+          url: "https://example.com/file",
+          scopes: ["scope-a"],
+          fetchFn: async (url, init) => {
+            noAttachCalls.push({
+              url,
+              authorization: new Headers(init && init.headers).get("authorization")
+            });
+            return new Response("unauthorized", { status: 401 });
+          },
+          tokenProvider: {
+            getAccessToken: async () => "unused"
+          },
+          shouldAttachAuth: () => false
+        });
+
+        const migratedChanges = [];
+        const migrated = ssrfPolicy.migrateLegacyFlatAllowPrivateNetworkAlias({
+          entry: {
+            allowPrivateNetwork: true,
+            network: { dangerouslyAllowPrivateNetwork: false }
+          },
+          pathPrefix: "channels.matrix",
+          changes: migratedChanges
+        });
+
+        const privateAllowed = await ssrfPolicy.assertHttpUrlTargetsPrivateNetwork(
+          "http://matrix-synapse:8008",
+          {
+            dangerouslyAllowPrivateNetwork: true,
+            lookupFn: async () => [{ address: "10.0.0.5", family: 4 }]
+          }
+        ).then(() => "ok");
+
+        let privateRejected = "";
+        try {
+          await ssrfPolicy.assertHttpUrlTargetsPrivateNetwork(
+            "http://matrix.example.org:8008",
+            {
+              dangerouslyAllowPrivateNetwork: true,
+              lookupFn: async () => [{ address: "93.184.216.34", family: 4 }],
+              errorMessage: "Matrix homeserver must target private hosts"
+            }
+          );
+        } catch (error) {
+          privateRejected = error.message;
+        }
+
+        return {
+          fetch: {
+            status: response.status,
+            fetchCalls,
+            tokenCalls,
+            httpsError,
+            noAttachStatus: noAttachResponse.status,
+            noAttachCalls
+          },
+          urls: [
+            requestUrl.resolveRequestUrl("https://example.com/a"),
+            requestUrl.resolveRequestUrl(new URL("https://example.com/b")),
+            requestUrl.resolveRequestUrl({ url: "https://example.com/c" }),
+            requestUrl.resolveRequestUrl({ href: "https://example.com/ignored" })
+          ],
+          policies: [
+            ssrfPolicy.isPrivateNetworkOptInEnabled(true),
+            ssrfPolicy.isPrivateNetworkOptInEnabled({
+              network: { dangerouslyAllowPrivateNetwork: true }
+            }),
+            ssrfPolicy.isPrivateNetworkOptInEnabled({
+              network: { dangerouslyAllowPrivateNetwork: false }
+            }),
+            ssrfPolicy.ssrfPolicyFromDangerouslyAllowPrivateNetwork(true),
+            ssrfPolicy.ssrfPolicyFromAllowPrivateNetwork(false),
+            ssrfPolicy.ssrfPolicyFromPrivateNetworkOptIn({
+              allowPrivateNetwork: true
+            }),
+            ssrfPolicy.mergeSsrFPolicies(
+              {
+                allowPrivateNetwork: true,
+                allowedHostnames: ["api.example.com"],
+                hostnameAllowlist: ["downloads.example.com"]
+              },
+              {
+                dangerouslyAllowPrivateNetwork: true,
+                allowRfc2544BenchmarkRange: true,
+                allowIpv6UniqueLocalRange: true,
+                allowedHostnames: ["api.example.com", "cdn.example.com"],
+                hostnameAllowlist: ["downloads.example.com", "assets.example.com"]
+              }
+            ),
+            ssrfRuntime.ssrfPolicyFromHttpBaseUrlAllowedHostname(
+              "https://api.example.com/base"
+            )
+          ],
+          legacy: {
+            hasFlat: ssrfPolicy.hasLegacyFlatAllowPrivateNetworkAlias({
+              allowPrivateNetwork: true
+            }),
+            migrated,
+            changes: migratedChanges
+          },
+          suffix: [
+            ssrfPolicy.normalizeHostnameSuffixAllowlist([
+              "*.TrafficManager.NET",
+              ".trafficmanager.net.",
+              " * ",
+              "x"
+            ]),
+            ssrfPolicy.isHttpsUrlAllowedByHostnameSuffixAllowlist(
+              "https://a.example.com/x",
+              ["example.com"]
+            ),
+            ssrfPolicy.isHttpsUrlAllowedByHostnameSuffixAllowlist(
+              "http://a.example.com/x",
+              ["example.com"]
+            ),
+            ssrfPolicy.buildHostnameAllowlistPolicyFromSuffixAllowlist([
+              "SharePoint.com"
+            ])
+          ],
+          privateNetwork: [
+            ssrfRuntime.isPrivateIpAddress("10.0.0.1"),
+            ssrfRuntime.isBlockedHostnameOrIp("localhost"),
+            ssrfRuntime.isBlockedHostnameOrIp("api.example.com"),
+            privateAllowed,
+            privateRejected
+          ],
+          exportTypes: [
+            typeof fetchAuth.fetchWithBearerAuthScopeFallback,
+            typeof requestUrl.resolveRequestUrl,
+            typeof ssrfPolicy.mergeSsrFPolicies,
+            typeof ssrfRuntime.isPrivateIpAddress,
+            typeof genericSdk.fetchWithBearerAuthScopeFallback,
+            typeof genericSdk.buildHostnameAllowlistPolicyFromSuffixAllowlist
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-fetch-ssrf-helpers-plugin",
+                    "name": "Runtime Fetch SSRF Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-fetch-ssrf-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.fetch_ssrf_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.fetch_ssrf_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "fetch": {
+            "status": 200,
+            "fetchCalls": [
+                {"url": "https://graph.microsoft.com/v1.0/me", "authorization": None},
+                {
+                    "url": "https://graph.microsoft.com/v1.0/me",
+                    "authorization": "Bearer token-1",
+                },
+            ],
+            "tokenCalls": ["scope-a"],
+            "httpsError": "URL must use HTTPS: http://example.com/file",
+            "noAttachStatus": 401,
+            "noAttachCalls": [
+                {"url": "https://example.com/file", "authorization": None}
+            ],
+        },
+        "urls": [
+            "https://example.com/a",
+            "https://example.com/b",
+            "https://example.com/c",
+            "",
+        ],
+        "policies": [
+            True,
+            True,
+            False,
+            {"allowPrivateNetwork": True},
+            None,
+            {"allowPrivateNetwork": True},
+            {
+                "allowPrivateNetwork": True,
+                "dangerouslyAllowPrivateNetwork": True,
+                "allowRfc2544BenchmarkRange": True,
+                "allowIpv6UniqueLocalRange": True,
+                "allowedHostnames": ["api.example.com", "cdn.example.com"],
+                "hostnameAllowlist": ["downloads.example.com", "assets.example.com"],
+            },
+            {"allowedHostnames": ["api.example.com"]},
+        ],
+        "legacy": {
+            "hasFlat": True,
+            "migrated": {
+                "entry": {"network": {"dangerouslyAllowPrivateNetwork": False}},
+                "changed": True,
+            },
+            "changes": [
+                "Moved channels.matrix.allowPrivateNetwork -> "
+                "channels.matrix.network.dangerouslyAllowPrivateNetwork (false)."
+            ],
+        },
+        "suffix": [
+            ["*"],
+            True,
+            False,
+            {"hostnameAllowlist": ["sharepoint.com", "*.sharepoint.com"]},
+        ],
+        "privateNetwork": [
+            True,
+            True,
+            False,
+            "ok",
+            "Matrix homeserver must target private hosts",
+        ],
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

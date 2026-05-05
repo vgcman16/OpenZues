@@ -19352,6 +19352,495 @@ function rejectNonPostWebhookRequest(req, res) {
   return true;
 }
 
+function resolveRequestUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (input && typeof input === "object" && typeof input.url === "string") {
+    return input.url;
+  }
+  return "";
+}
+
+function isAuthFailureStatus(status) {
+  return status === 401 || status === 403;
+}
+
+async function fetchWithBearerAuthScopeFallback(params) {
+  const fetchFn = params.fetchFn || fetch;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(params.url);
+  } catch (_error) {
+    throw new Error(`Invalid URL: ${params.url}`);
+  }
+  if (params.requireHttps === true && parsedUrl.protocol !== "https:") {
+    throw new Error(`URL must use HTTPS: ${params.url}`);
+  }
+
+  const fetchOnce = (headers) =>
+    fetchFn(params.url, {
+      ...(params.requestInit || {}),
+      ...(headers ? { headers } : {}),
+    });
+
+  const firstAttempt = await fetchOnce();
+  if (firstAttempt.ok) {
+    return firstAttempt;
+  }
+  if (!params.tokenProvider) {
+    return firstAttempt;
+  }
+  const shouldRetry = params.shouldRetry || ((response) => isAuthFailureStatus(response.status));
+  if (!shouldRetry(firstAttempt)) {
+    return firstAttempt;
+  }
+  if (params.shouldAttachAuth && !params.shouldAttachAuth(params.url)) {
+    return firstAttempt;
+  }
+  for (const scope of params.scopes || []) {
+    try {
+      const token = await params.tokenProvider.getAccessToken(scope);
+      const authHeaders = new Headers(params.requestInit && params.requestInit.headers);
+      authHeaders.set("Authorization", `Bearer ${token}`);
+      const authAttempt = await fetchOnce(authHeaders);
+      if (authAttempt.ok) {
+        return authAttempt;
+      }
+      if (!shouldRetry(authAttempt)) {
+        continue;
+      }
+    } catch (_error) {
+      // Continue trying remaining scopes, matching OpenClaw's forgiving fallback.
+    }
+  }
+  return firstAttempt;
+}
+
+function asNullableRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function isPrivateNetworkOptInEnabled(input) {
+  if (input === true) {
+    return true;
+  }
+  const record = asNullableRecord(input);
+  if (!record) {
+    return false;
+  }
+  const network = asNullableRecord(record.network);
+  return (
+    record.allowPrivateNetwork === true ||
+    record.dangerouslyAllowPrivateNetwork === true ||
+    (network && network.allowPrivateNetwork === true) ||
+    (network && network.dangerouslyAllowPrivateNetwork === true)
+  );
+}
+
+function ssrfPolicyFromPrivateNetworkOptIn(input) {
+  return isPrivateNetworkOptInEnabled(input) ? { allowPrivateNetwork: true } : undefined;
+}
+
+function ssrfPolicyFromDangerouslyAllowPrivateNetwork(dangerouslyAllowPrivateNetwork) {
+  return ssrfPolicyFromPrivateNetworkOptIn(dangerouslyAllowPrivateNetwork);
+}
+
+function ssrfPolicyFromAllowPrivateNetwork(allowPrivateNetwork) {
+  return ssrfPolicyFromDangerouslyAllowPrivateNetwork(allowPrivateNetwork);
+}
+
+function mergeSsrFPolicies(...policies) {
+  const merged = {};
+  for (const policy of policies) {
+    if (!policy) {
+      continue;
+    }
+    if (policy.allowPrivateNetwork) {
+      merged.allowPrivateNetwork = true;
+    }
+    if (policy.dangerouslyAllowPrivateNetwork) {
+      merged.dangerouslyAllowPrivateNetwork = true;
+    }
+    if (policy.allowRfc2544BenchmarkRange) {
+      merged.allowRfc2544BenchmarkRange = true;
+    }
+    if (policy.allowIpv6UniqueLocalRange) {
+      merged.allowIpv6UniqueLocalRange = true;
+    }
+    if (Array.isArray(policy.allowedHostnames) && policy.allowedHostnames.length) {
+      merged.allowedHostnames = Array.from(
+        new Set([...(merged.allowedHostnames || []), ...policy.allowedHostnames]),
+      );
+    }
+    if (Array.isArray(policy.hostnameAllowlist) && policy.hostnameAllowlist.length) {
+      merged.hostnameAllowlist = Array.from(
+        new Set([...(merged.hostnameAllowlist || []), ...policy.hostnameAllowlist]),
+      );
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function hasLegacyFlatAllowPrivateNetworkAlias(value) {
+  const entry = asNullableRecord(value);
+  return Boolean(entry && Object.prototype.hasOwnProperty.call(entry, "allowPrivateNetwork"));
+}
+
+function migrateLegacyFlatAllowPrivateNetworkAlias(params) {
+  if (!hasLegacyFlatAllowPrivateNetworkAlias(params.entry)) {
+    return { entry: params.entry, changed: false };
+  }
+  const legacyAllowPrivateNetwork = params.entry.allowPrivateNetwork;
+  const currentNetworkRecord = asNullableRecord(params.entry.network);
+  const currentNetwork = currentNetworkRecord ? { ...currentNetworkRecord } : {};
+  const currentDangerousAllowPrivateNetwork = currentNetwork.dangerouslyAllowPrivateNetwork;
+  let resolvedDangerousAllowPrivateNetwork = currentDangerousAllowPrivateNetwork;
+  if (typeof currentDangerousAllowPrivateNetwork === "boolean") {
+    resolvedDangerousAllowPrivateNetwork = currentDangerousAllowPrivateNetwork;
+  } else if (typeof legacyAllowPrivateNetwork === "boolean") {
+    resolvedDangerousAllowPrivateNetwork = legacyAllowPrivateNetwork;
+  } else if (currentDangerousAllowPrivateNetwork === undefined) {
+    resolvedDangerousAllowPrivateNetwork = legacyAllowPrivateNetwork;
+  }
+
+  delete currentNetwork.dangerouslyAllowPrivateNetwork;
+  if (resolvedDangerousAllowPrivateNetwork !== undefined) {
+    currentNetwork.dangerouslyAllowPrivateNetwork = resolvedDangerousAllowPrivateNetwork;
+  }
+  const nextEntry = { ...params.entry };
+  delete nextEntry.allowPrivateNetwork;
+  if (Object.keys(currentNetwork).length > 0) {
+    nextEntry.network = currentNetwork;
+  } else {
+    delete nextEntry.network;
+  }
+  params.changes.push(
+    `Moved ${params.pathPrefix}.allowPrivateNetwork -> ` +
+      `${params.pathPrefix}.network.dangerouslyAllowPrivateNetwork ` +
+      `(${String(resolvedDangerousAllowPrivateNetwork)}).`,
+  );
+  return { entry: nextEntry, changed: true };
+}
+
+function normalizeHostname(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/\.+$/, "");
+}
+
+function normalizeHostnameSet(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return new Set();
+  }
+  return new Set(values.map((value) => normalizeHostname(value)).filter(Boolean));
+}
+
+function normalizeHostnameAllowlist(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeHostname(value))
+        .filter((value) => value !== "*" && value !== "*." && value.length > 0),
+    ),
+  );
+}
+
+function isPrivateNetworkAllowedByPolicy(policy) {
+  return policy && (policy.dangerouslyAllowPrivateNetwork === true || policy.allowPrivateNetwork);
+}
+
+function isHostnameAllowedByPattern(hostname, pattern) {
+  if (pattern.startsWith("*.")) {
+    const suffix = pattern.slice(2);
+    return Boolean(suffix && hostname !== suffix && hostname.endsWith(`.${suffix}`));
+  }
+  return hostname === pattern;
+}
+
+function matchesHostnameAllowlist(hostname, allowlist) {
+  if (!allowlist.length) {
+    return true;
+  }
+  return allowlist.some((pattern) => isHostnameAllowedByPattern(hostname, pattern));
+}
+
+function isPrivateIpAddress(address, policy = {}) {
+  const normalized = normalizeHostname(address);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:")
+  ) {
+    return policy.allowIpv6UniqueLocalRange === true ? false : true;
+  }
+  const parts = normalized.split(".");
+  if (parts.length !== 4 || !parts.every((part) => /^\d+$/.test(part))) {
+    return false;
+  }
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((part) => part < 0 || part > 255)) {
+    return true;
+  }
+  const [a, b] = nums;
+  if (a === 10 || a === 127 || a === 0) {
+    return true;
+  }
+  if (a === 169 && b === 254) {
+    return true;
+  }
+  if (a === 172 && b >= 16 && b <= 31) {
+    return true;
+  }
+  if (a === 192 && b === 168) {
+    return true;
+  }
+  if (a === 100 && b >= 64 && b <= 127) {
+    return true;
+  }
+  if (a === 198 && (b === 18 || b === 19)) {
+    return policy.allowRfc2544BenchmarkRange === true ? false : true;
+  }
+  return false;
+}
+
+function isBlockedHostnameOrIp(hostname, policy) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    return false;
+  }
+  const blockedHostnames = new Set([
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+  ]);
+  return (
+    blockedHostnames.has(normalized) ||
+    normalized.endsWith(".localhost") ||
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".internal") ||
+    isPrivateIpAddress(normalized, policy)
+  );
+}
+
+function normalizeLookupResults(results) {
+  if (!results) {
+    return [];
+  }
+  return Array.isArray(results) ? results : [results];
+}
+
+async function resolvePinnedHostnameWithPolicy(hostname, params = {}) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    throw new Error("Invalid hostname");
+  }
+  const policy = params.policy;
+  const hostnameAllowlist = normalizeHostnameAllowlist(policy && policy.hostnameAllowlist);
+  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) {
+    throw new Error(`Blocked hostname (not in allowlist): ${hostname}`);
+  }
+  const skipPrivateNetworkChecks =
+    isPrivateNetworkAllowedByPolicy(policy) ||
+    normalizeHostnameSet(policy && policy.allowedHostnames).has(normalized);
+  if (!skipPrivateNetworkChecks && isBlockedHostnameOrIp(normalized, policy)) {
+    throw new Error("Blocked hostname or private/internal/special-use IP address");
+  }
+  let results;
+  if (typeof params.lookupFn === "function") {
+    results = await params.lookupFn(normalized, { all: true });
+  } else {
+    results = [{ address: normalized, family: normalized.includes(":") ? 6 : 4 }];
+  }
+  const records = normalizeLookupResults(results);
+  if (records.length === 0) {
+    throw new Error(`Unable to resolve hostname: ${hostname}`);
+  }
+  if (!skipPrivateNetworkChecks) {
+    for (const entry of records) {
+      if (isBlockedHostnameOrIp(entry.address, policy)) {
+        throw new Error("Blocked: resolves to private/internal/special-use IP address");
+      }
+    }
+  }
+  const addresses = Array.from(new Set(records.map((entry) => entry.address).filter(Boolean)));
+  return {
+    hostname: normalized,
+    addresses,
+    lookup: passthrough,
+  };
+}
+
+async function resolvePinnedHostname(hostname, lookupFn) {
+  return resolvePinnedHostnameWithPolicy(hostname, { lookupFn });
+}
+
+async function assertHttpUrlTargetsPrivateNetwork(url, params = {}) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:") {
+    return;
+  }
+  const errorMessage =
+    params.errorMessage || "HTTP URL must target a trusted private/internal host";
+  const hostname = parsed.hostname;
+  if (!hostname) {
+    throw new Error(errorMessage);
+  }
+  if (isBlockedHostnameOrIp(hostname)) {
+    return;
+  }
+  const allowPrivateNetwork =
+    typeof params.dangerouslyAllowPrivateNetwork === "boolean"
+      ? params.dangerouslyAllowPrivateNetwork
+      : params.allowPrivateNetwork;
+  if (allowPrivateNetwork !== true) {
+    throw new Error(errorMessage);
+  }
+  const pinned = await resolvePinnedHostnameWithPolicy(hostname, {
+    lookupFn: params.lookupFn,
+    policy: { allowPrivateNetwork: true },
+  });
+  if (!pinned.addresses.every((address) => isPrivateIpAddress(address))) {
+    throw new Error(errorMessage);
+  }
+}
+
+function normalizeHostnameSuffix(value) {
+  const trimmed = normalizeHostname(value);
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed === "*" || trimmed === "*.") {
+    return "*";
+  }
+  const withoutWildcard = trimmed.replace(/^\*\.?/, "");
+  const withoutLeadingDot = withoutWildcard.replace(/^\.+/, "");
+  return withoutLeadingDot.replace(/\.+$/, "");
+}
+
+function normalizeHostnameSuffixAllowlist(input, defaults) {
+  const source = input && input.length > 0 ? input : defaults;
+  if (!source || source.length === 0) {
+    return [];
+  }
+  const normalized = source.map(normalizeHostnameSuffix).filter(Boolean);
+  if (normalized.includes("*")) {
+    return ["*"];
+  }
+  return Array.from(new Set(normalized));
+}
+
+function isHostnameAllowedBySuffixAllowlist(hostname, allowlist) {
+  if (allowlist.includes("*")) {
+    return true;
+  }
+  const normalized = normalizeHostname(hostname);
+  return allowlist.some((entry) => normalized === entry || normalized.endsWith(`.${entry}`));
+}
+
+function isHttpsUrlAllowedByHostnameSuffixAllowlist(url, allowlist) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      isHostnameAllowedBySuffixAllowlist(parsed.hostname, allowlist)
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function buildHostnameAllowlistPolicyFromSuffixAllowlist(allowHosts) {
+  const normalizedAllowHosts = normalizeHostnameSuffixAllowlist(allowHosts);
+  if (normalizedAllowHosts.length === 0 || normalizedAllowHosts.includes("*")) {
+    return undefined;
+  }
+  const patterns = new Set();
+  for (const normalized of normalizedAllowHosts) {
+    patterns.add(normalized);
+    patterns.add(`*.${normalized}`);
+  }
+  return patterns.size > 0 ? { hostnameAllowlist: Array.from(patterns) } : undefined;
+}
+
+function ssrfPolicyFromHttpBaseUrlAllowedHostname(baseUrl) {
+  const trimmed = String(baseUrl || "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    return { allowedHostnames: [parsed.hostname] };
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function isPrivateOrLoopbackHost(hostname) {
+  return isBlockedHostnameOrIp(hostname);
+}
+
+async function closeDispatcher(dispatcher) {
+  if (!dispatcher) {
+    return;
+  }
+  try {
+    if (typeof dispatcher.close === "function") {
+      await dispatcher.close();
+      return;
+    }
+    if (typeof dispatcher.destroy === "function") {
+      dispatcher.destroy();
+    }
+  } catch (_error) {
+    // Ignore cleanup failures.
+  }
+}
+
+async function fetchWithSsrFGuard(params) {
+  const fetchImpl = params.fetchImpl || fetch;
+  let parsed;
+  try {
+    parsed = new URL(params.url);
+  } catch (_error) {
+    throw new Error("Invalid URL: must be http or https");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Invalid URL: must be http or https");
+  }
+  if (params.requireHttps === true && parsed.protocol !== "https:") {
+    throw new Error("URL must use https");
+  }
+  await resolvePinnedHostnameWithPolicy(parsed.hostname, {
+    lookupFn: params.lookupFn,
+    policy: params.policy,
+  });
+  const response = await fetchImpl(params.url, params.init || {});
+  return {
+    response,
+    finalUrl: params.url,
+    release: async () => undefined,
+  };
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -28026,6 +28515,42 @@ const webhookTargetsRuntime = {
   withResolvedWebhookRequestPipeline,
 };
 
+const requestUrlRuntime = {
+  resolveRequestUrl,
+};
+
+const fetchAuthRuntime = {
+  fetchWithBearerAuthScopeFallback,
+};
+
+const ssrfPolicyRuntime = {
+  assertHttpUrlTargetsPrivateNetwork,
+  buildHostnameAllowlistPolicyFromSuffixAllowlist,
+  hasLegacyFlatAllowPrivateNetworkAlias,
+  isHttpsUrlAllowedByHostnameSuffixAllowlist,
+  isPrivateIpAddress,
+  isPrivateNetworkOptInEnabled,
+  mergeSsrFPolicies,
+  migrateLegacyFlatAllowPrivateNetworkAlias,
+  normalizeHostnameSuffixAllowlist,
+  ssrfPolicyFromAllowPrivateNetwork,
+  ssrfPolicyFromDangerouslyAllowPrivateNetwork,
+  ssrfPolicyFromPrivateNetworkOptIn,
+};
+
+const ssrfRuntime = {
+  ...ssrfPolicyRuntime,
+  closeDispatcher,
+  createPinnedDispatcher: passthrough,
+  fetchWithSsrFGuard,
+  formatErrorMessage,
+  isBlockedHostnameOrIp,
+  isPrivateOrLoopbackHost,
+  resolvePinnedHostname,
+  resolvePinnedHostnameWithPolicy,
+  ssrfPolicyFromHttpBaseUrlAllowedHostname,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -28598,6 +29123,10 @@ const genericSdk = new Proxy(
     ...webhookMemoryGuardsRuntime,
     ...webhookRequestGuardsRuntime,
     ...webhookTargetsRuntime,
+    ...requestUrlRuntime,
+    ...fetchAuthRuntime,
+    ...ssrfPolicyRuntime,
+    ...ssrfRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -28985,6 +29514,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/webhook-targets"
   ) {
     return webhookTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/request-url" ||
+    request === "@openclaw/plugin-sdk/request-url"
+  ) {
+    return requestUrlRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/fetch-auth" ||
+    request === "@openclaw/plugin-sdk/fetch-auth"
+  ) {
+    return fetchAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-policy" ||
+    request === "@openclaw/plugin-sdk/ssrf-policy"
+  ) {
+    return ssrfPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-runtime" ||
+    request === "@openclaw/plugin-sdk/ssrf-runtime"
+  ) {
+    return ssrfRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
