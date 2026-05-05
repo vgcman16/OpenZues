@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.5% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.6% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10439,6 +10439,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
   tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
   Checkpointed in `50d05198`.
+
+- Microsoft Teams user-reference route support now mirrors the OpenClaw
+  `extensions/msteams/src/session-route.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/conversation-store.ts`, and
+  `extensions/msteams/src/conversation-store-helpers.ts` personal-DM send
+  contract: native `msteams:user:<aad-id>` targets are classified as direct
+  peers, route matching accepts stored `user:` references, route target
+  metadata can carry the stored Bot Framework `conversationId` and
+  `conversationType`, user-targeted sends resolve to that stored personal
+  conversation id, and non-personal stored references retain OpenClaw's
+  leakage guard. This closes `OZ-PROV-001AB`; repo-wide parity is now
+  estimated at ~63.6%. Remaining Microsoft Teams breadth is live threaded
+  replies, FileConsentCard/Graph media upload, delegated write actions, vote
+  invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams user-reference routing slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_user_reference_route -q`
+  (`1 passed`), adjacent Teams/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_user_reference_route or msteams_native_route or msteams_reactions or msteams_native_probe"`
+  (`6 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `b88c540d`.
 
 ## References
 

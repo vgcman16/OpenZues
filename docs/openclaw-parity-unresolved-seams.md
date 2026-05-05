@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.6% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5888,9 +5888,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime and CLI probe envelopes. Repo-wide parity is now estimated at
   ~63.5%. Verified with focused runtime/CLI pytest, adjacent runtime/CLI
   proof, `ruff check`, and `mypy`; checkpointed in `50d05198`.
+- Closed the Microsoft Teams user-reference routing seam from OpenClaw
+  `extensions/msteams/src/session-route.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/conversation-store.ts`, and
+  `extensions/msteams/src/conversation-store-helpers.ts`: native
+  `msteams:user:<aad-id>` targets are now classified as direct peers, route
+  matching accepts stored `user:` references, route target metadata can carry
+  a stored Bot Framework `conversationId` and `conversationType`, user-targeted
+  sends resolve to the stored personal conversation id, and non-personal
+  stored references retain OpenClaw's DM leakage guard. Repo-wide parity is now
+  estimated at ~63.6%. Verified with focused runtime pytest, adjacent
+  Teams/provider proof, `ruff check`, and `mypy`; checkpointed in `b88c540d`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams stored
-  conversation-reference, media/thread/delegated-action/vote-invoke breadth or
+  send/poll/replay metadata gap, starting with Microsoft Teams
+  media/thread/delegated-action/vote-invoke breadth or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
