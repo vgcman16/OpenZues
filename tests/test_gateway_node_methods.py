@@ -7336,6 +7336,136 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_tool_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-tool-payload.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  extractToolPayload,
+  parseStandalonePlainTextToolCallBlocks,
+  stripPlainTextToolCallBlocks
+} = require("openclaw/plugin-sdk/tool-payload");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.tool_payload",
+      description: "Use OpenClaw tool-payload SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const standalone = [
+          "[send]",
+          "{\\"text\\":\\"hi\\"}",
+          "[/send]",
+          "",
+          "[react]",
+          "{\\"emoji\\":\\"+\\"}",
+          "[END_TOOL_REQUEST]"
+        ].join("\\n");
+        const blocks = parseStandalonePlainTextToolCallBlocks(standalone, {
+          allowedToolNames: ["send", "react"]
+        });
+        return {
+          missing: extractToolPayload(null) ?? null,
+          details: extractToolPayload({
+            details: { ok: true },
+            content: [{ type: "text", text: "{\\"ignored\\":true}" }]
+          }),
+          jsonText: extractToolPayload({
+            content: [
+              { type: "image", url: "https://example.com/a.png" },
+              { type: "text", text: "{\\"ok\\":true,\\"count\\":2}" }
+            ]
+          }),
+          rawText: extractToolPayload({ content: [{ type: "text", text: "not json" }] }),
+          contentFallback: extractToolPayload({
+            content: [{ type: "image", url: "https://example.com/a.png" }]
+          }),
+          blockSummary: blocks && blocks.map((block) => ({
+            name: block.name,
+            arguments: block.arguments
+          })),
+          disallowed: parseStandalonePlainTextToolCallBlocks("[send]\\n{}\\n[/send]", {
+            allowedToolNames: ["other"]
+          }) === null,
+          oversized: parseStandalonePlainTextToolCallBlocks("[send]\\n{\\"a\\":1}\\n[/send]", {
+            maxPayloadBytes: 2
+          }) === null,
+          stripped: stripPlainTextToolCallBlocks("[send]\\n{\\"text\\":\\"hi\\"}\\n[/send]")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-tool-payload-plugin",
+                    "name": "Runtime Tool Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-tool-payload-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.tool_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.tool_payload"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "missing": None,
+        "details": {"ok": True},
+        "jsonText": {"ok": True, "count": 2},
+        "rawText": "not json",
+        "contentFallback": [{"type": "image", "url": "https://example.com/a.png"}],
+        "blockSummary": [
+            {"name": "send", "arguments": {"text": "hi"}},
+            {"name": "react", "arguments": {"emoji": "+"}},
+        ],
+        "disallowed": True,
+        "oversized": True,
+        "stripped": "",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

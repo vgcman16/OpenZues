@@ -19047,6 +19047,223 @@ function resolveAccountWithDefaultFallback(params) {
   return fallback;
 }
 
+function isToolPayloadTextBlock(block) {
+  return (
+    Boolean(block) &&
+    typeof block === "object" &&
+    block.type === "text" &&
+    typeof block.text === "string"
+  );
+}
+
+function extractToolPayload(result) {
+  if (!result) {
+    return undefined;
+  }
+  if (result.details !== undefined) {
+    return result.details;
+  }
+  const textBlock = Array.isArray(result.content)
+    ? result.content.find(isToolPayloadTextBlock)
+    : undefined;
+  const text = textBlock && textBlock.text;
+  if (!text) {
+    return result.content !== undefined ? result.content : result;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return text;
+  }
+}
+
+const DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES = 256000;
+const END_TOOL_REQUEST = "[END_TOOL_REQUEST]";
+
+function isToolNameChar(char) {
+  return Boolean(char && /[A-Za-z0-9_-]/.test(char));
+}
+
+function skipHorizontalWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && (text[index] === " " || text[index] === "\t")) {
+    index += 1;
+  }
+  return index;
+}
+
+function skipWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index] || "")) {
+    index += 1;
+  }
+  return index;
+}
+
+function consumeLineBreak(text, start) {
+  if (text[start] === "\r") {
+    return text[start + 1] === "\n" ? start + 2 : start + 1;
+  }
+  if (text[start] === "\n") {
+    return start + 1;
+  }
+  return null;
+}
+
+function parsePlainTextToolOpening(text, start) {
+  if (text[start] !== "[") {
+    return null;
+  }
+  let cursor = start + 1;
+  const nameStart = cursor;
+  while (isToolNameChar(text[cursor])) {
+    cursor += 1;
+  }
+  if (cursor === nameStart || text[cursor] !== "]") {
+    return null;
+  }
+  const name = text.slice(nameStart, cursor);
+  cursor += 1;
+  cursor = skipHorizontalWhitespace(text, cursor);
+  const afterLineBreak = consumeLineBreak(text, cursor);
+  if (afterLineBreak === null) {
+    return null;
+  }
+  return { end: afterLineBreak, name };
+}
+
+function consumeJsonObject(text, start, maxPayloadBytes) {
+  const cursor = skipWhitespace(text, start);
+  if (text[cursor] !== "{") {
+    return null;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = cursor; index < text.length; index += 1) {
+    const char = text[index];
+    if (index + 1 - cursor > maxPayloadBytes) {
+      return null;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        const rawJson = text.slice(cursor, index + 1);
+        try {
+          const parsed = JSON.parse(rawJson);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return null;
+          }
+          return { end: index + 1, value: parsed };
+        } catch (_error) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function parsePlainTextToolClosing(text, start, name) {
+  const cursor = skipWhitespace(text, start);
+  if (text.startsWith(END_TOOL_REQUEST, cursor)) {
+    return cursor + END_TOOL_REQUEST.length;
+  }
+  const namedClosing = `[/${name}]`;
+  if (text.startsWith(namedClosing, cursor)) {
+    return cursor + namedClosing.length;
+  }
+  return null;
+}
+
+function parsePlainTextToolCallBlockAt(text, start, options) {
+  const opening = parsePlainTextToolOpening(text, start);
+  if (!opening) {
+    return null;
+  }
+  const allowedToolNames =
+    options && options.allowedToolNames ? new Set(options.allowedToolNames) : undefined;
+  if (allowedToolNames && !allowedToolNames.has(opening.name)) {
+    return null;
+  }
+  const payload = consumeJsonObject(
+    text,
+    opening.end,
+    (options && options.maxPayloadBytes) || DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES,
+  );
+  if (!payload) {
+    return null;
+  }
+  const end = parsePlainTextToolClosing(text, payload.end, opening.name);
+  if (end === null) {
+    return null;
+  }
+  return {
+    arguments: payload.value,
+    end,
+    name: opening.name,
+    raw: text.slice(start, end),
+    start,
+  };
+}
+
+function parseStandalonePlainTextToolCallBlocks(text, options) {
+  const blocks = [];
+  let cursor = skipWhitespace(text, 0);
+  while (cursor < text.length) {
+    const block = parsePlainTextToolCallBlockAt(text, cursor, options);
+    if (!block) {
+      return null;
+    }
+    blocks.push(block);
+    cursor = skipWhitespace(text, block.end);
+  }
+  return blocks.length > 0 ? blocks : null;
+}
+
+function stripPlainTextToolCallBlocks(text) {
+  if (!text || !/\[[A-Za-z0-9_-]+\]/.test(text)) {
+    return text;
+  }
+  let result = "";
+  let cursor = 0;
+  let index = 0;
+  while (index < text.length) {
+    const lineStart = index === 0 || text[index - 1] === "\n";
+    if (!lineStart) {
+      index += 1;
+      continue;
+    }
+    const blockStart = skipHorizontalWhitespace(text, index);
+    const block = parsePlainTextToolCallBlockAt(text, blockStart);
+    if (!block) {
+      index += 1;
+      continue;
+    }
+    result += text.slice(cursor, index);
+    cursor = block.end;
+    index = block.end;
+  }
+  result += text.slice(cursor);
+  return result;
+}
+
 function normalizeMessageChannel(raw) {
   const normalized = normalizeOptionalLowercaseString(raw);
   if (!normalized) {
@@ -19887,6 +20104,12 @@ const accountResolutionRuntime = {
   resolveMergedAccountConfig,
 };
 
+const toolPayloadRuntime = {
+  extractToolPayload,
+  parseStandalonePlainTextToolCallBlocks,
+  stripPlainTextToolCallBlocks,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -19950,6 +20173,7 @@ const genericSdk = new Proxy(
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
     extractErrorCode,
+    extractToolPayload,
     formatTextWithAttachmentLinks,
     formatSetExplicitDefaultInstruction,
     formatSetExplicitDefaultToConfiguredInstruction,
@@ -19995,6 +20219,7 @@ const genericSdk = new Proxy(
     parseAgentSessionKey,
     parseEnvTemplateSecretRef,
     parseLegacySecretRefEnvMarker,
+    parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
     pathExists,
     readErrorName,
@@ -20027,6 +20252,7 @@ const genericSdk = new Proxy(
     sendPayloadMediaSequenceOrFallback,
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
+    stripPlainTextToolCallBlocks,
     withTempDownloadPath,
   },
   {
@@ -20093,6 +20319,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/account-resolution-runtime"
   ) {
     return accountResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tool-payload" ||
+    request === "@openclaw/plugin-sdk/tool-payload"
+  ) {
+    return toolPayloadRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
