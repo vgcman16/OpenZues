@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~64.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~64.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams SSO no-config invoke acknowledgement slice is checkpointed
-in `49ebe481`.
+The Microsoft Teams configured SSO token-exchange slice is checkpointed in
+`1bf6ab5b`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
+- `src/openzues/database.py`
 - `src/openzues/services/gateway_outbound_runtime.py`
 - `src/openzues/services/ops_mesh.py`
 - `src/openzues/services/gateway_channels.py`
@@ -61,9 +62,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams SSO no-config invoke acknowledgement checkpointed in `49ebe481` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue configured Teams SSO exchange/store, full Bot Framework inbound wiring, feedback reflection, or next provider-specific route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams configured SSO token exchange checkpointed in `1bf6ab5b` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue configured Teams verifyState magic-code handling, SSO authorization/drop policies, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AN` Microsoft Teams configured SSO token exchange/store
+  - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
+    `openclaw-main/extensions/msteams/src/sso-token-store.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/database.py`, `tests/test_ops_mesh.py`
+  - Contract: when `channels.msteams.sso.enabled` and `connectionName` are
+    configured, `signin/tokenExchange` resolves native Teams app credentials,
+    obtains a Bot Framework service bearer, calls `/api/usertoken/exchange`,
+    persists the delegated user token keyed by `(connectionName, userId)`, and
+    returns only safe stored/expiry metadata without leaking exchange or
+    delegated tokens.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `1bf6ab5b`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured
+    token-exchange proof (`1 passed`), adjacent Teams send/action/provider
+    proof (`16 passed, 304 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AM` Microsoft Teams SSO no-config invoke acknowledgement
   - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,

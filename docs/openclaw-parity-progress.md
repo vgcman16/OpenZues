@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.7% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.8% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10677,6 +10677,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`15 passed, 304 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `49ebe481`.
+
+- Microsoft Teams configured SSO token exchange now mirrors OpenClaw's
+  `extensions/msteams/src/sso.ts`,
+  `extensions/msteams/src/sso-token-store.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts` token-exchange path:
+  when `channels.msteams.sso.enabled` and `connectionName` are configured,
+  native inbound `signin/tokenExchange` invokes resolve an enabled native
+  Teams route with app credentials, fetch a Bot Framework service bearer
+  token, call `/api/usertoken/exchange` with `userId`, `connectionName`,
+  `channelId`, and the exchange token, persist the returned delegated user
+  token keyed by `(connectionName, userId)`, and return only safe status/
+  expiry metadata. This closes `OZ-PROV-001AN`; repo-wide parity is now
+  estimated at ~64.8%. Remaining Microsoft Teams SSO breadth is configured
+  `signin/verifyState` magic-code handling, authorization/drop policies,
+  delegated-token consumers, feedback reflection, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and member lifecycle handling.
+- Verified the Microsoft Teams configured SSO token-exchange slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_exchanges_msteams_signin_token_when_sso_configured -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`16 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `1bf6ab5b`.
 
 ## References
 
