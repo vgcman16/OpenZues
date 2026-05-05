@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~62.5% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~62.6% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -120,6 +120,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   chat/channel, timestamp, reply, and media URL metadata. This slice is
   checkpointed in `a6732846`.
 - Verified the Nextcloud Talk native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Synology Chat direct text/media-link parity now accepts
+  native `kind="synology-chat"` routes, posts OpenClaw-shaped form-encoded
+  `payload` data to incoming webhook URLs, preserves numeric recipient
+  `user_ids`, supports media URL delivery through `file_url` payloads, and
+  projects message/chat/channel/media metadata through the direct-send result
+  envelope. This slice is checkpointed in `b69d5489`.
+- Verified the Synology Chat native route slice with focused schema, service,
   CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
   touched source/test files, and `mypy` on touched source modules.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
@@ -10187,6 +10196,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_app.py`, and `mypy src\openzues\schemas.py
   src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
   src\openzues\cli.py`. Checkpointed in `a6732846`.
+
+- Synology Chat native outbound route support now mirrors OpenClaw's
+  `extensions/synology-chat/src/client.ts` and `channel.ts` form-webhook
+  contract: native `kind="synology-chat"` routes accept incoming webhook URLs,
+  post form-encoded `payload` JSON with `text` and numeric `user_ids`, send
+  outbound media URLs as `file_url` payloads, and preserve generated message id,
+  chat/channel recipient ids, and media URL metadata. This closes
+  `OZ-PROV-001R`; repo-wide parity is now estimated at ~62.6%.
+- Verified the Synology Chat native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_synology_chat_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_synology_chat_native_route tests\test_cli.py::test_routes_create_command_accepts_synology_chat_native_route tests\test_app.py -q -k "synology_chat_native_route"`
+  (`5 passed, 199 deselected`), adjacent provider route proof
+  (`13 passed, 276 deselected`), adjacent CLI route proof (`5 passed, 499
+  deselected`), adjacent app route proof (`13 passed, 188 deselected`), `ruff
+  check src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `b69d5489`.
 
 ## References
 

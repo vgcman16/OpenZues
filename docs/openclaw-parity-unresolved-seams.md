@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.6% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5753,6 +5753,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   URL metadata. Repo-wide parity is now estimated at ~62.5%. Verified with
   focused schema/service/CLI/app pytest, adjacent provider/CLI/app route proof,
   `ruff check`, and `mypy`; checkpointed in `a6732846`.
+- Closed the Synology Chat native outbound route seam from OpenClaw
+  `extensions/synology-chat/src/client.ts` and
+  `extensions/synology-chat/src/channel.ts`: native `kind="synology-chat"`
+  routes now accept incoming webhook URLs, send form-encoded `payload` JSON
+  with `text` and numeric `user_ids`, send media URL payloads as `file_url`,
+  and persist generated message, recipient chat/channel, and media URL
+  metadata. Repo-wide parity is now estimated at ~62.6%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `b69d5489`.
 - Next repo-wide queue head: rotate to the next provider-specific
   provider-specific send/poll/replay metadata gap, starting with another
   source-backed channel/provider route or action adapter, or packaging/plugin
