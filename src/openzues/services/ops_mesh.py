@@ -5397,6 +5397,26 @@ def _feishu_action_target(request: GatewayMessageActionDispatchRequest) -> str:
     return target
 
 
+def _feishu_action_chat_id(request: GatewayMessageActionDispatchRequest, *, action: str) -> str:
+    chat_id = (
+        _message_action_param_string(request.params, "chatId")
+        or _message_action_param_string(request.params, "chat_id")
+        or _message_action_param_string(request.params, "channelId")
+        or _message_action_param_string(request.params, "channel_id")
+        or _message_action_param_string(request.params, "to")
+        or _message_action_param_string(request.params, "target")
+    )
+    tool_context = request.tool_context or {}
+    if chat_id is None and isinstance(tool_context, dict):
+        chat_id = _message_action_param_string(tool_context, "currentChannelId")
+    if chat_id is None:
+        raise RuntimeError(f"Feishu {action} requires chatId or channelId.")
+    parsed = _feishu_target(chat_id)
+    if parsed is None or parsed[1] != "chat_id":
+        raise RuntimeError(f"Feishu {action} requires chatId or channelId.")
+    return parsed[0]
+
+
 def _feishu_action_text(params: dict[str, Any], *, action: str) -> str:
     if params.get("presentation") is not None or params.get("card") is not None:
         raise RuntimeError(f"Feishu {action} card sending is not available.")
@@ -15488,6 +15508,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_unpin_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "list-pins":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action list-pins."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_list_pins_message_action,
                 route,
                 request,
                 secret_token,
@@ -26899,6 +26935,70 @@ class OpsMeshService:
             "action": "unpin",
             "messageId": message_id,
         }
+
+    def _dispatch_feishu_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        chat_id = _feishu_action_chat_id(request, action="list-pins")
+        query: dict[str, object] = {"chat_id": chat_id}
+        start_time = (
+            _message_action_param_string(request.params, "startTime")
+            or _message_action_param_string(request.params, "start_time")
+        )
+        if start_time is not None:
+            query["start_time"] = start_time
+        end_time = (
+            _message_action_param_string(request.params, "endTime")
+            or _message_action_param_string(request.params, "end_time")
+        )
+        if end_time is not None:
+            query["end_time"] = end_time
+        page_size = _message_action_param_integer(request.params, "pageSize", "page_size")
+        if page_size is not None:
+            query["page_size"] = max(1, min(100, page_size))
+        page_token = (
+            _message_action_param_string(request.params, "pageToken")
+            or _message_action_param_string(request.params, "page_token")
+        )
+        if page_token is not None:
+            query["page_token"] = page_token
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "im/v1/pins",
+                query=query,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu pin list failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        items = data.get("items") if isinstance(data, Mapping) else None
+        pins = [
+            pin
+            for item in (items if isinstance(items, list) else [])
+            if (pin := _feishu_pin_view(item)) is not None
+        ]
+        response: dict[str, object] = {
+            "ok": True,
+            "channel": "feishu",
+            "action": "list-pins",
+            "chatId": chat_id,
+            "pins": pins,
+            "hasMore": bool(data.get("has_more")) if isinstance(data, Mapping) else False,
+        }
+        page_token_result = data.get("page_token") if isinstance(data, Mapping) else None
+        if isinstance(page_token_result, str) and page_token_result.strip():
+            response["pageToken"] = page_token_result.strip()
+        return response
 
     def _post_msteams_provider_event(
         self,
