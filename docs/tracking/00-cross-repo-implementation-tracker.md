@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~64.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~64.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams inbound message text normalization slice is checkpointed
-in `65daf165`.
+The Microsoft Teams feedback invoke recording slice is checkpointed in
+`7a545faf`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,9 +61,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams inbound message normalization checkpointed in `65daf165` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams full Bot Framework inbound wiring or next provider-specific route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams feedback invoke recording checkpointed in `7a545faf` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams feedback reflection/SSO/full Bot Framework inbound wiring or next provider-specific route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AL` Microsoft Teams feedback invoke recording
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams `message/submitAction` feedback invokes normalize
+    `like`/`dislike` reactions into positive/negative feedback, parse
+    optional `feedbackText`, resolve the same thread-aware session target as
+    inbound messages, and persist session-scoped feedback metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `7a545faf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams feedback invoke proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`13 passed, 304
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AK` Microsoft Teams inbound message text normalization
   - Source: `openclaw-main/extensions/msteams/src/monitor-handler/message-handler.ts`,

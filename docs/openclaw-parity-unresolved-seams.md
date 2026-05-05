@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.6% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5999,6 +5999,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and decoding entities. Repo-wide parity is now estimated at ~64.5%.
   Verified with focused runtime pytest, adjacent Teams send/action/provider
   proof, `ruff check`, and `mypy`; checkpointed in `65daf165`.
+- Closed the Microsoft Teams feedback invoke recording seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/feedback-reflection.ts`: `message/submitAction`
+  feedback invokes now normalize thumbs-up/thumbs-down reactions into
+  positive/negative feedback, parse optional feedback text, resolve the same
+  thread-aware session target as inbound messages, and persist session-scoped
+  feedback metadata. Repo-wide parity is now estimated at ~64.6%. Verified
+  with focused runtime pytest, adjacent Teams send/action/provider proof,
+  `ruff check`, and `mypy`; checkpointed in `7a545faf`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams full Bot
   Framework HTTP inbound wiring, feedback/SSO/member lifecycle breadth, or
