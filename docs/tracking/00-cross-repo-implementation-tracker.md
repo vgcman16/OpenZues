@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~60.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~60.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The package dist inventory validation slice is checkpointed in `3bf0ff86`.
+The Telegram audio/voice media routing slice is verified and awaiting
+checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/cli.py`
-- `tests/test_cli.py`
+- `src/openzues/services/ops_mesh.py`
+- `tests/test_ops_mesh.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -52,9 +53,28 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001I` Telegram audio/voice media send routing
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/voice.ts`,
+    `openclaw-main/src/media/audio.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Telegram `gateway/send` sends audio media through
+    `sendAudio` by default and through `sendVoice` with `voice` payload when
+    `audioAsVoice=true` and the media URL is voice-compatible, preserving
+    caption/thread/reply/silent/media result metadata.
+  - Evidence required: focused Telegram audio/voice test, adjacent Telegram
+    native-route tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
+    adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] `OZ-PKG-001B` package dist inventory validation
   - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.3% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.4% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9766,6 +9766,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "package_dist_inventory or package_distribution or runtime_bridge_posture"`
   (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `3bf0ff86`.
+
+- Telegram native route-backed media sends now route audio/voice payloads
+  through OpenClaw-shaped Bot API methods: `mediaKind="audio"` uses
+  `sendAudio`, and `audioAsVoice=true` with voice-compatible audio URLs uses
+  `sendVoice` with the `voice` payload key while preserving caption, thread,
+  reply, silent, and media-id metadata. This closes `OZ-PROV-001I`;
+  repo-wide parity is now estimated at ~60.4%, while provider-native outbound
+  breadth remains open for deeper provider-specific edges.
+- Verified the Telegram audio/voice media send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_voice_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_audio_voice_payload or telegram_animation_for_gif_media or
+  telegram_media_group or telegram_native_options or
+  send_direct_channel_message_uses_telegram_native_route or
+  send_direct_channel_poll_uses_telegram_native_route"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`. Checkpoint pending commit.
 
 ## References
 

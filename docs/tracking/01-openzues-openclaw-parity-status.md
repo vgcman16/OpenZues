@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -188,6 +188,10 @@ may lag behind this tracker.
 - [x] Package distribution inventory validation, preserving OpenClaw's
   invalid-inventory warning posture in `doctor --json`.
   - Status: checkpointed in `3bf0ff86`
+
+- [x] Telegram audio/voice media send routing, preserving OpenClaw's
+  `sendAudio`/`sendVoice` Bot API split for native provider routes.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -670,6 +674,19 @@ may lag behind this tracker.
   - Weight: 1
   - Last verified: 2026-05-04, focused package inventory test (`1 passed`),
     adjacent package/runtime doctor proof (`3 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Telegram audio/voice media send routing.
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/voice.ts`,
+    `openclaw-main/src/media/audio.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
+    adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
     `mypy`.
 
 - [x] Package distribution doctor diagnostics.

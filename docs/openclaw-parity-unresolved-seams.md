@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.4% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5552,9 +5552,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime/CLI/doctor bounded path remains ~99.9%. Verified with focused
   package inventory pytest, adjacent package/runtime doctor proof, `ruff
   check`, and `mypy`; checkpointed in `3bf0ff86`.
-- Next repo-wide queue head: rotate to Telegram audio/voice routing,
-  companion remote-bin discovery, or update-status channel projection based on
-  the strongest source-backed seam.
+- Closed the Telegram audio/voice media send seam from OpenClaw
+  `extensions/telegram/src/outbound-adapter.ts`,
+  `extensions/telegram/src/send.ts`, `extensions/telegram/src/voice.ts`, and
+  `src/media/audio.ts`: native route-backed Telegram sends now use `sendAudio`
+  for audio and `sendVoice` for voice-compatible audio when
+  `audioAsVoice=true`, preserving thread/reply/silent/caption/media metadata.
+  Repo-wide parity is now estimated at ~60.4%. Verified with focused Telegram
+  audio/voice pytest, adjacent Telegram native-route proof, `ruff check`, and
+  `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: rotate to companion remote-bin discovery or
+  update-status channel projection based on the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -1975,15 +1975,40 @@ def _telegram_media_is_gif(media_url: str, *, media_kind: object, gif_playback: 
     return content_type == "image/gif" or parsed_path.lower().endswith(".gif")
 
 
+def _telegram_media_is_audio(media_url: str, *, media_kind: object) -> bool:
+    normalized_kind = str(media_kind or "").strip().lower()
+    if normalized_kind in {"audio", "voice"}:
+        return True
+    parsed_path = unquote(urlparse(str(media_url)).path)
+    content_type = str(mimetypes.guess_type(parsed_path)[0] or "").split(";", 1)[0].lower()
+    return content_type.startswith("audio/")
+
+
+def _telegram_media_is_voice_compatible(media_url: str) -> bool:
+    parsed_path = unquote(urlparse(str(media_url)).path).lower()
+    content_type = str(mimetypes.guess_type(parsed_path)[0] or "").split(";", 1)[0].lower()
+    return content_type.startswith("audio/") or parsed_path.endswith(
+        (".oga", ".ogg", ".opus", ".mp3", ".m4a")
+    )
+
+
 def _telegram_media_send_shape(
     media_url: str,
     *,
     media_kind: object,
     force_document: bool,
     gif_playback: object,
+    audio_as_voice: object,
 ) -> tuple[str, str]:
     if force_document:
         return "document", "sendDocument"
+    normalized_kind = str(media_kind or "").strip().lower()
+    if _telegram_media_is_audio(media_url, media_kind=media_kind):
+        if (audio_as_voice is True or normalized_kind == "voice") and (
+            _telegram_media_is_voice_compatible(media_url)
+        ):
+            return "voice", "sendVoice"
+        return "audio", "sendAudio"
     if _telegram_media_is_gif(
         media_url,
         media_kind=media_kind,
@@ -18383,6 +18408,7 @@ class OpsMeshService:
         silent = _optional_bool_payload_value(event, "silent")
         force_document = _optional_bool_payload_value(event, "forceDocument") is True
         gif_playback = _optional_bool_payload_value(event, "gifPlayback")
+        audio_as_voice = _optional_bool_payload_value(event, "audioAsVoice")
         media_kind = event.get("mediaKind")
         inline_keyboard = _telegram_inline_keyboard(event.get("channelData"))
         if event_type == "gateway/poll":
@@ -18457,6 +18483,7 @@ class OpsMeshService:
                         media_kind=media_kind,
                         force_document=force_document,
                         gif_playback=gif_playback,
+                        audio_as_voice=audio_as_voice,
                     )
                     media_payload = dict(payload)
                     media_payload[media_payload_key] = media_url
@@ -18497,6 +18524,7 @@ class OpsMeshService:
                     media_kind=media_kind,
                     force_document=force_document,
                     gif_playback=gif_playback,
+                    audio_as_voice=audio_as_voice,
                 )
                 payload[media_payload_key] = media_urls[0]
                 if media_payload_key == "document" and force_document:
