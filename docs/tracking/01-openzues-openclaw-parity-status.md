@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~72.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~72.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -215,6 +215,10 @@ may lag behind this tracker.
   projection, configured-status resolution, pairing-approved message, and
   channel status helper reexports.
   - Status: checkpointed in `14ff20a1`
+
+- [x] Imported plugin SDK text-chunking shim for outbound text chunking with
+  newline/space boundary preference and hard-limit fallback.
+  - Status: checkpointed in `20267310`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1193,9 +1197,21 @@ may lag behind this tracker.
     checkpointed in `47fa2f39`, tool-payload shim checkpointed in
     `387717ed`, boolean-param shim checkpointed in `65bd842f`,
     channel-actions shim checkpointed in `447d15ff`, status-helper shim
-    checkpointed in `41323ea2`, and channel-status shim checkpointed in
-    `14ff20a1`, but broader plugin SDK helper/runtime surface breadth remains.
+    checkpointed in `41323ea2`, channel-status shim checkpointed in
+    `14ff20a1`, and text-chunking shim checkpointed in `20267310`, but broader
+    plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK text-chunking shim.
+  - Source: `openclaw-main/src/plugin-sdk/text-chunking.ts` and
+    `openclaw-main/src/shared/text-chunking.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `20267310`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused text-chunking proof (`1 passed`),
+    adjacent plugin invoke proof (`27 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK channel-status shim.
   - Source: `openclaw-main/src/plugin-sdk/channel-status.ts`,
