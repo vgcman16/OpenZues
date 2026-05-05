@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~78.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~78.1% overall, with a reasonable
   band of ~76-81%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -63,7 +63,7 @@ Current percentage rollup:
   native, webhook, fetch/SSRF, provider model/catalog, provider
   entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
   provider-auth-login, provider-auth facade, provider web-search contract,
-  provider web facade, and device-bootstrap helper slices.
+  provider web facade, device-bootstrap, and runtime-store helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7379,6 +7379,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~78.0%. Verified with focused device-bootstrap
   pytest, adjacent provider/helper proof, adjacent imported-plugin/runtime
   proof, `ruff check`, and `mypy`; source/test checkpointed in `ae2fc79f`.
+- Closed the imported OpenClaw plugin SDK runtime-store seam from
+  `src/plugin-sdk/runtime-store.ts`: native runtime entries can import
+  `createPluginRuntimeStore`, share plugin-id and custom-key runtime slots,
+  keep legacy string stores isolated per call, preserve falsy initialized
+  runtime values, reject empty plugin IDs with the upstream message, and reach
+  the helper through scoped and generic SDK aliases. Repo-wide parity is now
+  estimated at ~78.1%. Verified with focused runtime-store pytest, adjacent
+  helper proof, adjacent imported-plugin/runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `57cc0f37`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7386,7 +7395,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
   facade/provider-web-search-contract/provider-web facade/device-bootstrap
-  path, starting with the next
+  runtime-store path, starting with the next
   source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
