@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.0% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5790,6 +5790,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~62.9%. Verified with focused schema/service/CLI/app pytest,
   adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
   checkpointed in `8726ab49`.
+- Closed the Twitch native outbound route seam from OpenClaw
+  `extensions/twitch/src/send.ts`, `extensions/twitch/src/outbound.ts`,
+  `extensions/twitch/src/twitch-client.ts`, and Twitch utility tests: native
+  `kind="twitch"` routes now accept `twitch://` account targets, require
+  username/clientId/token posture, normalize channel targets, strip markdown,
+  append media URLs as chat text, send native Twitch IRC chat messages, and
+  persist generated message, chat/channel, timestamp, and media URL metadata.
+  Repo-wide parity is now estimated at ~63.0%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `6185301b`.
 - Next repo-wide queue head: rotate to the next provider-specific
   provider-specific send/poll/replay metadata gap, starting with another
   source-backed channel/provider route or action adapter, or packaging/plugin

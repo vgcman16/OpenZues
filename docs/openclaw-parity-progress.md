@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~62.9% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~63.0% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10293,6 +10293,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\schemas.py src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_channels.py src\openzues\cli.py`.
   Checkpointed in `8726ab49`.
+
+- Twitch native outbound route support now mirrors OpenClaw's
+  `extensions/twitch/src/send.ts`, `extensions/twitch/src/outbound.ts`,
+  `extensions/twitch/src/twitch-client.ts`, and Twitch markdown/target
+  utilities: native `kind="twitch"` routes accept `twitch://` account targets,
+  require username/clientId/token configuration, normalize channel targets,
+  strip markdown for chat, append media URLs as chat text, send native Twitch
+  IRC chat messages, and preserve generated message/chat/channel/media result
+  metadata. This closes `OZ-PROV-001V`; repo-wide parity is now estimated at
+  ~63.0%.
+- Verified the Twitch native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_twitch_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_route tests\test_cli.py::test_routes_create_command_accepts_twitch_native_route tests\test_app.py -q -k "twitch_native_route"`
+  (`5 passed, 207 deselected`), adjacent provider route proof (`21 passed, 276
+  deselected`), adjacent CLI route proof (`9 passed, 499 deselected`),
+  adjacent app route proof (`21 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `6185301b`.
 
 ## References
 
