@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~75.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~76.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -56,7 +56,10 @@ Current percentage rollup:
   installed plugin runtime activation adapter,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
-  imported plugin SDK allow-from plus access-groups helper slices.
+  imported plugin SDK allow-from, access-groups, direct-DM access,
+  direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
+  command-auth, channel-setup, allowlist-config-edit, group-access, and
+  provider-selection-runtime helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7098,9 +7101,112 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~75.6%. Verified with focused access-groups pytest,
   adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
   checkpointed in `93a4347c`.
+- Closed the imported OpenClaw plugin SDK direct-DM access seam from
+  `src/plugin-sdk/direct-dm-access.ts`: native runtime entries can now import
+  pairing-store direct-DM allowlist reads, access-group expansion for
+  configured/store allowlists, open-DM allowlist blocking, resolved direct-DM
+  access projection, command authorization runtime delegation, sender
+  command-allow checks, pairing challenge callbacks, and blocked-sender
+  callbacks while preserving generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~75.7%. Verified with
+  focused direct-DM access pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `5258f537`.
+- Closed the imported OpenClaw plugin SDK direct-DM guard-policy seam from
+  `src/plugin-sdk/direct-dm-guard-policy.ts`: native runtime entries can now
+  import default and overrideable pre-crypto guard policy construction, allowed
+  kind overrides, future-skew/ciphertext/plaintext byte limits, nested
+  rate-limit default merging, generic SDK fallback behavior, and the
+  `channel-inbound` re-export through `tools.invoke`. Repo-wide parity is now
+  estimated at ~75.8%. Verified with focused direct-DM guard-policy pytest,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `02803c84`.
+- Closed the imported OpenClaw plugin SDK direct-DM seam from
+  `src/plugin-sdk/direct-dm.ts`, `src/plugin-sdk/inbound-envelope.ts`, and
+  `src/plugin-sdk/inbound-reply-dispatch.ts`: native runtime entries can now
+  import the direct-DM access and guard-policy re-exports plus the
+  `dispatchInboundDirectDmWithRuntime` route/envelope/session-record/reply
+  dispatch helper, with generic SDK fallback behavior and the `channel-inbound`
+  re-export through `tools.invoke`. Repo-wide parity is now estimated at
+  ~75.9%. Verified with focused direct-DM pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `6534f0db`.
+- Closed the imported OpenClaw plugin SDK channel-send-result seam from
+  `src/plugin-sdk/channel-send-result.ts`: native runtime entries can now
+  import channel result stamping, batch stamping, empty outbound result
+  construction, raw send result normalization, raw error string projection,
+  attached text/media/poll adapter wrapping, and raw text/media adapter
+  wrapping while preserving generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~76.0%. Verified with
+  focused channel-send-result pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `c73fb961`.
+- Closed the imported OpenClaw plugin SDK channel-pairing seam from
+  `src/plugin-sdk/channel-pairing.ts`, `src/plugin-sdk/pairing-access.ts`,
+  `src/channels/plugins/pairing-adapters.ts`,
+  `src/pairing/pairing-challenge.ts`, and `src/pairing/pairing-store.ts`:
+  native runtime entries can now import scoped channel pairing controllers,
+  channel-bound challenge issuers, pairing reply delivery, prefix-stripping
+  allowFrom adapters, text pairing adapters, logged approval notifiers,
+  allowFrom store path resolution, and allowFrom store readers while
+  preserving generic SDK fallback behavior through `tools.invoke`. Repo-wide
+  parity is now estimated at ~76.1%. Verified with focused channel-pairing
+  pytest, adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `f0a21c8c`.
+- Closed the imported OpenClaw plugin SDK command-auth seam from
+  `src/plugin-sdk/command-auth.ts`, `src/plugin-sdk/access-groups.ts`,
+  `src/plugin-sdk/direct-dm.ts`, `src/auto-reply/command-detection.ts`,
+  `src/auto-reply/commands-registry.ts`, and
+  `src/channels/command-gating.ts`: native runtime entries can now import
+  sender command authorization across DM/group/pairing-store/access-group
+  sources, runtime-backed authorization wrappers, direct-DM authorization
+  outcomes, command-gating helpers, command detection helpers, direct-DM and
+  access-group compatibility re-exports, and deprecated command-status
+  builders while preserving generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~76.2%. Verified with
+  focused command-auth pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `d06e2c42`.
+- Closed the imported OpenClaw plugin SDK channel-setup seam from
+  `src/plugin-sdk/channel-setup.ts`,
+  `src/plugin-sdk/optional-channel-setup.ts`, `src/plugin-sdk/setup.ts`,
+  `src/channels/plugins/setup-wizard-helpers.ts`, and `src/terminal/links.ts`:
+  native runtime entries can now import optional channel setup adapters,
+  optional setup wizards, combined optional setup surfaces, setup validation
+  and finalize unavailable messages, docs-link formatting, setup entry
+  splitting, setup-channel enabled patching, top-level DM policy
+  descriptors/setters, and `DEFAULT_ACCOUNT_ID` projection while preserving
+  generic SDK fallback behavior through `tools.invoke`. Repo-wide parity is
+  now estimated at ~76.3%. Verified with focused channel-setup pytest,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `0b86d5ea`.
+- Closed the imported OpenClaw plugin SDK allowlist-config-edit seam from
+  `src/plugin-sdk/allowlist-config-edit.ts`: native runtime entries can now
+  import DM/group and legacy-DM config path resolution, configured entry
+  coercion, flat/nested override collectors and account-scoped resolvers,
+  token-gated name resolution, account-scoped config editor target selection,
+  add/remove/duplicate edit semantics, top-level/default-account writes, legacy
+  `dm.allowFrom` cleanup, and generic SDK re-exports through `tools.invoke`.
+  Repo-wide parity is now estimated at ~76.4%. Verified with focused
+  allowlist-config-edit pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `37677120`.
+- Closed the imported OpenClaw plugin SDK group-access seam from
+  `src/plugin-sdk/group-access.ts` and `src/config/runtime-group-policy.ts`:
+  native runtime entries can now import sender-scoped group policy downgrade,
+  route-level allowlist decisions, matched group access decisions, sender
+  allowlist decisions, missing-provider fail-closed fallback policy, and
+  generic SDK re-exports through `tools.invoke`. Repo-wide parity is now
+  estimated at ~76.5%. Verified with focused group-access pytest, adjacent
+  plugin invoke proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `88510816`.
+- Closed the imported OpenClaw plugin SDK provider-selection-runtime seam from
+  `src/plugin-sdk/provider-selection-runtime.ts`: native runtime entries can
+  now import explicit provider selection, missing explicit provider reporting,
+  auto-select ordering, canonical plus selected raw config merging,
+  configured-capability provider resolution, and no-provider/
+  provider-not-configured failure codes through `tools.invoke`. Repo-wide
+  parity is now estimated at ~76.6%. Verified with focused
+  provider-selection-runtime pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `395d23fc`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/allow-from/access-groups/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution

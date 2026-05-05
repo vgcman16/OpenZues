@@ -23417,6 +23417,172 @@ function evaluateSenderGroupAccessForPolicy(params) {
   };
 }
 
+function resolveRuntimeGroupPolicy(params) {
+  const configuredFallbackPolicy = params.configuredFallbackPolicy || "open";
+  const missingProviderFallbackPolicy = params.missingProviderFallbackPolicy || "allowlist";
+  const groupPolicy = params.providerConfigPresent
+    ? params.groupPolicy || params.defaultGroupPolicy || configuredFallbackPolicy
+    : params.groupPolicy || missingProviderFallbackPolicy;
+  return {
+    groupPolicy,
+    providerMissingFallbackApplied:
+      !params.providerConfigPresent && params.groupPolicy === undefined,
+  };
+}
+
+function resolveOpenProviderRuntimeGroupPolicy(params) {
+  return resolveRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.groupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+    configuredFallbackPolicy: "open",
+    missingProviderFallbackPolicy: "allowlist",
+  });
+}
+
+function evaluateSenderGroupAccess(params) {
+  const { groupPolicy, providerMissingFallbackApplied } = resolveOpenProviderRuntimeGroupPolicy({
+    providerConfigPresent: params.providerConfigPresent,
+    groupPolicy: params.configuredGroupPolicy,
+    defaultGroupPolicy: params.defaultGroupPolicy,
+  });
+  return evaluateSenderGroupAccessForPolicy({
+    groupPolicy,
+    providerMissingFallbackApplied,
+    groupAllowFrom: params.groupAllowFrom,
+    senderId: params.senderId,
+    isSenderAllowed: params.isSenderAllowed,
+  });
+}
+
+function compareProviderAutoSelectOrder(left, right) {
+  return (
+    (left.autoSelectOrder ?? Number.MAX_SAFE_INTEGER) -
+    (right.autoSelectOrder ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+function sortedProviderList(params) {
+  return Array.from(params.listProviders ? params.listProviders() : []).sort(
+    compareProviderAutoSelectOrder,
+  );
+}
+
+function readProviderConfig(providerConfigs, providerId) {
+  if (!providerId) {
+    return undefined;
+  }
+  const providerConfig = providerConfigs && providerConfigs[providerId];
+  return providerConfig && typeof providerConfig === "object" ? providerConfig : undefined;
+}
+
+function selectConfiguredOrAutoProvider(params) {
+  const configuredProviderId = normalizeOptionalString(params.configuredProviderId);
+  const configuredProvider = configuredProviderId
+    ? params.getConfiguredProvider(configuredProviderId)
+    : undefined;
+  if (configuredProviderId && !configuredProvider) {
+    return {
+      configuredProviderId,
+      missingConfiguredProvider: true,
+      provider: undefined,
+    };
+  }
+  return {
+    configuredProviderId,
+    missingConfiguredProvider: false,
+    provider: configuredProvider || sortedProviderList(params)[0],
+  };
+}
+
+function resolveProviderRawConfig(params) {
+  const canonicalProviderConfig = readProviderConfig(
+    params.providerConfigs,
+    params.providerId,
+  );
+  const selectedProviderConfig = readProviderConfig(
+    params.providerConfigs,
+    params.configuredProviderId,
+  );
+  return {
+    ...(canonicalProviderConfig || {}),
+    ...(selectedProviderConfig || {}),
+  };
+}
+
+function resolveProviderCandidate(params) {
+  const rawProviderConfig = resolveProviderRawConfig({
+    providerId: params.provider.id,
+    configuredProviderId: params.configuredProviderId,
+    providerConfigs: params.providerConfigs,
+  });
+  const providerConfig = params.resolveProviderConfig({
+    provider: params.provider,
+    cfg: params.cfgForResolve,
+    rawConfig: rawProviderConfig,
+  });
+  if (
+    !params.isProviderConfigured({
+      provider: params.provider,
+      cfg: params.cfg,
+      providerConfig,
+    })
+  ) {
+    return {
+      ok: false,
+      code: "provider-not-configured",
+      configuredProviderId: params.configuredProviderId,
+      provider: params.provider,
+    };
+  }
+  return {
+    ok: true,
+    configuredProviderId: params.configuredProviderId,
+    provider: params.provider,
+    providerConfig,
+  };
+}
+
+function resolveConfiguredCapabilityProvider(params) {
+  const configuredProviderId = normalizeOptionalString(params.configuredProviderId);
+  if (configuredProviderId) {
+    const provider = params.getConfiguredProvider(configuredProviderId);
+    if (!provider) {
+      return {
+        ok: false,
+        code: "missing-configured-provider",
+        configuredProviderId,
+      };
+    }
+    return resolveProviderCandidate({
+      ...params,
+      configuredProviderId,
+      provider,
+    });
+  }
+
+  const providers = sortedProviderList(params);
+  if (providers.length === 0) {
+    return { ok: false, code: "no-registered-provider" };
+  }
+
+  let firstUnconfigured;
+  for (const provider of providers) {
+    const resolution = resolveProviderCandidate({ ...params, provider });
+    if (resolution.ok) {
+      return resolution;
+    }
+    if (firstUnconfigured === undefined) {
+      firstUnconfigured = provider;
+    }
+  }
+  return {
+    ok: false,
+    code: "provider-not-configured",
+    provider: firstUnconfigured,
+  };
+}
+
 function resolveGroupAllowFromSources(params) {
   const explicitGroupAllowFrom =
     Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
@@ -24274,6 +24440,342 @@ function summarizeMapping(label, mapping, unresolved, runtime) {
   }
 }
 
+const DM_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["allowFrom"]],
+  writePath: ["allowFrom"],
+};
+const GROUP_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["groupAllowFrom"]],
+  writePath: ["groupAllowFrom"],
+};
+const LEGACY_DM_ALLOWLIST_CONFIG_PATHS = {
+  readPaths: [["allowFrom"], ["dm", "allowFrom"]],
+  writePath: ["allowFrom"],
+  cleanupPaths: [["dm", "allowFrom"]],
+};
+
+function resolveDmGroupAllowlistConfigPaths(scope) {
+  return scope === "dm" ? DM_ALLOWLIST_CONFIG_PATHS : GROUP_ALLOWLIST_CONFIG_PATHS;
+}
+
+function resolveLegacyDmAllowlistConfigPaths(scope) {
+  return scope === "dm" ? LEGACY_DM_ALLOWLIST_CONFIG_PATHS : null;
+}
+
+function readConfiguredAllowlistEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map(String).filter(Boolean);
+}
+
+function collectAllowlistOverridesFromRecord(params) {
+  const overrides = [];
+  for (const [key, value] of Object.entries(params.record || {})) {
+    if (!value) {
+      continue;
+    }
+    const entries = readConfiguredAllowlistEntries(params.resolveEntries(value));
+    if (entries.length === 0) {
+      continue;
+    }
+    overrides.push({ label: params.label(key, value), entries });
+  }
+  return overrides;
+}
+
+function collectNestedAllowlistOverridesFromRecord(params) {
+  const overrides = [];
+  for (const [outerKey, outerValue] of Object.entries(params.record || {})) {
+    if (!outerValue) {
+      continue;
+    }
+    const outerEntries = readConfiguredAllowlistEntries(
+      params.resolveOuterEntries(outerValue),
+    );
+    if (outerEntries.length > 0) {
+      overrides.push({
+        label: params.outerLabel(outerKey, outerValue),
+        entries: outerEntries,
+      });
+    }
+    overrides.push(
+      ...collectAllowlistOverridesFromRecord({
+        record: params.resolveChildren(outerValue),
+        label: (innerKey, innerValue) =>
+          params.innerLabel(outerKey, innerKey, innerValue),
+        resolveEntries: params.resolveInnerEntries,
+      }),
+    );
+  }
+  return overrides;
+}
+
+function createFlatAllowlistOverrideResolver(params) {
+  return (account) =>
+    collectAllowlistOverridesFromRecord({
+      record: params.resolveRecord(account),
+      label: params.label,
+      resolveEntries: params.resolveEntries,
+    });
+}
+
+function createNestedAllowlistOverrideResolver(params) {
+  return (account) =>
+    collectNestedAllowlistOverridesFromRecord({
+      record: params.resolveRecord(account),
+      outerLabel: params.outerLabel,
+      resolveOuterEntries: params.resolveOuterEntries,
+      resolveChildren: params.resolveChildren,
+      innerLabel: params.innerLabel,
+      resolveInnerEntries: params.resolveInnerEntries,
+    });
+}
+
+function createAccountScopedAllowlistNameResolver(params) {
+  return async ({ cfg, accountId, entries }) => {
+    const account = params.resolveAccount({ cfg, accountId });
+    const token = String(params.resolveToken(account) || "").trim();
+    if (!token) {
+      return [];
+    }
+    return await params.resolveNames({ token, entries });
+  };
+}
+
+function isBlockedObjectKey(value) {
+  return ROUTING_BLOCKED_OBJECT_KEYS.has(String(value || ""));
+}
+
+function resolveAccountScopedWriteTarget(parsed, channelId, accountId) {
+  const channels = parsed.channels && typeof parsed.channels === "object" ? parsed.channels : {};
+  parsed.channels = channels;
+  const channel = channels[channelId] && typeof channels[channelId] === "object"
+    ? channels[channelId]
+    : {};
+  channels[channelId] = channel;
+  const normalizedAccountId = normalizeAccountId(accountId);
+  if (isBlockedObjectKey(normalizedAccountId)) {
+    return {
+      target: channel,
+      pathPrefix: `channels.${channelId}`,
+      writeTarget: { kind: "channel", scope: { channelId } },
+    };
+  }
+  const hasAccounts = Boolean(channel.accounts && typeof channel.accounts === "object");
+  const useAccount = normalizedAccountId !== DEFAULT_ACCOUNT_ID || hasAccounts;
+  if (!useAccount) {
+    return {
+      target: channel,
+      pathPrefix: `channels.${channelId}`,
+      writeTarget: { kind: "channel", scope: { channelId } },
+    };
+  }
+  const accounts = channel.accounts && typeof channel.accounts === "object" ? channel.accounts : {};
+  channel.accounts = accounts;
+  const existingAccount = Object.prototype.hasOwnProperty.call(accounts, normalizedAccountId)
+    ? accounts[normalizedAccountId]
+    : undefined;
+  if (!existingAccount || typeof existingAccount !== "object") {
+    accounts[normalizedAccountId] = {};
+  }
+  const account = accounts[normalizedAccountId];
+  return {
+    target: account,
+    pathPrefix: `channels.${channelId}.accounts.${normalizedAccountId}`,
+    writeTarget: {
+      kind: "account",
+      scope: { channelId, accountId: normalizedAccountId },
+    },
+  };
+}
+
+function getNestedValue(root, path) {
+  let current = root;
+  for (const key of path) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function ensureNestedObject(root, path) {
+  let current = root;
+  for (const key of path) {
+    const existing = current[key];
+    if (!existing || typeof existing !== "object") {
+      current[key] = {};
+    }
+    current = current[key];
+  }
+  return current;
+}
+
+function setNestedValue(root, path, value) {
+  if (path.length === 0) {
+    return;
+  }
+  if (path.length === 1) {
+    root[path[0]] = value;
+    return;
+  }
+  const parent = ensureNestedObject(root, path.slice(0, -1));
+  parent[path[path.length - 1]] = value;
+}
+
+function deleteNestedValue(root, path) {
+  if (path.length === 0) {
+    return;
+  }
+  if (path.length === 1) {
+    delete root[path[0]];
+    return;
+  }
+  const parent = getNestedValue(root, path.slice(0, -1));
+  if (!parent || typeof parent !== "object") {
+    return;
+  }
+  delete parent[path[path.length - 1]];
+}
+
+function applyAccountScopedAllowlistConfigEdit(params) {
+  const resolvedTarget = resolveAccountScopedWriteTarget(
+    params.parsedConfig,
+    params.channelId,
+    params.accountId,
+  );
+  const existing = [];
+  for (const path of params.paths.readPaths) {
+    const existingRaw = getNestedValue(resolvedTarget.target, path);
+    if (!Array.isArray(existingRaw)) {
+      continue;
+    }
+    for (const entry of existingRaw) {
+      const value = String(entry).trim();
+      if (!value || existing.includes(value)) {
+        continue;
+      }
+      existing.push(value);
+    }
+  }
+
+  const normalizedEntry = params.normalize([params.entry]);
+  if (normalizedEntry.length === 0) {
+    return { kind: "invalid-entry" };
+  }
+
+  const existingNormalized = params.normalize(existing);
+  const shouldMatch = (value) => normalizedEntry.includes(value);
+  let changed = false;
+  let next = existing;
+  const configHasEntry = existingNormalized.some((value) => shouldMatch(value));
+  if (params.action === "add") {
+    if (!configHasEntry) {
+      next = [...existing, String(params.entry || "").trim()];
+      changed = true;
+    }
+  } else {
+    const keep = [];
+    for (const entry of existing) {
+      const normalized = params.normalize([entry]);
+      if (normalized.some((value) => shouldMatch(value))) {
+        changed = true;
+        continue;
+      }
+      keep.push(entry);
+    }
+    next = keep;
+  }
+
+  if (changed) {
+    if (next.length === 0) {
+      deleteNestedValue(resolvedTarget.target, params.paths.writePath);
+    } else {
+      setNestedValue(resolvedTarget.target, params.paths.writePath, next);
+    }
+    for (const path of params.paths.cleanupPaths || []) {
+      deleteNestedValue(resolvedTarget.target, path);
+    }
+  }
+
+  return {
+    kind: "ok",
+    changed,
+    pathLabel: `${resolvedTarget.pathPrefix}.${params.paths.writePath.join(".")}`,
+    writeTarget: resolvedTarget.writeTarget,
+  };
+}
+
+function buildAccountScopedAllowlistConfigEditor(params) {
+  return ({ cfg, parsedConfig, accountId, scope, action, entry }) => {
+    const paths = params.resolvePaths(scope);
+    if (!paths) {
+      return null;
+    }
+    return applyAccountScopedAllowlistConfigEdit({
+      parsedConfig,
+      channelId: params.channelId,
+      accountId,
+      action,
+      entry,
+      normalize: (values) => params.normalize({ cfg, accountId, values }),
+      paths,
+    });
+  };
+}
+
+function buildAccountAllowlistAdapter(params) {
+  return {
+    supportsScope: params.supportsScope,
+    readConfig: ({ cfg, accountId }) =>
+      params.readConfig(params.resolveAccount({ cfg, accountId }), { cfg, accountId }),
+    applyConfigEdit: buildAccountScopedAllowlistConfigEditor({
+      channelId: params.channelId,
+      normalize: params.normalize,
+      resolvePaths: params.resolvePaths,
+    }),
+  };
+}
+
+function buildDmGroupAccountAllowlistAdapter(params) {
+  return buildAccountAllowlistAdapter({
+    channelId: params.channelId,
+    resolveAccount: params.resolveAccount,
+    normalize: params.normalize,
+    supportsScope: ({ scope }) => scope === "dm" || scope === "group" || scope === "all",
+    resolvePaths: resolveDmGroupAllowlistConfigPaths,
+    readConfig: (account, context) => ({
+      dmAllowFrom: readConfiguredAllowlistEntries(params.resolveDmAllowFrom(account, context)),
+      groupAllowFrom: readConfiguredAllowlistEntries(params.resolveGroupAllowFrom(account)),
+      ...(params.resolveDmPolicy ? { dmPolicy: params.resolveDmPolicy(account) ?? undefined } : {}),
+      ...(params.resolveGroupPolicy
+        ? { groupPolicy: params.resolveGroupPolicy(account) ?? undefined }
+        : {}),
+      ...(params.resolveGroupOverrides
+        ? { groupOverrides: params.resolveGroupOverrides(account) }
+        : {}),
+    }),
+  });
+}
+
+function buildLegacyDmAccountAllowlistAdapter(params) {
+  return buildAccountAllowlistAdapter({
+    channelId: params.channelId,
+    resolveAccount: params.resolveAccount,
+    normalize: params.normalize,
+    supportsScope: ({ scope }) => scope === "dm",
+    resolvePaths: resolveLegacyDmAllowlistConfigPaths,
+    readConfig: (account, context) => ({
+      dmAllowFrom: readConfiguredAllowlistEntries(params.resolveDmAllowFrom(account, context)),
+      ...(params.resolveGroupPolicy
+        ? { groupPolicy: params.resolveGroupPolicy(account) ?? undefined }
+        : {}),
+      ...(params.resolveGroupOverrides
+        ? { groupOverrides: params.resolveGroupOverrides(account) }
+        : {}),
+    }),
+  });
+}
+
 const ACCESS_GROUP_ALLOW_FROM_PREFIX = "accessGroup:";
 
 function parseAccessGroupAllowFromEntry(entry) {
@@ -24369,6 +24871,700 @@ async function expandAllowFromWithAccessGroups(params) {
   }
   const senderEntry = params.senderAllowEntry ?? params.senderId;
   return Array.from(new Set([...allowFrom, senderEntry]));
+}
+
+function createDirectDmPreCryptoGuardPolicy(overrides = {}) {
+  const rateLimit = overrides.rateLimit || {};
+  return {
+    allowedKinds: overrides.allowedKinds ?? [4],
+    maxFutureSkewSec: overrides.maxFutureSkewSec ?? 120,
+    maxCiphertextBytes: overrides.maxCiphertextBytes ?? 16 * 1024,
+    maxPlaintextBytes: overrides.maxPlaintextBytes ?? 8 * 1024,
+    rateLimit: {
+      windowMs: rateLimit.windowMs ?? 60_000,
+      maxPerSenderPerWindow: rateLimit.maxPerSenderPerWindow ?? 20,
+      maxGlobalPerWindow: rateLimit.maxGlobalPerWindow ?? 200,
+      maxTrackedSenderKeys: rateLimit.maxTrackedSenderKeys ?? 4096,
+    },
+  };
+}
+
+async function resolveInboundDirectDmAccessWithRuntime(params) {
+  const dmPolicy = params.dmPolicy ?? "pairing";
+  const storeAllowFrom =
+    dmPolicy === "pairing"
+      ? await readStoreAllowFromForDmPolicy({
+          provider: params.channel,
+          accountId: params.accountId,
+          dmPolicy,
+          readStore: params.readStoreAllowFrom,
+        })
+      : [];
+  const [allowFrom, effectiveStoreAllowFrom] = await Promise.all([
+    expandAllowFromWithAccessGroups({
+      cfg: params.cfg,
+      allowFrom: params.allowFrom,
+      channel: params.channel,
+      accountId: params.accountId,
+      senderId: params.senderId,
+      isSenderAllowed: params.isSenderAllowed,
+      resolveMembership: params.resolveAccessGroupMembership,
+    }),
+    expandAllowFromWithAccessGroups({
+      cfg: params.cfg,
+      allowFrom: storeAllowFrom,
+      channel: params.channel,
+      accountId: params.accountId,
+      senderId: params.senderId,
+      isSenderAllowed: params.isSenderAllowed,
+      resolveMembership: params.resolveAccessGroupMembership,
+    }),
+  ]);
+  const access = resolveDmGroupAccessWithLists({
+    isGroup: false,
+    dmPolicy,
+    allowFrom,
+    storeAllowFrom: effectiveStoreAllowFrom,
+    groupAllowFromFallbackToAllowFrom: false,
+    isSenderAllowed: (allowEntries) => params.isSenderAllowed(params.senderId, allowEntries),
+  });
+  const shouldComputeAuth = params.runtime.shouldComputeCommandAuthorized(
+    params.rawBody,
+    params.cfg,
+  );
+  const senderAllowedForCommands = params.isSenderAllowed(
+    params.senderId,
+    access.effectiveAllowFrom,
+  );
+  const commandAuthorized = shouldComputeAuth
+    ? params.runtime.resolveCommandAuthorizedFromAuthorizers({
+        useAccessGroups: !(
+          params.cfg &&
+          params.cfg.commands &&
+          params.cfg.commands.useAccessGroups === false
+        ),
+        authorizers: [
+          {
+            configured: access.effectiveAllowFrom.length > 0,
+            allowed: senderAllowedForCommands,
+          },
+        ],
+        modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff,
+      })
+    : undefined;
+  return {
+    access: {
+      decision: access.decision,
+      reasonCode: access.reasonCode,
+      reason: access.reason,
+      effectiveAllowFrom: access.effectiveAllowFrom,
+    },
+    shouldComputeAuth,
+    senderAllowedForCommands,
+    commandAuthorized,
+  };
+}
+
+function createPreCryptoDirectDmAuthorizer(params) {
+  return async (input) => {
+    const resolved = await params.resolveAccess(input.senderId);
+    const access = resolved && "access" in resolved ? resolved.access : resolved;
+    if (access.decision === "allow") {
+      return "allow";
+    }
+    if (access.decision === "pairing") {
+      if (typeof params.issuePairingChallenge === "function") {
+        await params.issuePairingChallenge({
+          senderId: input.senderId,
+          reply: input.reply,
+        });
+      }
+      return "pairing";
+    }
+    if (typeof params.onBlocked === "function") {
+      params.onBlocked({
+        senderId: input.senderId,
+        reason: access.reason,
+        reasonCode: access.reasonCode,
+      });
+    }
+    return "block";
+  };
+}
+
+function resolveDirectDmAuthorizationOutcome(params) {
+  if (params.isGroup) {
+    return "allowed";
+  }
+  if (params.dmPolicy === "disabled") {
+    return "disabled";
+  }
+  if (!params.senderAllowedForCommands) {
+    return "unauthorized";
+  }
+  return "allowed";
+}
+
+async function resolveSenderCommandAuthorization(params) {
+  const shouldComputeAuth = params.shouldComputeCommandAuthorized(params.rawBody, params.cfg);
+  const storeAllowFrom =
+    !params.isGroup && params.dmPolicy !== "allowlist" && params.dmPolicy !== "open"
+      ? await params.readAllowFromStore().catch(() => [])
+      : [];
+  const channel = params.channel;
+  const accountId = params.accountId ?? DEFAULT_ACCOUNT_ID;
+  let configuredAllowFrom = Array.isArray(params.configuredAllowFrom)
+    ? params.configuredAllowFrom
+    : [];
+  let configuredGroupAllowFrom = Array.isArray(params.configuredGroupAllowFrom)
+    ? params.configuredGroupAllowFrom
+    : [];
+  let dmStoreAllowFrom = storeAllowFrom;
+  if (channel) {
+    [configuredAllowFrom, configuredGroupAllowFrom] = await Promise.all([
+      expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: configuredAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      }),
+      expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: configuredGroupAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      }),
+    ]);
+    if (!params.isGroup) {
+      dmStoreAllowFrom = await expandAllowFromWithAccessGroups({
+        cfg: params.cfg,
+        allowFrom: storeAllowFrom,
+        channel,
+        accountId,
+        senderId: params.senderId,
+        isSenderAllowed: params.isSenderAllowed,
+        resolveMembership: params.resolveAccessGroupMembership,
+      });
+    }
+  }
+  const access = resolveDmGroupAccessWithLists({
+    isGroup: params.isGroup,
+    dmPolicy: params.dmPolicy,
+    groupPolicy: "allowlist",
+    allowFrom: configuredAllowFrom,
+    groupAllowFrom: configuredGroupAllowFrom,
+    storeAllowFrom: dmStoreAllowFrom,
+    isSenderAllowed: (allowFrom) => params.isSenderAllowed(params.senderId, allowFrom),
+  });
+  const effectiveAllowFrom = access.effectiveAllowFrom || [];
+  const effectiveGroupAllowFrom = access.effectiveGroupAllowFrom || [];
+  const useAccessGroups = !(
+    params.cfg &&
+    params.cfg.commands &&
+    params.cfg.commands.useAccessGroups === false
+  );
+  const senderAllowedForCommands = params.isSenderAllowed(
+    params.senderId,
+    params.isGroup ? effectiveGroupAllowFrom : effectiveAllowFrom,
+  );
+  const ownerAllowedForCommands = params.isSenderAllowed(params.senderId, effectiveAllowFrom);
+  const groupAllowedForCommands = params.isSenderAllowed(
+    params.senderId,
+    effectiveGroupAllowFrom,
+  );
+  const commandAuthorized = shouldComputeAuth
+    ? params.resolveCommandAuthorizedFromAuthorizers({
+        useAccessGroups,
+        authorizers: [
+          { configured: effectiveAllowFrom.length > 0, allowed: ownerAllowedForCommands },
+          {
+            configured: effectiveGroupAllowFrom.length > 0,
+            allowed: groupAllowedForCommands,
+          },
+        ],
+      })
+    : undefined;
+  return {
+    shouldComputeAuth,
+    effectiveAllowFrom,
+    effectiveGroupAllowFrom,
+    senderAllowedForCommands,
+    commandAuthorized,
+  };
+}
+
+async function resolveSenderCommandAuthorizationWithRuntime(params) {
+  return resolveSenderCommandAuthorization({
+    ...params,
+    shouldComputeCommandAuthorized: params.runtime.shouldComputeCommandAuthorized,
+    resolveCommandAuthorizedFromAuthorizers:
+      params.runtime.resolveCommandAuthorizedFromAuthorizers,
+  });
+}
+
+function buildHelpMessage(_cfg) {
+  return "OpenClaw commands\n\nUse /commands for full list.";
+}
+
+function buildCommandsMessage(_cfg) {
+  return "More: /tools for available capabilities\n/models - List model providers/models.";
+}
+
+function buildCommandsMessagePaginated(cfg) {
+  return {
+    text: buildCommandsMessage(cfg),
+    currentPage: 1,
+    totalPages: 1,
+  };
+}
+
+async function dispatchInboundDirectDmWithRuntime(params) {
+  const channelRuntime = params.runtime && params.runtime.channel;
+  if (!channelRuntime) {
+    throw new Error("direct-DM runtime requires runtime.channel");
+  }
+  const route = channelRuntime.routing.resolveAgentRoute({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  const sessionStore =
+    params.cfg && params.cfg.session ? params.cfg.session.store : undefined;
+  const storePath = channelRuntime.session.resolveStorePath(sessionStore, {
+    agentId: route.agentId,
+  });
+  const envelopeOptions = channelRuntime.reply.resolveEnvelopeFormatOptions(params.cfg);
+  const previousTimestamp = channelRuntime.session.readSessionUpdatedAt({
+    storePath,
+    sessionKey: route.sessionKey,
+  });
+  const body = channelRuntime.reply.formatAgentEnvelope({
+    channel: params.channelLabel,
+    from: params.conversationLabel,
+    body: params.rawBody,
+    timestamp: params.timestamp,
+    previousTimestamp,
+    envelope: envelopeOptions,
+  });
+  const ctxPayload = channelRuntime.reply.finalizeInboundContext({
+    Body: body,
+    BodyForAgent: params.bodyForAgent ?? params.rawBody,
+    RawBody: params.rawBody,
+    CommandBody: params.commandBody ?? params.rawBody,
+    From: params.senderAddress,
+    To: params.recipientAddress,
+    SessionKey: route.sessionKey,
+    AccountId: route.accountId ?? params.accountId,
+    ChatType: "direct",
+    ConversationLabel: params.conversationLabel,
+    SenderId: params.senderId,
+    Provider: params.provider ?? params.channel,
+    Surface: params.surface ?? params.channel,
+    MessageSid: params.messageId,
+    MessageSidFull: params.messageId,
+    Timestamp: params.timestamp,
+    CommandAuthorized: params.commandAuthorized,
+    OriginatingChannel: params.originatingChannel ?? params.channel,
+    OriginatingTo: params.originatingTo ?? params.recipientAddress,
+    ...(params.extraContext || {}),
+  });
+  try {
+    await channelRuntime.session.recordInboundSession({
+      cfg: params.cfg,
+      channel: params.channel,
+      accountId: route.accountId ?? params.accountId,
+      agentId: route.agentId,
+      routeSessionKey: route.sessionKey,
+      storePath,
+      ctxPayload,
+    });
+  } catch (error) {
+    if (typeof params.onRecordError === "function") {
+      params.onRecordError(error);
+    }
+  }
+  try {
+    await channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+      ctx: ctxPayload,
+      cfg: params.cfg,
+      dispatcherOptions: {
+        deliver: params.deliver,
+        onError: params.onDispatchError,
+      },
+      replyOptions: {},
+    });
+  } catch (error) {
+    if (typeof params.onDispatchError === "function") {
+      params.onDispatchError(error, { kind: "reply_dispatch" });
+    }
+  }
+  return { route, storePath, ctxPayload };
+}
+
+function attachChannelToResult(channel, result) {
+  return {
+    channel,
+    ...(result || {}),
+  };
+}
+
+function attachChannelToResults(channel, results) {
+  return (Array.isArray(results) ? results : []).map((result) =>
+    attachChannelToResult(channel, result),
+  );
+}
+
+function createEmptyChannelResult(channel, result = {}) {
+  return attachChannelToResult(channel, {
+    messageId: "",
+    ...result,
+  });
+}
+
+function buildChannelSendResult(channel, result) {
+  return {
+    channel,
+    ok: Boolean(result && result.ok),
+    messageId: (result && result.messageId) ?? "",
+    error: result && result.error ? new Error(String(result.error)) : undefined,
+  };
+}
+
+function createAttachedChannelResultAdapter(params) {
+  return {
+    sendText:
+      typeof params.sendText === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendText(ctx))
+        : undefined,
+    sendMedia:
+      typeof params.sendMedia === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendMedia(ctx))
+        : undefined,
+    sendPoll:
+      typeof params.sendPoll === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendPoll(ctx))
+        : undefined,
+  };
+}
+
+function createRawChannelSendResultAdapter(params) {
+  return {
+    sendText:
+      typeof params.sendText === "function"
+        ? async (ctx) => buildChannelSendResult(params.channel, await params.sendText(ctx))
+        : undefined,
+    sendMedia:
+      typeof params.sendMedia === "function"
+        ? async (ctx) => buildChannelSendResult(params.channel, await params.sendMedia(ctx))
+        : undefined,
+  };
+}
+
+function normalizePairingFilenameKey(value, kind) {
+  if (typeof value !== "string") {
+    throw new Error(`invalid pairing ${kind}: expected non-empty string`);
+  }
+  const raw = normalizeLowercaseStringOrEmpty(value);
+  if (!raw) {
+    throw new Error(`invalid pairing ${kind}: expected non-empty string`);
+  }
+  const safe = raw.replace(/[\\/:*?"<>|]/g, "_").replace(/\.\./g, "_");
+  if (!safe || safe === "_") {
+    throw new Error(`invalid pairing ${kind}: sanitized filename key is empty`);
+  }
+  return safe;
+}
+
+function resolvePairingCredentialsDir(env = process.env) {
+  const oauthDir = env && typeof env.OPENCLAW_OAUTH_DIR === "string"
+    ? env.OPENCLAW_OAUTH_DIR.trim()
+    : "";
+  if (oauthDir) {
+    return oauthDir;
+  }
+  const stateDir = env && typeof env.OPENCLAW_STATE_DIR === "string"
+    ? env.OPENCLAW_STATE_DIR.trim()
+    : "";
+  return path.join(stateDir || path.join(os.homedir(), ".openclaw"), "credentials");
+}
+
+function resolveChannelAllowFromPath(channel, env = process.env, accountId) {
+  const channelKey = normalizePairingFilenameKey(channel, "channel");
+  const accountKey =
+    typeof accountId === "string" && accountId.trim()
+      ? normalizePairingFilenameKey(accountId, "account id")
+      : null;
+  const filename = accountKey
+    ? `${channelKey}-${accountKey}-allowFrom.json`
+    : `${channelKey}-allowFrom.json`;
+  return path.join(resolvePairingCredentialsDir(env), filename);
+}
+
+function readAllowFromEntriesAtPath(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : parsed && Array.isArray(parsed.allowFrom)
+        ? parsed.allowFrom
+        : [];
+    return Array.from(
+      new Set(
+        entries
+          .map((entry) => normalizeOptionalString(entry) || "")
+          .filter((entry) => entry.length > 0),
+      ),
+    );
+  } catch (_error) {
+    return [];
+  }
+}
+
+function readChannelAllowFromStoreSync(channel, env = process.env, accountId) {
+  const resolvedAccountId = normalizeAccountId(accountId);
+  const scopedEntries = readAllowFromEntriesAtPath(
+    resolveChannelAllowFromPath(channel, env, resolvedAccountId),
+  );
+  if (resolvedAccountId !== DEFAULT_ACCOUNT_ID) {
+    return scopedEntries;
+  }
+  const legacyEntries = readAllowFromEntriesAtPath(resolveChannelAllowFromPath(channel, env));
+  return Array.from(new Set([...scopedEntries, ...legacyEntries]));
+}
+
+async function readChannelAllowFromStore(channel, env = process.env, accountId) {
+  return readChannelAllowFromStoreSync(channel, env, accountId);
+}
+
+function buildPairingReply(params) {
+  return [
+    "OpenClaw: access not configured.",
+    "",
+    params.idLine,
+    "Pairing code:",
+    "```",
+    params.code,
+    "```",
+    "",
+    "Ask the bot owner to approve with:",
+    `openclaw pairing approve ${params.channel} ${params.code}`,
+  ].join("\n");
+}
+
+async function issuePairingChallenge(params) {
+  const { code, created } = await params.upsertPairingRequest({
+    id: params.senderId,
+    meta: params.meta,
+  });
+  if (!created) {
+    return { created: false };
+  }
+  if (typeof params.onCreated === "function") {
+    params.onCreated({ code });
+  }
+  const replyText =
+    typeof params.buildReplyText === "function"
+      ? params.buildReplyText({ code, senderIdLine: params.senderIdLine })
+      : buildPairingReply({
+          channel: params.channel,
+          idLine: params.senderIdLine,
+          code,
+        });
+  try {
+    await params.sendPairingReply(replyText);
+  } catch (error) {
+    if (typeof params.onReplyError === "function") {
+      params.onReplyError(error);
+    }
+  }
+  return { created: true, code };
+}
+
+function createScopedPairingAccess(params) {
+  const resolvedAccountId = normalizeAccountId(params.accountId);
+  return {
+    accountId: resolvedAccountId,
+    readAllowFromStore: () =>
+      params.core.channel.pairing.readAllowFromStore({
+        channel: params.channel,
+        accountId: resolvedAccountId,
+      }),
+    readStoreForDmPolicy: (provider, accountId) =>
+      params.core.channel.pairing.readAllowFromStore({
+        channel: provider,
+        accountId: normalizeAccountId(accountId),
+      }),
+    upsertPairingRequest: (input) =>
+      params.core.channel.pairing.upsertPairingRequest({
+        channel: params.channel,
+        accountId: resolvedAccountId,
+        ...input,
+      }),
+  };
+}
+
+function createChannelPairingChallengeIssuer(params) {
+  return (challenge) =>
+    issuePairingChallenge({
+      channel: params.channel,
+      upsertPairingRequest: params.upsertPairingRequest,
+      ...challenge,
+    });
+}
+
+function createChannelPairingController(params) {
+  const access = createScopedPairingAccess(params);
+  return {
+    ...access,
+    issueChallenge: createChannelPairingChallengeIssuer({
+      channel: params.channel,
+      upsertPairingRequest: access.upsertPairingRequest,
+    }),
+  };
+}
+
+function createPairingPrefixStripper(prefixRe, map = (entry) => entry) {
+  return (entry) => map(String(entry).trim().replace(prefixRe, "").trim());
+}
+
+function createLoggedPairingApprovalNotifier(format, log = console.log) {
+  return async (params) => {
+    log(typeof format === "function" ? format(params) : format);
+  };
+}
+
+function createTextPairingAdapter(params) {
+  return {
+    idLabel: params.idLabel,
+    normalizeAllowEntry: params.normalizeAllowEntry,
+    notifyApproval: async (ctx) => {
+      await params.notify({ ...ctx, message: params.message });
+    },
+  };
+}
+
+function formatDocsLink(pathValue, label, opts = {}) {
+  const docsRoot = "https://docs.openclaw.ai";
+  const trimmed = typeof pathValue === "string" ? pathValue.trim() : "";
+  const url = trimmed
+    ? trimmed.startsWith("http")
+      ? trimmed
+      : `${docsRoot}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`
+    : docsRoot;
+  const resolvedLabel = label ?? url;
+  return opts.fallback && opts.force !== true ? opts.fallback : `${resolvedLabel} (${url})`;
+}
+
+function splitSetupEntries(raw) {
+  return String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function setSetupChannelEnabled(cfg, channel, enabled) {
+  const channels = cfg && cfg.channels ? cfg.channels : {};
+  const channelConfig = channels[channel] || {};
+  return {
+    ...(cfg || {}),
+    channels: {
+      ...channels,
+      [channel]: {
+        ...channelConfig,
+        enabled,
+      },
+    },
+  };
+}
+
+function createTopLevelChannelDmPolicy(params) {
+  const setPolicy = (cfg, dmPolicy) => {
+    const channels = cfg && cfg.channels ? cfg.channels : {};
+    const channelConfig = channels[params.channel] || {};
+    const allowFrom =
+      typeof params.getAllowFrom === "function" ? params.getAllowFrom(cfg) : undefined;
+    return {
+      ...(cfg || {}),
+      channels: {
+        ...channels,
+        [params.channel]: {
+          ...channelConfig,
+          enabled: true,
+          dmPolicy,
+          ...(allowFrom !== undefined ? { allowFrom } : {}),
+        },
+      },
+    };
+  };
+  return {
+    label: params.label,
+    channel: params.channel,
+    policyKey: params.policyKey,
+    allowFromKey: params.allowFromKey,
+    getCurrent: params.getCurrent,
+    setPolicy,
+    ...(params.promptAllowFrom ? { promptAllowFrom: params.promptAllowFrom } : {}),
+  };
+}
+
+function buildOptionalChannelSetupMessage(params) {
+  const installTarget = params.npmSpec ?? `the ${params.label} plugin`;
+  const message = [`${params.label} setup requires ${installTarget} to be installed.`];
+  if (params.docsPath) {
+    message.push(
+      `Docs: ${formatDocsLink(params.docsPath, params.docsPath.replace(/^\/+/u, ""))}`,
+    );
+  }
+  return message.join(" ");
+}
+
+function createOptionalChannelSetupAdapter(params) {
+  const message = buildOptionalChannelSetupMessage(params);
+  return {
+    resolveAccountId: ({ accountId } = {}) => accountId ?? DEFAULT_ACCOUNT_ID,
+    applyAccountConfig: () => {
+      throw new Error(message);
+    },
+    validateInput: () => message,
+  };
+}
+
+function createOptionalChannelSetupWizard(params) {
+  const message = buildOptionalChannelSetupMessage(params);
+  return {
+    channel: params.channel,
+    status: {
+      configuredLabel: `${params.label} plugin installed`,
+      unconfiguredLabel: `install ${params.label} plugin`,
+      configuredHint: message,
+      unconfiguredHint: message,
+      unconfiguredScore: 0,
+      resolveConfigured: () => false,
+      resolveStatusLines: () => [message],
+      resolveSelectionHint: () => message,
+    },
+    credentials: [],
+    finalize: async () => {
+      throw new Error(message);
+    },
+  };
+}
+
+function createOptionalChannelSetupSurface(params) {
+  return {
+    setupAdapter: createOptionalChannelSetupAdapter(params),
+    setupWizard: createOptionalChannelSetupWizard(params),
+  };
 }
 
 function buildOutboundBaseSessionKey(params) {
@@ -25264,6 +26460,8 @@ const channelInboundDebounceRuntime = {
 const channelInboundRuntime = {
   buildMentionRegexes,
   createChannelInboundDebouncer,
+  createDirectDmPreCryptoGuardPolicy,
+  dispatchInboundDirectDmWithRuntime,
   createInboundDebouncer,
   formatInboundEnvelope,
   formatInboundFromLabel,
@@ -25316,6 +26514,7 @@ const channelPolicyRuntime = {
   createScopedDmSecurityResolver,
   evaluateGroupRouteAccessForPolicy,
   evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
   evaluateSenderGroupAccessForPolicy,
   formatPairingApproveHint,
   normalizeAllowFromList,
@@ -25327,8 +26526,25 @@ const channelPolicyRuntime = {
   resolveDmGroupAccessWithLists,
   resolveEffectiveAllowFromLists,
   resolveOpenDmAllowlistAccess,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveRuntimeGroupPolicy,
   resolveSenderScopedGroupPolicy,
   resolveToolsBySender,
+};
+
+const groupAccessRuntime = {
+  evaluateGroupRouteAccessForPolicy,
+  evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
+  evaluateSenderGroupAccessForPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveSenderScopedGroupPolicy,
+};
+
+const providerSelectionRuntime = {
+  resolveConfiguredCapabilityProvider,
+  resolveProviderRawConfig,
+  selectConfiguredOrAutoProvider,
 };
 
 const allowFromRuntime = {
@@ -25356,11 +26572,90 @@ const allowFromRuntime = {
   summarizeMapping,
 };
 
+const allowlistConfigEditRuntime = {
+  buildAccountScopedAllowlistConfigEditor,
+  buildDmGroupAccountAllowlistAdapter,
+  buildLegacyDmAccountAllowlistAdapter,
+  collectAllowlistOverridesFromRecord,
+  collectNestedAllowlistOverridesFromRecord,
+  createAccountScopedAllowlistNameResolver,
+  createFlatAllowlistOverrideResolver,
+  createNestedAllowlistOverrideResolver,
+  readConfiguredAllowlistEntries,
+  resolveDmGroupAllowlistConfigPaths,
+  resolveLegacyDmAllowlistConfigPaths,
+};
+
 const accessGroupsRuntime = {
   ACCESS_GROUP_ALLOW_FROM_PREFIX,
   expandAllowFromWithAccessGroups,
   parseAccessGroupAllowFromEntry,
   resolveAccessGroupAllowFromMatches,
+};
+
+const directDmAccessRuntime = {
+  createPreCryptoDirectDmAuthorizer,
+  resolveInboundDirectDmAccessWithRuntime,
+};
+
+const directDmGuardPolicyRuntime = {
+  createDirectDmPreCryptoGuardPolicy,
+};
+
+const directDmRuntime = {
+  ...directDmAccessRuntime,
+  ...directDmGuardPolicyRuntime,
+  dispatchInboundDirectDmWithRuntime,
+};
+
+const channelSendResultRuntime = {
+  attachChannelToResult,
+  attachChannelToResults,
+  buildChannelSendResult,
+  createAttachedChannelResultAdapter,
+  createEmptyChannelResult,
+  createRawChannelSendResultAdapter,
+};
+
+const channelPairingRuntime = {
+  createChannelPairingChallengeIssuer,
+  createChannelPairingController,
+  createLoggedPairingApprovalNotifier,
+  createPairingPrefixStripper,
+  createTextPairingAdapter,
+  readChannelAllowFromStore,
+  readChannelAllowFromStoreSync,
+  resolveChannelAllowFromPath,
+};
+
+const commandAuthRuntime = {
+  ...accessGroupsRuntime,
+  createPreCryptoDirectDmAuthorizer,
+  resolveInboundDirectDmAccessWithRuntime,
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  resolveCommandAuthorizedFromAuthorizers,
+  resolveDirectDmAuthorizationOutcome,
+  resolveSenderCommandAuthorization,
+  resolveSenderCommandAuthorizationWithRuntime,
+  shouldComputeCommandAuthorized,
+  ...commandDetectionRuntime,
+  ...commandPrimitivesRuntime,
+};
+
+const channelSetupRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupSurface,
+  createOptionalChannelSetupWizard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  setSetupChannelEnabled,
+  splitSetupEntries,
 };
 
 const markdownTableRuntime = {
@@ -25633,8 +26928,16 @@ const genericSdk = new Proxy(
     SILENT_REPLY_TOKEN,
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
+    ...groupAccessRuntime,
+    ...providerSelectionRuntime,
     ...allowFromRuntime,
+    ...allowlistConfigEditRuntime,
     ...accessGroupsRuntime,
+    ...directDmRuntime,
+    ...channelSendResultRuntime,
+    ...channelPairingRuntime,
+    ...commandAuthRuntime,
+    ...channelSetupRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26048,16 +27351,76 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelPolicyRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/group-access" ||
+    request === "@openclaw/plugin-sdk/group-access"
+  ) {
+    return groupAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-selection-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-selection-runtime"
+  ) {
+    return providerSelectionRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/allow-from" ||
     request === "@openclaw/plugin-sdk/allow-from"
   ) {
     return allowFromRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/allowlist-config-edit" ||
+    request === "@openclaw/plugin-sdk/allowlist-config-edit"
+  ) {
+    return allowlistConfigEditRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/access-groups" ||
     request === "@openclaw/plugin-sdk/access-groups"
   ) {
     return accessGroupsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/direct-dm-access" ||
+    request === "@openclaw/plugin-sdk/direct-dm-access"
+  ) {
+    return directDmAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/direct-dm-guard-policy" ||
+    request === "@openclaw/plugin-sdk/direct-dm-guard-policy"
+  ) {
+    return directDmGuardPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/direct-dm" ||
+    request === "@openclaw/plugin-sdk/direct-dm"
+  ) {
+    return directDmRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-send-result" ||
+    request === "@openclaw/plugin-sdk/channel-send-result"
+  ) {
+    return channelSendResultRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-pairing" ||
+    request === "@openclaw/plugin-sdk/channel-pairing"
+  ) {
+    return channelPairingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-auth" ||
+    request === "@openclaw/plugin-sdk/command-auth"
+  ) {
+    return commandAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-setup" ||
+    request === "@openclaw/plugin-sdk/channel-setup"
+  ) {
+    return channelSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

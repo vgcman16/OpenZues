@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~75.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~76.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -368,6 +368,60 @@ may lag behind this tracker.
   parsing, message-sender group matching, async membership resolver fallback,
   matched group projection, allowFrom expansion, and generic SDK re-exports.
   - Status: checkpointed in `93a4347c`
+
+- [x] Imported plugin SDK direct-DM access shim for pairing-store allowlists,
+  access-group expansion, open-DM allowlist blocking, command authorization
+  runtime delegation, pairing callbacks, blocked-sender callbacks, and generic
+  SDK re-exports.
+  - Status: checkpointed in `5258f537`
+
+- [x] Imported plugin SDK direct-DM guard-policy shim for pre-crypto guard
+  policy defaults/overrides, rate-limit default merging, channel-inbound
+  re-export, and generic SDK re-exports.
+  - Status: checkpointed in `02803c84`
+
+- [x] Imported plugin SDK direct-DM shim for direct-DM access/guard
+  re-exports, route/envelope/session-record/reply-dispatch helper behavior,
+  channel-inbound re-export, and generic SDK re-exports.
+  - Status: checkpointed in `6534f0db`
+
+- [x] Imported plugin SDK channel-send-result shim for channel result stamping,
+  empty result construction, raw send result normalization, attached/raw
+  adapter wrapping, and generic SDK re-exports.
+  - Status: checkpointed in `c73fb961`
+
+- [x] Imported plugin SDK channel-pairing shim for scoped pairing controllers,
+  challenge issuers, prefix-stripping/text/log pairing adapters, allowFrom
+  store path/read helpers, and generic SDK re-exports.
+  - Status: checkpointed in `f0a21c8c`
+
+- [x] Imported plugin SDK command-auth shim for DM/group/access-group sender
+  command authorization, runtime-backed wrappers, direct-DM outcomes,
+  command-gating/detection re-exports, deprecated command-status builders, and
+  generic SDK re-exports.
+  - Status: checkpointed in `d06e2c42`
+
+- [x] Imported plugin SDK channel-setup shim for optional setup
+  adapters/wizards/surfaces, unavailable setup messages, docs links, setup
+  entry splitting, enabled patches, top-level DM policy helpers, and generic
+  SDK re-exports.
+  - Status: checkpointed in `0b86d5ea`
+
+- [x] Imported plugin SDK allowlist-config-edit shim for DM/group and legacy-DM
+  config paths, entry coercion, override collectors/resolvers, token-gated name
+  resolution, account-scoped edits, default-account writes, legacy cleanup, and
+  generic SDK re-exports.
+  - Status: checkpointed in `37677120`
+
+- [x] Imported plugin SDK group-access shim for sender-scoped group policy
+  downgrade, route/matched/sender allowlist decisions, missing-provider
+  fail-closed fallback policy, and generic SDK re-exports.
+  - Status: checkpointed in `88510816`
+
+- [x] Imported plugin SDK provider-selection-runtime shim for explicit
+  provider selection, auto-select ordering, raw config merging, configured
+  capability resolution, failure codes, and generic SDK re-exports.
+  - Status: checkpointed in `395d23fc`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

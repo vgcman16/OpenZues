@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~75.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~76.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin access-groups shim slice is checkpointed in `93a4347c`.
+The imported plugin provider-selection-runtime shim slice is checkpointed in `395d23fc`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +61,219 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Access-groups shim checkpointed in `93a4347c` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Provider-selection-runtime shim checkpointed in `395d23fc` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001UC` Imported provider-selection-runtime shim
+  - Source: `openclaw-main/src/plugin-sdk/provider-selection-runtime.ts`
+  - References: `openclaw-main/src/plugin-sdk/provider-selection-runtime.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/provider-selection-runtime` and use explicit provider
+    selection, missing explicit provider reporting, auto-select ordering,
+    canonical plus selected raw config merging, configured-capability provider
+    resolution, no-provider/provider-not-configured failure codes, and generic
+    SDK availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `395d23fc`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused provider-selection-runtime proof
+    (`1 passed`), adjacent plugin invoke proof (`71 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001UB` Imported group-access shim
+  - Source: `openclaw-main/src/plugin-sdk/group-access.ts`,
+    `openclaw-main/src/config/runtime-group-policy.ts`
+  - References: `openclaw-main/src/plugin-sdk/group-access.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/group-access` and use sender-scoped group policy
+    downgrade, route-level allowlist decisions, matched group access decisions,
+    sender allowlist decisions, missing-provider fail-closed fallback policy,
+    and generic SDK availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `88510816`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused group-access proof (`1 passed`),
+    adjacent plugin invoke proof (`70 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001UA` Imported allowlist-config-edit shim
+  - Source: `openclaw-main/src/plugin-sdk/allowlist-config-edit.ts`
+  - References: `openclaw-main/src/plugin-sdk/allowlist-config-edit.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/allowlist-config-edit` and use DM/group and legacy-DM
+    config path resolution, configured entry coercion, flat/nested override
+    collectors/resolvers, token-gated account-scoped name resolution,
+    account-scoped config edit target selection, add/remove/duplicate edit
+    semantics, top-level/default-account writes, legacy `dm.allowFrom` cleanup,
+    and generic SDK availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `37677120`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused allowlist-config-edit proof
+    (`1 passed`), adjacent plugin invoke proof (`69 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001TZ` Imported channel-setup shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-setup.ts`,
+    `openclaw-main/src/plugin-sdk/optional-channel-setup.ts`,
+    `openclaw-main/src/plugin-sdk/setup.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-helpers.ts`,
+    `openclaw-main/src/terminal/links.ts`
+  - References: `openclaw-main/src/plugin-sdk/channel-setup.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/channel-setup` and use optional channel setup
+    adapters, optional setup wizards, combined optional setup surfaces, setup
+    validation/finalize unavailable messages, docs-link formatting, setup entry
+    splitting, setup channel enabled patching, top-level channel DM policy
+    descriptors/setters, `DEFAULT_ACCOUNT_ID`, and generic SDK availability
+    during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0b86d5ea`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-setup proof (`1 passed`),
+    adjacent plugin invoke proof (`68 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001TY` Imported command-auth shim
+  - Source: `openclaw-main/src/plugin-sdk/command-auth.ts`,
+    `openclaw-main/src/plugin-sdk/access-groups.ts`,
+    `openclaw-main/src/plugin-sdk/direct-dm.ts`,
+    `openclaw-main/src/auto-reply/command-detection.ts`,
+    `openclaw-main/src/auto-reply/commands-registry.ts`,
+    `openclaw-main/src/channels/command-gating.ts`
+  - References: `openclaw-main/src/plugin-sdk/command-auth.test.ts`,
+    `openclaw-main/src/plugin-sdk/direct-dm.test.ts`,
+    `openclaw-main/src/plugin-sdk/access-groups.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/command-auth` and use sender command authorization
+    across DM, group, pairing-store, and access-group allowlists,
+    runtime-backed authorization wrappers, direct-DM authorization outcome
+    projection, command-gating and detection re-exports, direct-DM/access-group
+    compatibility re-exports, deprecated command-status builders, and generic
+    SDK availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `d06e2c42`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused command-auth proof (`1 passed`),
+    adjacent plugin invoke proof (`67 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001TX` Imported channel-pairing shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-pairing.ts`,
+    `openclaw-main/src/plugin-sdk/pairing-access.ts`,
+    `openclaw-main/src/channels/plugins/pairing-adapters.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.ts`,
+    `openclaw-main/src/pairing/pairing-store.ts`
+  - References: `openclaw-main/src/plugin-sdk/channel-pairing.test.ts`,
+    `openclaw-main/src/channels/plugins/pairing-adapters.test.ts`,
+    `openclaw-main/src/pairing/pairing-challenge.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/channel-pairing` and use scoped pairing controller
+    store access, channel-bound challenge issuers, pairing reply delivery,
+    prefix-stripping allowFrom adapters, text pairing adapters, logged
+    approval notifiers, allowFrom store path/read helpers, and generic SDK
+    availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `f0a21c8c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-pairing proof (`1 passed`),
+    adjacent plugin invoke proof (`66 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001TW` Imported channel-send-result shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-send-result.ts`
+  - References: `openclaw-main/src/plugin-sdk/channel-send-result.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/channel-send-result` and use channel result stamping,
+    batch stamping, empty outbound result construction, raw send result
+    normalization with `Error` projection, attached text/media/poll adapter
+    wrapping, raw text/media adapter wrapping, and generic SDK availability
+    during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `c73fb961`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-send-result proof
+    (`1 passed`), adjacent plugin invoke proof (`65 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001TV` Imported direct-DM shim
+  - Source: `openclaw-main/src/plugin-sdk/direct-dm.ts`,
+    `openclaw-main/src/plugin-sdk/inbound-envelope.ts`,
+    `openclaw-main/src/plugin-sdk/inbound-reply-dispatch.ts`
+  - References: `openclaw-main/src/plugin-sdk/direct-dm.test.ts`,
+    `openclaw-main/src/plugin-sdk/nostr.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/direct-dm` and use direct-DM access/guard-policy
+    re-exports plus direct peer route resolution, session-store path lookup,
+    previous timestamp reads, envelope formatting, finalized direct-DM context
+    payload projection, inbound session recording, buffered reply dispatch,
+    generic SDK availability, and the `channel-inbound` re-export during
+    `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `6534f0db`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused direct-DM proof (`1 passed`),
+    adjacent plugin invoke proof (`64 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001TU` Imported direct-DM guard-policy shim
+  - Source: `openclaw-main/src/plugin-sdk/direct-dm-guard-policy.ts`
+  - References: `openclaw-main/src/plugin-sdk/direct-dm.test.ts`,
+    `openclaw-main/src/plugin-sdk/channel-inbound.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/direct-dm-guard-policy` and use default and
+    overrideable pre-crypto guard policy construction, allowed kind overrides,
+    future-skew/ciphertext/plaintext byte limits, nested rate-limit default
+    merging, generic SDK availability, and the `channel-inbound` re-export
+    during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `02803c84`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused direct-DM guard-policy proof (`1 passed`),
+    adjacent plugin invoke proof (`63 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PLUGIN-001TT` Imported direct-DM access shim
+  - Source: `openclaw-main/src/plugin-sdk/direct-dm-access.ts`
+  - References: `openclaw-main/src/plugin-sdk/direct-dm.test.ts`,
+    `openclaw-main/src/plugin-sdk/nostr.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/direct-dm-access` and use pairing-store direct-DM
+    allowlist reads, access-group expansion for configured/store allowlists,
+    open-DM allowlist blocking, resolved direct-DM access projection, command
+    authorization runtime delegation, sender command-allow checks, pairing
+    challenge callbacks, blocked-sender callbacks, and generic SDK
+    availability during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `5258f537`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused direct-DM access proof (`1 passed`),
+    adjacent plugin invoke proof (`62 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PLUGIN-001TS` Imported access-groups shim
   - Source: `openclaw-main/src/plugin-sdk/access-groups.ts`

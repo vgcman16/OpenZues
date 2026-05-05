@@ -8358,6 +8358,2319 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm-access.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createPreCryptoDirectDmAuthorizer,
+  resolveInboundDirectDmAccessWithRuntime
+} = require("openclaw/plugin-sdk/direct-dm-access");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm_access",
+      description: "Use OpenClaw direct-DM access SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const baseCfg = { commands: { useAccessGroups: true } };
+        const runtime = {
+          shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+          resolveCommandAuthorizedFromAuthorizers: ({ authorizers }) =>
+            authorizers.some((entry) => entry.configured && entry.allowed)
+        };
+        const isSenderAllowed = (senderId, allowFrom) => allowFrom.includes(senderId);
+        const paired = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: baseCfg,
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "pairing",
+          allowFrom: [],
+          senderId: "paired-user",
+          rawBody: "/status",
+          isSenderAllowed,
+          readStoreAllowFrom: async () => ["paired-user"],
+          runtime,
+          modeWhenAccessGroupsOff: "configured"
+        });
+        const openBlocked = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: baseCfg,
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "open",
+          allowFrom: [],
+          senderId: "random-user",
+          rawBody: "hello",
+          isSenderAllowed,
+          readStoreAllowFrom: async () => ["random-user"],
+          runtime
+        });
+        const grouped = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: {
+            ...baseCfg,
+            accessGroups: {
+              owners: {
+                type: "message.senders",
+                members: { nostr: ["owner-pubkey"], telegram: ["12345"] }
+              }
+            }
+          },
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "allowlist",
+          allowFrom: ["accessGroup:owners"],
+          senderId: "owner-pubkey",
+          rawBody: "/status",
+          isSenderAllowed,
+          runtime
+        });
+        const events = [];
+        const authorizer = createPreCryptoDirectDmAuthorizer({
+          resolveAccess: async (senderId) => ({
+            access:
+              senderId === "pair-me"
+                ? {
+                    decision: "pairing",
+                    reasonCode: "dm_policy_pairing_required",
+                    reason: "dmPolicy=pairing (not allowlisted)",
+                    effectiveAllowFrom: []
+                  }
+                : {
+                    decision: "block",
+                    reasonCode: "dm_policy_disabled",
+                    reason: "dmPolicy=disabled",
+                    effectiveAllowFrom: []
+                  }
+          }),
+          issuePairingChallenge: async ({ senderId }) => {
+            events.push(`pair:${senderId}`);
+          },
+          onBlocked: ({ senderId, reasonCode }) => {
+            events.push(`block:${senderId}:${reasonCode}`);
+          }
+        });
+        const decisions = await Promise.all([
+          authorizer({ senderId: "pair-me", reply: async () => {} }),
+          authorizer({ senderId: "blocked", reply: async () => {} })
+        ]);
+        return {
+          paired,
+          openBlocked: {
+            access: openBlocked.access,
+            shouldComputeAuth: openBlocked.shouldComputeAuth,
+            senderAllowedForCommands: openBlocked.senderAllowedForCommands,
+            commandAuthorized: openBlocked.commandAuthorized ?? null
+          },
+          grouped,
+          authorizer: { decisions, events },
+          exportTypes: [
+            typeof resolveInboundDirectDmAccessWithRuntime,
+            typeof createPreCryptoDirectDmAuthorizer,
+            typeof genericSdk.resolveInboundDirectDmAccessWithRuntime
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-access-plugin",
+                    "name": "Runtime Direct DM Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "paired": {
+            "access": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_allowlisted",
+                "reason": "dmPolicy=pairing (allowlisted)",
+                "effectiveAllowFrom": ["paired-user"],
+            },
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "openBlocked": {
+            "access": {
+                "decision": "block",
+                "reasonCode": "dm_policy_not_allowlisted",
+                "reason": "dmPolicy=open (not allowlisted)",
+                "effectiveAllowFrom": [],
+            },
+            "shouldComputeAuth": False,
+            "senderAllowedForCommands": False,
+            "commandAuthorized": None,
+        },
+        "grouped": {
+            "access": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_allowlisted",
+                "reason": "dmPolicy=allowlist (allowlisted)",
+                "effectiveAllowFrom": ["accessGroup:owners", "owner-pubkey"],
+            },
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "authorizer": {
+            "decisions": ["pairing", "block"],
+            "events": ["pair:pair-me", "block:blocked:dm_policy_disabled"],
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_guard_policy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm-guard-policy.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDirectDmPreCryptoGuardPolicy
+} = require("openclaw/plugin-sdk/direct-dm-guard-policy");
+const channelInbound = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm_guard_policy",
+      description: "Use OpenClaw direct-DM guard policy SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const defaults = createDirectDmPreCryptoGuardPolicy();
+        const custom = createDirectDmPreCryptoGuardPolicy({
+          allowedKinds: [4, 1059],
+          maxFutureSkewSec: 30,
+          maxPlaintextBytes: 4096,
+          rateLimit: {
+            maxPerSenderPerWindow: 5
+          }
+        });
+        return {
+          defaults,
+          custom,
+          exportTypes: [
+            typeof createDirectDmPreCryptoGuardPolicy,
+            typeof channelInbound.createDirectDmPreCryptoGuardPolicy,
+            typeof genericSdk.createDirectDmPreCryptoGuardPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-guard-policy-plugin",
+                    "name": "Runtime Direct DM Guard Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-guard-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm_guard_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm_guard_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "defaults": {
+            "allowedKinds": [4],
+            "maxFutureSkewSec": 120,
+            "maxCiphertextBytes": 16 * 1024,
+            "maxPlaintextBytes": 8 * 1024,
+            "rateLimit": {
+                "windowMs": 60_000,
+                "maxPerSenderPerWindow": 20,
+                "maxGlobalPerWindow": 200,
+                "maxTrackedSenderKeys": 4096,
+            },
+        },
+        "custom": {
+            "allowedKinds": [4, 1059],
+            "maxFutureSkewSec": 30,
+            "maxCiphertextBytes": 16 * 1024,
+            "maxPlaintextBytes": 4096,
+            "rateLimit": {
+                "windowMs": 60_000,
+                "maxPerSenderPerWindow": 5,
+                "maxGlobalPerWindow": 200,
+                "maxTrackedSenderKeys": 4096,
+            },
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDirectDmPreCryptoGuardPolicy,
+  dispatchInboundDirectDmWithRuntime,
+  resolveInboundDirectDmAccessWithRuntime
+} = require("openclaw/plugin-sdk/direct-dm");
+const channelInbound = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm",
+      description: "Use OpenClaw direct-DM SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const delivered = [];
+        const runtime = {
+          channel: {
+            routing: {
+              resolveAgentRoute: ({ accountId, peer }) => {
+                calls.push(`route:${peer.id}`);
+                return {
+                  agentId: "agent-main",
+                  accountId,
+                  sessionKey: `dm:${peer.id}`
+                };
+              }
+            },
+            session: {
+              resolveStorePath: (store, { agentId }) => {
+                calls.push(`store:${agentId}:${store.type}`);
+                return "/tmp/direct-dm-session-store";
+              },
+              readSessionUpdatedAt: ({ sessionKey }) => {
+                calls.push(`updated:${sessionKey}`);
+                return 1234;
+              },
+              recordInboundSession: async ({ routeSessionKey, ctxPayload }) => {
+                calls.push(`record:${routeSessionKey}:${ctxPayload.Body}`);
+              }
+            },
+            reply: {
+              resolveEnvelopeFormatOptions: () => ({ mode: "agent" }),
+              formatAgentEnvelope: ({ body, previousTimestamp }) =>
+                `env:${body}:${previousTimestamp}`,
+              finalizeInboundContext: (ctx) => ctx,
+              dispatchReplyWithBufferedBlockDispatcher: async ({ dispatcherOptions }) => {
+                calls.push("dispatch");
+                await dispatcherOptions.deliver({ text: "reply text" });
+              }
+            }
+          }
+        };
+        const result = await dispatchInboundDirectDmWithRuntime({
+          cfg: { session: { store: { type: "jsonl" } } },
+          runtime,
+          channel: "nostr",
+          channelLabel: "Nostr",
+          accountId: "default",
+          peer: { kind: "direct", id: "sender-1" },
+          senderId: "sender-1",
+          senderAddress: "nostr:sender-1",
+          recipientAddress: "nostr:bot-1",
+          conversationLabel: "sender-1",
+          rawBody: "hello world",
+          messageId: "event-123",
+          timestamp: 1710000000000,
+          commandAuthorized: true,
+          provider: "nostr",
+          surface: "direct-dm",
+          deliver: async (payload) => {
+            delivered.push(payload);
+          },
+          onRecordError: (err) => {
+            calls.push(`record-error:${err.message}`);
+          },
+          onDispatchError: (err, info) => {
+            calls.push(`dispatch-error:${info.kind}:${err.message}`);
+          }
+        });
+        return {
+          route: result.route,
+          storePath: result.storePath,
+          ctxPayload: {
+            Body: result.ctxPayload.Body,
+            BodyForAgent: result.ctxPayload.BodyForAgent,
+            RawBody: result.ctxPayload.RawBody,
+            CommandBody: result.ctxPayload.CommandBody,
+            From: result.ctxPayload.From,
+            To: result.ctxPayload.To,
+            SessionKey: result.ctxPayload.SessionKey,
+            AccountId: result.ctxPayload.AccountId,
+            ChatType: result.ctxPayload.ChatType,
+            ConversationLabel: result.ctxPayload.ConversationLabel,
+            SenderId: result.ctxPayload.SenderId,
+            Provider: result.ctxPayload.Provider,
+            Surface: result.ctxPayload.Surface,
+            MessageSid: result.ctxPayload.MessageSid,
+            MessageSidFull: result.ctxPayload.MessageSidFull,
+            Timestamp: result.ctxPayload.Timestamp,
+            CommandAuthorized: result.ctxPayload.CommandAuthorized,
+            OriginatingChannel: result.ctxPayload.OriginatingChannel,
+            OriginatingTo: result.ctxPayload.OriginatingTo
+          },
+          calls,
+          delivered,
+          guard: createDirectDmPreCryptoGuardPolicy({ maxFutureSkewSec: 30 }).maxFutureSkewSec,
+          accessType: typeof resolveInboundDirectDmAccessWithRuntime,
+          exportTypes: [
+            typeof dispatchInboundDirectDmWithRuntime,
+            typeof channelInbound.dispatchInboundDirectDmWithRuntime,
+            typeof genericSdk.dispatchInboundDirectDmWithRuntime
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-plugin",
+                    "name": "Runtime Direct DM Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "route": {
+            "agentId": "agent-main",
+            "accountId": "default",
+            "sessionKey": "dm:sender-1",
+        },
+        "storePath": "/tmp/direct-dm-session-store",
+        "ctxPayload": {
+            "Body": "env:hello world:1234",
+            "BodyForAgent": "hello world",
+            "RawBody": "hello world",
+            "CommandBody": "hello world",
+            "From": "nostr:sender-1",
+            "To": "nostr:bot-1",
+            "SessionKey": "dm:sender-1",
+            "AccountId": "default",
+            "ChatType": "direct",
+            "ConversationLabel": "sender-1",
+            "SenderId": "sender-1",
+            "Provider": "nostr",
+            "Surface": "direct-dm",
+            "MessageSid": "event-123",
+            "MessageSidFull": "event-123",
+            "Timestamp": 1710000000000,
+            "CommandAuthorized": True,
+            "OriginatingChannel": "nostr",
+            "OriginatingTo": "nostr:bot-1",
+        },
+        "calls": [
+            "route:sender-1",
+            "store:agent-main:jsonl",
+            "updated:dm:sender-1",
+            "record:dm:sender-1:env:hello world:1234",
+            "dispatch",
+        ],
+        "delivered": [{"text": "reply text"}],
+        "guard": 30,
+        "accessType": "function",
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_send_result_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-send-result.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  attachChannelToResult,
+  attachChannelToResults,
+  buildChannelSendResult,
+  createAttachedChannelResultAdapter,
+  createEmptyChannelResult,
+  createRawChannelSendResultAdapter
+} = require("openclaw/plugin-sdk/channel-send-result");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_send_result",
+      description: "Use OpenClaw channel send-result SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const seen = [];
+        const attachedAdapter = createAttachedChannelResultAdapter({
+          channel: "discord",
+          sendText: async (ctx) => {
+            seen.push(`text:${ctx.to}:${ctx.text}`);
+            return { messageId: "m1", channelId: "c1" };
+          },
+          sendMedia: async (ctx) => {
+            seen.push(`media:${ctx.to}:${ctx.text}`);
+            return { messageId: "m2" };
+          },
+          sendPoll: async (ctx) => {
+            seen.push(`poll:${ctx.to}:${ctx.poll.question}`);
+            return { messageId: "m3", pollId: "p1" };
+          }
+        });
+        const rawAdapter = createRawChannelSendResultAdapter({
+          channel: "zalo",
+          sendText: async (ctx) => ({ ok: true, messageId: `raw:${ctx.to}` }),
+          sendMedia: async () => ({ ok: false, messageId: null, error: "boom" })
+        });
+        const rawFailure = buildChannelSendResult("zalo", {
+          ok: false,
+          messageId: null,
+          error: "kapow"
+        });
+        const rawText = await rawAdapter.sendText({ cfg: {}, to: "u1", text: "hi" });
+        const rawMedia = await rawAdapter.sendMedia({ cfg: {}, to: "u2", text: "photo" });
+        return {
+          stamped: attachChannelToResult("discord", {
+            messageId: "m1",
+            ok: true,
+            extra: "value"
+          }),
+          batch: attachChannelToResults("signal", [
+            { messageId: "m1", timestamp: 1 },
+            { messageId: "m2", timestamp: 2 }
+          ]),
+          empty: createEmptyChannelResult("line", { chatId: "u1" }),
+          attached: [
+            await attachedAdapter.sendText({ cfg: {}, to: "x", text: "hi" }),
+            await attachedAdapter.sendMedia({ cfg: {}, to: "x", text: "photo" }),
+            await attachedAdapter.sendPoll({
+              cfg: {},
+              to: "x",
+              poll: { question: "choose", options: ["a", "b"] }
+            })
+          ],
+          rawText,
+          rawMedia: {
+            channel: rawMedia.channel,
+            ok: rawMedia.ok,
+            messageId: rawMedia.messageId,
+            error: rawMedia.error.message
+          },
+          rawFailure: {
+            channel: rawFailure.channel,
+            ok: rawFailure.ok,
+            messageId: rawFailure.messageId,
+            error: rawFailure.error.message
+          },
+          seen,
+          exportTypes: [
+            typeof attachChannelToResult,
+            typeof genericSdk.attachChannelToResult,
+            typeof genericSdk.createRawChannelSendResultAdapter
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-send-result-plugin",
+                    "name": "Runtime Channel Send Result Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-send-result-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_send_result"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_send_result"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "stamped": {
+            "channel": "discord",
+            "messageId": "m1",
+            "ok": True,
+            "extra": "value",
+        },
+        "batch": [
+            {"channel": "signal", "messageId": "m1", "timestamp": 1},
+            {"channel": "signal", "messageId": "m2", "timestamp": 2},
+        ],
+        "empty": {"channel": "line", "messageId": "", "chatId": "u1"},
+        "attached": [
+            {"channel": "discord", "messageId": "m1", "channelId": "c1"},
+            {"channel": "discord", "messageId": "m2"},
+            {"channel": "discord", "messageId": "m3", "pollId": "p1"},
+        ],
+        "rawText": {
+            "channel": "zalo",
+            "ok": True,
+            "messageId": "raw:u1",
+        },
+        "rawMedia": {
+            "channel": "zalo",
+            "ok": False,
+            "messageId": "",
+            "error": "boom",
+        },
+        "rawFailure": {
+            "channel": "zalo",
+            "ok": False,
+            "messageId": "",
+            "error": "kapow",
+        },
+        "seen": ["text:x:hi", "media:x:photo", "poll:x:choose"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_pairing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-pairing.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createChannelPairingChallengeIssuer,
+  createChannelPairingController,
+  createLoggedPairingApprovalNotifier,
+  createPairingPrefixStripper,
+  createTextPairingAdapter,
+  readChannelAllowFromStoreSync,
+  resolveChannelAllowFromPath
+} = require("openclaw/plugin-sdk/channel-pairing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_pairing",
+      description: "Use OpenClaw channel pairing SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const replies = [];
+        const logs = [];
+        const runtime = {
+          channel: {
+            pairing: {
+              readAllowFromStore: async ({ channel, accountId }) => {
+                calls.push(`read:${channel}:${accountId}`);
+                return ["alice"];
+              },
+              upsertPairingRequest: async (input) => {
+                calls.push(
+                  `upsert:${input.channel || ""}:${input.accountId || ""}:${input.id}:${
+                    input.meta ? input.meta.name : ""
+                  }`
+                );
+                return { code: "123456", created: true };
+              }
+            }
+          }
+        };
+        const controller = createChannelPairingController({
+          core: runtime,
+          channel: "googlechat",
+          accountId: "Primary"
+        });
+        const allowFrom = await controller.readAllowFromStore();
+        const challenge = await controller.issueChallenge({
+          senderId: "user-1",
+          senderIdLine: "Your id: user-1",
+          meta: { name: "Alice" },
+          sendPairingReply: async (text) => {
+            replies.push(text);
+          }
+        });
+        const issuerUpserts = [];
+        const issueChallenge = createChannelPairingChallengeIssuer({
+          channel: "quietchat",
+          upsertPairingRequest: async (input) => {
+            issuerUpserts.push(input);
+            return { code: "654321", created: true };
+          }
+        });
+        const issuerResult = await issueChallenge({
+          senderId: "user-2",
+          senderIdLine: "Your id: user-2",
+          sendPairingReply: async (text) => {
+            replies.push(text);
+          }
+        });
+        const strip = createPairingPrefixStripper(/^(telegram|tg):/i);
+        const lower = createPairingPrefixStripper(/^nextcloud:/i, (entry) =>
+          entry.toLowerCase()
+        );
+        const notifyCalls = [];
+        const adapter = createTextPairingAdapter({
+          idLabel: "telegramUserId",
+          message: "approved",
+          normalizeAllowEntry: strip,
+          notify: async (ctx) => {
+            notifyCalls.push(ctx);
+          }
+        });
+        await adapter.notifyApproval({ cfg: {}, id: "123" });
+        const logged = createLoggedPairingApprovalNotifier(({ id }) => `approved ${id}`, (msg) =>
+          logs.push(msg)
+        );
+        await logged({ cfg: {}, id: "u-1" });
+        return {
+          controller: {
+            accountId: controller.accountId,
+            allowFrom,
+            challenge,
+            calls,
+            replyContains: replies[0].includes("123456"),
+            issuerReplyContains: replies[1].includes("654321"),
+            issuerResult,
+            issuerUpserts
+          },
+          adapters: {
+            strip: [strip("telegram:123"), strip("  tg:456  ")],
+            lower: lower("  nextcloud:USER  "),
+            idLabel: adapter.idLabel,
+            normalized: adapter.normalizeAllowEntry("telegram:789"),
+            notifyCalls,
+            logs
+          },
+          storeHelpers: {
+            pathTail: resolveChannelAllowFromPath(
+              "Telegram",
+              { OPENCLAW_OAUTH_DIR: "/tmp/oauth" },
+              "Work"
+            ).replace(/\\\\/g, "/"),
+            readType: typeof readChannelAllowFromStoreSync
+          },
+          exportTypes: [
+            typeof createChannelPairingController,
+            typeof createChannelPairingChallengeIssuer,
+            typeof createPairingPrefixStripper,
+            typeof createTextPairingAdapter,
+            typeof createLoggedPairingApprovalNotifier
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-pairing-plugin",
+                    "name": "Runtime Channel Pairing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-pairing-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_pairing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_pairing"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "controller": {
+            "accountId": "primary",
+            "allowFrom": ["alice"],
+            "challenge": {"created": True, "code": "123456"},
+            "calls": [
+                "read:googlechat:primary",
+                "upsert:googlechat:primary:user-1:Alice",
+            ],
+            "replyContains": True,
+            "issuerReplyContains": True,
+            "issuerResult": {"created": True, "code": "654321"},
+            "issuerUpserts": [{"id": "user-2"}],
+        },
+        "adapters": {
+            "strip": ["123", "456"],
+            "lower": "user",
+            "idLabel": "telegramUserId",
+            "normalized": "789",
+            "notifyCalls": [{"cfg": {}, "id": "123", "message": "approved"}],
+            "logs": ["approved u-1"],
+        },
+        "storeHelpers": {
+            "pathTail": "/tmp/oauth/telegram-work-allowFrom.json",
+            "readType": "function",
+        },
+        "exportTypes": ["function", "function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-auth.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+  createPreCryptoDirectDmAuthorizer,
+  parseAccessGroupAllowFromEntry,
+  resolveDirectDmAuthorizationOutcome,
+  resolveSenderCommandAuthorization,
+  resolveSenderCommandAuthorizationWithRuntime,
+  shouldComputeCommandAuthorized
+} = require("openclaw/plugin-sdk/command-auth");
+
+const baseCfg = { commands: { useAccessGroups: true } };
+
+async function resolveAuthorization(params) {
+  return resolveSenderCommandAuthorization({
+    cfg: params.cfg || baseCfg,
+    rawBody: params.rawBody || "/status",
+    isGroup: params.isGroup !== undefined ? params.isGroup : true,
+    dmPolicy: params.dmPolicy || "pairing",
+    configuredAllowFrom: params.configuredAllowFrom || ["dm-owner"],
+    configuredGroupAllowFrom: params.configuredGroupAllowFrom || ["group-owner"],
+    senderId: params.senderId,
+    isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+    channel: params.channel === undefined ? "zalouser" : params.channel,
+    accountId: "default",
+    readAllowFromStore: async () => params.storeAllowFrom || ["paired-user"],
+    shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+    resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+      useAccessGroups && authorizers.some((entry) => entry.configured && entry.allowed),
+    resolveAccessGroupMembership: async ({ name, senderId }) =>
+      name === "admins" && senderId === "group-admin"
+  });
+}
+
+function summarize(result) {
+  return {
+    shouldComputeAuth: result.shouldComputeAuth,
+    effectiveAllowFrom: result.effectiveAllowFrom,
+    effectiveGroupAllowFrom: result.effectiveGroupAllowFrom,
+    senderAllowedForCommands: result.senderAllowedForCommands,
+    commandAuthorized: result.commandAuthorized ?? null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_auth",
+      description: "Use OpenClaw command auth SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const groupOwner = summarize(
+          await resolveAuthorization({ senderId: "group-owner" })
+        );
+        const pairedGroup = summarize(
+          await resolveAuthorization({ senderId: "paired-user" })
+        );
+        const dmNonCommand = summarize(
+          await resolveAuthorization({
+            senderId: "paired-user",
+            rawBody: "hello",
+            isGroup: false,
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            channel: undefined
+          })
+        );
+        const openDm = summarize(
+          await resolveAuthorization({
+            senderId: "paired-user",
+            rawBody: "hello",
+            isGroup: false,
+            dmPolicy: "open",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            channel: undefined
+          })
+        );
+        const accessGroup = summarize(
+          await resolveAuthorization({
+            senderId: "group-admin",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: ["accessGroup:admins"],
+            cfg: {
+              commands: { useAccessGroups: true },
+              accessGroups: {
+                admins: {
+                  type: "message.senders",
+                  members: { zalouser: ["group-admin"] }
+                }
+              }
+            }
+          })
+        );
+        const runtimeWrapped = summarize(
+          await resolveSenderCommandAuthorizationWithRuntime({
+            cfg: baseCfg,
+            rawBody: "/status",
+            isGroup: false,
+            dmPolicy: "pairing",
+            configuredAllowFrom: [],
+            configuredGroupAllowFrom: [],
+            senderId: "paired-user",
+            isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+            readAllowFromStore: async () => ["paired-user"],
+            runtime: {
+              shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+              resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+                useAccessGroups &&
+                authorizers.some((entry) => entry.configured && entry.allowed)
+            }
+          })
+        );
+        return {
+          helpContains: buildHelpMessage({ commands: { config: false } }).includes(
+            "/commands for full list"
+          ),
+          commandsContains: [
+            buildCommandsMessage({ commands: { config: false } }).includes(
+              "More: /tools for available capabilities"
+            ),
+            buildCommandsMessage({ commands: { config: false } }).includes(
+              "/models - List model providers/models."
+            )
+          ],
+          paginated: buildCommandsMessagePaginated({ commands: { config: false } }),
+          groupOwner,
+          pairedGroup,
+          dmNonCommand,
+          openDm,
+          accessGroup,
+          runtimeWrapped,
+          outcomes: [
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: true,
+              dmPolicy: "disabled",
+              senderAllowedForCommands: false
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "disabled",
+              senderAllowedForCommands: true
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "pairing",
+              senderAllowedForCommands: false
+            }),
+            resolveDirectDmAuthorizationOutcome({
+              isGroup: false,
+              dmPolicy: "pairing",
+              senderAllowedForCommands: true
+            })
+          ],
+          detection: shouldComputeCommandAuthorized("/status", baseCfg),
+          accessGroupPrefix: parseAccessGroupAllowFromEntry("accessGroup:admins"),
+          directDmAuthorizerType: typeof createPreCryptoDirectDmAuthorizer,
+          exportTypes: [
+            typeof resolveSenderCommandAuthorization,
+            typeof resolveSenderCommandAuthorizationWithRuntime,
+            typeof resolveDirectDmAuthorizationOutcome
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-auth-plugin",
+                    "name": "Runtime Command Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-auth-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "helpContains": True,
+        "commandsContains": [True, True],
+        "paginated": {
+            "text": (
+                "More: /tools for available capabilities\n"
+                "/models - List model providers/models."
+            ),
+            "currentPage": 1,
+            "totalPages": 1,
+        },
+        "groupOwner": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["dm-owner"],
+            "effectiveGroupAllowFrom": ["group-owner"],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "pairedGroup": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["dm-owner"],
+            "effectiveGroupAllowFrom": ["group-owner"],
+            "senderAllowedForCommands": False,
+            "commandAuthorized": False,
+        },
+        "dmNonCommand": {
+            "shouldComputeAuth": False,
+            "effectiveAllowFrom": ["paired-user"],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": None,
+        },
+        "openDm": {
+            "shouldComputeAuth": False,
+            "effectiveAllowFrom": [],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": False,
+            "commandAuthorized": None,
+        },
+        "accessGroup": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": [],
+            "effectiveGroupAllowFrom": ["accessGroup:admins", "group-admin"],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "runtimeWrapped": {
+            "shouldComputeAuth": True,
+            "effectiveAllowFrom": ["paired-user"],
+            "effectiveGroupAllowFrom": [],
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "outcomes": ["allowed", "disabled", "unauthorized", "allowed"],
+        "detection": True,
+        "accessGroupPrefix": "admins",
+        "directDmAuthorizerType": "function",
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-setup.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupSurface,
+  createOptionalChannelSetupWizard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  setSetupChannelEnabled,
+  splitSetupEntries
+} = require("openclaw/plugin-sdk/channel-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_setup",
+      description: "Use OpenClaw channel setup SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const setup = createOptionalChannelSetupSurface({
+          channel: "example",
+          label: "Example",
+          npmSpec: "@openclaw/example",
+          docsPath: "/channels/example"
+        });
+        const adapter = createOptionalChannelSetupAdapter({
+          channel: "alt",
+          label: "Alt",
+          docsPath: "/channels/alt"
+        });
+        const wizard = createOptionalChannelSetupWizard({
+          channel: "wizard",
+          label: "Wizard",
+          npmSpec: "@openclaw/wizard",
+          docsPath: "/channels/wizard"
+        });
+        let finalizeError = "";
+        try {
+          await setup.setupWizard.finalize({
+            runtime: { log: () => {}, error: () => {}, exit: async () => {} }
+          });
+        } catch (error) {
+          finalizeError = error.message;
+        }
+        let adapterError = "";
+        try {
+          adapter.applyAccountConfig({ cfg: {}, accountId: "default", input: {} });
+        } catch (error) {
+          adapterError = error.message;
+        }
+        const dmPolicy = createTopLevelChannelDmPolicy({
+          label: "Example DM",
+          channel: "example",
+          policyKey: "dmPolicy",
+          allowFromKey: "allowFrom",
+          getCurrent: (cfg) => cfg.channels.example.dmPolicy,
+          getAllowFrom: (cfg) => cfg.channels.example.allowFrom
+        });
+        const patched = dmPolicy.setPolicy(
+          { channels: { example: { allowFrom: ["alice"] } } },
+          "allowlist"
+        );
+        return {
+          surface: {
+            accountId: setup.setupAdapter.resolveAccountId({ cfg: {} }),
+            validation: setup.setupAdapter.validateInput({
+              cfg: {},
+              accountId: "default",
+              input: {}
+            }),
+            wizardChannel: setup.setupWizard.channel,
+            wizardHint: setup.setupWizard.status.unconfiguredHint,
+            finalizeError
+          },
+          adapter: {
+            accountId: adapter.resolveAccountId({ cfg: {}, accountId: "work" }),
+            validation: adapter.validateInput({ cfg: {}, accountId: "work", input: {} }),
+            applyError: adapterError
+          },
+          wizard: {
+            channel: wizard.channel,
+            statusLines: wizard.status.resolveStatusLines({ cfg: {} }),
+            selectionHint: wizard.status.resolveSelectionHint({ cfg: {} }),
+            configured: wizard.status.resolveConfigured({ cfg: {} })
+          },
+          helpers: {
+            docsLink: formatDocsLink("/channels/example", "example docs"),
+            entries: splitSetupEntries("alice, bob; carol\\ndave"),
+            enabled: setSetupChannelEnabled(
+              { channels: { example: { token: "x" } } },
+              "example",
+              true
+            ),
+            dmPolicy: {
+              label: dmPolicy.label,
+              current: dmPolicy.getCurrent({ channels: { example: { dmPolicy: "pairing" } } }),
+              patched
+            },
+            defaultAccountId: DEFAULT_ACCOUNT_ID
+          },
+          exportTypes: [
+            typeof createOptionalChannelSetupSurface,
+            typeof createOptionalChannelSetupAdapter,
+            typeof createOptionalChannelSetupWizard,
+            typeof createTopLevelChannelDmPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-setup-plugin",
+                    "name": "Runtime Channel Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-setup-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_setup"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "surface": {
+            "accountId": "default",
+            "validation": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+            "wizardChannel": "example",
+            "wizardHint": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+            "finalizeError": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+        },
+        "adapter": {
+            "accountId": "work",
+            "validation": (
+                "Alt setup requires the Alt plugin to be installed. "
+                "Docs: channels/alt (https://docs.openclaw.ai/channels/alt)"
+            ),
+            "applyError": (
+                "Alt setup requires the Alt plugin to be installed. "
+                "Docs: channels/alt (https://docs.openclaw.ai/channels/alt)"
+            ),
+        },
+        "wizard": {
+            "channel": "wizard",
+            "statusLines": [
+                "Wizard setup requires @openclaw/wizard to be installed. "
+                "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+            ],
+            "selectionHint": (
+                "Wizard setup requires @openclaw/wizard to be installed. "
+                "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+            ),
+            "configured": False,
+        },
+        "helpers": {
+            "docsLink": "example docs (https://docs.openclaw.ai/channels/example)",
+            "entries": ["alice", "bob", "carol", "dave"],
+            "enabled": {"channels": {"example": {"token": "x", "enabled": True}}},
+            "dmPolicy": {
+                "label": "Example DM",
+                "current": "pairing",
+                "patched": {
+                    "channels": {
+                        "example": {
+                            "allowFrom": ["alice"],
+                            "enabled": True,
+                            "dmPolicy": "allowlist",
+                        }
+                    }
+                },
+            },
+            "defaultAccountId": "default",
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_allowlist_config_edit_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-allowlist-config-edit.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildDmGroupAccountAllowlistAdapter,
+  buildLegacyDmAccountAllowlistAdapter,
+  collectAllowlistOverridesFromRecord,
+  collectNestedAllowlistOverridesFromRecord,
+  createAccountScopedAllowlistNameResolver,
+  createFlatAllowlistOverrideResolver,
+  createNestedAllowlistOverrideResolver,
+  readConfiguredAllowlistEntries,
+  resolveDmGroupAllowlistConfigPaths,
+  resolveLegacyDmAllowlistConfigPaths
+} = require("openclaw/plugin-sdk/allowlist-config-edit");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.allowlist_config_edit",
+      description: "Use OpenClaw allowlist config edit SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const flatOverrides = collectAllowlistOverridesFromRecord({
+          record: {
+            room1: { users: ["a", "b"] },
+            room2: { users: [] },
+            room3: null
+          },
+          label: (key) => key,
+          resolveEntries: (value) => value.users
+        });
+        const nestedOverrides = collectNestedAllowlistOverridesFromRecord({
+          record: {
+            guild1: {
+              users: ["owner"],
+              channels: {
+                chan1: { users: ["member"] }
+              }
+            }
+          },
+          outerLabel: (key) => `guild ${key}`,
+          resolveOuterEntries: (value) => value.users,
+          resolveChildren: (value) => value.channels,
+          innerLabel: (outerKey, innerKey) => `guild ${outerKey} / channel ${innerKey}`,
+          resolveInnerEntries: (value) => value.users
+        });
+        const flatResolver = createFlatAllowlistOverrideResolver({
+          resolveRecord: (account) => account.channels,
+          label: (key) => key,
+          resolveEntries: (value) => value.users
+        });
+        const nestedResolver = createNestedAllowlistOverrideResolver({
+          resolveRecord: (account) => account.groups,
+          outerLabel: (groupId) => groupId,
+          resolveOuterEntries: (group) => group.allowFrom,
+          resolveChildren: (group) => group.topics,
+          innerLabel: (groupId, topicId) => `${groupId} topic ${topicId}`,
+          resolveInnerEntries: (topic) => topic.allowFrom
+        });
+        const noTokenResolver = createAccountScopedAllowlistNameResolver({
+          resolveAccount: () => ({ token: "" }),
+          resolveToken: (account) => account.token,
+          resolveNames: async ({ token, entries }) =>
+            entries.map((entry) => ({ input: entry, resolved: true, name: `${token}:${entry}` }))
+        });
+        const tokenResolver = createAccountScopedAllowlistNameResolver({
+          resolveAccount: () => ({ token: " secret " }),
+          resolveToken: (account) => account.token,
+          resolveNames: async ({ token, entries }) =>
+            entries.map((entry) => ({ input: entry, resolved: true, name: `${token}:${entry}` }))
+        });
+        const dmGroupAdapter = buildDmGroupAccountAllowlistAdapter({
+          channelId: "demo",
+          resolveAccount: ({ accountId }) => ({
+            accountId: accountId || "default",
+            dmAllowFrom: ["dm-owner"],
+            groupAllowFrom: ["group-owner"],
+            dmPolicy: "allowlist",
+            groupPolicy: "allowlist",
+            groupOverrides: [{ label: "room-1", entries: ["member-1"] }]
+          }),
+          normalize: ({ values }) => values.map((entry) => String(entry).trim().toLowerCase()),
+          resolveDmAllowFrom: (account) => account.dmAllowFrom,
+          resolveGroupAllowFrom: (account) => account.groupAllowFrom,
+          resolveDmPolicy: (account) => account.dmPolicy,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          resolveGroupOverrides: (account) => account.groupOverrides
+        });
+        const parsedGroup = {};
+        const groupWrite = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedGroup,
+          accountId: "alt",
+          scope: "group",
+          action: "add",
+          entry: " Member-2 "
+        });
+        const groupDuplicate = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedGroup,
+          accountId: "alt",
+          scope: "group",
+          action: "add",
+          entry: "member-2"
+        });
+        const legacyAdapter = buildLegacyDmAccountAllowlistAdapter({
+          channelId: "demo",
+          resolveAccount: ({ accountId }) => ({
+            accountId: accountId || "default",
+            dmAllowFrom: ["owner"],
+            groupPolicy: "allowlist",
+            groupOverrides: [{ label: "group-1", entries: ["member-1"] }]
+          }),
+          normalize: ({ values }) => values.map((entry) => String(entry).trim().toLowerCase()),
+          resolveDmAllowFrom: (account) => account.dmAllowFrom,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          resolveGroupOverrides: (account) => account.groupOverrides
+        });
+        const parsedLegacy = {
+          channels: {
+            demo: {
+              accounts: {
+                alt: {
+                  dm: { allowFrom: ["owner"] }
+                }
+              }
+            }
+          }
+        };
+        const legacyWrite = legacyAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: parsedLegacy,
+          accountId: "alt",
+          scope: "dm",
+          action: "add",
+          entry: "admin"
+        });
+        const defaultParsed = {};
+        const defaultWrite = dmGroupAdapter.applyConfigEdit({
+          cfg: {},
+          parsedConfig: defaultParsed,
+          accountId: "default",
+          scope: "dm",
+          action: "add",
+          entry: "Owner"
+        });
+        return {
+          entries: readConfiguredAllowlistEntries(["owner", 42, ""]),
+          flatOverrides,
+          nestedOverrides,
+          flatResolved: flatResolver({ channels: { room1: { users: ["a"] } } }),
+          nestedResolved: nestedResolver({
+            groups: {
+              g1: { allowFrom: ["owner"], topics: { t1: { allowFrom: ["member"] } } }
+            }
+          }),
+          names: {
+            missingToken: await noTokenResolver({
+              cfg: {},
+              accountId: "alt",
+              scope: "dm",
+              entries: ["a"]
+            }),
+            resolved: await tokenResolver({
+              cfg: {},
+              accountId: "alt",
+              scope: "dm",
+              entries: ["a"]
+            })
+          },
+          dmGroup: {
+            supports: [
+              dmGroupAdapter.supportsScope({ scope: "dm" }),
+              dmGroupAdapter.supportsScope({ scope: "group" }),
+              dmGroupAdapter.supportsScope({ scope: "all" }),
+              dmGroupAdapter.supportsScope({ scope: "unknown" })
+            ],
+            read: dmGroupAdapter.readConfig({ cfg: {}, accountId: "alt" }),
+            groupWrite,
+            groupDuplicate,
+            parsedGroup,
+            defaultWrite,
+            defaultParsed
+          },
+          legacy: {
+            supports: [
+              legacyAdapter.supportsScope({ scope: "dm" }),
+              legacyAdapter.supportsScope({ scope: "group" }),
+              legacyAdapter.supportsScope({ scope: "all" })
+            ],
+            read: legacyAdapter.readConfig({ cfg: {}, accountId: "alt" }),
+            legacyWrite,
+            parsedLegacy
+          },
+          paths: {
+            dm: resolveDmGroupAllowlistConfigPaths("dm"),
+            group: resolveDmGroupAllowlistConfigPaths("group"),
+            legacyDm: resolveLegacyDmAllowlistConfigPaths("dm"),
+            legacyGroup: resolveLegacyDmAllowlistConfigPaths("group")
+          },
+          exportTypes: [
+            typeof buildDmGroupAccountAllowlistAdapter,
+            typeof buildLegacyDmAccountAllowlistAdapter,
+            typeof genericSdk.buildDmGroupAccountAllowlistAdapter
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-allowlist-config-edit-plugin",
+                    "name": "Runtime Allowlist Config Edit Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-allowlist-config-edit-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.allowlist_config_edit"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.allowlist_config_edit"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "entries": ["owner", "42"],
+        "flatOverrides": [{"label": "room1", "entries": ["a", "b"]}],
+        "nestedOverrides": [
+            {"label": "guild guild1", "entries": ["owner"]},
+            {"label": "guild guild1 / channel chan1", "entries": ["member"]},
+        ],
+        "flatResolved": [{"label": "room1", "entries": ["a"]}],
+        "nestedResolved": [
+            {"label": "g1", "entries": ["owner"]},
+            {"label": "g1 topic t1", "entries": ["member"]},
+        ],
+        "names": {
+            "missingToken": [],
+            "resolved": [{"input": "a", "resolved": True, "name": "secret:a"}],
+        },
+        "dmGroup": {
+            "supports": [True, True, True, False],
+            "read": {
+                "dmAllowFrom": ["dm-owner"],
+                "groupAllowFrom": ["group-owner"],
+                "dmPolicy": "allowlist",
+                "groupPolicy": "allowlist",
+                "groupOverrides": [{"label": "room-1", "entries": ["member-1"]}],
+            },
+            "groupWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.accounts.alt.groupAllowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "groupDuplicate": {
+                "kind": "ok",
+                "changed": False,
+                "pathLabel": "channels.demo.accounts.alt.groupAllowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "parsedGroup": {
+                "channels": {
+                    "demo": {
+                        "accounts": {
+                            "alt": {"groupAllowFrom": ["Member-2"]},
+                        }
+                    }
+                }
+            },
+            "defaultWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.allowFrom",
+                "writeTarget": {
+                    "kind": "channel",
+                    "scope": {"channelId": "demo"},
+                },
+            },
+            "defaultParsed": {
+                "channels": {
+                    "demo": {"allowFrom": ["Owner"]},
+                }
+            },
+        },
+        "legacy": {
+            "supports": [True, False, False],
+            "read": {
+                "dmAllowFrom": ["owner"],
+                "groupPolicy": "allowlist",
+                "groupOverrides": [{"label": "group-1", "entries": ["member-1"]}],
+            },
+            "legacyWrite": {
+                "kind": "ok",
+                "changed": True,
+                "pathLabel": "channels.demo.accounts.alt.allowFrom",
+                "writeTarget": {
+                    "kind": "account",
+                    "scope": {"channelId": "demo", "accountId": "alt"},
+                },
+            },
+            "parsedLegacy": {
+                "channels": {
+                    "demo": {
+                        "accounts": {
+                            "alt": {
+                                "dm": {},
+                                "allowFrom": ["owner", "admin"],
+                            }
+                        }
+                    }
+                }
+            },
+        },
+        "paths": {
+            "dm": {"readPaths": [["allowFrom"]], "writePath": ["allowFrom"]},
+            "group": {"readPaths": [["groupAllowFrom"]], "writePath": ["groupAllowFrom"]},
+            "legacyDm": {
+                "readPaths": [["allowFrom"], ["dm", "allowFrom"]],
+                "writePath": ["allowFrom"],
+                "cleanupPaths": [["dm", "allowFrom"]],
+            },
+            "legacyGroup": None,
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_group_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-group-access.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  evaluateGroupRouteAccessForPolicy,
+  evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccess,
+  evaluateSenderGroupAccessForPolicy,
+  resolveOpenProviderRuntimeGroupPolicy,
+  resolveSenderScopedGroupPolicy
+} = require("openclaw/plugin-sdk/group-access");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.group_access",
+      description: "Use OpenClaw group access SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          scopedPolicies: [
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["a"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["a"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: []
+            })
+          ],
+          senderForPolicy: [
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: [],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["123"],
+              senderId: "999",
+              isSenderAllowed: () => false
+            }),
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              providerMissingFallbackApplied: true,
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            })
+          ],
+          routeAccess: [
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "disabled",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: true
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: false,
+              routeMatched: false
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: false
+            }),
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "open",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: false
+            })
+          ],
+          matchedAccess: [
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "disabled",
+              allowlistConfigured: true,
+              allowlistMatched: true
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              allowlistConfigured: false,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              requireMatchInput: true,
+              hasMatchInput: false,
+              allowlistConfigured: true,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              allowlistConfigured: true,
+              allowlistMatched: false
+            }),
+            evaluateMatchedGroupAccessForPolicy({
+              groupPolicy: "open",
+              allowlistConfigured: false,
+              allowlistMatched: false
+            })
+          ],
+          senderAccess: [
+            evaluateSenderGroupAccess({
+              providerConfigPresent: false,
+              configuredGroupPolicy: undefined,
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "disabled",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "allowlist",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: [],
+              senderId: "123",
+              isSenderAllowed: () => true
+            }),
+            evaluateSenderGroupAccess({
+              providerConfigPresent: true,
+              configuredGroupPolicy: "allowlist",
+              defaultGroupPolicy: "open",
+              groupAllowFrom: ["123"],
+              senderId: "999",
+              isSenderAllowed: () => false
+            })
+          ],
+          fallback: resolveOpenProviderRuntimeGroupPolicy({
+            providerConfigPresent: false,
+            defaultGroupPolicy: "open"
+          }),
+          exportTypes: [
+            typeof evaluateSenderGroupAccess,
+            typeof resolveOpenProviderRuntimeGroupPolicy,
+            typeof genericSdk.evaluateSenderGroupAccess
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-group-access-plugin",
+                    "name": "Runtime Group Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-group-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.group_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.group_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "scopedPolicies": ["disabled", "allowlist", "open"],
+        "senderForPolicy": [
+            {
+                "allowed": False,
+                "groupPolicy": "disabled",
+                "providerMissingFallbackApplied": False,
+                "reason": "disabled",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "empty_allowlist",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "sender_not_allowlisted",
+            },
+            {
+                "allowed": True,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": True,
+                "reason": "allowed",
+            },
+        ],
+        "routeAccess": [
+            {"allowed": False, "groupPolicy": "disabled", "reason": "disabled"},
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "empty_allowlist"},
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "reason": "route_not_allowlisted",
+            },
+            {"allowed": False, "groupPolicy": "open", "reason": "route_disabled"},
+        ],
+        "matchedAccess": [
+            {"allowed": False, "groupPolicy": "disabled", "reason": "disabled"},
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "empty_allowlist"},
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "reason": "missing_match_input",
+            },
+            {"allowed": False, "groupPolicy": "allowlist", "reason": "not_allowlisted"},
+            {"allowed": True, "groupPolicy": "open", "reason": "allowed"},
+        ],
+        "senderAccess": [
+            {
+                "allowed": True,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": True,
+                "reason": "allowed",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "disabled",
+                "providerMissingFallbackApplied": False,
+                "reason": "disabled",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "empty_allowlist",
+            },
+            {
+                "allowed": False,
+                "groupPolicy": "allowlist",
+                "providerMissingFallbackApplied": False,
+                "reason": "sender_not_allowlisted",
+            },
+        ],
+        "fallback": {"groupPolicy": "allowlist", "providerMissingFallbackApplied": True},
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-selection.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  resolveConfiguredCapabilityProvider,
+  resolveProviderRawConfig,
+  selectConfiguredOrAutoProvider
+} = require("openclaw/plugin-sdk/provider-selection-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const providers = [
+  { id: "first", autoSelectOrder: 1 },
+  { id: "second", autoSelectOrder: 2, configured: true }
+];
+
+function getConfiguredProvider(providerId) {
+  return providers.find((entry) => entry.id === providerId);
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_selection",
+      description: "Use OpenClaw provider selection runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          explicit: selectConfiguredOrAutoProvider({
+            configuredProviderId: " second ",
+            getConfiguredProvider,
+            listProviders: () => providers
+          }),
+          missingExplicit: resolveConfiguredCapabilityProvider({
+            configuredProviderId: "missing",
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ rawConfig }) => rawConfig,
+            isProviderConfigured: ({ provider }) => provider.configured === true
+          }),
+          autoSelected: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ provider, rawConfig }) => ({
+              ...rawConfig,
+              providerId: provider.id
+            }),
+            isProviderConfigured: ({ providerConfig }) => providerConfig.providerId === "second"
+          }),
+          noRegistered: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider: () => undefined,
+            listProviders: () => [],
+            resolveProviderConfig: ({ rawConfig }) => rawConfig,
+            isProviderConfigured: () => false
+          }),
+          providerNotConfigured: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ provider }) => ({ providerId: provider.id }),
+            isProviderConfigured: () => false
+          }),
+          merged: resolveProviderRawConfig({
+            providerId: "canonical",
+            configuredProviderId: "alias",
+            providerConfigs: {
+              canonical: { apiKey: "default", model: "base" },
+              alias: { model: "alias-model" }
+            }
+          }),
+          missingSelection: selectConfiguredOrAutoProvider({
+            configuredProviderId: "missing",
+            getConfiguredProvider,
+            listProviders: () => providers
+          }),
+          exportTypes: [
+            typeof resolveConfiguredCapabilityProvider,
+            typeof resolveProviderRawConfig,
+            typeof selectConfiguredOrAutoProvider,
+            typeof genericSdk.resolveConfiguredCapabilityProvider
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-selection-plugin",
+                    "name": "Runtime Provider Selection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-selection-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_selection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_selection"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "explicit": {
+            "configuredProviderId": "second",
+            "missingConfiguredProvider": False,
+            "provider": {"id": "second", "autoSelectOrder": 2, "configured": True},
+        },
+        "missingExplicit": {
+            "ok": False,
+            "code": "missing-configured-provider",
+            "configuredProviderId": "missing",
+        },
+        "autoSelected": {
+            "ok": True,
+            "provider": {"id": "second", "autoSelectOrder": 2, "configured": True},
+            "providerConfig": {"providerId": "second"},
+        },
+        "noRegistered": {"ok": False, "code": "no-registered-provider"},
+        "providerNotConfigured": {
+            "ok": False,
+            "code": "provider-not-configured",
+            "provider": {"id": "first", "autoSelectOrder": 1},
+        },
+        "merged": {"apiKey": "default", "model": "alias-model"},
+        "missingSelection": {
+            "configuredProviderId": "missing",
+            "missingConfiguredProvider": True,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
