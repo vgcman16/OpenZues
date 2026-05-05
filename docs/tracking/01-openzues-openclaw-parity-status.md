@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -169,6 +169,11 @@ may lag behind this tracker.
   normalization, and outbound thread id normalization for imported runtime
   tools.
   - Status: checkpointed in `2cf7fb27`
+
+- [x] Imported plugin SDK reply-chunking helper shim for length/newline text
+  chunking, provider/account chunk limit and mode resolution, and silent reply
+  token helpers.
+  - Status: checkpointed in `b000f51c`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1140,10 +1145,22 @@ may lag behind this tracker.
     context checkpointed in `ef254cbf`, text-runtime helper shim checkpointed
     in `91918c38`, error-runtime helper shim checkpointed in `7888c8de`, and
     temp-path helper shim checkpointed in `d6a73b21`, and secret-input helper
-    shim checkpointed in `76e3c638`, and routing helper shim checkpointed in
-    `2cf7fb27`, but broader plugin SDK helper/runtime surface breadth
-    remains.
+    shim checkpointed in `76e3c638`, routing helper shim checkpointed in
+    `2cf7fb27`, and reply-chunking helper shim checkpointed in `b000f51c`,
+    but broader plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK reply-chunking helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/reply-chunking.ts`,
+    `openclaw-main/src/auto-reply/chunk.ts`, and
+    `openclaw-main/src/auto-reply/tokens.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `b000f51c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused reply-chunking helper proof (`1
+    passed`), adjacent plugin invoke proof (`18 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] Imported plugin SDK routing helper shim.
   - Source: `openclaw-main/src/plugin-sdk/routing.ts`,
