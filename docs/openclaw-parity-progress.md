@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.3% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.4% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10806,8 +10806,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   activities through `OpsMeshService.handle_msteams_inbound_activity`. This
   closes `OZ-PROV-001AS`; repo-wide parity is now estimated at ~65.3%.
   Remaining Microsoft Teams HTTP breadth is Bot Framework JWT validation,
-  configured webhook-path aliasing, richer inbound media staging, feedback
-  reflection, and member lifecycle handling.
+  richer inbound media staging, feedback reflection, and member lifecycle
+  handling.
 - Verified the Microsoft Teams webhook slice with
   `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_requires_bearer_before_json_body tests\test_app.py::test_msteams_messages_endpoint_dispatches_signin_invoke -q`
   (`2 passed`), adjacent app proof
@@ -10815,6 +10815,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`4 passed, 209 deselected`), `ruff check src\openzues\app.py
   tests\test_app.py`, and `mypy src\openzues\app.py`. Checkpointed in
   `b162bc17`.
+
+- Microsoft Teams Bot Framework webhook path aliasing now mirrors OpenClaw's
+  configured-path plus fallback registration from
+  `extensions/msteams/src/monitor.ts`: OpenZues reads
+  `channels.msteams.webhook.path` from the native control UI config at app
+  startup, registers that POST path when it differs from `/api/messages`, and
+  routes both the configured path and the standard fallback through the same
+  bearer pre-gate, 1 MiB body guard, JSON activity decode, and Ops Mesh
+  inbound handler. This closes `OZ-PROV-001AT`; repo-wide parity is now
+  estimated at ~65.4%. Remaining Microsoft Teams HTTP breadth is Bot
+  Framework JWT validation, richer inbound media staging, feedback reflection,
+  and member lifecycle handling.
+- Verified the Microsoft Teams configured webhook-path slice with
+  `python -m pytest tests\test_app.py::test_msteams_messages_endpoint_uses_configured_path_and_fallback -q`
+  (`1 passed`), adjacent app proof
+  `python -m pytest tests\test_app.py -q -k "msteams_messages_endpoint or gateway_channels_endpoint_classifies_msteams_native_route or notification_route_operator_form_offers_msteams_native_routes"`
+  (`5 passed, 209 deselected`), `ruff check src\openzues\app.py
+  tests\test_app.py`, and `mypy src\openzues\app.py`. Checkpointed in
+  `91e854a0`.
 
 ## References
 

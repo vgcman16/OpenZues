@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.4% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6082,12 +6082,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   inbound handler. Repo-wide parity is now estimated at ~65.3%. Verified with
   focused app pytest, adjacent app proof, `ruff check`, and `mypy`;
   source/test checkpointed in `b162bc17`.
+- Closed the Microsoft Teams Bot Framework configured webhook-path aliasing
+  seam from OpenClaw `extensions/msteams/src/monitor.ts`: OpenZues now reads
+  `channels.msteams.webhook.path` from the native control UI config at app
+  startup, registers that configured POST path when it differs from
+  `/api/messages`, and keeps `/api/messages` as the standard Bot Framework
+  fallback. Both paths share the same bearer pre-gate, body limit, JSON
+  activity decode, safe SSO result projection, and Ops Mesh inbound dispatch.
+  Repo-wide parity is now estimated at ~65.4%. Verified with focused app
+  pytest, adjacent app proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `91e854a0`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams Bot Framework
-  JWT validation, configured webhook path aliasing, delegated-token consumers,
-  feedback reflection follow-up generation,
-  welcome/member lifecycle handling, richer inbound media staging, or another
-  source-backed channel/provider route/action adapter.
+  JWT validation, delegated-token consumers, feedback reflection follow-up
+  generation, welcome/member lifecycle handling, richer inbound media staging,
+  or another source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

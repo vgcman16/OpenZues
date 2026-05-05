@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~65.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~65.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams Bot Framework `/api/messages` webhook slice is
-checkpointed in `b162bc17`.
+The Microsoft Teams Bot Framework configured webhook-path slice is
+checkpointed in `91e854a0`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,9 +62,25 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams `/api/messages` webhook dispatch checkpointed in `b162bc17` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Bot Framework JWT validation, configured webhook path aliasing, delegated-token consumers, feedback reflection, member lifecycle, richer inbound media staging, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams configured webhook path checkpointed in `91e854a0` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Bot Framework JWT validation, delegated-token consumers, feedback reflection, member lifecycle, richer inbound media staging, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AT` Microsoft Teams Bot Framework configured webhook path
+  - Source: `openclaw-main/extensions/msteams/src/monitor.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/app.py`, `tests/test_app.py`
+  - Contract: when `channels.msteams.webhook.path` is configured, OpenZues
+    registers that POST path at app startup while keeping `/api/messages` as
+    the standard Bot Framework fallback; both paths use the same bearer
+    pre-gate, 1 MiB body limit, JSON activity decode, and Ops Mesh Microsoft
+    Teams inbound dispatch.
+  - Evidence required: focused app test, adjacent app tests, ruff, mypy
+  - Status: checkpointed in `91e854a0`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured webhook
+    path proof (`1 passed`), adjacent app proof (`5 passed, 209 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AS` Microsoft Teams Bot Framework `/api/messages` webhook
   - Source: `openclaw-main/extensions/msteams/src/monitor.ts`
