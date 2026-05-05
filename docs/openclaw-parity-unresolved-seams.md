@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.5% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6188,10 +6188,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   the reflection result requests it. Repo-wide parity is now estimated at
   ~66.4%. Verified with focused runtime pytest, adjacent Teams invoke/inbound
   proof, `ruff check`, and `mypy`; source/test checkpointed in `45c4ca7a`.
+- Closed the Microsoft Teams inbound media auth-fallback seam from OpenClaw
+  `extensions/msteams/src/attachments/download.ts` and
+  `extensions/msteams/src/attachments/shared.ts`: the production default Teams
+  media fetcher now retries 401/403 attachment downloads with native
+  route-backed bearer auth when the target URL is in the media auth allowlist,
+  preferring Graph scope for Graph/SharePoint URLs and Bot Framework scope for
+  Bot Framework-style URLs. Repo-wide parity is now estimated at ~66.5%.
+  Verified with focused runtime pytest, adjacent Teams inbound proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `5460ebf5`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated auth
-  setup breadth, richer Teams Bot Framework/Graph auth fallback depth, or
-  another source-backed channel/provider route/action adapter.
+  setup breadth or another source-backed channel/provider route/action
+  adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
