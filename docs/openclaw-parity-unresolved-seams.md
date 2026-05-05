@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~72.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~72.1% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6741,11 +6741,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `tools.invoke`. Repo-wide parity is now estimated at ~72.0%. Verified with
   focused status-helpers pytest, adjacent plugin invoke proof, `ruff check`,
   and `mypy`; source/test checkpointed in `41323ea2`.
+- Closed the imported OpenClaw plugin SDK channel-status seam from
+  `src/plugin-sdk/channel-status.ts`,
+  `src/channels/account-snapshot-fields.ts`, and
+  `src/channels/plugins/pairing-message.ts`: native runtime entries can now
+  import credential snapshot projection, configured-status resolution,
+  required credential status resolution, the pairing-approved message, and
+  channel status helper reexports from `openclaw/plugin-sdk/channel-status`
+  and execute them through `tools.invoke`. Repo-wide parity is now estimated
+  at ~72.1%. Verified with focused channel-status pytest, adjacent plugin
+  invoke proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `14ff20a1`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   reply-payload/account-helper/account-core/tool-payload/boolean-param/
-  channel-actions/status-helpers path,
+  channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
   binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
