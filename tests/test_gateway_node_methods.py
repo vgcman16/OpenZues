@@ -7756,6 +7756,105 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_target_resolver_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-target-resolver-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildUnresolvedTargetResults,
+  resolveTargetsWithOptionalToken
+} = require("openclaw/plugin-sdk/target-resolver-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.target_resolver",
+      description: "Use OpenClaw target-resolver-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const unresolved = buildUnresolvedTargetResults(["a", "b"], "missing token");
+        const missing = await resolveTargetsWithOptionalToken({
+          inputs: ["alice"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async () => [{ input: "alice", id: "1" }],
+          mapResolved: (entry) => ({ input: entry.input, resolved: true, id: entry.id })
+        });
+        const resolved = await resolveTargetsWithOptionalToken({
+          token: " x ",
+          inputs: ["alice"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async ({ token, inputs }) =>
+            inputs.map((input) => ({ input, id: `${token}:${input}` })),
+          mapResolved: (entry) => ({ input: entry.input, resolved: true, id: entry.id })
+        });
+        return { unresolved, missing, resolved };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-target-resolver-plugin",
+                    "name": "Runtime Target Resolver Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-target-resolver-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.target_resolver"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.target_resolver"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "unresolved": [
+            {"input": "a", "resolved": False, "note": "missing token"},
+            {"input": "b", "resolved": False, "note": "missing token"},
+        ],
+        "missing": [{"input": "alice", "resolved": False, "note": "missing token"}],
+        "resolved": [{"input": "alice", "resolved": True, "id": "x:alice"}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_transport_ready_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -18205,6 +18205,27 @@ async function waitForTransportReady(params) {
   throw new Error(`${params.label} not ready (${lastError ?? "unknown error"})`);
 }
 
+function buildUnresolvedTargetResults(inputs, note) {
+  return (Array.isArray(inputs) ? inputs : []).map((input) => ({
+    input,
+    resolved: false,
+    note,
+  }));
+}
+
+async function resolveTargetsWithOptionalToken(params) {
+  const token =
+    typeof params.token === "string" && params.token.trim() ? params.token.trim() : undefined;
+  if (!token) {
+    return buildUnresolvedTargetResults(params.inputs, params.missingTokenNote);
+  }
+  const resolved = await params.resolveWithToken({
+    token,
+    inputs: params.inputs,
+  });
+  return resolved.map(params.mapResolved);
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -21027,6 +21048,11 @@ const transportReadyRuntime = {
   waitForTransportReady,
 };
 
+const targetResolverRuntime = {
+  buildUnresolvedTargetResults,
+  resolveTargetsWithOptionalToken,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21248,6 +21274,7 @@ const genericSdk = new Proxy(
     buildGroupHistoryKey,
     buildMediaPayload,
     buildOutboundBaseSessionKey,
+    buildUnresolvedTargetResults,
     buildProbeChannelStatusSummary,
     buildRuntimeAccountStatusSnapshot,
     buildTokenChannelStatusSummary,
@@ -21382,6 +21409,7 @@ const genericSdk = new Proxy(
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
     resolveTimezone,
+    resolveTargetsWithOptionalToken,
     resolveUserPath,
     sanitizeTempFileName,
     sanitizeAgentId,
@@ -21480,6 +21508,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/transport-ready-runtime"
   ) {
     return transportReadyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/target-resolver-runtime" ||
+    request === "@openclaw/plugin-sdk/target-resolver-runtime"
+  ) {
+    return targetResolverRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
