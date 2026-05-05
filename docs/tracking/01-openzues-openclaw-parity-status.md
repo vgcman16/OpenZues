@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -162,6 +162,13 @@ may lag behind this tracker.
   normalization, SecretRef coercion, inspect-mode resolution, and configured
   secret detection.
   - Status: checkpointed in `76e3c638`
+
+- [x] Imported plugin SDK routing helper shim for common routing/session
+  helpers, preserving account and agent id normalization, session key
+  parsing/building, thread suffix handling, account lookup, message-channel
+  normalization, and outbound thread id normalization for imported runtime
+  tools.
+  - Status: checkpointed in `2cf7fb27`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1133,9 +1140,25 @@ may lag behind this tracker.
     context checkpointed in `ef254cbf`, text-runtime helper shim checkpointed
     in `91918c38`, error-runtime helper shim checkpointed in `7888c8de`, and
     temp-path helper shim checkpointed in `d6a73b21`, and secret-input helper
-    shim checkpointed in `76e3c638`, but broader plugin SDK helper/runtime
-    surface breadth remains.
+    shim checkpointed in `76e3c638`, and routing helper shim checkpointed in
+    `2cf7fb27`, but broader plugin SDK helper/runtime surface breadth
+    remains.
   - Weight: 5
+
+- [x] Imported plugin SDK routing helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/routing.ts`,
+    `openclaw-main/src/routing/session-key.ts`,
+    `openclaw-main/src/sessions/session-key-utils.ts`,
+    `openclaw-main/src/routing/account-id.ts`,
+    `openclaw-main/src/routing/account-lookup.ts`, and
+    `openclaw-main/src/infra/outbound/thread-id.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2cf7fb27`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused routing helper proof (`1 passed`),
+    adjacent plugin invoke proof (`17 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK secret-input helper shim.
   - Source: `openclaw-main/src/plugin-sdk/secret-input.ts` and

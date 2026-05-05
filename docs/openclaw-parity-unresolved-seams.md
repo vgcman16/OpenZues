@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~71.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.2% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6654,10 +6654,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `tools.invoke`. Repo-wide parity is now estimated at ~71.1%. Verified with
   focused secret-input helper pytest, adjacent plugin invoke proof, `ruff
   check`, and `mypy`; source/test checkpointed in `76e3c638`.
-- Next repo-wide queue head: rotate to the next provider-specific
-  runtime/plugin gap, continuing broader plugin SDK helper/runtime surface
+- Closed the imported OpenClaw plugin SDK routing helper seam from
+  `src/plugin-sdk/routing.ts`, `src/routing/session-key.ts`,
+  `src/sessions/session-key-utils.ts`, `src/routing/account-id.ts`,
+  `src/routing/account-lookup.ts`, and `src/infra/outbound/thread-id.ts`:
+  native runtime entries can now import common routing/session helper exports
+  from `openclaw/plugin-sdk/routing` and execute account/agent normalization,
+  session key parsing/building, thread suffix handling, account lookup,
+  message-channel normalization, and outbound thread id normalization through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.2%. Verified with
+  focused routing helper pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `2cf7fb27`.
+- Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/error-runtime/temp-path/secret-input helper path.
+  text-runtime/error-runtime/temp-path/secret-input/routing helper path,
+  starting with the next source-backed SDK subpath or deeper route-resolution
+  binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

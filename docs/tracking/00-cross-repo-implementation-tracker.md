@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~71.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~71.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin secret-input helper shim slice is checkpointed in `76e3c638`.
+The imported plugin routing helper shim slice is checkpointed in `2cf7fb27`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -43,6 +43,7 @@ Any follow-up changes should target the next queue head only:
 - `src/openzues/web/templates/index.html`
 - `src/openzues/web/static/app.js`
 - `tests/test_ops_mesh.py`
+- `tests/test_gateway_node_methods.py`
 - `tests/test_cli.py`
 - `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
@@ -60,12 +61,35 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Secret-input helper shim checkpointed in `76e3c638` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Routing helper shim checkpointed in `2cf7fb27` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime surface breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001SA` Imported routing helper shim
+  - Source: `openclaw-main/src/plugin-sdk/routing.ts`,
+    `openclaw-main/src/routing/session-key.ts`,
+    `openclaw-main/src/sessions/session-key-utils.ts`,
+    `openclaw-main/src/routing/account-id.ts`,
+    `openclaw-main/src/routing/account-lookup.ts`,
+    `openclaw-main/src/infra/outbound/thread-id.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/routing` and use common routing/session helper
+    exports for account and agent id normalization, session key
+    parsing/building, thread suffix handling, account lookup,
+    message-channel normalization, and outbound thread id normalization during
+    `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2cf7fb27`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused routing helper proof (`1 passed`),
+    adjacent plugin invoke proof (`17 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PLUGIN-001RZ` Imported secret-input helper shim
   - Source: `openclaw-main/src/plugin-sdk/secret-input.ts`,
