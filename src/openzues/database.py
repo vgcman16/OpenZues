@@ -276,6 +276,7 @@ class Database:
                     model_identifier TEXT,
                     caps_json TEXT NOT NULL DEFAULT '[]',
                     commands_json TEXT NOT NULL DEFAULT '[]',
+                    bins_json TEXT NOT NULL DEFAULT '[]',
                     permissions_json TEXT,
                     remote_ip TEXT,
                     created_at_ms INTEGER NOT NULL,
@@ -647,6 +648,12 @@ class Database:
             await self._ensure_column(
                 db, "gateway_node_paired_nodes", "last_seen_reason", "TEXT"
             )
+            await self._ensure_column(
+                db,
+                "gateway_node_paired_nodes",
+                "bins_json",
+                "TEXT NOT NULL DEFAULT '[]'",
+            )
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model_provider", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model", "TEXT")
@@ -989,6 +996,7 @@ class Database:
             "model_identifier": payload["model_identifier"],
             "caps": Database._decode_json_list(payload.get("caps_json")),
             "commands": Database._decode_json_list(payload.get("commands_json")),
+            "bins": Database._decode_json_list(payload.get("bins_json")),
             "permissions": Database._decode_json_object(payload.get("permissions_json")),
             "remote_ip": payload["remote_ip"],
             "created_at_ms": int(payload["created_at_ms"]),
@@ -1044,6 +1052,7 @@ class Database:
         model_identifier: str | None,
         caps: Sequence[str],
         commands: Sequence[str],
+        bins: Sequence[str] = (),
         permissions: dict[str, bool] | None,
         remote_ip: str | None,
         created_at_ms: int,
@@ -1066,6 +1075,7 @@ class Database:
                     model_identifier,
                     caps_json,
                     commands_json,
+                    bins_json,
                     permissions_json,
                     remote_ip,
                     created_at_ms,
@@ -1074,7 +1084,7 @@ class Database:
                     created_at,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     token = excluded.token,
                     display_name = excluded.display_name,
@@ -1086,6 +1096,7 @@ class Database:
                     model_identifier = excluded.model_identifier,
                     caps_json = excluded.caps_json,
                     commands_json = excluded.commands_json,
+                    bins_json = excluded.bins_json,
                     permissions_json = excluded.permissions_json,
                     remote_ip = excluded.remote_ip,
                     created_at_ms = excluded.created_at_ms,
@@ -1105,6 +1116,7 @@ class Database:
                     model_identifier,
                     json.dumps(list(caps)),
                     json.dumps(list(commands)),
+                    json.dumps(list(bins)),
                     json.dumps(permissions) if permissions is not None else None,
                     remote_ip,
                     created_at_ms,

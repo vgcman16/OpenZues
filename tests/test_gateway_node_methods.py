@@ -66,6 +66,7 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginRuntimeService,
     GatewayPluginSessionExtensionSpec,
 )
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
@@ -171,6 +172,37 @@ class BackgroundUnavailableNodeConnection(FakeNodeConnection):
                         "require foreground"
                     ),
                 },
+            )
+        )
+
+
+class SystemWhichBinsNodeConnection(FakeNodeConnection):
+    def __init__(
+        self,
+        registry: GatewayNodeRegistry,
+        conn_id: str,
+        bins: dict[str, str],
+    ) -> None:
+        super().__init__(conn_id)
+        self.registry = registry
+        self.bins = dict(bins)
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        super().send_gateway_event(event, payload)
+        if event != "node.invoke.request" or not isinstance(payload, dict):
+            return
+        request_id = str(payload.get("id") or "")
+        node_id = str(payload.get("nodeId") or "")
+        if not request_id or not node_id:
+            return
+        asyncio.get_running_loop().call_soon(
+            lambda: self.registry.handle_invoke_result(
+                request_id=request_id,
+                node_id=node_id,
+                ok=True,
+                payload={"bins": self.bins},
+                payload_json=json.dumps({"bins": self.bins}),
+                error=None,
             )
         )
 
@@ -38673,6 +38705,99 @@ async def test_node_presence_alive_persists_paired_node_last_seen_and_throttles(
 
 
 @pytest.mark.asyncio
+async def test_remote_macos_node_refresh_persists_system_which_bins(tmp_path) -> None:
+    codex_home = tmp_path / ".codex"
+    skill_path = codex_home / "skills" / "remote-macos-bin" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: remote-macos-bin
+description: Needs a remote macOS binary
+metadata:
+  openclaw:
+    os:
+      - darwin
+    requires:
+      bins:
+        - ffmpeg
+        - missing-bin
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    skill_bins_service = GatewaySkillBinsService(
+        codex_home=codex_home,
+        workspace_root=tmp_path,
+    )
+    remote_bins_service = GatewayRemoteNodeBinsService(
+        registry,
+        pairing_service=pairing_service,
+        skill_bins_service=skill_bins_service,
+        timeout_ms=1_000,
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+        skill_bins_service=skill_bins_service,
+        remote_node_bins_service=remote_bins_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-remote-bins",
+            "displayName": "Remote Mac",
+            "platform": "darwin",
+            "commands": ["system.which", "system.run"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "node.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+    connection = SystemWhichBinsNodeConnection(
+        registry,
+        "conn-pair-node-remote-bins",
+        {"ffmpeg": "/opt/homebrew/bin/ffmpeg", "missing-bin": ""},
+    )
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-pair-node-remote-bins",
+            device_id="pair-node-remote-bins",
+            client_mode="node",
+            display_name="Remote Mac",
+            platform="darwin",
+            commands=("system.which", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    pairing = await service.call("node.pair.list", {}, now_ms=3_000)
+    stored = await pairing_service.get_paired_node("pair-node-remote-bins")
+
+    assert stored is not None
+    assert stored.bins == ("ffmpeg",)
+    assert pairing["paired"][0]["bins"] == ["ffmpeg"]
+    assert connection.sent_events[0]["event"] == "node.invoke.request"
+    invoke_payload = connection.sent_events[0]["payload"]
+    assert isinstance(invoke_payload, dict)
+    assert invoke_payload["command"] == "system.which"
+    assert json.loads(str(invoke_payload["paramsJSON"])) == {
+        "bins": ["ffmpeg", "missing-bin"]
+    }
+
+
+@pytest.mark.asyncio
 async def test_node_pair_approve_respects_explicit_caller_scope_requirements(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()
@@ -40639,6 +40764,88 @@ async def test_node_event_agent_request_routes_deep_link_to_chat_runtime(tmp_pat
             "timeout_ms": 45_000,
             "channel": "telegram",
             "to": "12345",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-agent-request-slack-thread.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+        account_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "channel": channel,
+                "to": to,
+                "account_id": account_id,
+                "thread_id": thread_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-slack-thread-announce-1",
+                "sessionKey": "agent:main:main",
+                "message": "  Announce completion back to the Slack thread.  ",
+                "deliver": True,
+                "channel": "slack",
+                "accountId": "acct-1",
+                "to": "channel:C123",
+                "threadId": "171.222",
+            },
+        },
+        requester=requester,
+    )
+
+    assert response == {"ok": True}
+    assert observed == [
+        {
+            "session_key": "agent:main:main",
+            "message": "Announce completion back to the Slack thread.",
+            "idempotency_key": "node-slack-thread-announce-1",
+            "thinking": None,
+            "deliver": True,
+            "timeout_ms": None,
+            "channel": "slack",
+            "to": "channel:C123",
+            "account_id": "acct-1",
+            "thread_id": "171.222",
         }
     ]
 

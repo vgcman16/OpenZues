@@ -9344,6 +9344,177 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         )
 
 
+_OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
+_OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
+
+
+def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
+    if not isinstance(config_snapshot, Mapping):
+        return None
+    update = config_snapshot.get("update")
+    if not isinstance(update, Mapping):
+        return None
+    channel = str(update.get("channel") or "").strip().lower()
+    return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
+
+
+def _openclaw_update_install_kind(root: Path) -> str:
+    if _doctor_path_exists(root / ".git"):
+        return "git"
+    if _doctor_path_exists(root):
+        return "package"
+    return "unknown"
+
+
+def _openclaw_update_package_manager(root: Path) -> str:
+    package_json = root / "package.json"
+    if _doctor_path_exists(package_json):
+        try:
+            parsed = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, Mapping):
+            raw_manager = str(parsed.get("packageManager") or "").strip()
+            manager = raw_manager.split("@", maxsplit=1)[0].strip().lower()
+            if manager in _OPENCLAW_UPDATE_PACKAGE_MANAGERS:
+                return manager
+
+    lockfile_managers = (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+        ("package-lock.json", "npm"),
+    )
+    for filename, manager in lockfile_managers:
+        if _doctor_path_exists(root / filename):
+            return manager
+    return "unknown"
+
+
+def _openclaw_update_deps_marker(root: Path, manager: str) -> tuple[Path | None, Path | None]:
+    if manager == "pnpm":
+        return root / "pnpm-lock.yaml", root / "node_modules" / ".modules.yaml"
+    if manager == "bun":
+        return root / "bun.lockb", root / "node_modules"
+    if manager == "npm":
+        return root / "package-lock.json", root / "node_modules"
+    return None, None
+
+
+def _openclaw_update_deps_status(root: Path, manager: str) -> dict[str, object]:
+    lockfile_path, marker_path = _openclaw_update_deps_marker(root, manager)
+    payload: dict[str, object] = {
+        "manager": manager,
+        "status": "unknown",
+        "lockfilePath": str(lockfile_path) if lockfile_path is not None else None,
+        "markerPath": str(marker_path) if marker_path is not None else None,
+    }
+    if lockfile_path is None or marker_path is None:
+        payload["reason"] = "unknown package manager"
+        return payload
+    if not _doctor_path_exists(lockfile_path):
+        payload["reason"] = "lockfile missing"
+        return payload
+    if not _doctor_path_exists(marker_path):
+        payload["status"] = "missing"
+        payload["reason"] = "node_modules marker missing"
+        return payload
+    try:
+        lock_mtime_ms = lockfile_path.stat().st_mtime * 1000
+        marker_mtime_ms = marker_path.stat().st_mtime * 1000
+    except OSError:
+        return payload
+    if lock_mtime_ms > marker_mtime_ms + 1000:
+        payload["status"] = "stale"
+        payload["reason"] = "lockfile newer than install marker"
+        return payload
+    payload["status"] = "ok"
+    return payload
+
+
+def _openclaw_update_git_branch(root: Path) -> str | None:
+    head_path = root / ".git" / "HEAD"
+    if not _doctor_path_exists(head_path):
+        return None
+    try:
+        head = head_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/heads/"
+    if not head.startswith(prefix):
+        return None
+    branch = head.removeprefix(prefix).strip()
+    if not branch or branch == "HEAD":
+        return None
+    return branch
+
+
+def _openclaw_update_channel_payload(
+    *,
+    config_channel: str | None,
+    install_kind: str,
+    git_branch: str | None,
+) -> dict[str, object]:
+    if config_channel is not None:
+        channel = config_channel
+        source = "config"
+        label = f"{channel} (config)"
+    elif install_kind == "git" and git_branch is not None:
+        channel = "dev"
+        source = "git-branch"
+        label = f"{channel} ({git_branch})"
+    elif install_kind == "git":
+        channel = "dev"
+        source = "default"
+        label = f"{channel} ({source})"
+    else:
+        channel = "stable"
+        source = "default"
+        label = f"{channel} ({source})"
+    return {
+        "value": channel,
+        "source": source,
+        "label": label,
+        "config": config_channel,
+    }
+
+
+def _with_openclaw_update_status_projection(
+    payload: dict[str, object],
+    *,
+    config_snapshot: object,
+) -> dict[str, object]:
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
+    config_channel = _openclaw_update_config_channel(config_snapshot)
+    package_manager = (
+        _openclaw_update_package_manager(root) if install_kind != "unknown" else "unknown"
+    )
+    next_payload = dict(payload)
+    update_payload: dict[str, object] = {
+        "root": str(root),
+        "installKind": install_kind,
+        "packageManager": package_manager,
+    }
+    if install_kind != "unknown":
+        update_payload["deps"] = _openclaw_update_deps_status(root, package_manager)
+    next_payload["update"] = update_payload
+    next_payload["channel"] = _openclaw_update_channel_payload(
+        config_channel=config_channel,
+        install_kind=install_kind,
+        git_branch=git_branch,
+    )
+    next_payload["availability"] = {
+        "available": False,
+        "hasGitUpdate": False,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": None,
+    }
+    return next_payload
+
+
 def _emit_continue_action(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -18000,6 +18171,8 @@ _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
 )
 _OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
+    "embeddedExtensionFactories": "embedded-extension-factory",
+    "agentToolResultMiddleware": "agent-tool-result-middleware",
     "tools": "tool",
     "externalAuthProviders": "external-auth-provider",
     "speechProviders": "speech",
@@ -29272,7 +29445,17 @@ def update_status(
         view = await _try_live_update_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_update_view()
-        return view.model_dump(mode="json")
+        config_snapshot: object = {}
+        gateway_config = getattr(services, "gateway_config", None)
+        if gateway_config is not None:
+            try:
+                config_snapshot = gateway_config.build_snapshot()
+            except Exception:
+                config_snapshot = {}
+        return _with_openclaw_update_status_projection(
+            view.model_dump(mode="json"),
+            config_snapshot=config_snapshot,
+        )
 
     payload = _run(_run_with_services(_action))
     _emit_update_status(payload, json_output=json_output)

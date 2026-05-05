@@ -80,6 +80,7 @@ from openzues.services.gateway_plugin_runtime import (
     copy_plugin_json_value,
     is_plugin_json_value,
 )
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sandbox_spawn import (
     FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
     sandbox_runtime_metadata,
@@ -1352,7 +1353,9 @@ def _node_agent_request_timeout_ms(raw: object) -> int | None:
     return min(int(raw * 1000), 2_592_000_000)
 
 
-def _node_agent_request_delivery_route(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def _node_agent_request_delivery_route(
+    payload: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, str | None]:
     channel_raw = payload.get("channel")
     to_raw = payload.get("to")
     channel = (
@@ -1362,8 +1365,10 @@ def _node_agent_request_delivery_route(payload: dict[str, Any]) -> tuple[str | N
     )
     to = to_raw.strip() if isinstance(to_raw, str) and to_raw.strip() else None
     if channel is None or to is None:
-        return None, None
-    return channel, to
+        return None, None, None, None
+    account_id = _string_or_none(payload.get("accountId"))
+    thread_id = _stringified_route_id(payload.get("threadId"))
+    return channel, to, account_id, thread_id
 
 
 _NODE_PENDING_WAKE_RECONNECT_WAIT_MS = 3_000
@@ -1423,6 +1428,7 @@ class GatewayNodeMethodService:
         skill_config_service: GatewaySkillConfigService | None = None,
         skill_install_service: GatewaySkillInstallService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
+        remote_node_bins_service: GatewayRemoteNodeBinsService | None = None,
         send_channel_message_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_push_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
@@ -1550,6 +1556,7 @@ class GatewayNodeMethodService:
         self._skill_status_service = skill_status_service or GatewaySkillStatusService(
             skill_config_service=self._skill_config_service
         )
+        self._remote_node_bins_service = remote_node_bins_service
         self._send_channel_message_service = send_channel_message_service
         self._send_channel_poll_service = send_channel_poll_service
         self._send_apns_push_service = send_apns_push_service
@@ -1632,6 +1639,26 @@ class GatewayNodeMethodService:
             platform=node.platform,
             device_family=node.device_family,
         )
+
+    async def _refresh_remote_node_bins_if_available(
+        self,
+        *,
+        node_id: str,
+        platform: str | None,
+        device_family: str | None,
+        commands: Iterable[str],
+    ) -> None:
+        if self._remote_node_bins_service is None:
+            return
+        try:
+            await self._remote_node_bins_service.refresh_for_node(
+                node_id=node_id,
+                platform=platform,
+                device_family=device_family,
+                commands=tuple(commands),
+            )
+        except Exception:
+            return
 
     async def _wait_for_node_connection(
         self,
@@ -2757,6 +2784,19 @@ class GatewayNodeMethodService:
                             paired_node=paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=existing_node.node_id,
+                            platform=existing_node.platform or paired_node.platform,
+                            device_family=(
+                                existing_node.device_family or paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(existing_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            paired_node.node_id
+                        )
+                        if refreshed is not None:
+                            paired_node = refreshed
                     paired_payload = _known_paired_node_payload(
                         paired_node,
                         commands=self._normalized_paired_node_commands(paired_node),
@@ -10426,6 +10466,20 @@ class GatewayNodeMethodService:
                             paired_node=stored_paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=existing_node.node_id,
+                            platform=existing_node.platform or stored_paired_node.platform,
+                            device_family=(
+                                existing_node.device_family
+                                or stored_paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(existing_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            stored_paired_node.node_id
+                        )
+                        if refreshed is not None:
+                            stored_paired_node = refreshed
                     stored_payload = _stored_paired_node_payload(
                         stored_paired_node,
                         commands=self._normalized_paired_node_commands(stored_paired_node),
@@ -10658,6 +10712,20 @@ class GatewayNodeMethodService:
                             paired_node=merged_paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=described_node.node_id,
+                            platform=described_node.platform or merged_paired_node.platform,
+                            device_family=(
+                                described_node.device_family
+                                or merged_paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(described_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            wanted_node_id
+                        )
+                        if refreshed is not None:
+                            merged_paired_node = refreshed
                         payload_node = _merge_known_node_payload(
                             _known_paired_node_payload(
                                 merged_paired_node,
@@ -12510,7 +12578,12 @@ class GatewayNodeMethodService:
             if isinstance(payload.get("thinking"), str) and payload["thinking"].strip()
             else None
         )
-        delivery_channel, delivery_to = _node_agent_request_delivery_route(payload)
+        (
+            delivery_channel,
+            delivery_to,
+            delivery_account_id,
+            delivery_thread_id,
+        ) = _node_agent_request_delivery_route(payload)
         deliver = payload.get("deliver") is True and delivery_channel is not None
         timeout_ms = _node_agent_request_timeout_ms(payload.get("timeoutSeconds"))
         timestamp_ms = _timestamp_ms(now_ms)
@@ -12547,6 +12620,14 @@ class GatewayNodeMethodService:
                     message,
                     sandbox_media_paths,
                 )
+            delivery_kwargs: dict[str, object | None] = {
+                "channel": delivery_channel,
+                "to": delivery_to,
+            }
+            if delivery_account_id is not None:
+                delivery_kwargs["account_id"] = delivery_account_id
+            if delivery_thread_id is not None:
+                delivery_kwargs["thread_id"] = delivery_thread_id
             send_result = await self._chat_attachment_send_service(
                 session_key=session_key,
                 message=runtime_message,
@@ -12555,12 +12636,19 @@ class GatewayNodeMethodService:
                 deliver=deliver,
                 timeout_ms=timeout_ms,
                 attachments=runtime_attachments,
-                channel=delivery_channel,
-                to=delivery_to,
                 node_id=node_id,
+                **delivery_kwargs,
             )
         else:
             assert self._chat_send_service is not None
+            delivery_kwargs = {
+                "channel": delivery_channel,
+                "to": delivery_to,
+            }
+            if delivery_account_id is not None:
+                delivery_kwargs["account_id"] = delivery_account_id
+            if delivery_thread_id is not None:
+                delivery_kwargs["thread_id"] = delivery_thread_id
             send_result = await self._chat_send_service(
                 session_key=session_key,
                 message=message,
@@ -12568,8 +12656,7 @@ class GatewayNodeMethodService:
                 thinking=thinking,
                 deliver=deliver,
                 timeout_ms=timeout_ms,
-                channel=delivery_channel,
-                to=delivery_to,
+                **delivery_kwargs,
             )
         self._remember_gateway_chat_run(
             session_key,
@@ -20576,6 +20663,8 @@ def _known_paired_node_payload(
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 
@@ -20626,6 +20715,8 @@ def _merge_known_node_payload(
         merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
     if persisted.get("lastSeenReason") is not None:
         merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    if persisted.get("bins"):
+        merged["bins"] = persisted.get("bins")
     return merged
 
 
@@ -20707,6 +20798,8 @@ def _stored_paired_node_payload(
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 
@@ -20823,6 +20916,8 @@ def _merge_paired_node_payload(
         merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
     if persisted.get("lastSeenReason") is not None:
         merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    if persisted.get("bins"):
+        merged["bins"] = persisted.get("bins")
     return merged
 
 

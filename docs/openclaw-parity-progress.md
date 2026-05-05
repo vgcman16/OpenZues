@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.4% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~61.3% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -50,6 +50,13 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native Slack media parity now iterates multi-media uploads with the
   caption on the first upload, returns the final media id as `messageId`, and
   preserves the ordered `mediaIds`/`mediaUrls` result metadata.
+- Slack agent-request route metadata parity now forwards OpenClaw-shaped
+  `accountId` and Slack `threadId` fields into the fakeable chat runtime path
+  as `account_id` / `thread_id` when a valid external route is present.
+- Update status package-manager dependency posture now mirrors OpenClaw's
+  package runtime check surface by detecting `packageManager` from
+  `package.json`/lockfiles and projecting `deps` lockfile/install-marker state
+  in `openzues update status --json`.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -9783,6 +9790,165 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_poll_uses_telegram_native_route"` (`6 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `9e1743fb`.
+
+- `openzues update status --json` now includes OpenClaw-shaped update channel
+  projection alongside the existing OpenZues/Hermes update view: git roots
+  default to `dev (default)`, package/unknown roots default to
+  `stable (default)`, and conservative availability metadata is present until
+  deeper git/registry checks land. This closes `OZ-PKG-001C`; repo-wide parity
+  is now estimated at ~60.5%, while packaging/update-channel breadth remains
+  open for persisted channel config and live availability checks.
+- Verified the update status channel projection slice with `python -m pytest
+  tests\test_cli.py::test_update_status_json_includes_openclaw_channel_projection
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_includes_openclaw_channel_projection or
+  doctor_and_update_status_json_include_hermes_sections or
+  package_distribution"` (`3 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `e32d4d47`.
+
+- `openzues update status --json` now mirrors OpenClaw's git-branch channel
+  labeling: when a git install exposes `.git/HEAD` pointing at a branch, the
+  channel projection reports `source="git-branch"` and labels the channel as
+  `dev (<branch>)` instead of the generic default. This closes
+  `OZ-PKG-001D`; repo-wide parity is now estimated at ~60.6%.
+- Verified the update status git-branch channel slice with `python -m pytest
+  tests\test_cli.py::test_update_status_json_uses_git_branch_channel_label -q`
+  (`1 passed`), focused pair `python -m pytest
+  tests\test_cli.py::test_update_status_json_includes_openclaw_channel_projection
+  tests\test_cli.py::test_update_status_json_uses_git_branch_channel_label -q`
+  (`2 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_uses_git_branch_channel_label or
+  update_status_json_includes_openclaw_channel_projection or
+  doctor_and_update_status_json_include_hermes_sections or
+  package_distribution"` (`4 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `8673e35d`.
+
+- Remote macOS paired nodes now preserve OpenClaw's required-bin discovery
+  lifecycle: OpenZues collects Darwin skill bin requirements, probes connected
+  paired macOS nodes with `system.which` or a `system.run command -v`
+  fallback, parses array/object/stdout results, persists discovered `bins` on
+  paired-node metadata, and exposes non-empty bins through `node.pair.list`.
+  This closes `OZ-COMP-001B`; repo-wide parity is now estimated at ~60.7%.
+- Verified the remote macOS node bin discovery slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_remote_macos_node_refresh_persists_system_which_bins
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "remote_macos_node_refresh_persists_system_which_bins or
+  node_pair_approve_verify_and_rename_lifecycle or
+  node_presence_alive_persists_paired_node_last_seen_and_throttles or
+  node_pair_list_stages_silent_scope_upgrade_request_for_paired_command_expansion
+  or node_list_and_describe_include_persisted_approved_nodes"` (`5 passed,
+  806 deselected`), API adjacent `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "remote_macos_bins_through_app or
+  gateway_nodes_endpoints_pin_paired_commands_until_repair_request or
+  gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_command_expansion
+  or gateway_nodes_endpoints_stage_silent_upgrade_for_commandless_reconnect"`
+  (`4 passed, 424 deselected`), pairing refresh `python -m pytest
+  tests\test_gateway_node_pairing_refresh.py -q` (`5 passed`), `ruff check`
+  on touched source/tests, and `mypy` on touched source modules. Checkpointed
+  in `7dcce35d`.
+
+- Manifest runtime-extension contracts are now preserved in native
+  `plugins list --json`: OpenClaw manifest `contracts.embeddedExtensionFactories`
+  and `contracts.agentToolResultMiddleware` values are normalized, kept on the
+  plugin record, and projected as `embedded-extension-factory:<id>` and
+  `agent-tool-result-middleware:<id>` capability strings. This closes
+  `OZ-PLUGIN-001BJ`; repo-wide parity is now estimated at ~60.8%, while
+  plugin activation/import breadth remains open for deeper runtime execution
+  seams.
+- Verified the runtime-extension contract metadata slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_runtime_extension_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "runtime_extension_contracts or document_extractor_contracts or
+  web_content_extractor_contracts or migration_provider_contracts or
+  external_auth_provider_contracts or plugins_list_json_preserves_manifest_config_contracts"`
+  (`6 passed, 486 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `cbd59d1d`.
+
+- Telegram native route-backed media sends now preserve OpenClaw's raw media
+  caption contract: media sends receive the caller text as the first caption
+  without the OpenZues delivery-summary `Media:` inventory, later media sends
+  stay captionless, and forced document sends still set
+  `disable_content_type_detection` while preserving terminal message id,
+  chat/channel id, media URLs, and collected media IDs. This closes
+  `OZ-PROV-001J`; repo-wide parity is now estimated at ~60.9%.
+- Verified the Telegram raw media-caption slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_media_group or telegram_native_options"` (`2 passed, 277
+  deselected`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpointed in `b2bc7fb7`.
+
+- WhatsApp native split-media sends now expose OpenClaw-style per-part result
+  observability: multi-media sends keep `messageId` as the last provider
+  message id, add `primaryMessageId` for the first media message, and return
+  `messageIds` for the full split while preserving compatibility `mediaIds`,
+  media URLs, and persisted provider-result metadata. This closes
+  `OZ-PROV-001K`; repo-wide parity is now estimated at ~61.0%.
+- Verified the WhatsApp split-media result metadata slice with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_reply_document or whatsapp_gif_video or whatsapp_audio_voice or
+  send_direct_channel_message_splits_whatsapp_media"` (`4 passed, 275
+  deselected`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpointed in `7e549c1e`.
+
+- Discord native route-backed webhook sends now preserve OpenClaw's thread
+  result fallback: `threadId` still routes through the webhook query string,
+  reply/silent payload fields are preserved, and when Discord returns a
+  message id without `channel_id`, the native result and persisted provider
+  metadata report `chatId`/`channelId` as the requested thread id instead of
+  the parent target. This closes `OZ-PROV-001L`; repo-wide parity is now
+  estimated at ~61.1%.
+- Verified the Discord thread result fallback slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_query
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "discord_thread_query or discord_reply_and_silent or
+  send_direct_channel_message_uses_discord_native_route or
+  send_direct_channel_poll_uses_discord"` (`4 passed, 275 deselected`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `e47324f4`.
+- Slack agent-request thread metadata parity is now landed: `node.event`
+  `agent.request` payloads that target Slack preserve `accountId` and
+  Slack `threadId` through the gateway route helper and forward them as
+  `account_id` / `thread_id` to the fakeable chat runtime path, while keeping
+  no-route delivery disabled. This closes `OZ-PROV-001M`; repo-wide parity is
+  now estimated at ~61.2%.
+- Verified the Slack agent-request thread metadata slice with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "agent_request_routes_deep_link_to_chat_runtime
+  or forwards_slack_account_and_thread or disables_delivery_without_route or
+  sends_receipt_ack_when_route_is_present or
+  agent_request_uses_attachment_runtime_when_wired"` (`5 passed, 807
+  deselected`), adjacent Slack provider proof (`3 passed, 276 deselected`),
+  `ruff check`, and `mypy`. Checkpointed in `e3671d6f`.
+
+- `openzues update status --json` now mirrors OpenClaw's package-manager
+  dependency posture: package installs detect `packageManager` from
+  `package.json` or lockfiles, and the update payload includes `deps` metadata
+  for manager, status, lockfile path, marker path, and stale/missing/unknown
+  reasons while preserving the existing channel and availability projections.
+  This closes `OZ-PKG-001E`; repo-wide parity is now estimated at ~61.3%.
+- Verified the update status package-manager dependency posture slice with
+  `python -m pytest
+  tests\test_cli.py::test_update_status_json_detects_package_manager_deps -q`
+  (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_detects_package_manager_deps or
+  update_status_json_includes_openclaw_channel_projection or
+  update_status_json_uses_git_branch_channel_label or
+  doctor_json_includes_windows_package_distribution_diagnostics or
+  doctor_json_warns_on_invalid_package_dist_inventory"` (`5 passed, 488
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `f1ac67da`.
 
 ## References
 

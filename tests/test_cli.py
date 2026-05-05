@@ -8048,6 +8048,65 @@ def test_plugins_list_json_preserves_manifest_external_auth_provider_contracts(
     assert plugin["capabilities"] == ["external-auth-provider:demo"]
 
 
+def test_plugins_list_json_preserves_manifest_runtime_extension_contracts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "runtime-extension-owner"
+    plugin_dir.mkdir(parents=True)
+    manifest_path = plugin_dir / "openclaw.plugin.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "id": "runtime-extension-owner",
+                "configSchema": {"type": "object"},
+                "contracts": {
+                    "agentToolResultMiddleware": ["codex", ""],
+                    "embeddedExtensionFactories": ["codex-app-server", ""],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    plugin = json.loads(result.stdout)["plugins"][0]
+    assert plugin["source"] == str(manifest_path)
+    assert plugin["contracts"] == {
+        "agentToolResultMiddleware": ["codex"],
+        "embeddedExtensionFactories": ["codex-app-server"],
+    }
+    assert plugin["capabilities"] == [
+        "embedded-extension-factory:codex-app-server",
+        "agent-tool-result-middleware:codex",
+    ]
+
+
 def test_plugins_list_json_prefers_doctor_contract_api_artifact(
     tmp_path,
     monkeypatch,
@@ -22181,6 +22240,185 @@ def test_doctor_and_update_status_json_include_hermes_sections(tmp_path, monkeyp
     assert "delivery" in doctor_payload
     assert "updates" in doctor_payload
     assert update_payload["headline"]
+
+
+def test_update_status_json_includes_openclaw_channel_projection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / ".git").mkdir(parents=True)
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "pending_restart": False,
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["headline"] == "OpenZues runtime update status is steady."
+    assert payload["channel"] == {
+        "value": "dev",
+        "source": "default",
+        "label": "dev (default)",
+        "config": None,
+    }
+    assert payload["update"] == {
+        "root": str(package_root),
+        "installKind": "git",
+        "packageManager": "unknown",
+        "deps": {
+            "manager": "unknown",
+            "status": "unknown",
+            "lockfilePath": None,
+            "markerPath": None,
+            "reason": "unknown package manager",
+        },
+    }
+    assert payload["availability"] == {
+        "available": False,
+        "hasGitUpdate": False,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": None,
+    }
+
+
+def test_update_status_json_detects_package_manager_deps(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    package_root.mkdir()
+    (package_root / "package.json").write_text(
+        json.dumps({"packageManager": "npm@10.0.0"}),
+        encoding="utf-8",
+    )
+    lockfile = package_root / "package-lock.json"
+    lockfile.write_text("{}", encoding="utf-8")
+    marker = package_root / "node_modules"
+    marker.mkdir()
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["update"]["installKind"] == "package"
+    assert payload["update"]["packageManager"] == "npm"
+    assert payload["update"]["deps"] == {
+        "manager": "npm",
+        "status": "ok",
+        "lockfilePath": str(lockfile),
+        "markerPath": str(marker),
+    }
+
+
+def test_update_status_json_uses_git_branch_channel_label(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    git_dir = package_root / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"headline": "OpenZues runtime update status is steady."}
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["channel"] == {
+        "value": "dev",
+        "source": "git-branch",
+        "label": "dev (main)",
+        "config": None,
+    }
 
 
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:

@@ -4,8 +4,8 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.4% overall, with a reasonable
-  band of ~50-60%.
+- Repo-wide OpenClaw parity is estimated at ~61.3% overall, with a reasonable
+  band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest companion node presence alive slice.
+  latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5561,8 +5561,90 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~60.4%. Verified with focused Telegram
   audio/voice pytest, adjacent Telegram native-route proof, `ruff check`, and
   `mypy`; checkpointed in `9e1743fb`.
-- Next repo-wide queue head: rotate to companion remote-bin discovery or
-  update-status channel projection based on the strongest source-backed seam.
+- Closed the update-status channel projection seam from OpenClaw
+  `src/cli/update-cli/status.ts`, `src/infra/update-channels.ts`, and
+  `src/commands/status.update.ts`: native `openzues update status --json` now
+  adds `update`, `channel`, and conservative `availability` payloads while
+  preserving existing OpenZues/Hermes update fields. Repo-wide parity is now
+  estimated at ~60.5%. Verified with focused update-status pytest, adjacent
+  update/package doctor proof, `ruff check`, and `mypy`; checkpointed in
+  `e32d4d47`.
+- Closed the update-status git branch channel label seam from OpenClaw
+  `src/infra/update-channels.ts`: native `openzues update status --json` now
+  reads `.git/HEAD` and projects `channel.source="git-branch"` with
+  `dev (<branch>)` labels for branch installs. Repo-wide parity is now
+  estimated at ~60.6%. Verified with focused update-status branch pytest,
+  adjacent update/package doctor proof, `ruff check`, and `mypy`; checkpointed
+  in `8673e35d`.
+- Closed the companion remote macOS bin discovery seam from OpenClaw
+  `src/infra/skills-remote.ts`, `src/infra/node-pairing.ts`, and
+  `src/gateway/server/ws-connection/message-handler.ts`: connected paired
+  Darwin/macOS nodes now probe required skill binaries with `system.which` or
+  `system.run` fallback, parse object-map/array/stdout responses, persist
+  `bins` on paired-node metadata, and expose discovered bins through
+  `node.pair.list`. Repo-wide parity is now estimated at ~60.7%. Verified with
+  focused remote-bin pytest, adjacent node method/API/pairing-refresh proof,
+  `ruff check`, and `mypy`; checkpointed in `7dcce35d`.
+- Closed the manifest runtime-extension contract seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/registry.ts`,
+  `src/plugins/agent-tool-result-middleware-loader.ts`, and
+  `src/agents/codex-app-server.extensions.test.ts`: manifest
+  `contracts.embeddedExtensionFactories` and
+  `contracts.agentToolResultMiddleware` entries now survive native
+  `plugins list --json` projection and emit
+  `embedded-extension-factory:<id>` / `agent-tool-result-middleware:<id>`
+  capability strings. Repo-wide parity is now estimated at ~60.8%. Verified
+  with focused runtime-extension contract pytest, adjacent plugin manifest
+  contract proof, `ruff check`, and `mypy`; checkpointed in `cbd59d1d`.
+- Closed the Telegram raw media-caption seam from OpenClaw
+  `extensions/telegram/src/outbound-adapter.ts`,
+  `src/plugin-sdk/reply-payload.ts`, and `extensions/telegram/src/send.ts`:
+  native route-backed Telegram media sends now pass the caller text as the
+  first media caption without appending the delivery-summary `Media:` URL
+  inventory, keep later media sends captionless, preserve forced-document
+  `disable_content_type_detection`, and retain terminal/provider media
+  metadata. Repo-wide parity is now estimated at ~60.9%. Verified with
+  focused Telegram media-group pytest, adjacent Telegram native-options proof,
+  `ruff check`, and `mypy`; checkpointed in `b2bc7fb7`.
+- Closed the WhatsApp split-media result metadata seam from OpenClaw
+  `src/infra/outbound/message-plan.ts`, `src/infra/outbound/deliver.ts`, and
+  `src/gateway/server-methods/send.ts`: native route-backed WhatsApp
+  multi-media sends now keep the last provider message as `messageId`, expose
+  the first media message as `primaryMessageId`, include all split provider
+  ids in `messageIds`, and persist those fields alongside compatibility
+  `mediaIds` and `mediaUrls`. Repo-wide parity is now estimated at ~61.0%.
+  Verified with focused WhatsApp split-media pytest, adjacent WhatsApp media
+  proof, `ruff check`, and `mypy`; checkpointed in `7e549c1e`.
+- Closed the Discord thread result fallback seam from OpenClaw
+  `extensions/discord/src/send.webhook.ts` and
+  `extensions/discord/src/outbound-adapter.ts`: native route-backed Discord
+  webhook sends now keep `wait=true`, route `threadId` through the webhook
+  query string, preserve reply/silent payload fields, and fall back
+  `chatId`/`channelId` to the requested thread id when Discord returns a
+  message id without `channel_id`. Repo-wide parity is now estimated at
+  ~61.1%. Verified with focused Discord thread-query pytest, adjacent Discord
+  native route proof, `ruff check`, and `mypy`; checkpointed in `e47324f4`.
+- Closed the Slack agent-request thread metadata seam from OpenClaw
+  `src/agents/subagent-announce-delivery.ts` and
+  `extensions/slack/src/outbound-adapter.ts`: `node.event` `agent.request`
+  route payloads that target Slack now preserve `accountId` and Slack
+  `threadId` through the native gateway route helper and forward them as
+  `account_id` / `thread_id` to the fakeable chat runtime path. Repo-wide
+  parity is now estimated at ~61.2%. Verified with focused Slack
+  agent-request pytest, adjacent gateway route/no-route/receipt/attachment
+  proof, adjacent Slack provider direct-send proof, `ruff check`, and `mypy`;
+  checkpointed in `e3671d6f`.
+- Closed the update-status package-manager dependency posture seam from
+  OpenClaw `src/infra/detect-package-manager.ts`,
+  `src/infra/update-check.ts`, and `src/cli/update-cli/status.ts`: native
+  `openzues update status --json` now detects `packageManager` from
+  `package.json` or lockfiles and projects `deps` metadata for manager,
+  status, lockfile path, marker path, and stale/missing/unknown reasons.
+  Repo-wide parity is now estimated at ~61.3%. Verified with focused
+  update-status package-manager pytest, adjacent update/package doctor proof,
+  `ruff check`, and `mypy`; checkpointed in `f1ac67da`.
+- Next repo-wide queue head: rotate to the next provider-specific
+  send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

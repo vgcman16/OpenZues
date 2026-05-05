@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -181,6 +181,12 @@ may lag behind this tracker.
   capability strings.
   - Status: checkpointed in `5fdfb23c`
 
+- [x] Manifest runtime-extension contract metadata, preserving
+  `contracts.embeddedExtensionFactories` and
+  `contracts.agentToolResultMiddleware` in `plugins list --json` records and
+  capability strings.
+  - Status: checkpointed in `cbd59d1d`
+
 - [x] Canvas shortcode text normalization, preserving OpenClaw's visible
   assistant-message cleanup after valid `[embed ...]` removals.
   - Status: checkpointed in `c34e4a77`
@@ -192,6 +198,27 @@ may lag behind this tracker.
 - [x] Telegram audio/voice media send routing, preserving OpenClaw's
   `sendAudio`/`sendVoice` Bot API split for native provider routes.
   - Status: checkpointed in `9e1743fb`
+
+- [x] Telegram raw media-caption metadata, preserving OpenClaw's first-media
+  raw caption without appended delivery-summary `Media:` URL inventory.
+  - Status: checkpointed in `b2bc7fb7`
+
+- [x] Update status channel projection, preserving OpenClaw's `update`,
+  `channel`, and conservative `availability` JSON fields.
+  - Status: checkpointed in `e32d4d47`
+
+- [x] Update status git branch channel label, preserving OpenClaw's
+  `dev (<branch>)` channel source projection.
+  - Status: checkpointed in `8673e35d`
+
+- [x] Update status package-manager dependency posture, preserving OpenClaw's
+  `packageManager` detection and `deps` lockfile/install-marker metadata.
+  - Status: checkpointed in `f1ac67da`
+
+- [x] Companion remote macOS bin discovery, preserving OpenClaw's
+  `system.which`/`system.run command -v` probe, paired-node `bins`
+  persistence, and node-pair metadata exposure.
+  - Status: checkpointed in `7dcce35d`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -211,6 +238,14 @@ may lag behind this tracker.
   media behavior by sending Cloud API `type="audio"` payloads and splitting
   visible text into a follow-up text message.
   - Status: checkpointed in `c27d3439`
+
+- [x] WhatsApp split-media result metadata, preserving OpenClaw-style
+  first/last/all message id observability for multi-media sends.
+  - Status: checkpointed in `7e549c1e`
+
+- [x] Discord thread result fallback, preserving OpenClaw's requested-thread
+  `chatId`/`channelId` fallback when webhook responses omit `channel_id`.
+  - Status: checkpointed in `e47324f4`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -380,6 +415,11 @@ may lag behind this tracker.
   metadata projection.
   - Status: checkpointed in `e3b5bbc0`
 
+- [x] Slack agent-request route metadata forwarding for direct announce-style
+  delivery, including `accountId` and Slack `threadId` propagation into the
+  fakeable chat runtime path.
+  - Status: checkpointed in `e3671d6f`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -510,7 +550,11 @@ may lag behind this tracker.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.
-  - Status: open
+  - Status: open; package distribution doctor diagnostics checkpointed in
+    `47d73351`, package dist inventory validation checkpointed in `3bf0ff86`,
+    update status channel projection checkpointed in `e32d4d47`, update status
+    git branch channel label checkpointed in `8673e35d`, and update status
+    package-manager dependency posture checkpointed in `f1ac67da`.
   - Weight: 5
 
 - [ ] Runtime-control hard gaps.
@@ -655,6 +699,20 @@ may lag behind this tracker.
     -q` (`1 passed`), adjacent plugin manifest inventory proof (`12 passed`),
     `ruff check`, and `mypy`.
 
+- [x] Manifest runtime-extension contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/agent-tool-result-middleware-loader.ts`,
+    `openclaw-main/src/agents/codex-app-server.extensions.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `cbd59d1d`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_runtime_extension_contracts
+    -q` (`1 passed`), adjacent plugin manifest contract proof (`6 passed,
+    486 deselected`), `ruff check`, and `mypy`.
+
 - [x] Canvas shortcode text normalization.
   - Source: `openclaw-main/src/chat/canvas-render.ts`
   - Target: `src/openzues/services/gateway_canvas_render.py`
@@ -689,6 +747,54 @@ may lag behind this tracker.
     adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
     `mypy`.
 
+- [x] Telegram raw media-caption metadata.
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/src/plugin-sdk/reply-payload.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `b2bc7fb7`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+    -q` (`1 passed`), adjacent Telegram native-options/media proof (`2
+    passed, 277 deselected`), `ruff check`, and `mypy`.
+
+- [x] Update status channel projection.
+  - Source: `openclaw-main/src/cli/update-cli/status.ts`,
+    `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/commands/status.update.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `e32d4d47`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused update-status test (`1 passed`),
+    adjacent update/package doctor proof (`3 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Update status git branch channel label.
+  - Source: `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `8673e35d`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused update-status pair (`2 passed`),
+    adjacent update/package doctor proof (`4 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Update status package-manager dependency posture.
+  - Source: `openclaw-main/src/infra/detect-package-manager.ts`,
+    `openclaw-main/src/infra/update-check.ts`, and
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f1ac67da`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused update-status package-manager test (`1
+    passed`), adjacent update/package doctor proof (`5 passed, 488
+    deselected`), `ruff check`, and `mypy`.
+
 - [x] Package distribution doctor diagnostics.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,
     `openclaw-main/src/commands/doctor-install.ts`,
@@ -716,6 +822,25 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused service/API presence tests (`1 passed`
     each), adjacent node pairing/event API proof (`3 passed` each),
     `ruff check`, and `mypy`.
+
+- [x] Companion remote macOS bin discovery.
+  - Source: `openclaw-main/src/infra/skills-remote.ts`,
+    `openclaw-main/src/infra/node-pairing.ts`,
+    `openclaw-main/src/gateway/server/ws-connection/message-handler.ts`
+  - Target: `src/openzues/services/gateway_remote_node_bins.py`,
+    `src/openzues/services/gateway_skill_bins.py`,
+    `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_service.py`, `src/openzues/database.py`,
+    `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_node_pairing_refresh.py`, `tests/test_gateway_nodes_api.py`
+  - Status: checkpointed in `7dcce35d`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused remote-bin node method test
+    (`1 passed`), adjacent node method proof (`5 passed`), adjacent node API
+    proof (`4 passed`), pairing refresh proof (`5 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
@@ -1217,8 +1342,37 @@ may lag behind this tracker.
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
     checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
-    `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`
+    `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
+    WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
+    thread result fallback checkpointed in `e47324f4`; Slack agent-request
+    thread metadata checkpointed in `e3671d6f`
   - Weight: 3
+
+- [x] Slack agent-request thread metadata.
+  - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e3671d6f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_gateway_node_methods.py::test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime
+    -q` (`1 passed`), adjacent gateway proof (`5 passed, 807 deselected`),
+    adjacent Slack provider proof (`3 passed, 276 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Discord thread result fallback.
+  - Source: `openclaw-main/extensions/discord/src/send.webhook.ts`,
+    `openclaw-main/extensions/discord/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `e47324f4`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_query
+    -q` (`1 passed`), adjacent Discord native route proof (`4 passed, 275
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] WhatsApp audio/voice media send payload.
   - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,
@@ -1232,6 +1386,19 @@ may lag behind this tracker.
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
     -q` (`1 passed`), adjacent WhatsApp native media/reply/gif/poll proof (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] WhatsApp split-media result metadata.
+  - Source: `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/gateway/server-methods/send.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `7e549c1e`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+    -q` (`1 passed`), adjacent WhatsApp media/reply/audio proof (`4 passed,
+    275 deselected`), `ruff check`, and `mypy`.
 
 - [x] Telegram GIF media send animation routing.
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,

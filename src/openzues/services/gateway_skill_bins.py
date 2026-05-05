@@ -40,10 +40,26 @@ def _frontmatter_payload(skill_path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _skill_bins(skill_path: Path) -> tuple[str, ...]:
-    frontmatter = _frontmatter_payload(skill_path)
+def _metadata_payload(frontmatter: dict[str, Any]) -> dict[str, Any]:
     metadata = frontmatter.get("metadata")
     if not isinstance(metadata, dict):
+        return {}
+    openclaw_metadata = metadata.get("openclaw")
+    if isinstance(openclaw_metadata, dict):
+        return openclaw_metadata
+    return metadata
+
+
+def _matches_platform(metadata: dict[str, Any], platform: str | None) -> bool:
+    if platform is None:
+        return True
+    os_values = _string_list(metadata.get("os"))
+    return not os_values or platform in os_values
+
+
+def _skill_bins(skill_path: Path, *, platform: str | None = None) -> tuple[str, ...]:
+    metadata = _metadata_payload(_frontmatter_payload(skill_path))
+    if not metadata or not _matches_platform(metadata, platform):
         return ()
     bins: list[str] = []
     requires = metadata.get("requires")
@@ -75,10 +91,10 @@ class GatewaySkillBinsService:
         self.codex_home = (codex_home or _default_codex_home()).expanduser()
         self.workspace_root = (workspace_root or Path.cwd()).expanduser()
 
-    def list_bins(self) -> list[str]:
+    def list_bins(self, *, platform: str | None = None) -> list[str]:
         bins: set[str] = set()
         for skill_path in self._iter_skill_paths():
-            bins.update(_skill_bins(skill_path))
+            bins.update(_skill_bins(skill_path, platform=platform))
         return sorted(bins)
 
     def _iter_skill_paths(self) -> list[Path]:

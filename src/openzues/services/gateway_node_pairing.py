@@ -48,6 +48,7 @@ class GatewayPairedNode:
     model_identifier: str | None = None
     caps: tuple[str, ...] = ()
     commands: tuple[str, ...] = ()
+    bins: tuple[str, ...] = ()
     permissions: dict[str, bool] | None = None
     remote_ip: str | None = None
     created_at_ms: int = 0
@@ -211,6 +212,7 @@ class GatewayNodePairingService:
         model_identifier: str | None = None,
         caps: list[str] | None = None,
         commands: list[str] | None = None,
+        bins: list[str] | None = None,
         permissions: dict[str, bool] | None = None,
         remote_ip: str | None = None,
         last_connected_at_ms: int | None = None,
@@ -238,6 +240,7 @@ class GatewayNodePairingService:
         resolved_commands = (
             _string_list(commands) if commands is not None else list(existing.commands)
         )
+        resolved_bins = _string_list(bins) if bins is not None else list(existing.bins)
         resolved_permissions = permissions if permissions is not None else existing.permissions
         resolved_remote_ip = remote_ip if remote_ip is not None else existing.remote_ip
         resolved_last_connected_at_ms = (
@@ -255,6 +258,7 @@ class GatewayNodePairingService:
             and resolved_model_identifier == existing.model_identifier
             and resolved_caps == list(existing.caps)
             and resolved_commands == list(existing.commands)
+            and resolved_bins == list(existing.bins)
             and resolved_permissions == existing.permissions
             and resolved_remote_ip == existing.remote_ip
             and resolved_last_connected_at_ms == existing.last_connected_at_ms
@@ -272,6 +276,7 @@ class GatewayNodePairingService:
             model_identifier=resolved_model_identifier,
             caps=resolved_caps,
             commands=resolved_commands,
+            bins=resolved_bins,
             permissions=resolved_permissions,
             remote_ip=resolved_remote_ip,
             created_at_ms=existing.created_at_ms,
@@ -331,6 +336,7 @@ class GatewayNodePairingService:
             model_identifier=request.model_identifier,
             caps=list(request.caps),
             commands=list(request.commands),
+            bins=[],
             permissions=None,
             remote_ip=request.remote_ip,
             created_at_ms=created_at_ms,
@@ -485,6 +491,7 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
         model_identifier=_optional_string(row.get("model_identifier")),
         caps=tuple(_string_list(row.get("caps"))),
         commands=tuple(_string_list(row.get("commands"))),
+        bins=tuple(_string_list(row.get("bins"))),
         permissions=permissions if isinstance(permissions, dict) else None,
         remote_ip=_optional_string(row.get("remote_ip")),
         created_at_ms=cast(int, row["created_at_ms"]),
@@ -574,6 +581,8 @@ def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 
@@ -600,6 +609,8 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 

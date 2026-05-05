@@ -203,6 +203,7 @@ from openzues.services.gateway_node_methods import (
 from openzues.services.gateway_node_pairing import GatewayNodePairingService
 from openzues.services.gateway_node_service import GatewayNodeService
 from openzues.services.gateway_outbound_runtime import GatewayOutboundRuntimeService
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sandbox_spawn import RuntimeManagerSandboxChatSendService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_thread_binding import GatewaySubagentThreadBinderRegistry
@@ -1984,6 +1985,13 @@ def create_app(
         node_allow_commands=active_settings.gateway_node_allow_commands,
         node_deny_commands=active_settings.gateway_node_deny_commands,
     )
+    active_gateway_remote_node_bins_service = GatewayRemoteNodeBinsService(
+        active_gateway_node_service.registry,
+        pairing_service=active_gateway_node_pairing_service,
+    )
+    active_gateway_node_service.set_remote_node_bins_service(
+        active_gateway_remote_node_bins_service
+    )
 
     async def load_gateway_status() -> dict[str, object]:
         return await build_status()
@@ -2247,6 +2255,8 @@ def create_app(
         image_order: list[str] | None = None,
         channel: str | None = None,
         to: str | None = None,
+        account_id: str | None = None,
+        thread_id: str | None = None,
         node_id: str | None = None,
     ) -> dict[str, object]:
         persisted_attachments = _persist_gateway_chat_attachments(
@@ -2269,6 +2279,8 @@ def create_app(
             timeout_ms=timeout_ms,
             channel=channel,
             to=to,
+            account_id=account_id,
+            thread_id=thread_id,
             metadata=(
                 {"imageOrder": list(image_order)}
                 if image_order is not None
@@ -2350,6 +2362,7 @@ def create_app(
             send_channel_message_service=active_ops_mesh_service.send_direct_channel_message,
             send_channel_poll_service=active_ops_mesh_service.send_direct_channel_poll,
             message_action_dispatcher=active_ops_mesh_service.dispatch_message_action,
+            remote_node_bins_service=active_gateway_remote_node_bins_service,
             acp_spawn_service=RuntimeManagerAcpSpawnService(
                 active_manager,
                 parent_stream_relay=FileAcpParentStreamRelay(active_settings.data_dir),

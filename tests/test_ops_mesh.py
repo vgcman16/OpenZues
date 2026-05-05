@@ -14849,11 +14849,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
                 "disable_notification": True,
                 "document": "https://example.com/report.pdf",
                 "disable_content_type_detection": True,
-                "caption": (
-                    "Ship native Telegram document parity.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/report.pdf"
-                ),
+                "caption": "Ship native Telegram document parity.",
             },
         )
     ]
@@ -15610,7 +15606,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
                 "result": {
                     "message_id": 44,
                     "chat": {"id": -100123},
-                    "photo": [{"file_id": "small-one"}, {"file_id": "large-one"}],
+                    "document": {"file_id": "document-one"},
                 },
             }
         return {
@@ -15618,7 +15614,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
             "result": {
                 "message_id": 45,
                 "chat": {"id": -100123},
-                "photo": [{"file_id": "small-two"}, {"file_id": "large-two"}],
+                "document": {"file_id": "document-two"},
             },
         }
 
@@ -15641,6 +15637,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
             "https://example.com/one.png",
             "https://example.com/two.png",
         ],
+        force_document=True,
         account_id="telegram-bot",
         idempotency_key="idem-native-telegram-media-group",
     )
@@ -15648,37 +15645,34 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_
     delivery = await database.get_outbound_delivery(1)
 
     assert result["messageId"] == "45"
-    assert result["mediaIds"] == ["large-one", "large-two"]
+    assert result["mediaIds"] == ["document-one", "document-two"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
         "https://example.com/two.png",
     ]
     assert telegram_posts == [
         (
-            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            "https://api.telegram.org/bot123456:telegram-token/sendDocument",
             {
                 "chat_id": "-100123",
-                "photo": "https://example.com/one.png",
-                "caption": (
-                    "Ship the media bundle.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/one.png\n"
-                    "2. https://example.com/two.png"
-                ),
+                "document": "https://example.com/one.png",
+                "disable_content_type_detection": True,
+                "caption": "Ship the media bundle.",
             },
         ),
         (
-            "https://api.telegram.org/bot123456:telegram-token/sendPhoto",
+            "https://api.telegram.org/bot123456:telegram-token/sendDocument",
             {
                 "chat_id": "-100123",
-                "photo": "https://example.com/two.png",
+                "document": "https://example.com/two.png",
+                "disable_content_type_detection": True,
             },
         )
     ]
     assert delivery is not None
     assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
-        "large-one",
-        "large-two",
+        "document-one",
+        "document-two",
     ]
 
 
@@ -16001,7 +15995,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
     ) -> dict[str, object]:
         del self, secret_header_name, secret_token
         discord_posts.append((target, payload))
-        return {"id": "discord-thread-1", "channel_id": "thread-123"}
+        return {"id": "discord-thread-1"}
 
     monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
     service = OpsMeshService(
@@ -16024,9 +16018,11 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
         silent=True,
         idempotency_key="idem-native-discord-thread-query",
     )
+    delivery = await database.get_outbound_delivery(1)
 
     assert result["messageId"] == "discord-thread-1"
     assert result["chatId"] == "thread-123"
+    assert result["channelId"] == "thread-123"
     assert discord_posts == [
         (
             (
@@ -16043,6 +16039,10 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
             },
         )
     ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "discord-thread-1"
+    assert delivery["route_scope"]["provider_result"]["chatId"] == "thread-123"
+    assert delivery["route_scope"]["provider_result"]["channelId"] == "thread-123"
 
 
 @pytest.mark.asyncio
@@ -19406,6 +19406,8 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
     delivery = await database.get_outbound_delivery(1)
 
     assert result["messageId"] == "wamid.media.2"
+    assert result["primaryMessageId"] == "wamid.media.1"
+    assert result["messageIds"] == ["wamid.media.1", "wamid.media.2"]
     assert result["mediaIds"] == ["wamid.media.1", "wamid.media.2"]
     assert result["mediaUrls"] == [
         "https://example.com/one.png",
@@ -19440,6 +19442,14 @@ async def test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_medi
     ]
     assert delivery is not None
     assert delivery["route_scope"]["provider_result"]["messageId"] == "wamid.media.2"
+    assert (
+        delivery["route_scope"]["provider_result"]["primaryMessageId"]
+        == "wamid.media.1"
+    )
+    assert delivery["route_scope"]["provider_result"]["messageIds"] == [
+        "wamid.media.1",
+        "wamid.media.2",
+    ]
     assert delivery["route_scope"]["provider_result"]["mediaIds"] == [
         "wamid.media.1",
         "wamid.media.2",
