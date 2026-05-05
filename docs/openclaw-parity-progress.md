@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~67.3% overall, with a reasonable band of ~50-68%.
+- Estimated repo-wide parity: ~67.4% overall, with a reasonable band of ~50-68%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11189,6 +11189,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`13 passed, 327 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `9531fbe3`.
+- Microsoft Teams search actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.search.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="search"`
+  resolves route-backed Graph chat/team-channel targets, obtains route-backed
+  Graph credentials with delegated-token preference when available, strips
+  double quotes from `query`, clamps numeric `limit` to 1..50, escapes OData
+  sender filters, sends Graph `$search` with `ConsistencyLevel=eventual`, and
+  returns OpenClaw-shaped `{ok, channel, action, messages}` summaries. This
+  closes `OZ-PROV-001BN`; repo-wide parity is now estimated at ~67.4%.
+  Remaining Teams Graph action breadth is member-info.
+- Verified the Microsoft Teams search action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_search_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_search or msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`14 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `29547a56`.
 
 ## References
 
