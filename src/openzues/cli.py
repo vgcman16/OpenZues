@@ -18253,6 +18253,142 @@ async function withTempDownloadPath(params, fn) {
   }
 }
 
+const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
+const ENV_SECRET_REF_ID_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
+const LEGACY_SECRETREF_ENV_MARKER_PREFIX = "secretref-env:";
+const ENV_SECRET_TEMPLATE_RE = /^\$\{([A-Z][A-Z0-9_]{0,127})\}$/;
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isSecretRef(value) {
+  if (!isRecord(value) || Object.keys(value).length !== 3) {
+    return false;
+  }
+  return (
+    (value.source === "env" || value.source === "file" || value.source === "exec") &&
+    typeof value.provider === "string" &&
+    value.provider.trim().length > 0 &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0
+  );
+}
+
+function isLegacySecretRefWithoutProvider(value) {
+  return (
+    isRecord(value) &&
+    (value.source === "env" || value.source === "file" || value.source === "exec") &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0 &&
+    value.provider === undefined
+  );
+}
+
+function parseEnvTemplateSecretRef(value, provider) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = ENV_SECRET_TEMPLATE_RE.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const normalizedProvider =
+    typeof provider === "string" && provider.trim()
+      ? provider.trim()
+      : DEFAULT_SECRET_PROVIDER_ALIAS;
+  return { source: "env", provider: normalizedProvider, id: match[1] };
+}
+
+function parseLegacySecretRefEnvMarker(value, provider) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(LEGACY_SECRETREF_ENV_MARKER_PREFIX)) {
+    return null;
+  }
+  const id = trimmed.slice(LEGACY_SECRETREF_ENV_MARKER_PREFIX.length);
+  if (!ENV_SECRET_REF_ID_RE.test(id)) {
+    return null;
+  }
+  const normalizedProvider =
+    typeof provider === "string" && provider.trim()
+      ? provider.trim()
+      : DEFAULT_SECRET_PROVIDER_ALIAS;
+  return { source: "env", provider: normalizedProvider, id };
+}
+
+function coerceSecretRef(value, defaults) {
+  if (isSecretRef(value)) {
+    return value;
+  }
+  if (isLegacySecretRefWithoutProvider(value)) {
+    const provider =
+      value.source === "env"
+        ? (defaults && defaults.env) || DEFAULT_SECRET_PROVIDER_ALIAS
+        : value.source === "file"
+          ? (defaults && defaults.file) || DEFAULT_SECRET_PROVIDER_ALIAS
+          : (defaults && defaults.exec) || DEFAULT_SECRET_PROVIDER_ALIAS;
+    return { source: value.source, provider, id: value.id };
+  }
+  return parseEnvTemplateSecretRef(value, defaults && defaults.env);
+}
+
+function normalizeSecretInputString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function hasConfiguredSecretInput(value, defaults) {
+  return (
+    normalizeSecretInputString(value) !== undefined ||
+    coerceSecretRef(value, defaults) !== null
+  );
+}
+
+function normalizeSecretInput(value, defaults) {
+  return normalizeSecretInputString(value) || coerceSecretRef(value, defaults) || undefined;
+}
+
+function formatSecretRefLabel(ref) {
+  return `${ref.source}:${ref.provider}:${ref.id}`;
+}
+
+function createUnresolvedSecretInputError(params) {
+  return new Error(
+    `${params.path}: unresolved SecretRef "${formatSecretRefLabel(
+      params.ref,
+    )}". Resolve this command against an active gateway runtime snapshot before reading it.`,
+  );
+}
+
+function resolveSecretInputString(params) {
+  const normalized = normalizeSecretInputString(params && params.value);
+  if (normalized) {
+    return { status: "available", value: normalized, ref: null };
+  }
+  const ref = coerceSecretRef(params && params.value, params && params.defaults);
+  if (!ref) {
+    return { status: "missing", value: undefined, ref: null };
+  }
+  if (((params && params.mode) || "strict") === "strict") {
+    throw createUnresolvedSecretInputError({
+      path: (params && params.path) || "secret",
+      ref,
+    });
+  }
+  return { status: "configured_unavailable", value: undefined, ref };
+}
+
+function normalizeResolvedSecretInputString(params) {
+  const resolved = resolveSecretInputString({ ...(params || {}), mode: "strict" });
+  return resolved.status === "available" ? resolved.value : undefined;
+}
+
 function passthrough(value) {
   return value;
 }
@@ -18285,25 +18421,46 @@ const tempPathRuntime = {
   withTempDownloadPath,
 };
 
+const secretInputRuntime = {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInput,
+  normalizeSecretInputString,
+  parseEnvTemplateSecretRef,
+  parseLegacySecretRefEnvMarker,
+  resolveSecretInputString,
+};
+
 const genericSdk = new Proxy(
   {
     buildRandomTempFilePath,
+    coerceSecretRef,
     collectErrorGraphCandidates,
     createTempDownloadTarget,
     extractErrorCode,
     formatErrorMessage,
     formatUncaughtError,
     hasNonEmptyString,
+    hasConfiguredSecretInput,
+    isSecretRef,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
     normalizeLowercaseStringOrEmpty,
     normalizeNullableString,
     normalizeOptionalLowercaseString,
     normalizeOptionalString,
+    normalizeResolvedSecretInputString,
+    normalizeSecretInput,
+    normalizeSecretInputString,
     normalizeStringifiedOptionalString,
+    parseEnvTemplateSecretRef,
+    parseLegacySecretRefEnvMarker,
     readErrorName,
     readStringValue,
     resolvePreferredOpenClawTmpDir,
+    resolveSecretInputString,
     sanitizeTempFileName,
     withTempDownloadPath,
   },
@@ -18339,6 +18496,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/temp-path"
   ) {
     return tempPathRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-input" ||
+    request === "@openclaw/plugin-sdk/secret-input"
+  ) {
+    return secretInputRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

@@ -6417,6 +6417,117 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secret_input_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secret-input.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  resolveSecretInputString
+} = require("openclaw/plugin-sdk/secret-input");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_input",
+      description: "Use OpenClaw secret-input helpers",
+      parameters: { type: "object" },
+      execute() {
+        const ref = { source: "env", id: "API_TOKEN" };
+        return {
+          literal: normalizeResolvedSecretInputString({
+            value: "  token-value  ",
+            path: "plugins.demo.apiKey"
+          }),
+          missingStatus: resolveSecretInputString({
+            value: "   ",
+            path: "plugins.demo.apiKey"
+          }).status,
+          inspectStatus: resolveSecretInputString({
+            value: { source: "env", id: "API_TOKEN" },
+            path: "plugins.demo.apiKey",
+            mode: "inspect"
+          }).status,
+          inspectProvider: resolveSecretInputString({
+            value: { source: "env", id: "API_TOKEN" },
+            path: "plugins.demo.apiKey",
+            mode: "inspect"
+          }).ref.provider,
+          coercedProvider: coerceSecretRef(ref, { env: "runtime" }).provider,
+          configured: hasConfiguredSecretInput(ref, { env: "runtime" }),
+          exactRef: isSecretRef({ source: "env", provider: "default", id: "API_TOKEN" })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-plugin",
+                    "name": "Runtime Secret Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-secret-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_input"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_input"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "literal": "token-value",
+        "missingStatus": "missing",
+        "inspectStatus": "configured_unavailable",
+        "inspectProvider": "default",
+        "coercedProvider": "runtime",
+        "configured": True,
+        "exactRef": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
