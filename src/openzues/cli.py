@@ -20160,6 +20160,14 @@ function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
   return chunks;
 }
 
+function chunkTextForOutbound(text, limit) {
+  return chunkTextByBreakResolver(text, limit, (window) => {
+    const lastNewline = window.lastIndexOf("\n");
+    const lastSpace = window.lastIndexOf(" ");
+    return lastNewline > 0 ? lastNewline : lastSpace;
+  });
+}
+
 function scanParenAwareBreakpoints(text, start, end) {
   let lastNewline = -1;
   let lastWhitespace = -1;
@@ -20878,6 +20886,10 @@ const replyChunkingRuntime = {
   resolveTextChunkLimit,
 };
 
+const textChunkingRuntime = {
+  chunkTextForOutbound,
+};
+
 const replyPayloadRuntime = {
   buildMediaPayload,
   countOutboundMedia,
@@ -20943,6 +20955,7 @@ const genericSdk = new Proxy(
     createUnionActionGate,
     chunkMarkdownTextWithMode,
     chunkText,
+    chunkTextForOutbound,
     chunkTextWithMode,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
@@ -21153,6 +21166,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-chunking"
   ) {
     return replyChunkingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/text-chunking" ||
+    request === "@openclaw/plugin-sdk/text-chunking"
+  ) {
+    return textChunkingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-payload" ||

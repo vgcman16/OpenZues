@@ -7756,6 +7756,90 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_text_chunking_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-text-chunking.cjs"
+    runtime_entry.write_text(
+        """
+const { chunkTextForOutbound } = require("openclaw/plugin-sdk/text-chunking");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.text_chunking",
+      description: "Use OpenClaw text-chunking SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          empty: chunkTextForOutbound("", 10),
+          newlinePreferred: chunkTextForOutbound("alpha\\nbeta gamma", 8),
+          hardLimit: chunkTextForOutbound("abcdefghij", 4),
+          noLimit: chunkTextForOutbound("short", 0)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-text-chunking-plugin",
+                    "name": "Runtime Text Chunking Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-text-chunking-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.text_chunking"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.text_chunking"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "empty": [],
+        "newlinePreferred": ["alpha", "beta", "gamma"],
+        "hardLimit": ["abcd", "efgh", "ij"],
+        "noLimit": ["short"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_status_helpers(
     tmp_path,
 ) -> None:
