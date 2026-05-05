@@ -18638,6 +18638,7 @@ class OpsMeshService:
             event.get("to") or (conversation_target or {}).get("peer_id") or ""
         ).strip()
         thread_id = str(event.get("threadId") or "").strip()
+        result_fallback_channel = thread_id or fallback_channel
         reply_to_id = str(event.get("replyToId") or "").strip()
         silent = _optional_bool_payload_value(event, "silent")
         if event_type == "gateway/poll":
@@ -18674,7 +18675,7 @@ class OpsMeshService:
             if media_urls:
                 if len(media_urls) > 1:
                     message_ids: list[str] = []
-                    delivered_channel = fallback_channel
+                    delivered_channel = result_fallback_channel
                     for index, media_url in enumerate(media_urls):
                         media_payload: dict[str, Any] = {
                             "content": text[:2000] if index == 0 and text else "",
@@ -18735,7 +18736,7 @@ class OpsMeshService:
         message_id = _discord_message_id(result)
         if message_id is None:
             raise RuntimeError("Discord webhook response did not include a message id.")
-        delivered_channel = _discord_channel_id(result, fallback_channel)
+        delivered_channel = _discord_channel_id(result, result_fallback_channel)
         native_result: dict[str, object] = {
             "runtime": "native-provider-backed",
             "messageId": message_id,

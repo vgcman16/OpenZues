@@ -15995,7 +15995,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
     ) -> dict[str, object]:
         del self, secret_header_name, secret_token
         discord_posts.append((target, payload))
-        return {"id": "discord-thread-1", "channel_id": "thread-123"}
+        return {"id": "discord-thread-1"}
 
     monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
     service = OpsMeshService(
@@ -16018,9 +16018,11 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
         silent=True,
         idempotency_key="idem-native-discord-thread-query",
     )
+    delivery = await database.get_outbound_delivery(1)
 
     assert result["messageId"] == "discord-thread-1"
     assert result["chatId"] == "thread-123"
+    assert result["channelId"] == "thread-123"
     assert discord_posts == [
         (
             (
@@ -16037,6 +16039,10 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_
             },
         )
     ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["messageId"] == "discord-thread-1"
+    assert delivery["route_scope"]["provider_result"]["chatId"] == "thread-123"
+    assert delivery["route_scope"]["provider_result"]["channelId"] == "thread-123"
 
 
 @pytest.mark.asyncio

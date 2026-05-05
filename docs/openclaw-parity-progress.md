@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.0% overall, with a reasonable band of ~50-61%.
+- Estimated repo-wide parity: ~61.1% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9892,6 +9892,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
   Checkpointed in `7e549c1e`.
+
+- Discord native route-backed webhook sends now preserve OpenClaw's thread
+  result fallback: `threadId` still routes through the webhook query string,
+  reply/silent payload fields are preserved, and when Discord returns a
+  message id without `channel_id`, the native result and persisted provider
+  metadata report `chatId`/`channelId` as the requested thread id instead of
+  the parent target. This closes `OZ-PROV-001L`; repo-wide parity is now
+  estimated at ~61.1%.
+- Verified the Discord thread result fallback slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_query
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "discord_thread_query or discord_reply_and_silent or
+  send_direct_channel_message_uses_discord_native_route or
+  send_direct_channel_poll_uses_discord"` (`4 passed, 275 deselected`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`. Checkpoint pending.
 
 ## References
 

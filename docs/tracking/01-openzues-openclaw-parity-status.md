@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -238,6 +238,10 @@ may lag behind this tracker.
 - [x] WhatsApp split-media result metadata, preserving OpenClaw-style
   first/last/all message id observability for multi-media sends.
   - Status: checkpointed in `7e549c1e`
+
+- [x] Discord thread result fallback, preserving OpenClaw's requested-thread
+  `chatId`/`channelId` fallback when webhook responses omit `channel_id`.
+  - Status: verified; checkpoint pending
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -1314,8 +1318,21 @@ may lag behind this tracker.
     checkpointed in `b5371fd9`; native provider result metadata passthrough
     checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
     `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
-    WhatsApp split-media result metadata checkpointed in `7e549c1e`
+    WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
+    thread result fallback verified with checkpoint pending
   - Weight: 3
+
+- [x] Discord thread result fallback.
+  - Source: `openclaw-main/extensions/discord/src/send.webhook.ts`,
+    `openclaw-main/extensions/discord/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_discord_thread_query
+    -q` (`1 passed`), adjacent Discord native route proof (`4 passed, 275
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] WhatsApp audio/voice media send payload.
   - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,

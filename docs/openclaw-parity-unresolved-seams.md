@@ -4,8 +4,8 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.0% overall, with a reasonable
-  band of ~50-61%.
+- Repo-wide OpenClaw parity is estimated at ~61.1% overall, with a reasonable
+  band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -5615,6 +5615,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `mediaIds` and `mediaUrls`. Repo-wide parity is now estimated at ~61.0%.
   Verified with focused WhatsApp split-media pytest, adjacent WhatsApp media
   proof, `ruff check`, and `mypy`; checkpointed in `7e549c1e`.
+- Closed the Discord thread result fallback seam from OpenClaw
+  `extensions/discord/src/send.webhook.ts` and
+  `extensions/discord/src/outbound-adapter.ts`: native route-backed Discord
+  webhook sends now keep `wait=true`, route `threadId` through the webhook
+  query string, preserve reply/silent payload fields, and fall back
+  `chatId`/`channelId` to the requested thread id when Discord returns a
+  message id without `channel_id`. Repo-wide parity is now estimated at
+  ~61.1%. Verified with focused Discord thread-query pytest, adjacent Discord
+  native route proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
