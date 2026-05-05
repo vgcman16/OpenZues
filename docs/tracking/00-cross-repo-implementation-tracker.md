@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The companion node presence alive slice is verified and awaiting checkpoint commit.
+The companion node presence alive slice is checkpointed in `caded84a`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/database.py`
@@ -53,7 +53,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Package distribution doctor diagnostics checkpointed in `47d73351` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Document extractor contract metadata checkpointed in `2196c65e` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | Node presence alive verified; checkpoint pending | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
+| OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
@@ -74,7 +74,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     handled/reason payloads.
   - Evidence required: focused service/API node presence tests, adjacent
     pairing/event API tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `caded84a`
   - Weight: 1
   - Last verified: 2026-05-04, focused service/API tests (`1 passed` each),
     adjacent service/API selections (`3 passed` each), `ruff check` on touched

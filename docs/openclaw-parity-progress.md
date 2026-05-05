@@ -9666,7 +9666,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `ruff check` on touched node/database tests and services, and `mypy` on
   `src\openzues\database.py`,
   `src\openzues\services\gateway_node_pairing.py`, and
-  `src\openzues\services\gateway_node_methods.py`. Checkpoint pending commit.
+  `src\openzues\services\gateway_node_methods.py`. Checkpointed in
+  `caded84a`.
 
 ## References
 

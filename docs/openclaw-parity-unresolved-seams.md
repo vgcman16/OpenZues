@@ -5503,8 +5503,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   handled/reason responses. Repo-wide parity is now estimated at ~59.8%;
   gateway/session/tool-contract and runtime/CLI/doctor bounded paths remain
   ~99.9%. Verified with focused service/API presence tests, adjacent node
-  pairing/event API proof, `ruff check`, and `mypy`; checkpoint pending
-  commit.
+  pairing/event API proof, `ruff check`, and `mypy`; checkpointed in
+  `caded84a`.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.

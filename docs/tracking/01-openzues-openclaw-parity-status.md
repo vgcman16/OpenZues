@@ -173,7 +173,7 @@ may lag behind this tracker.
 
 - [x] Companion node presence alive lifecycle, preserving authenticated
   background beacon persistence and upstream-shaped handled/reason results.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `caded84a`
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -609,7 +609,7 @@ may lag behind this tracker.
   - Target: `src/openzues/services/gateway_node_methods.py`,
     `src/openzues/services/gateway_node_pairing.py`, `src/openzues/database.py`
   - Test: `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `caded84a`.
   - Weight: 1
   - Last verified: 2026-05-04, focused service/API presence tests (`1 passed`
     each), adjacent node pairing/event API proof (`3 passed` each),
