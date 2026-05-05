@@ -23054,6 +23054,896 @@ function channelRouteKey(route) {
   return channelRouteCompactKey(route);
 }
 
+function normalizeAllowFromList(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  return list.map((value) => String(value).trim()).filter(Boolean);
+}
+
+function coerceNativeSetting(value) {
+  return value === true || value === false || value === "auto" ? value : undefined;
+}
+
+function asObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function collectProviderDangerousNameMatchingScopes(cfg, provider) {
+  const scopes = [];
+  const channels = asObjectRecord(cfg && cfg.channels);
+  if (!channels) {
+    return scopes;
+  }
+  const providerCfg = asObjectRecord(channels[provider]);
+  if (!providerCfg) {
+    return scopes;
+  }
+  const providerPrefix = `channels.${provider}`;
+  const providerFlagPath = `${providerPrefix}.dangerouslyAllowNameMatching`;
+  const providerEnabled = isDangerousNameMatchingEnabled(providerCfg);
+  scopes.push({
+    prefix: providerPrefix,
+    account: providerCfg,
+    dangerousNameMatchingEnabled: providerEnabled,
+    dangerousFlagPath: providerFlagPath,
+  });
+  const accounts = asObjectRecord(providerCfg.accounts);
+  if (!accounts) {
+    return scopes;
+  }
+  for (const key of Object.keys(accounts)) {
+    const account = asObjectRecord(accounts[key]);
+    if (!account) {
+      continue;
+    }
+    const accountPrefix = `${providerPrefix}.accounts.${key}`;
+    const accountFlag = account.dangerouslyAllowNameMatching;
+    scopes.push({
+      prefix: accountPrefix,
+      account,
+      dangerousNameMatchingEnabled:
+        typeof accountFlag === "boolean" ? accountFlag : providerEnabled,
+      dangerousFlagPath:
+        typeof accountFlag === "boolean"
+          ? `${accountPrefix}.dangerouslyAllowNameMatching`
+          : providerFlagPath,
+    });
+  }
+  return scopes;
+}
+
+function collectMutableAllowlistWarningLines(hits, channel) {
+  if (hits.length === 0) {
+    return [];
+  }
+  const exampleLines = hits
+    .slice(0, 8)
+    .map((hit) => `- ${hit.path}: ${hit.entry}`);
+  const remaining =
+    hits.length > 8 ? [`- +${hits.length - 8} more mutable allowlist entries.`] : [];
+  const flagPaths = Array.from(new Set(hits.map((hit) => hit.dangerousFlagPath)));
+  const flagHint =
+    flagPaths.length === 1
+      ? flagPaths[0] || ""
+      : `${flagPaths[0] || ""} (and ${flagPaths.length - 1} other scope flags)`;
+  return [
+    `- Found ${hits.length} mutable allowlist ${
+      hits.length === 1 ? "entry" : "entries"
+    } across ${channel} while name matching is disabled by default.`,
+    ...exampleLines,
+    ...remaining,
+    `- Option A (break-glass): enable ${flagHint}=true to keep name/email/nick matching.`,
+    "- Option B (recommended): resolve names/emails/nicks to stable sender IDs and " +
+      "rewrite the allowlist entries.",
+  ];
+}
+
+function createDangerousNameMatchingMutableAllowlistWarningCollector(params) {
+  return ({ cfg }) => {
+    const hits = [];
+    for (const scope of collectProviderDangerousNameMatchingScopes(cfg, params.channel)) {
+      if (scope.dangerousNameMatchingEnabled) {
+        continue;
+      }
+      const candidates =
+        typeof params.collectLists === "function" ? params.collectLists(scope) : [];
+      for (const candidate of Array.isArray(candidates) ? candidates : []) {
+        if (!Array.isArray(candidate && candidate.list)) {
+          continue;
+        }
+        for (const entry of candidate.list) {
+          const text = String(entry).trim();
+          if (!text || text === "*" || !params.detector(text)) {
+            continue;
+          }
+          hits.push({
+            path: candidate.pathLabel,
+            entry: text,
+            dangerousFlagPath: scope.dangerousFlagPath,
+          });
+        }
+      }
+    }
+    return collectMutableAllowlistWarningLines(hits, params.channel);
+  };
+}
+
+function formatPairingApproveHint(channelId) {
+  return (
+    `Approve via: openclaw pairing list ${channelId} / ` +
+    `openclaw pairing approve ${channelId} <code>`
+  );
+}
+
+function buildAccountScopedDmSecurityPolicy(params) {
+  const resolvedAccountId = params.accountId || params.fallbackAccountId || DEFAULT_ACCOUNT_ID;
+  const channelConfig =
+    params.cfg &&
+    params.cfg.channels &&
+    typeof params.cfg.channels === "object" &&
+    params.cfg.channels[params.channelKey];
+  const accounts = channelConfig && channelConfig.accounts;
+  const accountConfig = accounts && accounts[resolvedAccountId];
+  const defaultAccountConfig =
+    params.inheritSharedDefaultsFromDefaultAccount &&
+    resolvedAccountId !== DEFAULT_ACCOUNT_ID &&
+    accounts
+      ? accounts[DEFAULT_ACCOUNT_ID]
+      : undefined;
+  const rootBasePath = `channels.${params.channelKey}.`;
+  const accountBasePath = `channels.${params.channelKey}.accounts.${resolvedAccountId}.`;
+  const defaultBasePath = `channels.${params.channelKey}.accounts.${DEFAULT_ACCOUNT_ID}.`;
+  const resolveFieldName = (suffix, fallbackField) => {
+    if (suffix == null || suffix === "") {
+      return fallbackField;
+    }
+    return /^[A-Za-z0-9_-]+$/.test(suffix) ? suffix : null;
+  };
+  const simplePolicyField = resolveFieldName(params.policyPathSuffix, "dmPolicy");
+  const simpleAllowFromField = resolveFieldName(params.allowFromPathSuffix, "allowFrom");
+  const matchesAnyField = (config, fields) =>
+    fields.some((field) => field != null && config && config[field] !== undefined);
+  const basePath =
+    simplePolicyField || simpleAllowFromField
+      ? matchesAnyField(accountConfig, [simplePolicyField, simpleAllowFromField])
+        ? accountBasePath
+        : matchesAnyField(defaultAccountConfig, [simplePolicyField, simpleAllowFromField])
+          ? defaultBasePath
+          : matchesAnyField(channelConfig, [simplePolicyField, simpleAllowFromField])
+            ? rootBasePath
+            : accountConfig
+              ? accountBasePath
+              : rootBasePath
+      : accountConfig
+        ? accountBasePath
+        : rootBasePath;
+  return {
+    policy: params.policy || params.defaultPolicy || "pairing",
+    allowFrom: params.allowFrom || [],
+    ...(params.policyPathSuffix != null
+      ? { policyPath: `${basePath}${params.policyPathSuffix}` }
+      : {}),
+    allowFromPath: `${basePath}${params.allowFromPathSuffix || ""}`,
+    approveHint:
+      params.approveHint || formatPairingApproveHint(params.approveChannelId || params.channelKey),
+    ...(params.normalizeEntry ? { normalizeEntry: params.normalizeEntry } : {}),
+  };
+}
+
+function createScopedDmSecurityResolver(params) {
+  return ({ cfg, accountId, account }) => {
+    const access =
+      typeof params.resolveAccess === "function"
+        ? params.resolveAccess({ cfg, accountId, account })
+        : undefined;
+    return buildAccountScopedDmSecurityPolicy({
+      cfg,
+      channelKey: params.channelKey,
+      accountId,
+      fallbackAccountId:
+        (typeof params.resolveFallbackAccountId === "function"
+          ? params.resolveFallbackAccountId(account)
+          : undefined) ||
+        (account && account.accountId),
+      policy: (access && access.dmPolicy) || params.resolvePolicy(account),
+      allowFrom: (access && access.allowFrom) || params.resolveAllowFrom(account) || [],
+      defaultPolicy: params.defaultPolicy,
+      allowFromPathSuffix: params.allowFromPathSuffix,
+      policyPathSuffix: params.policyPathSuffix,
+      approveChannelId: params.approveChannelId,
+      approveHint: params.approveHint,
+      normalizeEntry: params.normalizeEntry,
+      inheritSharedDefaultsFromDefaultAccount: params.inheritSharedDefaultsFromDefaultAccount,
+    });
+  };
+}
+
+function buildOpenGroupPolicyWarning(params) {
+  return `- ${params.surface}: groupPolicy="open" ${params.openBehavior}. ${params.remediation}.`;
+}
+
+function buildOpenGroupPolicyRestrictSendersWarning(params) {
+  const mentionSuffix = params.mentionGated === false ? "" : " (mention-gated)";
+  return buildOpenGroupPolicyWarning({
+    surface: params.surface,
+    openBehavior: `allows ${params.openScope} to trigger${mentionSuffix}`,
+    remediation:
+      `Set ${params.groupPolicyPath}="allowlist" + ` +
+      `${params.groupAllowFromPath} to restrict senders`,
+  });
+}
+
+function collectOpenGroupPolicyRestrictSendersWarnings(params) {
+  if (params.groupPolicy !== "open") {
+    return [];
+  }
+  return [buildOpenGroupPolicyRestrictSendersWarning(params)];
+}
+
+function createAllowlistProviderRestrictSendersWarningCollector(params) {
+  return ({ cfg, account }) => {
+    const providerConfigPresent =
+      typeof params.providerConfigPresent === "function"
+        ? params.providerConfigPresent(cfg)
+        : true;
+    if (!providerConfigPresent) {
+      return [];
+    }
+    return collectOpenGroupPolicyRestrictSendersWarnings({
+      groupPolicy:
+        (typeof params.resolveGroupPolicy === "function"
+          ? params.resolveGroupPolicy(account)
+          : undefined) || "allowlist",
+      surface: params.surface,
+      openScope: params.openScope,
+      groupPolicyPath: params.groupPolicyPath,
+      groupAllowFromPath: params.groupAllowFromPath,
+      mentionGated: params.mentionGated,
+    });
+  };
+}
+
+function createRestrictSendersChannelSecurity(params) {
+  return {
+    resolveDmPolicy: createScopedDmSecurityResolver({
+      channelKey: params.channelKey,
+      resolvePolicy: params.resolveDmPolicy,
+      resolveAllowFrom: params.resolveDmAllowFrom,
+      resolveFallbackAccountId: params.resolveFallbackAccountId,
+      defaultPolicy: params.defaultDmPolicy,
+      allowFromPathSuffix: params.allowFromPathSuffix,
+      policyPathSuffix: params.policyPathSuffix,
+      approveChannelId: params.approveChannelId,
+      approveHint: params.approveHint,
+      normalizeEntry: params.normalizeDmEntry,
+      inheritSharedDefaultsFromDefaultAccount: params.inheritSharedDefaultsFromDefaultAccount,
+    }),
+    collectWarnings: createAllowlistProviderRestrictSendersWarningCollector({
+      providerConfigPresent:
+        params.providerConfigPresent ||
+        ((cfg) => Boolean(cfg && cfg.channels && cfg.channels[params.channelKey] !== undefined)),
+      resolveGroupPolicy: ({ groupPolicy }) =>
+        typeof params.resolveGroupPolicy === "function"
+          ? params.resolveGroupPolicy({ groupPolicy })
+          : groupPolicy,
+      surface: params.surface,
+      openScope: params.openScope,
+      groupPolicyPath: params.groupPolicyPath,
+      groupAllowFromPath: params.groupAllowFromPath,
+      mentionGated: params.mentionGated,
+    }),
+  };
+}
+
+function resolveSenderScopedGroupPolicy(params) {
+  if (params.groupPolicy === "disabled") {
+    return "disabled";
+  }
+  return Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
+    ? "allowlist"
+    : "open";
+}
+
+function evaluateGroupRouteAccessForPolicy(params) {
+  if (params.groupPolicy === "disabled") {
+    return { allowed: false, groupPolicy: params.groupPolicy, reason: "disabled" };
+  }
+  if (params.routeMatched && params.routeEnabled === false) {
+    return { allowed: false, groupPolicy: params.groupPolicy, reason: "route_disabled" };
+  }
+  if (params.groupPolicy === "allowlist") {
+    if (!params.routeAllowlistConfigured) {
+      return { allowed: false, groupPolicy: params.groupPolicy, reason: "empty_allowlist" };
+    }
+    if (!params.routeMatched) {
+      return { allowed: false, groupPolicy: params.groupPolicy, reason: "route_not_allowlisted" };
+    }
+  }
+  return { allowed: true, groupPolicy: params.groupPolicy, reason: "allowed" };
+}
+
+function evaluateMatchedGroupAccessForPolicy(params) {
+  if (params.groupPolicy === "disabled") {
+    return { allowed: false, groupPolicy: params.groupPolicy, reason: "disabled" };
+  }
+  if (params.groupPolicy === "allowlist") {
+    if (params.requireMatchInput && !params.hasMatchInput) {
+      return { allowed: false, groupPolicy: params.groupPolicy, reason: "missing_match_input" };
+    }
+    if (!params.allowlistConfigured) {
+      return { allowed: false, groupPolicy: params.groupPolicy, reason: "empty_allowlist" };
+    }
+    if (!params.allowlistMatched) {
+      return { allowed: false, groupPolicy: params.groupPolicy, reason: "not_allowlisted" };
+    }
+  }
+  return { allowed: true, groupPolicy: params.groupPolicy, reason: "allowed" };
+}
+
+function evaluateSenderGroupAccessForPolicy(params) {
+  const fallbackApplied = Boolean(params.providerMissingFallbackApplied);
+  if (params.groupPolicy === "disabled") {
+    return {
+      allowed: false,
+      groupPolicy: params.groupPolicy,
+      providerMissingFallbackApplied: fallbackApplied,
+      reason: "disabled",
+    };
+  }
+  if (params.groupPolicy === "allowlist") {
+    if (!Array.isArray(params.groupAllowFrom) || params.groupAllowFrom.length === 0) {
+      return {
+        allowed: false,
+        groupPolicy: params.groupPolicy,
+        providerMissingFallbackApplied: fallbackApplied,
+        reason: "empty_allowlist",
+      };
+    }
+    if (!params.isSenderAllowed(params.senderId, params.groupAllowFrom)) {
+      return {
+        allowed: false,
+        groupPolicy: params.groupPolicy,
+        providerMissingFallbackApplied: fallbackApplied,
+        reason: "sender_not_allowlisted",
+      };
+    }
+  }
+  return {
+    allowed: true,
+    groupPolicy: params.groupPolicy,
+    providerMissingFallbackApplied: fallbackApplied,
+    reason: "allowed",
+  };
+}
+
+function resolveGroupAllowFromSources(params) {
+  const explicitGroupAllowFrom =
+    Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
+      ? params.groupAllowFrom
+      : undefined;
+  const scoped = explicitGroupAllowFrom
+    ? explicitGroupAllowFrom
+    : params.fallbackToAllowFrom === false
+      ? []
+      : params.allowFrom || [];
+  return normalizeStringEntries(scoped);
+}
+
+function mergeDmAllowFromSources(params) {
+  const storeEntries =
+    params.dmPolicy === "allowlist" || params.dmPolicy === "open"
+      ? []
+      : params.storeAllowFrom || [];
+  return normalizeStringEntries([...(params.allowFrom || []), ...storeEntries]);
+}
+
+function resolveEffectiveAllowFromLists(params) {
+  const allowFrom = Array.isArray(params.allowFrom) ? params.allowFrom : undefined;
+  const groupAllowFrom = Array.isArray(params.groupAllowFrom)
+    ? params.groupAllowFrom
+    : undefined;
+  const storeAllowFrom = Array.isArray(params.storeAllowFrom)
+    ? params.storeAllowFrom
+    : undefined;
+  return {
+    effectiveAllowFrom: normalizeStringEntries(
+      mergeDmAllowFromSources({
+        allowFrom,
+        storeAllowFrom,
+        dmPolicy: params.dmPolicy || undefined,
+      }),
+    ),
+    effectiveGroupAllowFrom: normalizeStringEntries(
+      resolveGroupAllowFromSources({
+        allowFrom,
+        groupAllowFrom,
+        fallbackToAllowFrom: params.groupAllowFromFallbackToAllowFrom ?? undefined,
+      }),
+    ),
+  };
+}
+
+const DM_GROUP_ACCESS_REASON = {
+  GROUP_POLICY_ALLOWED: "group_policy_allowed",
+  GROUP_POLICY_DISABLED: "group_policy_disabled",
+  GROUP_POLICY_EMPTY_ALLOWLIST: "group_policy_empty_allowlist",
+  GROUP_POLICY_NOT_ALLOWLISTED: "group_policy_not_allowlisted",
+  DM_POLICY_OPEN: "dm_policy_open",
+  DM_POLICY_DISABLED: "dm_policy_disabled",
+  DM_POLICY_ALLOWLISTED: "dm_policy_allowlisted",
+  DM_POLICY_PAIRING_REQUIRED: "dm_policy_pairing_required",
+  DM_POLICY_NOT_ALLOWLISTED: "dm_policy_not_allowlisted",
+};
+
+async function readStoreAllowFromForDmPolicy(params) {
+  if (
+    params.shouldRead === false ||
+    params.dmPolicy === "allowlist" ||
+    params.dmPolicy === "open"
+  ) {
+    return [];
+  }
+  if (typeof params.readStore !== "function") {
+    return [];
+  }
+  try {
+    return await params.readStore(params.provider, params.accountId);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function resolveOpenDmAllowlistAccess(params) {
+  const effectiveAllowFrom = normalizeStringEntries(params.effectiveAllowFrom);
+  if (effectiveAllowFrom.includes("*")) {
+    return {
+      decision: "allow",
+      reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_OPEN,
+      reason: "dmPolicy=open",
+    };
+  }
+  if (params.isSenderAllowed(effectiveAllowFrom)) {
+    return {
+      decision: "allow",
+      reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_ALLOWLISTED,
+      reason: "dmPolicy=open (allowlisted)",
+    };
+  }
+  return {
+    decision: "block",
+    reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_NOT_ALLOWLISTED,
+    reason: "dmPolicy=open (not allowlisted)",
+  };
+}
+
+function resolveDmGroupAccessDecision(params) {
+  const dmPolicy = params.dmPolicy || "pairing";
+  const groupPolicy =
+    params.groupPolicy === "open" || params.groupPolicy === "disabled"
+      ? params.groupPolicy
+      : "allowlist";
+  const effectiveAllowFrom = normalizeStringEntries(params.effectiveAllowFrom);
+  const effectiveGroupAllowFrom = normalizeStringEntries(params.effectiveGroupAllowFrom);
+  if (params.isGroup) {
+    const groupAccess = evaluateMatchedGroupAccessForPolicy({
+      groupPolicy,
+      allowlistConfigured: effectiveGroupAllowFrom.length > 0,
+      allowlistMatched: params.isSenderAllowed(effectiveGroupAllowFrom),
+    });
+    if (!groupAccess.allowed) {
+      if (groupAccess.reason === "disabled") {
+        return {
+          decision: "block",
+          reasonCode: DM_GROUP_ACCESS_REASON.GROUP_POLICY_DISABLED,
+          reason: "groupPolicy=disabled",
+        };
+      }
+      if (groupAccess.reason === "empty_allowlist") {
+        return {
+          decision: "block",
+          reasonCode: DM_GROUP_ACCESS_REASON.GROUP_POLICY_EMPTY_ALLOWLIST,
+          reason: "groupPolicy=allowlist (empty allowlist)",
+        };
+      }
+      if (groupAccess.reason === "not_allowlisted") {
+        return {
+          decision: "block",
+          reasonCode: DM_GROUP_ACCESS_REASON.GROUP_POLICY_NOT_ALLOWLISTED,
+          reason: "groupPolicy=allowlist (not allowlisted)",
+        };
+      }
+    }
+    return {
+      decision: "allow",
+      reasonCode: DM_GROUP_ACCESS_REASON.GROUP_POLICY_ALLOWED,
+      reason: `groupPolicy=${groupPolicy}`,
+    };
+  }
+  if (dmPolicy === "disabled") {
+    return {
+      decision: "block",
+      reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_DISABLED,
+      reason: "dmPolicy=disabled",
+    };
+  }
+  if (dmPolicy === "open") {
+    return resolveOpenDmAllowlistAccess({
+      effectiveAllowFrom,
+      isSenderAllowed: params.isSenderAllowed,
+    });
+  }
+  if (params.isSenderAllowed(effectiveAllowFrom)) {
+    return {
+      decision: "allow",
+      reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_ALLOWLISTED,
+      reason: `dmPolicy=${dmPolicy} (allowlisted)`,
+    };
+  }
+  if (dmPolicy === "pairing") {
+    return {
+      decision: "pairing",
+      reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_PAIRING_REQUIRED,
+      reason: "dmPolicy=pairing (not allowlisted)",
+    };
+  }
+  return {
+    decision: "block",
+    reasonCode: DM_GROUP_ACCESS_REASON.DM_POLICY_NOT_ALLOWLISTED,
+    reason: `dmPolicy=${dmPolicy} (not allowlisted)`,
+  };
+}
+
+function resolveDmGroupAccessWithLists(params) {
+  const { effectiveAllowFrom, effectiveGroupAllowFrom } = resolveEffectiveAllowFromLists({
+    allowFrom: params.allowFrom,
+    groupAllowFrom: params.groupAllowFrom,
+    storeAllowFrom: params.storeAllowFrom,
+    dmPolicy: params.dmPolicy,
+    groupAllowFromFallbackToAllowFrom: params.groupAllowFromFallbackToAllowFrom,
+  });
+  return {
+    ...resolveDmGroupAccessDecision({
+      isGroup: params.isGroup,
+      dmPolicy: params.dmPolicy,
+      groupPolicy: params.groupPolicy,
+      effectiveAllowFrom,
+      effectiveGroupAllowFrom,
+      isSenderAllowed: params.isSenderAllowed,
+    }),
+    effectiveAllowFrom,
+    effectiveGroupAllowFrom,
+  };
+}
+
+function resolveCommandAuthorizedFromAuthorizers(params) {
+  if (!params.useAccessGroups) {
+    return true;
+  }
+  return params.authorizers.some((entry) => entry.configured && entry.allowed);
+}
+
+function resolveControlCommandGate(params) {
+  const commandAuthorized = resolveCommandAuthorizedFromAuthorizers({
+    useAccessGroups: params.useAccessGroups,
+    authorizers: params.authorizers,
+  });
+  return {
+    commandAuthorized,
+    shouldBlock:
+      Boolean(params.allowTextCommands) &&
+      Boolean(params.hasControlCommand) &&
+      !commandAuthorized,
+  };
+}
+
+function resolveDmGroupAccessWithCommandGate(params) {
+  const access = resolveDmGroupAccessWithLists({
+    isGroup: params.isGroup,
+    dmPolicy: params.dmPolicy,
+    groupPolicy: params.groupPolicy,
+    allowFrom: params.allowFrom,
+    groupAllowFrom: params.groupAllowFrom,
+    storeAllowFrom: params.storeAllowFrom,
+    groupAllowFromFallbackToAllowFrom: params.groupAllowFromFallbackToAllowFrom,
+    isSenderAllowed: params.isSenderAllowed,
+  });
+  const configuredAllowFrom = normalizeStringEntries(params.allowFrom || []);
+  const configuredGroupAllowFrom = normalizeStringEntries(
+    resolveGroupAllowFromSources({
+      allowFrom: configuredAllowFrom,
+      groupAllowFrom: normalizeStringEntries(params.groupAllowFrom || []),
+      fallbackToAllowFrom: params.groupAllowFromFallbackToAllowFrom ?? undefined,
+    }),
+  );
+  const commandDmAllowFrom = params.isGroup ? configuredAllowFrom : access.effectiveAllowFrom;
+  const commandGroupAllowFrom = params.isGroup
+    ? configuredGroupAllowFrom
+    : access.effectiveGroupAllowFrom;
+  const commandGate = params.command
+    ? resolveControlCommandGate({
+        useAccessGroups: params.command.useAccessGroups,
+        authorizers: [
+          {
+            configured: commandDmAllowFrom.length > 0,
+            allowed: params.isSenderAllowed(commandDmAllowFrom),
+          },
+          {
+            configured: commandGroupAllowFrom.length > 0,
+            allowed: params.isSenderAllowed(commandGroupAllowFrom),
+          },
+        ],
+        allowTextCommands: params.command.allowTextCommands,
+        hasControlCommand: params.command.hasControlCommand,
+      })
+    : { commandAuthorized: false, shouldBlock: false };
+  return {
+    ...access,
+    commandAuthorized: commandGate.commandAuthorized,
+    shouldBlockControlCommand: Boolean(params.isGroup && commandGate.shouldBlock),
+  };
+}
+
+function parseToolsBySenderTypedKey(rawKey) {
+  const trimmed = String(rawKey || "").trim();
+  const match = /^(id|e164|username|name):(.*)$/i.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  return { type: match[1].toLowerCase(), value: match[2] || "" };
+}
+
+function normalizeSenderKey(value, options) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const withoutAt =
+    options && options.stripLeadingAt && trimmed.startsWith("@")
+      ? trimmed.slice(1)
+      : trimmed;
+  return normalizeLowercaseStringOrEmpty(withoutAt);
+}
+
+function normalizeTypedSenderKey(value, type) {
+  return normalizeSenderKey(value, { stripLeadingAt: type === "username" });
+}
+
+function normalizeLegacySenderKey(value) {
+  return normalizeSenderKey(value, { stripLeadingAt: true });
+}
+
+function parseSenderPolicyKey(rawKey) {
+  const trimmed = String(rawKey || "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed === "*") {
+    return { kind: "wildcard" };
+  }
+  const typed = parseToolsBySenderTypedKey(trimmed);
+  if (typed) {
+    const key = normalizeTypedSenderKey(typed.value, typed.type);
+    return key ? { kind: "typed", type: typed.type, key } : undefined;
+  }
+  const key = normalizeLegacySenderKey(trimmed);
+  return key ? { kind: "typed", type: "id", key } : undefined;
+}
+
+function createSenderPolicyBuckets() {
+  return {
+    id: new Map(),
+    e164: new Map(),
+    username: new Map(),
+    name: new Map(),
+  };
+}
+
+function compileToolsBySenderPolicy(toolsBySender) {
+  const entries = Object.entries(toolsBySender || {});
+  if (entries.length === 0) {
+    return undefined;
+  }
+  const buckets = createSenderPolicyBuckets();
+  let wildcard;
+  for (const [rawKey, policy] of entries) {
+    if (!policy) {
+      continue;
+    }
+    const parsed = parseSenderPolicyKey(rawKey);
+    if (!parsed) {
+      continue;
+    }
+    if (parsed.kind === "wildcard") {
+      wildcard = policy;
+      continue;
+    }
+    const bucket = buckets[parsed.type];
+    if (!bucket.has(parsed.key)) {
+      bucket.set(parsed.key, policy);
+    }
+  }
+  return { buckets, wildcard };
+}
+
+function normalizeCandidate(value, type) {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed ? normalizeTypedSenderKey(trimmed, type) : "";
+}
+
+function normalizeSenderIdCandidates(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return [];
+  }
+  const typed = normalizeTypedSenderKey(trimmed, "id");
+  const legacy = normalizeLegacySenderKey(trimmed);
+  if (!typed) {
+    return legacy ? [legacy] : [];
+  }
+  return !legacy || legacy === typed ? [typed] : [typed, legacy];
+}
+
+function matchToolsBySenderPolicy(compiled, params) {
+  for (const senderIdCandidate of normalizeSenderIdCandidates(params.senderId)) {
+    const match = compiled.buckets.id.get(senderIdCandidate);
+    if (match) {
+      return match;
+    }
+  }
+  const senderE164 = normalizeCandidate(params.senderE164, "e164");
+  if (senderE164 && compiled.buckets.e164.has(senderE164)) {
+    return compiled.buckets.e164.get(senderE164);
+  }
+  const senderUsername = normalizeCandidate(params.senderUsername, "username");
+  if (senderUsername && compiled.buckets.username.has(senderUsername)) {
+    return compiled.buckets.username.get(senderUsername);
+  }
+  const senderName = normalizeCandidate(params.senderName, "name");
+  if (senderName && compiled.buckets.name.has(senderName)) {
+    return compiled.buckets.name.get(senderName);
+  }
+  return compiled.wildcard;
+}
+
+function resolveToolsBySender(params) {
+  const compiled = compileToolsBySenderPolicy(params && params.toolsBySender);
+  return compiled ? matchToolsBySenderPolicy(compiled, params) : undefined;
+}
+
+function resolveChannelGroupConfig(groups, groupId, caseInsensitive) {
+  if (!groups) {
+    return undefined;
+  }
+  if (groups[groupId]) {
+    return groups[groupId];
+  }
+  if (!caseInsensitive) {
+    return undefined;
+  }
+  const target = normalizeLowercaseStringOrEmpty(groupId);
+  const matchedKey = Object.keys(groups).find(
+    (key) => key !== "*" && normalizeLowercaseStringOrEmpty(key) === target,
+  );
+  return matchedKey ? groups[matchedKey] : undefined;
+}
+
+function resolveChannelGroups(cfg, channel, accountId) {
+  const channelConfig = cfg && cfg.channels && cfg.channels[channel];
+  if (!channelConfig) {
+    return undefined;
+  }
+  const accountGroups =
+    channelConfig.accounts &&
+    resolveAccountEntry(channelConfig.accounts, normalizeAccountId(accountId)) &&
+    resolveAccountEntry(channelConfig.accounts, normalizeAccountId(accountId)).groups;
+  return accountGroups || channelConfig.groups;
+}
+
+function resolveChannelGroupPolicyMode(cfg, channel, accountId) {
+  const channelConfig = cfg && cfg.channels && cfg.channels[channel];
+  if (!channelConfig) {
+    return undefined;
+  }
+  const account =
+    channelConfig.accounts &&
+    resolveAccountEntry(channelConfig.accounts, normalizeAccountId(accountId));
+  return (account && account.groupPolicy) || channelConfig.groupPolicy;
+}
+
+function resolveChannelGroupPolicy(params) {
+  const groups = resolveChannelGroups(params.cfg, params.channel, params.accountId);
+  const groupPolicy = resolveChannelGroupPolicyMode(
+    params.cfg,
+    params.channel,
+    params.accountId,
+  );
+  const hasGroups = Boolean(groups && Object.keys(groups).length > 0);
+  const allowlistEnabled = groupPolicy === "allowlist" || hasGroups;
+  const normalizedId = normalizeOptionalString(params.groupId);
+  const groupConfig = normalizedId
+    ? resolveChannelGroupConfig(groups, normalizedId, params.groupIdCaseInsensitive)
+    : undefined;
+  const defaultConfig = groups && groups["*"];
+  const allowAll = allowlistEnabled && Boolean(groups && groups["*"]);
+  const senderFilterBypass =
+    groupPolicy === "allowlist" && !hasGroups && Boolean(params.hasGroupAllowFrom);
+  const allowed =
+    groupPolicy === "disabled"
+      ? false
+      : !allowlistEnabled || allowAll || Boolean(groupConfig) || senderFilterBypass;
+  return { allowlistEnabled, allowed, groupConfig, defaultConfig };
+}
+
+function resolveChannelGroupRequireMention(params) {
+  const requireMentionOverride = params && params.requireMentionOverride;
+  const overrideOrder = (params && params.overrideOrder) || "after-config";
+  const { groupConfig, defaultConfig } = resolveChannelGroupPolicy(params);
+  const configMention =
+    groupConfig && typeof groupConfig.requireMention === "boolean"
+      ? groupConfig.requireMention
+      : defaultConfig && typeof defaultConfig.requireMention === "boolean"
+        ? defaultConfig.requireMention
+        : undefined;
+  if (overrideOrder === "before-config" && typeof requireMentionOverride === "boolean") {
+    return requireMentionOverride;
+  }
+  if (typeof configMention === "boolean") {
+    return configMention;
+  }
+  if (overrideOrder !== "before-config" && typeof requireMentionOverride === "boolean") {
+    return requireMentionOverride;
+  }
+  if (params.configuredGroupDefaultsToNoMention && groupConfig) {
+    return false;
+  }
+  return true;
+}
+
+function resolveChannelGroupToolsPolicy(params) {
+  const groups = resolveChannelGroups(params.cfg, params.channel, params.accountId);
+  const groupIds = [
+    params.groupId,
+    ...(Array.isArray(params.groupIdCandidates) ? params.groupIdCandidates : []),
+  ];
+  let groupConfig;
+  for (const rawGroupId of groupIds) {
+    const groupId = normalizeOptionalString(rawGroupId);
+    if (!groupId) {
+      continue;
+    }
+    groupConfig = resolveChannelGroupConfig(groups, groupId, params.groupIdCaseInsensitive);
+    if (groupConfig) {
+      break;
+    }
+  }
+  const defaultConfig = groups && groups["*"];
+  const groupSenderPolicy = resolveToolsBySender({
+    toolsBySender: groupConfig && groupConfig.toolsBySender,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    senderUsername: params.senderUsername,
+    senderE164: params.senderE164,
+  });
+  if (groupSenderPolicy) {
+    return groupSenderPolicy;
+  }
+  if (groupConfig && groupConfig.tools) {
+    return groupConfig.tools;
+  }
+  const defaultSenderPolicy = resolveToolsBySender({
+    toolsBySender: defaultConfig && defaultConfig.toolsBySender,
+    senderId: params.senderId,
+    senderName: params.senderName,
+    senderUsername: params.senderUsername,
+    senderE164: params.senderE164,
+  });
+  if (defaultSenderPolicy) {
+    return defaultSenderPolicy;
+  }
+  return defaultConfig && defaultConfig.tools ? defaultConfig.tools : undefined;
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -23986,6 +24876,34 @@ const channelRouteRuntime = {
   stringifyRouteThreadId,
 };
 
+const channelPolicyRuntime = {
+  DM_GROUP_ACCESS_REASON,
+  buildAccountScopedDmSecurityPolicy,
+  buildOpenGroupPolicyRestrictSendersWarning,
+  buildOpenGroupPolicyWarning,
+  coerceNativeSetting,
+  collectOpenGroupPolicyRestrictSendersWarnings,
+  createAllowlistProviderRestrictSendersWarningCollector,
+  createDangerousNameMatchingMutableAllowlistWarningCollector,
+  createRestrictSendersChannelSecurity,
+  createScopedDmSecurityResolver,
+  evaluateGroupRouteAccessForPolicy,
+  evaluateMatchedGroupAccessForPolicy,
+  evaluateSenderGroupAccessForPolicy,
+  formatPairingApproveHint,
+  normalizeAllowFromList,
+  readStoreAllowFromForDmPolicy,
+  resolveChannelGroupPolicy,
+  resolveChannelGroupRequireMention,
+  resolveChannelGroupToolsPolicy,
+  resolveDmGroupAccessWithCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveOpenDmAllowlistAccess,
+  resolveSenderScopedGroupPolicy,
+  resolveToolsBySender,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -24255,6 +25173,7 @@ const genericSdk = new Proxy(
     PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
     CODING_TOOL_TOKENS,
+    ...channelPolicyRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -24660,6 +25579,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-route"
   ) {
     return channelRouteRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-policy" ||
+    request === "@openclaw/plugin-sdk/channel-policy"
+  ) {
+    return channelPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

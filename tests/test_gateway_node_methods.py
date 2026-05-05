@@ -7497,6 +7497,380 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_policy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-policy.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DM_GROUP_ACCESS_REASON,
+  coerceNativeSetting,
+  createDangerousNameMatchingMutableAllowlistWarningCollector,
+  createRestrictSendersChannelSecurity,
+  evaluateGroupRouteAccessForPolicy,
+  evaluateSenderGroupAccessForPolicy,
+  normalizeAllowFromList,
+  readStoreAllowFromForDmPolicy,
+  resolveChannelGroupPolicy,
+  resolveChannelGroupRequireMention,
+  resolveChannelGroupToolsPolicy,
+  resolveDmGroupAccessWithCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveSenderScopedGroupPolicy,
+  resolveToolsBySender
+} = require("openclaw/plugin-sdk/channel-policy");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_policy",
+      description: "Use OpenClaw channel policy SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const warningCollector = createDangerousNameMatchingMutableAllowlistWarningCollector({
+          channel: "irc",
+          detector: (entry) => !entry.includes("@"),
+          collectLists: (scope) => [
+            {
+              pathLabel: `${scope.prefix}.allowFrom`,
+              list: scope.account.allowFrom
+            }
+          ]
+        });
+        const security = createRestrictSendersChannelSecurity({
+          channelKey: "line",
+          resolveDmPolicy: (account) => account.dmPolicy,
+          resolveDmAllowFrom: (account) => account.allowFrom,
+          resolveGroupPolicy: (account) => account.groupPolicy,
+          surface: "LINE groups",
+          openScope: "any member in groups",
+          groupPolicyPath: "channels.line.groupPolicy",
+          groupAllowFromPath: "channels.line.groupAllowFrom",
+          mentionGated: false,
+          policyPathSuffix: "dmPolicy"
+        });
+        const cfg = {
+          channels: {
+            line: {},
+            irc: {
+              allowFrom: ["charlie"],
+              accounts: {
+                alt: {
+                  dangerouslyAllowNameMatching: true,
+                  allowFrom: ["delta"]
+                }
+              }
+            },
+            slack: {
+              groupPolicy: "allowlist",
+              groups: {
+                G1: {
+                  requireMention: false,
+                  tools: { allow: ["read"] },
+                  toolsBySender: {
+                    "id:u1": { allow: ["send"] }
+                  }
+                },
+                "*": {
+                  requireMention: true,
+                  tools: { allow: ["fallback"] }
+                }
+              }
+            }
+          }
+        };
+        const senderAllowed = (allowFrom) => allowFrom.includes("u1");
+        const toolsBySender = {
+          "id:u1": { allow: ["send"] },
+          "username:alice": { allow: ["user"] },
+          "*": { allow: ["wild"] }
+        };
+        const storeReads = [
+          await readStoreAllowFromForDmPolicy({
+            provider: "line",
+            accountId: "default",
+            dmPolicy: "pairing",
+            readStore: async () => ["stored"]
+          }),
+          await readStoreAllowFromForDmPolicy({
+            provider: "line",
+            accountId: "default",
+            dmPolicy: "allowlist",
+            readStore: async () => ["stored"]
+          })
+        ];
+        const groupPolicy = resolveChannelGroupPolicy({
+          cfg,
+          channel: "slack",
+          groupId: "g1",
+          groupIdCaseInsensitive: true
+        });
+        return {
+          normalized: normalizeAllowFromList(["  abc ", 42, "", "   "]),
+          nativeSettings: [
+            coerceNativeSetting(true),
+            coerceNativeSetting(false),
+            coerceNativeSetting("auto"),
+            coerceNativeSetting("on") === undefined
+          ],
+          warnings: warningCollector({ cfg }).map((line) => line.includes("charlie")),
+          scopedDm: security.resolveDmPolicy({
+            cfg,
+            accountId: "default",
+            account: {
+              accountId: "default",
+              dmPolicy: "allowlist",
+              allowFrom: ["line:user:abc"]
+            }
+          }),
+          groupWarnings: security.collectWarnings({
+            cfg,
+            accountId: "default",
+            account: {
+              accountId: "default",
+              groupPolicy: "open"
+            }
+          }),
+          senderPolicy: [
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: []
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"]
+            }),
+            resolveSenderScopedGroupPolicy({
+              groupPolicy: "disabled",
+              groupAllowFrom: ["u1"]
+            })
+          ],
+          routeAccess: [
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: true,
+              routeEnabled: false
+            }).reason,
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "allowlist",
+              routeAllowlistConfigured: true,
+              routeMatched: false
+            }).reason,
+            evaluateGroupRouteAccessForPolicy({
+              groupPolicy: "open",
+              routeAllowlistConfigured: false,
+              routeMatched: false
+            }).allowed
+          ],
+          senderAccess: [
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"],
+              senderId: "u1",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            }).reason,
+            evaluateSenderGroupAccessForPolicy({
+              groupPolicy: "allowlist",
+              groupAllowFrom: [],
+              senderId: "u1",
+              isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+            }).reason
+          ],
+          effectiveLists: resolveEffectiveAllowFromLists({
+            allowFrom: ["u1"],
+            groupAllowFrom: [],
+            storeAllowFrom: ["stored"],
+            dmPolicy: "pairing"
+          }),
+          dmAccess: [
+            resolveDmGroupAccessWithLists({
+              isGroup: true,
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["u1"],
+              allowFrom: [],
+              isSenderAllowed: senderAllowed
+            }),
+            resolveDmGroupAccessWithLists({
+              isGroup: false,
+              dmPolicy: "pairing",
+              allowFrom: [],
+              storeAllowFrom: [],
+              isSenderAllowed: senderAllowed
+            }).decision
+          ],
+          commandGate: resolveDmGroupAccessWithCommandGate({
+            isGroup: true,
+            groupPolicy: "allowlist",
+            allowFrom: ["owner"],
+            groupAllowFrom: [],
+            groupAllowFromFallbackToAllowFrom: false,
+            isSenderAllowed: senderAllowed,
+            command: {
+              useAccessGroups: true,
+              allowTextCommands: true,
+              hasControlCommand: true
+            }
+          }),
+          storeReads,
+          toolsBySender: [
+            resolveToolsBySender({ toolsBySender, senderId: "U1" }),
+            resolveToolsBySender({ toolsBySender, senderUsername: "@Alice" }),
+            resolveToolsBySender({ toolsBySender, senderName: "Other" })
+          ],
+          channelGroup: {
+            allowed: groupPolicy.allowed,
+            allowlistEnabled: groupPolicy.allowlistEnabled,
+            requireMention: resolveChannelGroupRequireMention({
+              cfg,
+              channel: "slack",
+              groupId: "g1",
+              groupIdCaseInsensitive: true
+            }),
+            tools: resolveChannelGroupToolsPolicy({
+              cfg,
+              channel: "slack",
+              groupId: "G1",
+              senderId: "u1"
+            }),
+            defaultTools: resolveChannelGroupToolsPolicy({
+              cfg,
+              channel: "slack",
+              groupId: "missing"
+            })
+          },
+          constants: [
+            DM_GROUP_ACCESS_REASON.GROUP_POLICY_ALLOWED,
+            DM_GROUP_ACCESS_REASON.DM_POLICY_PAIRING_REQUIRED
+          ],
+          exportTypes: [
+            typeof resolveDmGroupAccessWithLists,
+            typeof evaluateSenderGroupAccessForPolicy,
+            typeof genericSdk.resolveDmGroupAccessWithCommandGate,
+            typeof genericSdk.resolveChannelGroupToolsPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-policy-plugin",
+                    "name": "Runtime Channel Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-policy-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": ["abc", "42"],
+        "nativeSettings": [True, False, "auto", True],
+        "warnings": [False, True, False, False],
+        "scopedDm": {
+            "policy": "allowlist",
+            "allowFrom": ["line:user:abc"],
+            "policyPath": "channels.line.dmPolicy",
+            "allowFromPath": "channels.line.",
+            "approveHint": (
+                "Approve via: openclaw pairing list line / "
+                "openclaw pairing approve line <code>"
+            ),
+        },
+        "groupWarnings": [
+            '- LINE groups: groupPolicy="open" allows any member in groups to trigger. '
+            'Set channels.line.groupPolicy="allowlist" + channels.line.groupAllowFrom '
+            "to restrict senders."
+        ],
+        "senderPolicy": ["open", "allowlist", "disabled"],
+        "routeAccess": ["route_disabled", "route_not_allowlisted", True],
+        "senderAccess": ["allowed", "empty_allowlist"],
+        "effectiveLists": {
+            "effectiveAllowFrom": ["u1", "stored"],
+            "effectiveGroupAllowFrom": ["u1"],
+        },
+        "dmAccess": [
+            {
+                "decision": "allow",
+                "reasonCode": "group_policy_allowed",
+                "reason": "groupPolicy=allowlist",
+                "effectiveAllowFrom": [],
+                "effectiveGroupAllowFrom": ["u1"],
+            },
+            "pairing",
+        ],
+        "commandGate": {
+            "decision": "block",
+            "reasonCode": "group_policy_empty_allowlist",
+            "reason": "groupPolicy=allowlist (empty allowlist)",
+            "effectiveAllowFrom": ["owner"],
+            "effectiveGroupAllowFrom": [],
+            "commandAuthorized": False,
+            "shouldBlockControlCommand": True,
+        },
+        "storeReads": [["stored"], []],
+        "toolsBySender": [
+            {"allow": ["send"]},
+            {"allow": ["user"]},
+            {"allow": ["wild"]},
+        ],
+        "channelGroup": {
+            "allowed": True,
+            "allowlistEnabled": True,
+            "requireMention": False,
+            "tools": {"allow": ["send"]},
+            "defaultTools": {"allow": ["fallback"]},
+        },
+        "constants": ["group_policy_allowed", "dm_policy_pairing_required"],
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
