@@ -14847,6 +14847,22 @@ class OpsMeshService:
                 request,
                 secret_token,
             )
+        if channel == "msteams" and action == "delete":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action delete."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "msteams" and action == "read":
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -25756,6 +25772,44 @@ class OpsMeshService:
             ),
             method="PUT",
             payload={"type": "message", "id": message_id, "text": content},
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "conversationId": conversation_id,
+        }
+
+    def _dispatch_msteams_delete_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("messageId is required.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=target,
+        )
+        self._request_json_provider_url(
+            _msteams_activity_update_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+                activity_id=message_id,
+            ),
+            method="DELETE",
             secret_header_name="Authorization",
             secret_token=self._msteams_bearer_token(
                 route_config=route_config,
