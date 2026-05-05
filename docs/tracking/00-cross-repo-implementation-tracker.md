@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~69.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~70.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Feishu/Lark file media send slice is checkpointed in `152dcb38`.
+The imported ESM plugin runtime execution proof is checkpointed in `311f37e1`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -60,12 +60,190 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Imported ESM runtime execution checkpointed in `311f37e1` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue plugin SDK execution-context breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark file media sends checkpointed in `152dcb38` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark audio/video media verification |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001RU` Imported ESM runtime tool execution
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/sdk-alias.ts`,
+    `openclaw-main/src/plugins/tools.ts`,
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `tests/test_gateway_node_methods.py` plus the native runtime
+    executor bridge in `src/openzues/cli.py` from `d80b0252`
+  - Contract: imported ESM-style OpenClaw runtime entries transformed into
+    temporary CommonJS modules preserve SDK alias shims and executable tools
+    through `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `311f37e1`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused ESM runtime invoke proof (`1
+    passed`), adjacent plugin invoke proof (`11 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001RT` Imported CommonJS runtime tool execution
+  - Source: `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/tools.ts`,
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw plugin runtime entries that register tools
+    with `execute` are not metadata-only; `tools.invoke` resolves the imported
+    runtime spec, preserves before-call and allowlist behavior, reloads the
+    runtime entry in a bounded Node bridge, and calls
+    `execute(toolCallId, args)`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke and
+    runtime import tests, ruff, mypy
+  - Status: checkpointed in `d80b0252`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused imported runtime invoke proof (`1
+    passed`), adjacent plugin invoke proof (`10 passed, 803 deselected`),
+    adjacent runtime import proof (`2 passed, 512 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PROV-001CR` Feishu/Lark post/rich-text embedded media hydration
+  - Source: `openclaw-main/extensions/feishu/src/post.ts`,
+    `openclaw-main/extensions/feishu/src/bot-content.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Feishu/Lark read actions resolve localized post payloads,
+    collect embedded `img.image_key` and `media.file_key` elements in order,
+    download image resources as `type=image` and media resources as
+    `type=file`, store bytes under the inbound attachment workspace, and
+    project ordered media metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `ed3aedb5`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu post-media proof (`1 passed`),
+    adjacent Feishu provider proof (`29 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001CQ` Feishu/Lark message-resource read hydration
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`,
+    `openclaw-main/extensions/feishu/src/bot-content.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Feishu/Lark read actions parse media bodies, prefer
+    video `file_key` over thumbnail `image_key`, request message resources
+    with `type=file`, retry as `type=media` on Feishu HTTP 502, save bytes
+    under the inbound attachment workspace, and project placeholder, path,
+    filename, content-type, byte-length, and SHA-256 metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `65da0455`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu read-media fallback proof (`1
+    passed`), adjacent Feishu provider proof (`28 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CP` Feishu/Lark direct provider-route media sends
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: direct `gateway.send`/`send_direct_channel_message` calls on
+    native Feishu/Lark routes accept media URLs, upload through the verified
+    Feishu media runtime, send the native media payload, and preserve final
+    `messageId`, ordered `mediaIds`, `mediaUrls`, chat/channel, and delivery
+    provider result metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `77149f94`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu direct media proof (`1 passed`),
+    adjacent Feishu provider proof (`27 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001CO` Feishu/Lark channel capability discovery
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: CLI channel capabilities for Feishu/Lark advertise direct and
+    channel chats, replies, threads, media, reactions, edit support,
+    `polls=false`, and voice TTS transcode metadata.
+  - Evidence required: focused CLI test, adjacent channel-capabilities tests,
+    ruff, mypy
+  - Status: checkpointed in `326f471f`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu channel capability proof (`1
+    passed`), adjacent CLI channel-capabilities proof (`5 passed, 509
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CN` Feishu/Lark mediaMaxMb media-size limits
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Feishu media sends resolve account-level
+    `mediaMaxMb` before channel-level `mediaMaxMb`, pass the configured byte
+    cap into the media loader, and reject oversized media before upload.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `45d6a6bc`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu mediaMaxMb proof (`1 passed`),
+    adjacent Feishu provider proof (`26 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001CM` Feishu/Lark audioAsVoice transcode posture
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native Feishu media sends carry `audioAsVoice`/`asVoice`,
+    transcode compatible audio to `voice.ogg` through a fakeable ffmpeg
+    adapter, send native Feishu audio payloads, and fall back to the original
+    file attachment if transcode is unavailable.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `81c93c0e`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu audioAsVoice proof (`2
+    passed`), adjacent Feishu provider proof (`25 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CL` Feishu/Lark mediaLocalRoots local-path guard
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for Feishu media rejects local
+    paths and `file://` media by default, reads channel/account
+    `mediaLocalRoots`, allows only files under configured roots, and preserves
+    provider upload/send metadata for allowed local files.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `78cfda1f`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu local media-root proof (`2
+    passed`), adjacent Feishu provider proof (`23 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CK` Feishu/Lark audio/video media sends
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` routes Ogg/Opus media through Feishu file upload with
+    `file_type="opus"` and `msg_type="audio"`, and routes MP4 video replies
+    through `file_type="mp4"`, `msg_type="media"`, and `reply_in_thread=true`.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `6e99a40b`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu audio/video media proof (`2
+    passed`), adjacent Feishu provider proof (`21 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001CJ` Feishu/Lark file media sends
   - Source: `openclaw-main/extensions/feishu/src/channel.ts`,

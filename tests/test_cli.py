@@ -1984,6 +1984,71 @@ def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) 
     assert report["actions"] == ["send", "broadcast"]
 
 
+def test_channels_capabilities_json_reports_feishu_media_voice_support(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Feishu Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Feishu Route",
+            kind="feishu",
+            target="https://open.feishu.cn/open-apis",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "feishu",
+                "account_id": "feishu-bot",
+                "peer_kind": "channel",
+                "peer_id": "feishu:chat:oc_chat_1",
+                "summary": "feishu-bot channel oc_chat_1",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="tenant-access-token",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "feishu",
+            "--account",
+            "feishu-bot",
+            "--target",
+            "feishu:chat:oc_chat_1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "feishu:chat:oc_chat_1"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "feishu"
+    assert report["accountId"] == "feishu-bot"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert report["support"]["chatTypes"] == ["direct", "channel"]
+    assert report["support"]["media"] is True
+    assert report["support"]["threads"] is True
+    assert report["support"]["reply"] is True
+    assert report["support"]["reactions"] is True
+    assert report["support"]["polls"] is False
+    assert report["support"]["tts"] == {
+        "voice": {"synthesisTarget": "voice-note", "transcodesAudio": True}
+    }
+    assert report["actions"] == ["send", "broadcast"]
+
+
 def test_channels_capabilities_json_reports_msteams_poll_support(tmp_path, monkeypatch) -> None:
     data_dir = tmp_path / "data"
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Capabilities")

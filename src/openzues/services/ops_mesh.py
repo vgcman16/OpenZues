@@ -17,6 +17,8 @@ import re
 import secrets
 import socket
 import ssl
+import subprocess
+import tempfile
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -161,6 +163,25 @@ BLUEBUBBLES_AUDIO_MIME_MP3 = {"audio/mpeg", "audio/mp3"}
 BLUEBUBBLES_AUDIO_MIME_CAF = {"audio/x-caf", "audio/caf"}
 BLUEBUBBLES_MEDIA_MB = 1024 * 1024
 BLUEBUBBLES_REACTION_TYPES = {"love", "like", "dislike", "laugh", "emphasize", "question"}
+FEISHU_MEDIA_MB = 1024 * 1024
+FEISHU_TRANSCODABLE_AUDIO_EXTS = {
+    ".aac",
+    ".aiff",
+    ".alac",
+    ".amr",
+    ".caf",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".oga",
+    ".wav",
+    ".webm",
+    ".wma",
+}
+FEISHU_VOICE_FILE_NAME = "voice.ogg"
+FEISHU_VOICE_SAMPLE_RATE_HZ = 48_000
+FEISHU_VOICE_BITRATE = "64k"
+FEISHU_FFMPEG_MAX_AUDIO_DURATION_SECONDS = 120
 BLUEBUBBLES_REACTION_ALIASES = {
     "heart": "love",
     "love": "love",
@@ -1504,12 +1525,65 @@ def _bluebubbles_media_local_roots(
     return []
 
 
+def _feishu_channel_config(snapshot: dict[str, Any]) -> dict[str, Any]:
+    channels = snapshot.get("channels")
+    if not isinstance(channels, dict):
+        return {}
+    for channel_id in ("feishu", "lark"):
+        channel_config = channels.get(channel_id)
+        if isinstance(channel_config, dict):
+            return channel_config
+    return {}
+
+
+def _feishu_account_config(
+    channel_config: dict[str, Any],
+    account_id: str | None,
+) -> dict[str, Any]:
+    accounts = channel_config.get("accounts")
+    if not isinstance(accounts, dict):
+        return {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    account_config = accounts.get(normalized_account_id)
+    return account_config if isinstance(account_config, dict) else {}
+
+
+def _feishu_media_local_roots(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> list[str]:
+    channel_config = _feishu_channel_config(snapshot)
+    account_config = _feishu_account_config(channel_config, account_id)
+    raw_account_roots = account_config.get("mediaLocalRoots")
+    if isinstance(raw_account_roots, list):
+        return [str(entry).strip() for entry in raw_account_roots if str(entry).strip()]
+    raw_channel_roots = channel_config.get("mediaLocalRoots")
+    if isinstance(raw_channel_roots, list):
+        return [str(entry).strip() for entry in raw_channel_roots if str(entry).strip()]
+    return []
+
+
 def _bluebubbles_positive_number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if not math.isfinite(float(value)) or float(value) <= 0:
         return None
     return float(value)
+
+
+def _feishu_media_max_bytes(
+    snapshot: dict[str, Any],
+    *,
+    account_id: str | None,
+) -> int | None:
+    channel_config = _feishu_channel_config(snapshot)
+    account_config = _feishu_account_config(channel_config, account_id)
+    for value in (account_config.get("mediaMaxMb"), channel_config.get("mediaMaxMb")):
+        max_mb = _bluebubbles_positive_number(value)
+        if max_mb is not None:
+            return int(max_mb * FEISHU_MEDIA_MB)
+    return None
 
 
 def _bluebubbles_media_max_bytes(
@@ -1624,6 +1698,40 @@ def _bluebubbles_allowed_local_media_path(
             return resolved_candidate
     raise RuntimeError(
         f"Local media path is not under any configured mediaLocalRoots entry: {source}"
+    )
+
+
+def _feishu_allowed_local_media_path(
+    local_path: Path,
+    *,
+    source: str,
+    local_roots: list[str],
+    account_id: str | None,
+) -> Path:
+    if not local_roots:
+        suffix = (
+            f" or channels.feishu.accounts.{account_id}.mediaLocalRoots"
+            if account_id
+            else ""
+        )
+        raise RuntimeError(
+            "Local Feishu media paths are disabled by default. "
+            f"Set channels.feishu.mediaLocalRoots{suffix} to explicitly "
+            "allow local file directories."
+        )
+    candidate = local_path.expanduser().resolve(strict=False)
+    for root_entry in local_roots:
+        root = _bluebubbles_configured_local_root(root_entry)
+        if not _bluebubbles_path_inside_root(candidate, root):
+            continue
+        if not local_path.is_file():
+            raise RuntimeError(f"Media path does not exist: {source}")
+        resolved_candidate = local_path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True) if root.exists() else root
+        if _bluebubbles_path_inside_root(resolved_candidate, resolved_root):
+            return resolved_candidate
+    raise RuntimeError(
+        f"Local Feishu media path is not under any configured mediaLocalRoots entry: {source}"
     )
 
 
@@ -5650,7 +5758,7 @@ def _feishu_collect_text_fragments(value: object) -> list[str]:
 
 def _feishu_message_content(raw_content: str, msg_type: str) -> str:
     if not raw_content:
-        return ""
+        return _feishu_media_placeholder(msg_type) or ""
     try:
         parsed: object = json.loads(raw_content)
     except json.JSONDecodeError:
@@ -5672,7 +5780,165 @@ def _feishu_message_content(raw_content: str, msg_type: str) -> str:
             candidate = parsed.get(key)
             if isinstance(candidate, str) and candidate.strip():
                 return candidate.strip()
+    placeholder = _feishu_media_placeholder(msg_type)
+    if placeholder is not None:
+        return placeholder
     return f"[{msg_type or 'unknown'} message]"
+
+
+def _feishu_message_body_content(item: Mapping[str, object]) -> str:
+    body = item.get("body")
+    if not isinstance(body, Mapping):
+        return ""
+    content = body.get("content")
+    return content if isinstance(content, str) else ""
+
+
+def _feishu_media_placeholder(msg_type: str) -> str | None:
+    normalized = str(msg_type or "").strip().lower()
+    if normalized == "image":
+        return "<media:image>"
+    if normalized == "file":
+        return "<media:document>"
+    if normalized == "audio":
+        return "<media:audio>"
+    if normalized in {"video", "media"}:
+        return "<media:video>"
+    if normalized == "sticker":
+        return "<media:sticker>"
+    return None
+
+
+def _feishu_message_resource_type(msg_type: str) -> str:
+    return "image" if str(msg_type or "").strip().lower() == "image" else "file"
+
+
+def _feishu_message_media_keys(
+    raw_content: str,
+    msg_type: str,
+) -> dict[str, str]:
+    if not raw_content:
+        return {}
+    try:
+        parsed: object = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    normalized_type = str(msg_type or "").strip().lower()
+    image_key = str(parsed.get("image_key") or "").strip()
+    file_key = str(parsed.get("file_key") or "").strip()
+    file_name = str(parsed.get("file_name") or parsed.get("fileName") or "").strip()
+    keys: dict[str, str] = {}
+    if normalized_type == "image" and image_key:
+        keys["imageKey"] = image_key
+    elif normalized_type in {"file", "audio", "sticker"} and file_key:
+        keys["fileKey"] = file_key
+    elif normalized_type in {"video", "media"}:
+        if file_key:
+            keys["fileKey"] = file_key
+        if image_key:
+            keys["imageKey"] = image_key
+    if file_name:
+        keys["fileName"] = file_name
+    return keys
+
+
+def _feishu_post_payload(candidate: object) -> Mapping[str, object] | None:
+    if not isinstance(candidate, Mapping):
+        return None
+    content = candidate.get("content")
+    if isinstance(content, list):
+        return candidate
+    return None
+
+
+def _feishu_resolve_post_payload(parsed: object) -> Mapping[str, object] | None:
+    direct = _feishu_post_payload(parsed)
+    if direct is not None:
+        return direct
+    if not isinstance(parsed, Mapping):
+        return None
+    wrapped_post = parsed.get("post")
+    if isinstance(wrapped_post, Mapping):
+        direct_post = _feishu_post_payload(wrapped_post)
+        if direct_post is not None:
+            return direct_post
+        for value in wrapped_post.values():
+            locale_payload = _feishu_post_payload(value)
+            if locale_payload is not None:
+                return locale_payload
+    for value in parsed.values():
+        locale_payload = _feishu_post_payload(value)
+        if locale_payload is not None:
+            return locale_payload
+    return None
+
+
+def _feishu_post_media_entries(raw_content: str) -> list[dict[str, str]]:
+    if not raw_content:
+        return []
+    try:
+        parsed: object = json.loads(raw_content)
+    except json.JSONDecodeError:
+        return []
+    payload = _feishu_resolve_post_payload(parsed)
+    if payload is None:
+        return []
+    raw_paragraphs = payload.get("content")
+    if not isinstance(raw_paragraphs, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for paragraph in raw_paragraphs:
+        if not isinstance(paragraph, list):
+            continue
+        for element in paragraph:
+            if not isinstance(element, Mapping):
+                continue
+            tag = str(element.get("tag") or "").strip().lower()
+            if tag == "img":
+                image_key = str(element.get("image_key") or "").strip()
+                if image_key:
+                    entries.append(
+                        {
+                            "messageType": "image",
+                            "fileKey": image_key,
+                            "resourceType": "image",
+                            "placeholder": "<media:image>",
+                        }
+                    )
+            elif tag == "media":
+                file_key = str(element.get("file_key") or "").strip()
+                if file_key:
+                    entry = {
+                        "messageType": "media",
+                        "fileKey": file_key,
+                        "resourceType": "file",
+                        "placeholder": "<media:video>",
+                    }
+                    file_name = str(
+                        element.get("file_name") or element.get("fileName") or ""
+                    ).strip()
+                    if file_name:
+                        entry["fileName"] = file_name
+                    entries.append(entry)
+    return entries
+
+
+def _feishu_content_disposition_filename(value: str | None) -> str | None:
+    disposition = str(value or "").strip()
+    if not disposition:
+        return None
+    utf8_match = re.search(r"filename\*=UTF-8''([^;]+)", disposition, flags=re.I)
+    if utf8_match:
+        try:
+            return unquote(utf8_match.group(1).strip().strip('"')) or None
+        except Exception:
+            return utf8_match.group(1).strip().strip('"') or None
+    plain_match = re.search(r'filename="?([^";]+)"?', disposition, flags=re.I)
+    if plain_match:
+        return plain_match.group(1).strip() or None
+    return None
 
 
 def _feishu_message_view(
@@ -5681,12 +5947,7 @@ def _feishu_message_view(
     fallback_message_id: str,
 ) -> dict[str, object]:
     msg_type = str(item.get("msg_type") or "text")
-    body = item.get("body")
-    raw_content = ""
-    if isinstance(body, Mapping):
-        content = body.get("content")
-        if isinstance(content, str):
-            raw_content = content
+    raw_content = _feishu_message_body_content(item)
     message: dict[str, object] = {
         "messageId": str(item.get("message_id") or fallback_message_id),
         "chatId": str(item.get("chat_id") or ""),
@@ -5981,6 +6242,30 @@ def _feishu_media_file_type_and_message_type(
     if extension in {".ppt", ".pptx"}:
         return "ppt", "file"
     return "stream", "file"
+
+
+def _feishu_is_native_voice_audio(filename: str, content_type: str | None) -> bool:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return extension in {".opus", ".ogg"} or normalized_content_type in {
+        "audio/ogg",
+        "audio/opus",
+    }
+
+
+def _feishu_is_likely_transcodable_audio(filename: str, content_type: str | None) -> bool:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    return extension in FEISHU_TRANSCODABLE_AUDIO_EXTS or normalized_content_type.startswith(
+        "audio/"
+    )
+
+
+def _feishu_transcode_input_extension(filename: str) -> str:
+    extension = Path(filename).suffix.lower()
+    if extension and len(extension) <= 12 and re.fullmatch(r"\.[a-z0-9]+", extension):
+        return extension
+    return ".audio"
 
 
 def _msteams_action_content(params: dict[str, Any]) -> str:
@@ -12478,6 +12763,15 @@ class OpsMeshService:
         return result
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        return snapshot if isinstance(snapshot, dict) else {}
+
+    def _feishu_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:
             return {}
         try:
@@ -23946,6 +24240,38 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_feishu_message_resource_provider_url(
+        self,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        request = Request(
+            target,
+            headers={"Authorization": _feishu_bearer_token(secret_token)},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                resource_bytes = response.read()
+                content_type = response.headers.get("Content-Type")
+                filename = _feishu_content_disposition_filename(
+                    response.headers.get("Content-Disposition")
+                )
+                return (
+                    resource_bytes,
+                    content_type.strip() if content_type else None,
+                    filename,
+                )
+        except HTTPError:
+            raise
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_discord_message_upload(
         self,
         *,
@@ -25581,7 +25907,30 @@ class OpsMeshService:
             ),
         )
         if media_urls:
-            raise RuntimeError("Feishu native provider route does not support media sends yet.")
+            media_event = dict(event)
+            media_event["to"] = str(
+                event.get("to") or (conversation_target or {}).get("peer_id") or ""
+            )
+            media_results = [
+                self._post_feishu_media_provider_event(
+                    route,
+                    media_event,
+                    media_url,
+                    secret_token,
+                )
+                for media_url in media_urls
+            ]
+            native_result = dict(media_results[-1])
+            message_ids = [
+                str(result.get("messageId")).strip()
+                for result in media_results
+                if str(result.get("messageId") or "").strip()
+            ]
+            if message_ids:
+                native_result["messageId"] = message_ids[-1]
+                native_result["mediaIds"] = message_ids
+            native_result["mediaUrls"] = media_urls
+            return native_result
         text = str(event.get("message") or "").strip()
         if not text:
             raise RuntimeError("Feishu route is missing message text.")
@@ -27380,11 +27729,125 @@ class OpsMeshService:
         media_url: str,
         *,
         max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
     ) -> tuple[bytes, str, str]:
+        data_match = re.match(
+            r"^data:([^;,]+);base64,(.*)$",
+            media_url,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if data_match:
+            content_type = data_match.group(1).strip().lower()
+            try:
+                media_bytes = base64.b64decode(data_match.group(2).strip(), validate=True)
+            except ValueError as exc:
+                raise RuntimeError("Feishu media data URL is not valid base64.") from exc
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Feishu media exceeds the provider size limit.")
+            filename = _feishu_media_filename(media_url, content_type)
+            return media_bytes, content_type, filename
+
+        local_source_path = _bluebubbles_local_media_source_path(media_url)
+        if local_source_path is not None:
+            allowed_path = _feishu_allowed_local_media_path(
+                local_source_path,
+                source=media_url,
+                local_roots=local_roots or [],
+                account_id=account_id,
+            )
+            media_bytes = allowed_path.read_bytes()
+            if len(media_bytes) > max_bytes:
+                raise RuntimeError("Feishu media exceeds the provider size limit.")
+            content_type = mimetypes.guess_type(allowed_path.name)[0] or ""
+            return media_bytes, content_type, allowed_path.name
+
         media_bytes, content_type = self._load_discord_media(media_url, max_bytes=max_bytes)
         normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
         filename = _feishu_media_filename(media_url, normalized_content_type)
         return media_bytes, normalized_content_type, filename
+
+    def _transcode_feishu_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> tuple[bytes, str, str]:
+        del content_type
+        with tempfile.TemporaryDirectory(prefix="openzues-feishu-voice-") as temp_dir:
+            temp_root = Path(temp_dir)
+            input_path = temp_root / f"input{_feishu_transcode_input_extension(filename)}"
+            output_path = temp_root / FEISHU_VOICE_FILE_NAME
+            input_path.write_bytes(media_bytes)
+            command = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-sn",
+                "-dn",
+                "-t",
+                str(FEISHU_FFMPEG_MAX_AUDIO_DURATION_SECONDS),
+                "-ar",
+                str(FEISHU_VOICE_SAMPLE_RATE_HZ),
+                "-ac",
+                "1",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                FEISHU_VOICE_BITRATE,
+                str(output_path),
+            ]
+            try:
+                subprocess.run(  # noqa: S603, S607
+                    command,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    timeout=180,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise RuntimeError(f"Feishu audioAsVoice transcode failed: {exc}") from exc
+            if not output_path.is_file():
+                raise RuntimeError("Feishu audioAsVoice transcode did not create voice.ogg")
+            return output_path.read_bytes(), "audio/ogg", FEISHU_VOICE_FILE_NAME
+
+    def _prepare_feishu_voice_media(
+        self,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+        audio_as_voice: bool,
+    ) -> tuple[bytes, str, str | None]:
+        if _feishu_is_native_voice_audio(filename, content_type):
+            return media_bytes, filename, content_type
+        if not audio_as_voice or not _feishu_is_likely_transcodable_audio(
+            filename,
+            content_type,
+        ):
+            return media_bytes, filename, content_type
+        try:
+            transcoded_bytes, transcoded_content_type, transcoded_filename = (
+                self._transcode_feishu_voice_media(
+                    media_bytes,
+                    filename=filename,
+                    content_type=content_type,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Feishu audioAsVoice transcode failed; sending %s as a file attachment: %s",
+                filename,
+                exc,
+            )
+            return media_bytes, filename, content_type
+        return transcoded_bytes, transcoded_filename, transcoded_content_type
 
     def _post_feishu_media_message_payload(
         self,
@@ -27474,10 +27937,34 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         bearer_token = _feishu_bearer_token(secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        account_id = (
+            normalize_optional_account_id(event.get("accountId"))
+            or normalize_optional_account_id((conversation_target or {}).get("account_id"))
+            or DEFAULT_ACCOUNT_ID
+        )
+        config_snapshot = self._feishu_config_snapshot()
         media_bytes, content_type, filename = self._load_feishu_media(
             media_url,
-            max_bytes=30 * 1024 * 1024,
+            max_bytes=_feishu_media_max_bytes(
+                config_snapshot,
+                account_id=account_id,
+            )
+            or 30 * FEISHU_MEDIA_MB,
+            local_roots=_feishu_media_local_roots(
+                config_snapshot,
+                account_id=account_id,
+            ),
+            account_id=account_id,
         )
+        prepared_content_type: str | None
+        media_bytes, filename, prepared_content_type = self._prepare_feishu_voice_media(
+            media_bytes,
+            filename=filename,
+            content_type=content_type,
+            audio_as_voice=_optional_bool_payload_value(event, "audioAsVoice") is True,
+        )
+        content_type = prepared_content_type or ""
         if _feishu_media_is_image(filename, content_type):
             upload = self._request_feishu_multipart_provider_url(
                 _feishu_api_endpoint(str(route.get("target") or ""), "im/v1/images"),
@@ -27566,6 +28053,13 @@ class OpsMeshService:
             }
         if media_url is not None:
             media_event: dict[str, Any] = {"to": target}
+            if request.account_id is not None:
+                media_event["accountId"] = request.account_id
+            audio_as_voice = _message_action_param_bool(request.params, "audioAsVoice")
+            if audio_as_voice is None:
+                audio_as_voice = _message_action_param_bool(request.params, "asVoice")
+            if audio_as_voice is not None:
+                media_event["audioAsVoice"] = audio_as_voice
             if action == "thread-reply":
                 reply_to_id = _feishu_action_message_id(request.params, action=action)
                 media_event["replyToId"] = reply_to_id
@@ -27604,6 +28098,154 @@ class OpsMeshService:
             **native_result,
         }
 
+    def _download_feishu_message_resource(
+        self,
+        route: dict[str, Any],
+        *,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+        message_type: str,
+        placeholder: str,
+        filename_hint: str | None,
+        account_id: str | None,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        def request_resource(download_type: str) -> tuple[bytes, str | None, str | None]:
+            return self._request_feishu_message_resource_provider_url(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    (
+                        f"im/v1/messages/{quote(message_id, safe='')}/resources/"
+                        f"{quote(file_key, safe='')}"
+                    ),
+                    query={"type": download_type},
+                ),
+                secret_token=_feishu_bearer_token(secret_token),
+            )
+
+        download_type = resource_type
+        try:
+            media_bytes, content_type, downloaded_filename = request_resource(resource_type)
+        except HTTPError as exc:
+            if resource_type != "file" or int(exc.code) != 502:
+                raise RuntimeError(
+                    _http_error_message("Feishu message resource download failed", exc)
+                ) from exc
+            try:
+                media_bytes, content_type, downloaded_filename = request_resource("media")
+            except Exception:
+                raise RuntimeError(
+                    _http_error_message("Feishu message resource download failed", exc)
+                ) from exc
+            download_type = "media"
+
+        config_snapshot = self._feishu_config_snapshot()
+        max_bytes = (
+            _feishu_media_max_bytes(
+                config_snapshot,
+                account_id=normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID,
+            )
+            or 30 * FEISHU_MEDIA_MB
+        )
+        if len(media_bytes) > max_bytes:
+            raise RuntimeError("Feishu message resource exceeds the provider size limit.")
+        safe_filename = _safe_slack_file_label(
+            downloaded_filename or filename_hint or file_key,
+            "resource.bin",
+        )
+        if "." not in safe_filename and content_type:
+            extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip()) or ""
+            if extension:
+                safe_filename = f"{safe_filename}{extension}"
+        digest = hashlib.sha256(media_bytes).hexdigest()
+        storage_root = (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+        stored_path = storage_root / "gateway-attachments" / "inbound" / (
+            f"{digest[:16]}-{safe_filename}"
+        )
+        stored_path.parent.mkdir(parents=True, exist_ok=True)
+        if not stored_path.exists():
+            stored_path.write_bytes(media_bytes)
+        result: dict[str, object] = {
+            "messageType": message_type,
+            "fileKey": file_key,
+            "resourceType": resource_type,
+            "downloadType": download_type,
+            "placeholder": placeholder,
+            "path": str(stored_path),
+            "filename": safe_filename,
+            "byteLength": len(media_bytes),
+            "sha256": digest,
+        }
+        if content_type:
+            result["contentType"] = content_type
+        return result
+
+    def _feishu_read_message_media(
+        self,
+        route: dict[str, Any],
+        item: Mapping[str, object],
+        *,
+        fallback_message_id: str,
+        account_id: str | None,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        msg_type = str(item.get("msg_type") or "text").strip().lower()
+        raw_content = _feishu_message_body_content(item)
+        if msg_type == "post":
+            message_id = str(item.get("message_id") or fallback_message_id).strip()
+            if not message_id:
+                return []
+            media: list[dict[str, object]] = []
+            for entry in _feishu_post_media_entries(raw_content):
+                try:
+                    media.append(
+                        self._download_feishu_message_resource(
+                            route,
+                            message_id=message_id,
+                            file_key=entry["fileKey"],
+                            resource_type=entry["resourceType"],
+                            message_type=entry["messageType"],
+                            placeholder=entry["placeholder"],
+                            filename_hint=entry.get("fileName"),
+                            account_id=account_id,
+                            secret_token=secret_token,
+                        )
+                    )
+                except Exception:
+                    continue
+            return media
+        placeholder = _feishu_media_placeholder(msg_type)
+        if placeholder is None:
+            return []
+        media_keys = _feishu_message_media_keys(raw_content, msg_type)
+        file_key = media_keys.get("fileKey") or media_keys.get("imageKey")
+        if not file_key:
+            return []
+        message_id = str(item.get("message_id") or fallback_message_id).strip()
+        if not message_id:
+            return []
+        try:
+            return [
+                self._download_feishu_message_resource(
+                    route,
+                    message_id=message_id,
+                    file_key=file_key,
+                    resource_type=_feishu_message_resource_type(msg_type),
+                    message_type=msg_type,
+                    placeholder=placeholder,
+                    filename_hint=media_keys.get("fileName"),
+                    account_id=account_id,
+                    secret_token=secret_token,
+                )
+            ]
+        except Exception:
+            return []
+
     def _dispatch_feishu_read_message_action(
         self,
         route: dict[str, Any],
@@ -27628,11 +28270,29 @@ class OpsMeshService:
                 "content": [{"type": "text", "text": json.dumps({"error": error})}],
                 "details": {"error": error},
             }
+        message = _feishu_message_view(item, fallback_message_id=message_id)
+        media = self._feishu_read_message_media(
+            route,
+            item,
+            fallback_message_id=message_id,
+            account_id=request.account_id,
+            secret_token=secret_token,
+        )
+        if media:
+            message["media"] = media
+            media_paths = [
+                str(entry.get("path") or "").strip()
+                for entry in media
+                if str(entry.get("path") or "").strip()
+            ]
+            if media_paths:
+                message["mediaPaths"] = media_paths
+                message["mediaUrls"] = media_paths
         return {
             "ok": True,
             "channel": "feishu",
             "action": "read",
-            "message": _feishu_message_view(item, fallback_message_id=message_id),
+            "message": message,
         }
 
     def _dispatch_feishu_edit_message_action(

@@ -16687,6 +16687,165 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-media-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Media Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"image_key": "img_direct_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_media_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    media_url = "data:image/png;base64,aW1hZ2U="
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="",
+        media_urls=[media_url],
+        account_id="feishu-bot",
+        idempotency_key="idem-native-feishu-media-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id=feishu_target,
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-feishu-media-send",
+        "channel": "feishu",
+        "messageId": "om_feishu_media_1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "feishu",
+            "target": feishu_target,
+            "accountId": "feishu-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "mediaIds": ["om_feishu_media_1"],
+        "mediaUrls": [media_url],
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/images",
+            {"image_type": "message"},
+            "media.png",
+            b"image",
+            "image/png",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"image_key": "img_direct_1"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+    assert delivery is not None
+    assert delivery["event_payload"]["mediaUrls"] == [media_url]
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_media_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "mediaIds": ["om_feishu_media_1"],
+        "mediaUrls": [media_url],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_feishu_send_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -16929,6 +17088,7 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_send_image_medi
         tuple[str, dict[str, str], str, bytes, str | None, str | None]
     ] = []
     feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
 
     def fake_request_feishu_multipart_provider_url(
         self: OpsMeshService,
@@ -17061,8 +17221,10 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_send_file_media
         media_url: str,
         *,
         max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
     ) -> tuple[bytes, str, str]:
-        del self, max_bytes
+        del self, max_bytes, local_roots, account_id
         assert media_url == "https://example.test/report.pdf"
         return b"pdf-bytes", "application/pdf", "report.pdf"
 
@@ -17160,6 +17322,966 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_send_file_media
     }
     assert secret_header_name == "Authorization"
     assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_send_audio_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-audio-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Audio Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, max_bytes, local_roots, account_id
+        assert media_url == "https://example.test/voice.ogg"
+        return b"voice-bytes", "audio/ogg", "voice.ogg"
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_audio_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_audio_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="lark",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": "https://example.test/voice.ogg",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-audio-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_audio_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "opus", "file_name": "voice.ogg"},
+            "voice.ogg",
+            b"voice-bytes",
+            "audio/ogg",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"file_key": "file_audio_1"}, separators=(",", ":")),
+        "msg_type": "audio",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_audio_as_voice_transcode_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-audio-voice"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Audio Voice Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    transcodes: list[tuple[bytes, str, str | None]] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, max_bytes, local_roots, account_id
+        assert media_url == "https://example.test/voice.mp3"
+        return b"mp3-bytes", "audio/mpeg", "voice.mp3"
+
+    def fake_transcode_feishu_voice_media(
+        self: OpsMeshService,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> tuple[bytes, str, str]:
+        del self
+        transcodes.append((media_bytes, filename, content_type))
+        return b"opus-bytes", "audio/ogg", "voice.ogg"
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_voice_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_voice_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_transcode_feishu_voice_media",
+        fake_transcode_feishu_voice_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": "https://example.test/voice.mp3",
+                "audioAsVoice": True,
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-audio-voice-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_voice_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert transcodes == [(b"mp3-bytes", "voice.mp3", "audio/mpeg")]
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "opus", "file_name": "voice.ogg"},
+            "voice.ogg",
+            b"opus-bytes",
+            "audio/ogg",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"file_key": "file_voice_1"}, separators=(",", ":")),
+        "msg_type": "audio",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_falls_back_on_feishu_voice_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-feishu-audio-voice-fallback"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Audio Voice Fallback Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+    transcodes: list[tuple[bytes, str, str | None]] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, max_bytes, local_roots, account_id
+        assert media_url == "https://example.test/voice.mp3"
+        return b"mp3-bytes", "audio/mpeg", "voice.mp3"
+
+    def fake_transcode_feishu_voice_media(
+        self: OpsMeshService,
+        media_bytes: bytes,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> tuple[bytes, str, str]:
+        del self
+        transcodes.append((media_bytes, filename, content_type))
+        raise RuntimeError("ffmpeg unavailable")
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_fallback_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_fallback_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_transcode_feishu_voice_media",
+        fake_transcode_feishu_voice_media,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": "https://example.test/voice.mp3",
+                "asVoice": True,
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-audio-voice-fallback-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_fallback_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert transcodes == [(b"mp3-bytes", "voice.mp3", "audio/mpeg")]
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "stream", "file_name": "voice.mp3"},
+            "voice.mp3",
+            b"mp3-bytes",
+            "audio/mpeg",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"file_key": "file_fallback_1"}, separators=(",", ":")),
+        "msg_type": "file",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_thread_reply_video_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-video-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Video Reply Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, max_bytes, local_roots, account_id
+        assert media_url == "https://example.test/clip.mp4"
+        return b"video-bytes", "video/mp4", "clip.mp4"
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_video_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_video_reply_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="thread-reply",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "messageId": "om_parent_video",
+                "media": "https://example.test/clip.mp4",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-video-reply-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "thread-reply",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_video_reply_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "replyToId": "om_parent_video",
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "mp4", "file_name": "clip.mp4"},
+            "clip.mp4",
+            b"video-bytes",
+            "video/mp4",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages/om_parent_video/reply"
+    assert payload == {
+        "content": json.dumps({"file_key": "file_video_1"}, separators=(",", ":")),
+        "msg_type": "media",
+        "reply_in_thread": True,
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_rejects_feishu_local_media_without_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-feishu-local-media-no-roots"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    local_file = tmp_path / "report.pdf"
+    local_file.write_bytes(b"local report")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Local Media Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_should_not_send"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_should_not_send",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    with pytest.raises(RuntimeError, match="mediaLocalRoots"):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="feishu",
+                action="send",
+                params={
+                    "to": "feishu:chat:oc_chat_1",
+                    "media": str(local_file),
+                },
+                account_id="feishu-bot",
+                idempotency_key="idem-feishu-local-media-no-roots",
+            )
+        )
+
+    assert feishu_uploads == []
+    assert feishu_posts == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_allows_feishu_local_media_under_configured_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-feishu-local-media-allowed-root"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    local_file = tmp_path / "report.pdf"
+    local_file.write_bytes(b"local report")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Local Media Allowed Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object({"channels": {"feishu": {"mediaLocalRoots": [str(tmp_path)]}}})
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_local_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_local_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": str(local_file),
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-local-media-allowed-root",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_local_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "pdf", "file_name": "report.pdf"},
+            "report.pdf",
+            b"local report",
+            "application/pdf",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"file_key": "file_local_1"}, separators=(",", ":")),
+        "msg_type": "file",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_uses_feishu_account_media_max_mb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-feishu-account-media-max"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Account Media Max Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="",
+        assistant_agent_id="main",
+        server_version=None,
+        data_dir=tmp_path / "config",
+    )
+    config_service.patch_object(
+        {
+            "channels": {
+                "feishu": {
+                    "mediaMaxMb": 5,
+                    "accounts": {"feishu-bot": {"mediaMaxMb": 2}},
+                }
+            }
+        }
+    )
+    seen_max_bytes: list[int] = []
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+        local_roots: list[str] | None = None,
+        account_id: str | None = None,
+    ) -> tuple[bytes, str, str]:
+        del self, local_roots
+        assert media_url == "https://example.test/too-large.pdf"
+        assert account_id == "feishu-bot"
+        seen_max_bytes.append(max_bytes)
+        raise RuntimeError("Feishu media exceeds configured mediaMaxMb")
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_should_not_send"}}
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=config_service,
+    )
+
+    with pytest.raises(RuntimeError, match="configured mediaMaxMb"):
+        await service.dispatch_message_action(
+            GatewayMessageActionDispatchRequest(
+                channel="feishu",
+                action="send",
+                params={
+                    "to": "feishu:chat:oc_chat_1",
+                    "media": "https://example.test/too-large.pdf",
+                },
+                account_id="feishu-bot",
+                idempotency_key="idem-feishu-account-media-max",
+            )
+        )
+
+    assert seen_max_bytes == [2 * 1024 * 1024]
+    assert feishu_uploads == []
 
 
 @pytest.mark.asyncio
@@ -17377,6 +18499,347 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_read_route(
             "Bearer tenant-access-token",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_feishu_read_video_resource_uses_media_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-read-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Read Media Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+    resource_requests: list[tuple[str, str | None, float]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_video_1",
+                        "chat_id": "oc_chat_1",
+                        "chat_type": "group",
+                        "msg_type": "video",
+                        "body": {
+                            "content": json.dumps(
+                                {
+                                    "file_key": "file_key_ios_video",
+                                    "image_key": "img_thumb_should_not_win",
+                                    "file_name": "fallback-name.mp4",
+                                }
+                            )
+                        },
+                    }
+                ]
+            },
+        }
+
+    def fake_request_feishu_message_resource_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        resource_requests.append((target, secret_token, timeout_seconds))
+        if target.endswith("?type=file"):
+            raise HTTPError(target, 502, "Bad Gateway", {}, None)
+        return b"fake-ios-video-data", "video/mp4", "ios-video.mp4"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_message_resource_provider_url",
+        fake_request_feishu_message_resource_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="read",
+            params={"messageId": "om_video_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-read-media-action",
+        )
+    )
+
+    digest = hashlib.sha256(b"fake-ios-video-data").hexdigest()
+    expected_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{digest[:16]}-ios-video.mp4"
+    )
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "read",
+        "message": {
+            "messageId": "om_video_1",
+            "chatId": "oc_chat_1",
+            "chatType": "group",
+            "content": "<media:video>",
+            "contentType": "video",
+            "media": [
+                {
+                    "messageType": "video",
+                    "fileKey": "file_key_ios_video",
+                    "resourceType": "file",
+                    "downloadType": "media",
+                    "placeholder": "<media:video>",
+                    "path": expected_path,
+                    "filename": "ios-video.mp4",
+                    "contentType": "video/mp4",
+                    "byteLength": len(b"fake-ios-video-data"),
+                    "sha256": digest,
+                }
+            ],
+            "mediaPaths": [expected_path],
+            "mediaUrls": [expected_path],
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert resource_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1/resources/file_key_ios_video?type=file",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_video_1/resources/file_key_ios_video?type=media",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+    ]
+    assert Path(expected_path).read_bytes() == b"fake-ios-video-data"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_feishu_read_post_hydrates_embedded_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-read-post-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Read Post Media Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    post_content = json.dumps(
+        {
+            "post": {
+                "zh_cn": {
+                    "title": "Launch",
+                    "content": [
+                        [
+                            {"tag": "text", "text": "Look "},
+                            {"tag": "img", "image_key": "img_post_1"},
+                            {
+                                "tag": "media",
+                                "file_key": "file_post_video",
+                                "file_name": "clip.mov",
+                            },
+                        ]
+                    ],
+                }
+            }
+        }
+    )
+    resource_requests: list[tuple[str, str | None, float]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, target, method, payload, secret_header_name, secret_token
+        del extra_headers, timeout_seconds
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_post_1",
+                        "chat_id": "oc_chat_1",
+                        "chat_type": "group",
+                        "msg_type": "post",
+                        "body": {"content": post_content},
+                    }
+                ]
+            },
+        }
+
+    def fake_request_feishu_message_resource_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> tuple[bytes, str | None, str | None]:
+        del self
+        resource_requests.append((target, secret_token, timeout_seconds))
+        if "img_post_1" in target:
+            return b"post-image", "image/png", None
+        return b"post-video", "video/mp4", "clip.mp4"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_message_resource_provider_url",
+        fake_request_feishu_message_resource_provider_url,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="read",
+            params={"messageId": "om_post_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-read-post-media-action",
+        )
+    )
+
+    image_digest = hashlib.sha256(b"post-image").hexdigest()
+    video_digest = hashlib.sha256(b"post-video").hexdigest()
+    image_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{image_digest[:16]}-img_post_1.png"
+    )
+    video_path = str(
+        tmp_path / "gateway-attachments" / "inbound" / f"{video_digest[:16]}-clip.mp4"
+    )
+    assert result["ok"] is True
+    message = result["message"]
+    assert isinstance(message, dict)
+    assert message["messageId"] == "om_post_1"
+    assert message["contentType"] == "post"
+    assert message["media"] == [
+        {
+            "messageType": "image",
+            "fileKey": "img_post_1",
+            "resourceType": "image",
+            "downloadType": "image",
+            "placeholder": "<media:image>",
+            "path": image_path,
+            "filename": "img_post_1.png",
+            "contentType": "image/png",
+            "byteLength": len(b"post-image"),
+            "sha256": image_digest,
+        },
+        {
+            "messageType": "media",
+            "fileKey": "file_post_video",
+            "resourceType": "file",
+            "downloadType": "file",
+            "placeholder": "<media:video>",
+            "path": video_path,
+            "filename": "clip.mp4",
+            "contentType": "video/mp4",
+            "byteLength": len(b"post-video"),
+            "sha256": video_digest,
+        },
+    ]
+    assert message["mediaPaths"] == [image_path, video_path]
+    assert message["mediaUrls"] == [image_path, video_path]
+    assert resource_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_post_1/resources/img_post_1?type=image",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_post_1/resources/file_post_video?type=file",
+            "Bearer tenant-access-token",
+            60.0,
+        ),
+    ]
+    assert Path(image_path).read_bytes() == b"post-image"
+    assert Path(video_path).read_bytes() == b"post-video"
 
 
 @pytest.mark.asyncio

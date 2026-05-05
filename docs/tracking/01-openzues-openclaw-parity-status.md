@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~69.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -123,6 +123,17 @@ may lag behind this tracker.
   including CommonJS OpenClaw plugin-SDK alias shims and native
   `register`/`activate` tool collection.
   - Status: checkpointed in `8cb314f4`
+
+- [x] Imported CommonJS plugin runtime execution through `tools.invoke`,
+  preserving registered tool `execute(toolCallId, args)` behavior with a
+  bounded native Node bridge.
+  - Status: checkpointed in `d80b0252`
+
+- [x] Imported ESM-style plugin runtime execution through `tools.invoke`,
+  preserving transformed `export default` runtime entries and
+  `openclaw/plugin-sdk/text-runtime` alias behavior through the bounded native
+  Node bridge.
+  - Status: checkpointed in `311f37e1`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -853,6 +864,43 @@ may lag behind this tracker.
   metadata.
   - Status: checkpointed in `152dcb38`
 
+- [x] Feishu/Lark audio/video media send support, preserving OpenClaw
+  Ogg/Opus audio routing, MP4 video routing, file-key message sends, and
+  threaded reply media payloads.
+  - Status: checkpointed in `6e99a40b`
+
+- [x] Feishu/Lark mediaLocalRoots local-path guard support, preserving
+  OpenClaw fail-closed local media reads and configured root allowlisting.
+  - Status: checkpointed in `78cfda1f`
+
+- [x] Feishu/Lark audioAsVoice transcode support, preserving OpenClaw
+  voice-compatible audio conversion, native Feishu audio payloads, and
+  fallback-to-file behavior when conversion is unavailable.
+  - Status: checkpointed in `81c93c0e`
+
+- [x] Feishu/Lark mediaMaxMb support, preserving OpenClaw account/channel
+  media-size caps before upload.
+  - Status: checkpointed in `45d6a6bc`
+
+- [x] Feishu/Lark channel capability discovery support, preserving OpenClaw
+  media, thread/reply, reaction/edit, and voice-transcode capability metadata.
+  - Status: checkpointed in `326f471f`
+
+- [x] Feishu/Lark direct provider-route media send support, preserving
+  OpenClaw media upload/send behavior for direct `gateway.send`, ordered
+  `mediaIds`/`mediaUrls`, and delivery provider metadata.
+  - Status: checkpointed in `77149f94`
+
+- [x] Feishu/Lark message-resource read hydration support, preserving
+  OpenClaw `file_key` precedence, file-to-media retry behavior, inbound
+  attachment storage, and read action media metadata projection.
+  - Status: checkpointed in `65da0455`
+
+- [x] Feishu/Lark post/rich-text embedded media hydration support,
+  preserving OpenClaw localized post parsing, embedded image/media key
+  collection, resource downloads, and ordered read action media metadata.
+  - Status: checkpointed in `ed3aedb5`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -1051,9 +1099,38 @@ may lag behind this tracker.
     checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
     in `55e1fb28`, manifest document extractor contract metadata checkpointed
     in `2196c65e`, bundled plugin runtime entry import checkpointed in
-    `8cb314f4`, and ESM plugin runtime entry import checkpointed in
-    `eb11e22f`, but deeper runtime executor invocation breadth remains.
+    `8cb314f4`, ESM plugin runtime entry import checkpointed in `eb11e22f`,
+    imported CommonJS runtime execution checkpointed in `d80b0252`, and ESM
+    runtime execution checkpointed in `311f37e1`, but deeper plugin SDK
+    execution-context breadth remains.
   - Weight: 5
+
+- [x] Imported ESM plugin runtime execution.
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/sdk-alias.ts`,
+    `openclaw-main/src/plugins/tools.ts`, and
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - Target: `tests/test_gateway_node_methods.py` plus the native runtime
+    executor bridge in `src/openzues/cli.py` from `d80b0252`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `311f37e1`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused ESM runtime invoke proof (`1
+    passed`), adjacent plugin invoke proof (`11 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported CommonJS plugin runtime execution.
+  - Source: `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/tools.ts`, and
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d80b0252`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused imported runtime invoke proof (`1
+    passed`), adjacent plugin invoke proof (`10 passed, 803 deselected`),
+    adjacent runtime import proof (`2 passed, 512 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] ESM bundled plugin runtime entry import.
   - Source: `openclaw-main/src/plugins/loader.ts`,
@@ -1897,7 +1974,15 @@ may lag behind this tracker.
     action checkpointed in `dd915f30`; Feishu/Lark reaction actions
     checkpointed in `1c6b44af`; Feishu/Lark presentation-card sends
     checkpointed in `75edc136`; Feishu/Lark image media sends checkpointed in
-    `64375b92`; Feishu/Lark file media sends checkpointed in `152dcb38`; Signal native
+    `64375b92`; Feishu/Lark file media sends checkpointed in `152dcb38`;
+    Feishu/Lark audio/video media sends checkpointed in `6e99a40b`;
+    Feishu/Lark mediaLocalRoots local-path guard checkpointed in `78cfda1f`;
+    Feishu/Lark audioAsVoice transcode checkpointed in `81c93c0e`;
+    Feishu/Lark mediaMaxMb limits checkpointed in `45d6a6bc`; Feishu/Lark
+    channel capability discovery checkpointed in `326f471f`; Feishu/Lark
+    direct provider-route media sends checkpointed in `77149f94`; Feishu/Lark
+    read-media resource hydration checkpointed in `65da0455`; Feishu/Lark
+    post-media resource hydration checkpointed in `ed3aedb5`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 

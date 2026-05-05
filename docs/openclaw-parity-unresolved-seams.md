@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~69.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~70.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6528,9 +6528,92 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~69.6%. Verified with focused runtime pytest,
   adjacent Feishu provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `152dcb38`.
+- Closed the Feishu/Lark audio/video media send verification seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/media.ts`:
+  native OpenZues `message.action` dispatch now has focused proof for
+  Ogg/Opus `msg_type="audio"` sends and MP4 `msg_type="media"`
+  thread-replies, including provider upload file-type routing and
+  `reply_in_thread` payload shape. Repo-wide parity is now estimated at
+  ~69.7%. Verified with focused runtime pytest, adjacent Feishu provider
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `6e99a40b`.
+- Closed the Feishu/Lark mediaLocalRoots local-path seam from OpenClaw
+  `extensions/feishu/src/media.ts`: native OpenZues `message.action` dispatch
+  now rejects local Feishu media paths by default, allows local files only under
+  configured `channels.feishu.mediaLocalRoots` or account roots, and preserves
+  provider upload/send metadata for allowed files. Repo-wide parity is now
+  estimated at ~69.8%. Verified with focused runtime pytest, adjacent Feishu
+  provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `78cfda1f`.
+- Closed the Feishu/Lark audioAsVoice seam from OpenClaw
+  `extensions/feishu/src/media.ts`: native OpenZues `message.action` dispatch
+  now carries `audioAsVoice`/`asVoice`, transcodes compatible audio through a
+  fakeable ffmpeg adapter to `voice.ogg`, sends native Feishu
+  `msg_type="audio"`, and falls back to the original file attachment when
+  transcode is unavailable. Repo-wide parity is now estimated at ~69.9%.
+  Verified with focused runtime pytest, adjacent Feishu provider proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `81c93c0e`.
+- Closed the Feishu/Lark mediaMaxMb seam from OpenClaw
+  `extensions/feishu/src/media.ts`: native OpenZues `message.action` dispatch
+  now resolves account-level and channel-level Feishu media-size caps from
+  gateway config and passes the configured byte cap to the loader before upload.
+  Repo-wide parity is now estimated at ~70.0%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `45d6a6bc`.
+- Closed the Feishu/Lark channel capability discovery seam from OpenClaw
+  `extensions/feishu/src/channel.ts`: CLI channel capabilities now advertise
+  Feishu/Lark direct/channel chat types, reply/thread/media/reaction/edit
+  support, `polls=false`, and voice TTS transcode metadata. Repo-wide parity is
+  now estimated at ~70.1%. Verified with focused CLI pytest, adjacent
+  channel-capabilities proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `326f471f`.
+- Closed the Feishu/Lark direct provider-route media seam from OpenClaw
+  `extensions/feishu/src/media.ts`: native OpenZues direct Feishu/Lark sends
+  now accept `mediaUrls`, reuse the verified Feishu media upload/send runtime,
+  and persist final `messageId`, ordered `mediaIds`, `mediaUrls`,
+  chat/channel, and delivery provider metadata. Repo-wide parity is now
+  estimated at ~70.2%. Verified with focused runtime pytest, adjacent Feishu
+  provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `77149f94`.
+- Closed the Feishu/Lark message-resource read hydration seam from OpenClaw
+  `extensions/feishu/src/media.ts` and `extensions/feishu/src/bot-content.ts`:
+  native OpenZues Feishu/Lark read actions now parse media message bodies,
+  prefer video `file_key` over thumbnail `image_key`, retry file downloads as
+  `type=media` after Feishu HTTP 502, save resource bytes under the inbound
+  attachment workspace, and project placeholder/path/type/hash metadata.
+  Repo-wide parity is now estimated at ~70.3%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `65da0455`.
+- Closed the Feishu/Lark post/rich-text embedded media hydration seam from
+  OpenClaw `extensions/feishu/src/post.ts` and
+  `extensions/feishu/src/bot-content.ts`: native OpenZues Feishu/Lark read
+  actions now resolve localized post payloads, collect `img.image_key` and
+  `media.file_key` elements in order, download embedded image/media resources,
+  save bytes under the inbound attachment workspace, and project ordered media
+  metadata. Repo-wide parity is now estimated at ~70.4%. Verified with focused
+  runtime pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `ed3aedb5`.
+- Closed the imported CommonJS OpenClaw plugin runtime execution seam from
+  `src/plugins/registry.ts`, `src/plugins/tools.ts`, and
+  `src/gateway/tools-invoke-shared.ts`: native OpenZues plugin runtime import
+  specs now preserve executable tool metadata and attach real async executors,
+  and `tools.invoke` reloads the runtime in a bounded Node bridge before
+  calling the registered `execute(toolCallId, args)` function. Repo-wide parity
+  is now estimated at ~70.5%. Verified with focused `tools.invoke` pytest,
+  adjacent plugin invoke/import proofs, `ruff check`, and `mypy`; source/test
+  checkpointed in `d80b0252`.
+- Closed the imported ESM-style OpenClaw plugin runtime execution proof from
+  `src/plugins/loader.ts`, `src/plugins/sdk-alias.ts`,
+  `src/plugins/tools.ts`, and `src/gateway/tools-invoke-shared.ts`: a
+  transformed `export default` runtime entry that imports
+  `openclaw/plugin-sdk/text-runtime` now registers an executable tool and
+  runs through `tools.invoke` via the same native Node bridge, preserving the
+  plugin-SDK alias shim. Repo-wide parity is now estimated at ~70.6%.
+  Verified with focused ESM invoke pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `311f37e1`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, continuing Feishu/Lark audio/video native media verification
-  from `extensions/feishu/src/channel.ts`.
+  runtime/plugin gap, continuing richer plugin SDK execution-context breadth
+  for imported runtime tools from `src/plugins/tools.ts`,
+  `src/plugins/registry.ts`, and `src/gateway/tools-invoke-shared.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
