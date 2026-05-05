@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~76.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~76.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -435,6 +435,14 @@ may lag behind this tracker.
   `command-auth` compatibility exports, generic SDK re-exports, and
   UTF-8-safe native Node bridge output.
   - Status: checkpointed in `6c22af79`
+
+- [x] Imported plugin SDK command-auth native shim for mode-aware command
+  authorization, control-command gates, dual text-command gates, native session
+  target resolution, command body alias normalization, text-command routing,
+  native command specs, command text serialization, Telegram command
+  pagination keyboards, stored model override lookup, scoped/unscoped SDK
+  aliases, and generic SDK re-exports.
+  - Status: checkpointed in `1bbd7ed9`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

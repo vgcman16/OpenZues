@@ -12969,6 +12969,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`73 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `6c22af79`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  command-auth native helper breadth from `src/plugin-sdk/command-auth.ts`,
+  `src/plugin-sdk/command-auth-native.ts`, `src/plugin-sdk/command-gating.ts`,
+  `src/plugin-sdk/command-surface.ts`,
+  `src/plugin-sdk/native-command-registry.ts`,
+  `src/channels/native-command-session-targets.ts`, and
+  adjacent command registry/model override helpers: mode-aware
+  `resolveCommandAuthorizedFromAuthorizers`, control-command gates,
+  dual text-command gates, native session target resolution, command body alias
+  normalization, text-command routing, native command specs, command text
+  serialization, Telegram command pagination keyboard, stored model override
+  lookup, scoped/unscoped SDK aliases, and generic SDK re-exports are now
+  available through `tools.invoke`. This closes `OZ-PLUGIN-001UF`;
+  repo-wide parity is now estimated at ~76.9%. The next plugin/runtime seam
+  remains broader SDK helper/runtime surface breadth.
+- Verified the command-auth native shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_auth_native_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof including command-auth native
+  (`74 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `1bbd7ed9`.
 
 ## References
 
