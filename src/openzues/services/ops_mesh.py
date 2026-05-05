@@ -346,6 +346,7 @@ class _MSTeamsRouteConfig:
     conversation_id: str | None
     conversation_type: str | None
     graph_chat_id: str | None
+    share_point_site_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3362,6 +3363,15 @@ def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
     graph_chat_id = (
         str(query.get("graphchatid") or query.get("graph_chat_id") or "").strip() or None
     )
+    share_point_site_id = (
+        str(
+            query.get("sharepointsiteid")
+            or query.get("share_point_site_id")
+            or query.get("siteid")
+            or ""
+        ).strip()
+        or None
+    )
     return _MSTeamsRouteConfig(
         service_url=service_url,
         app_id=query.get("appid") or None,
@@ -3369,6 +3379,7 @@ def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
         conversation_id=conversation_id,
         conversation_type=conversation_type,
         graph_chat_id=graph_chat_id,
+        share_point_site_id=share_point_site_id,
     )
 
 
@@ -3812,6 +3823,60 @@ def _msteams_file_consent_content_type(
         return downloaded_content_type
     guessed = mimetypes.guess_type(str(filename or ""))[0]
     return guessed or "application/octet-stream"
+
+
+def _msteams_graph_upload_entry(event: Mapping[str, Any]) -> Mapping[str, object] | None:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsGraphUpload",
+            "msteamsSharePointUpload",
+            "teamsGraphUpload",
+            "teamsSharePointUpload",
+            "graphUpload",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return cast(Mapping[str, object], value)
+    return None
+
+
+def _msteams_graph_upload_site_id(
+    *,
+    event: Mapping[str, Any],
+    route_config: _MSTeamsRouteConfig,
+) -> str | None:
+    upload = _msteams_graph_upload_entry(event)
+    if upload is not None:
+        site_id = _msteams_file_info_value(
+            upload,
+            "siteId",
+            "sharePointSiteId",
+            "sharepointSiteId",
+            "share_point_site_id",
+        )
+        if site_id is not None:
+            return site_id
+    return route_config.share_point_site_id
+
+
+def _msteams_graph_upload_filename(
+    *,
+    event: Mapping[str, Any],
+    media_url: str,
+    downloaded_filename: str | None,
+    index: int,
+) -> str:
+    upload = _msteams_graph_upload_entry(event)
+    if upload is not None:
+        filename = _msteams_file_info_value(upload, "filename", "fileName", "name")
+        if filename is not None:
+            return filename
+    parsed_name = unquote(Path(urlparse(media_url).path).name)
+    return downloaded_filename or parsed_name or f"upload-{index}"
 
 
 def _msteams_poll_card(
@@ -19474,7 +19539,12 @@ class OpsMeshService:
             with urlopen(request, timeout=timeout_seconds) as response:
                 if response.status >= 400:
                     raise RuntimeError(f"Provider returned HTTP {response.status}")
-                response.read()
+                response_body = response.read().strip()
+                if response_body:
+                    try:
+                        return json.loads(response_body.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        pass
                 return {"status": response.status}
         except HTTPError as exc:
             raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
@@ -21757,6 +21827,119 @@ class OpsMeshService:
                     f"Consent upload URL resolves to a private/reserved IP ({address})."
                 )
 
+    def _msteams_graph_upload_result_value(
+        self,
+        result: object,
+        key: str,
+        *,
+        label: str,
+    ) -> str:
+        del self
+        if not isinstance(result, Mapping):
+            raise RuntimeError(f"Microsoft Teams Graph {label} returned a non-JSON response.")
+        value = str(result.get(key) or "").strip()
+        if not value:
+            raise RuntimeError(f"Microsoft Teams Graph {label} response missing {key}.")
+        return value
+
+    def _msteams_graph_file_cards_from_upload(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        event: dict[str, Any],
+        media_urls: list[str],
+        secret_token: str | None,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        site_id = _msteams_graph_upload_site_id(
+            event=event,
+            route_config=route_config,
+        )
+        if site_id is None:
+            raise RuntimeError(
+                "Microsoft Teams native media delivery requires FileConsentCard or "
+                "Graph upload support and is not available for this route yet."
+            )
+        if not media_urls:
+            return [], {}
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        encoded_site_id = quote(site_id, safe=",")
+        attachments: list[dict[str, object]] = []
+        item_ids: list[str] = []
+        share_urls: list[str] = []
+        for index, media_url in enumerate(media_urls, start=1):
+            media_bytes, content_type, downloaded_filename = self._download_matrix_media_url(
+                media_url
+            )
+            if not media_bytes:
+                raise RuntimeError("Microsoft Teams Graph upload media is empty.")
+            filename = _msteams_graph_upload_filename(
+                event=event,
+                media_url=media_url,
+                downloaded_filename=downloaded_filename,
+                index=index,
+            )
+            upload_content_type = content_type or mimetypes.guess_type(filename)[0]
+            encoded_filename = quote(filename, safe="")
+            upload_result = self._request_bytes_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/root:/OpenClawShared/"
+                    f"{encoded_filename}:/content"
+                ),
+                method="PUT",
+                body=media_bytes,
+                headers={
+                    "User-Agent": "OpenZues",
+                    "Authorization": bearer_token,
+                    "Content-Type": upload_content_type or "application/octet-stream",
+                },
+                timeout_seconds=60.0,
+            )
+            item_id = self._msteams_graph_upload_result_value(
+                upload_result,
+                "id",
+                label="upload",
+            )
+            item_ids.append(item_id)
+            create_link_result = self._request_json_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/items/{quote(item_id, safe='')}/createLink"
+                ),
+                method="POST",
+                payload={"type": "view", "scope": "organization"},
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+                extra_headers={"User-Agent": "OpenZues"},
+            )
+            if isinstance(create_link_result, Mapping):
+                link = create_link_result.get("link")
+                if isinstance(link, Mapping):
+                    share_url = str(link.get("webUrl") or "").strip()
+                    if share_url:
+                        share_urls.append(share_url)
+            drive_item = self._request_json_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/items/{quote(item_id, safe='')}"
+                    "?$select=eTag,webDavUrl,name"
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+                extra_headers={"User-Agent": "OpenZues"},
+            )
+            if not isinstance(drive_item, Mapping):
+                raise RuntimeError("Microsoft Teams Graph driveItem response was not JSON.")
+            attachments.append(_msteams_file_info_card(cast(Mapping[str, object], drive_item)))
+        meta: dict[str, object] = {"siteId": site_id, "itemIds": item_ids}
+        if share_urls:
+            meta["shareUrls"] = share_urls
+        return attachments, meta
+
     def _msteams_poll_vote_voter_id(
         self,
         request: GatewayMessageActionDispatchRequest,
@@ -22251,6 +22434,7 @@ class OpsMeshService:
         send_media_urls: list[str] = []
         send_attachments: list[dict[str, object]] = []
         pending_upload_id: str | None = None
+        graph_upload_meta: dict[str, object] | None = None
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
             raw_options = event.get("options")
@@ -22296,6 +22480,21 @@ class OpsMeshService:
                     send_attachments = _msteams_file_info_cards_from_event(
                         event=event,
                         media_urls=media_urls,
+                    )
+                elif (
+                    _msteams_graph_upload_site_id(
+                        event=event,
+                        route_config=route_config,
+                    )
+                    is not None
+                ):
+                    send_attachments, graph_upload_meta = (
+                        self._msteams_graph_file_cards_from_upload(
+                            route_config=route_config,
+                            event=event,
+                            media_urls=media_urls,
+                            secret_token=secret_token,
+                        )
                     )
                 else:
                     consent_card, pending_upload_id = _msteams_file_consent_card_from_event(
@@ -22374,6 +22573,8 @@ class OpsMeshService:
                         file_ids.append(unique_id)
                 if file_ids:
                     native_result["fileIds"] = file_ids
+                if graph_upload_meta is not None:
+                    native_result["meta"] = {"graphUpload": graph_upload_meta}
         return native_result
 
     def _post_signal_provider_event(

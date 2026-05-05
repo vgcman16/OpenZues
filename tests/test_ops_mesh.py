@@ -18188,6 +18188,246 @@ async def test_ops_mesh_service_message_action_accepts_msteams_file_consent_uplo
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_graph_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    site_id = "contoso.sharepoint.com,site-guid,web-guid"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-graph-upload"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    report_path = tmp_path / "Q1 Plan.pdf"
+    report_bytes = b"%PDF-1.7 graph upload payload"
+    report_path.write_bytes(report_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Graph Upload Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=channel&"
+            f"sharePointSiteId={site_id}"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"conversation:{conversation_id}",
+        },
+    )
+    graph_uploads: list[tuple[str, str, bytes, dict[str, str]]] = []
+    json_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_bytes_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        graph_uploads.append((method, target, body, dict(headers or {})))
+        return {
+            "id": "drive-item-123",
+            "webUrl": "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf",
+            "name": "Q1 Plan.pdf",
+        }
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        json_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/createLink"):
+            return {"link": {"webUrl": "https://tenant.sharepoint.com/:b:/share"}}
+        if "$select=eTag,webDavUrl,name" in target:
+            return {
+                "eTag": '"{11111111-2222-3333-4444-555555555555},1"',
+                "webDavUrl": (
+                    "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf"
+                ),
+                "name": "Q1 Plan.pdf",
+            }
+        return {"id": "teams-graph-upload-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bytes_provider_url",
+        fake_request_bytes_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        message="Here is the plan.",
+        media_urls=[str(report_path)],
+        channel_data={"msteamsGraphUpload": {"filename": "Q1 Plan.pdf"}},
+        account_id="default",
+        idempotency_key="idem-native-msteams-graph-upload",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert result["messageId"] == "teams-graph-upload-message-123"
+    assert result["mediaUrls"] == [str(report_path)]
+    assert result["filenames"] == ["Q1 Plan.pdf"]
+    assert result["fileIds"] == ["11111111-2222-3333-4444-555555555555"]
+    assert graph_uploads == [
+        (
+            "PUT",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/root:"
+                "/OpenClawShared/Q1%20Plan.pdf:/content"
+            ),
+            report_bytes,
+            {
+                "User-Agent": "OpenZues",
+                "Authorization": "Bearer graph-access-token",
+                "Content-Type": "application/pdf",
+            },
+        )
+    ]
+    assert json_requests[:2] == [
+        (
+            "POST",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/items/"
+                "drive-item-123/createLink"
+            ),
+            {"type": "view", "scope": "organization"},
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/items/"
+                "drive-item-123?$select=eTag,webDavUrl,name"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+    ]
+    assert json_requests[-1] == (
+        "POST",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "19%3Aops-thread%40thread.tacv2/activities"
+        ),
+        {
+            "type": "message",
+            "channelData": {"feedbackLoopEnabled": False},
+            "entities": [
+                {
+                    "type": "https://schema.org/Message",
+                    "@type": "Message",
+                    "@id": "",
+                    "additionalType": ["AIGeneratedContent"],
+                }
+            ],
+            "text": "Here is the plan.",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.card.file.info",
+                    "contentUrl": (
+                        "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf"
+                    ),
+                    "name": "Q1 Plan.pdf",
+                    "content": {
+                        "uniqueId": "11111111-2222-3333-4444-555555555555",
+                        "fileType": "pdf",
+                    },
+                }
+            ],
+        },
+        "Authorization",
+        "Bearer teams-access-token",
+    )
+    assert delivery is not None
+    provider_result = delivery["route_scope"]["provider_result"]
+    assert provider_result["meta"]["graphUpload"] == {
+        "siteId": site_id,
+        "itemIds": ["drive-item-123"],
+        "shareUrls": ["https://tenant.sharepoint.com/:b:/share"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
