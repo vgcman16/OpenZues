@@ -7590,10 +7590,37 @@ def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
                     {
                         "endpointClass": "openai-public",
                         "hosts": ["API.OPENAI.COM", ""],
+                        "hostSuffixes": [".OPENAI.AZURE.COM", ""],
                         "baseUrls": ["https://api.openai.com/v1"],
+                        "googleVertexRegion": "global",
+                        "googleVertexRegionHostSuffix": "-AIPLATFORM.GOOGLEAPIS.COM",
                     },
                     {"endpointClass": "empty"},
                 ],
+                "modelIdNormalization": {
+                    "providers": {
+                        "openai": {
+                            "aliases": {"gpt-latest": "gpt-5.4", "": "ignored"},
+                            "stripPrefixes": ["openai/", ""],
+                            "prefixWhenBare": "openai",
+                            "prefixWhenBareAfterAliasStartsWith": [
+                                {"modelPrefix": "gpt-", "prefix": "openai"},
+                                {"modelPrefix": "", "prefix": "ignored"},
+                            ],
+                        },
+                        "ignored": {"prefixWhenBare": "ignored"},
+                    }
+                },
+                "providerRequest": {
+                    "providers": {
+                        "openai": {
+                            "family": "openai-family",
+                            "compatibilityFamily": "moonshot",
+                            "openAICompletions": {"supportsStreamingUsage": True},
+                        },
+                        "ignored": {"family": "ignored"},
+                    }
+                },
                 "syntheticAuthRefs": ["openai-cli", ""],
                 "nonSecretAuthMarkers": ["openai-cli"],
                 "providerAuthAliases": {
@@ -7656,9 +7683,33 @@ def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
         {
             "endpointClass": "openai-public",
             "hosts": ["api.openai.com"],
+            "hostSuffixes": [".openai.azure.com"],
             "baseUrls": ["https://api.openai.com/v1"],
+            "googleVertexRegion": "global",
+            "googleVertexRegionHostSuffix": "-aiplatform.googleapis.com",
         }
     ]
+    assert plugin["modelIdNormalization"] == {
+        "providers": {
+            "openai": {
+                "aliases": {"gpt-latest": "gpt-5.4"},
+                "stripPrefixes": ["openai/"],
+                "prefixWhenBare": "openai",
+                "prefixWhenBareAfterAliasStartsWith": [
+                    {"modelPrefix": "gpt-", "prefix": "openai"}
+                ],
+            }
+        }
+    }
+    assert plugin["providerRequest"] == {
+        "providers": {
+            "openai": {
+                "family": "openai-family",
+                "compatibilityFamily": "moonshot",
+                "openAICompletions": {"supportsStreamingUsage": True},
+            }
+        }
+    }
     assert plugin["syntheticAuthRefs"] == ["openai-cli"]
     assert plugin["nonSecretAuthMarkers"] == ["openai-cli"]
     assert plugin["providerAuthAliases"] == {"openai-codex": "openai"}

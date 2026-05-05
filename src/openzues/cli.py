@@ -18739,16 +18739,145 @@ def _plugin_manifest_provider_endpoints(value: object) -> list[dict[str, object]
             host.lower()
             for host in _plugin_manifest_string_list(raw_endpoint.get("hosts"))
         ]
+        host_suffixes = [
+            host.lower()
+            for host in _plugin_manifest_string_list(raw_endpoint.get("hostSuffixes"))
+        ]
         base_urls = _plugin_manifest_string_list(raw_endpoint.get("baseUrls"))
-        if not hosts and not base_urls:
+        if not hosts and not host_suffixes and not base_urls:
             continue
         endpoint: dict[str, object] = {"endpointClass": endpoint_class}
         if hosts:
             endpoint["hosts"] = hosts
+        if host_suffixes:
+            endpoint["hostSuffixes"] = host_suffixes
         if base_urls:
             endpoint["baseUrls"] = base_urls
+        google_vertex_region = _optional_cli_string(raw_endpoint.get("googleVertexRegion"))
+        if google_vertex_region is not None:
+            endpoint["googleVertexRegion"] = google_vertex_region
+        google_vertex_region_host_suffix = _optional_cli_string(
+            raw_endpoint.get("googleVertexRegionHostSuffix")
+        )
+        if google_vertex_region_host_suffix is not None:
+            endpoint["googleVertexRegionHostSuffix"] = (
+                google_vertex_region_host_suffix.lower()
+            )
         endpoints.append(endpoint)
     return endpoints
+
+
+def _plugin_manifest_owned_provider_ids(manifest: Mapping[str, object]) -> set[str]:
+    return {
+        provider.lower()
+        for provider in _plugin_manifest_string_list(manifest.get("providers"))
+    }
+
+
+def _plugin_manifest_model_id_prefix_rules(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rules: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        model_prefix = _optional_cli_string(entry.get("modelPrefix"))
+        prefix = _optional_cli_string(entry.get("prefix"))
+        if model_prefix is None or prefix is None:
+            continue
+        rules.append({"modelPrefix": model_prefix, "prefix": prefix})
+    return rules
+
+
+def _plugin_manifest_model_id_normalization_provider(
+    value: object,
+) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    policy: dict[str, object] = {}
+    aliases = _plugin_manifest_string_record(value.get("aliases"))
+    if aliases:
+        policy["aliases"] = aliases
+    strip_prefixes = _plugin_manifest_string_list(value.get("stripPrefixes"))
+    if strip_prefixes:
+        policy["stripPrefixes"] = strip_prefixes
+    prefix_when_bare = _optional_cli_string(value.get("prefixWhenBare"))
+    if prefix_when_bare is not None:
+        policy["prefixWhenBare"] = prefix_when_bare
+    prefix_rules = _plugin_manifest_model_id_prefix_rules(
+        value.get("prefixWhenBareAfterAliasStartsWith")
+    )
+    if prefix_rules:
+        policy["prefixWhenBareAfterAliasStartsWith"] = prefix_rules
+    return policy or None
+
+
+def _plugin_manifest_model_id_normalization(
+    value: object,
+    *,
+    owned_provider_ids: set[str],
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_providers = value.get("providers")
+    if not isinstance(raw_providers, dict):
+        return {}
+    providers: dict[str, object] = {}
+    for raw_provider, raw_policy in raw_providers.items():
+        provider_id = _optional_cli_string(raw_provider)
+        if provider_id is None:
+            continue
+        normalized_provider_id = provider_id.lower()
+        if normalized_provider_id not in owned_provider_ids:
+            continue
+        policy = _plugin_manifest_model_id_normalization_provider(raw_policy)
+        if policy:
+            providers[normalized_provider_id] = policy
+    return {"providers": providers} if providers else {}
+
+
+def _plugin_manifest_provider_request_provider(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    request: dict[str, object] = {}
+    family = _optional_cli_string(value.get("family"))
+    if family is not None:
+        request["family"] = family
+    compatibility_family = _optional_cli_string(value.get("compatibilityFamily"))
+    if compatibility_family == "moonshot":
+        request["compatibilityFamily"] = compatibility_family
+    openai_completions = value.get("openAICompletions")
+    if isinstance(openai_completions, dict):
+        supports_streaming_usage = openai_completions.get("supportsStreamingUsage")
+        if isinstance(supports_streaming_usage, bool):
+            request["openAICompletions"] = {
+                "supportsStreamingUsage": supports_streaming_usage
+            }
+    return request or None
+
+
+def _plugin_manifest_provider_request(
+    value: object,
+    *,
+    owned_provider_ids: set[str],
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_providers = value.get("providers")
+    if not isinstance(raw_providers, dict):
+        return {}
+    providers: dict[str, object] = {}
+    for raw_provider, raw_policy in raw_providers.items():
+        provider_id = _optional_cli_string(raw_provider)
+        if provider_id is None:
+            continue
+        normalized_provider_id = provider_id.lower()
+        if normalized_provider_id not in owned_provider_ids:
+            continue
+        policy = _plugin_manifest_provider_request_provider(raw_policy)
+        if policy:
+            providers[normalized_provider_id] = policy
+    return {"providers": providers} if providers else {}
 
 
 def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, object]]:
@@ -18809,6 +18938,7 @@ def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, obje
 
 def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str, object]:
     metadata: dict[str, object] = {}
+    owned_provider_ids = _plugin_manifest_owned_provider_ids(manifest)
     for key in ("providerAuthEnvVars", "channelEnvVars"):
         value = _plugin_manifest_string_list_record(manifest.get(key))
         if value:
@@ -18827,6 +18957,18 @@ def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str,
     )
     if provider_endpoints:
         metadata["providerEndpoints"] = provider_endpoints
+    model_id_normalization = _plugin_manifest_model_id_normalization(
+        manifest.get("modelIdNormalization"),
+        owned_provider_ids=owned_provider_ids,
+    )
+    if model_id_normalization:
+        metadata["modelIdNormalization"] = model_id_normalization
+    provider_request = _plugin_manifest_provider_request(
+        manifest.get("providerRequest"),
+        owned_provider_ids=owned_provider_ids,
+    )
+    if provider_request:
+        metadata["providerRequest"] = provider_request
     provider_auth_choices = _plugin_manifest_provider_auth_choices(
         manifest.get("providerAuthChoices")
     )
