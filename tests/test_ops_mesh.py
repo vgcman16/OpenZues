@@ -7794,6 +7794,27 @@ def test_notification_route_create_accepts_synology_chat_native_route_kind() -> 
     assert route.conversation_target.channel == "synology-chat"
 
 
+def test_notification_route_create_accepts_mattermost_native_route_kind() -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    route = NotificationRouteCreate(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="mattermost",
+            account_id="default",
+            peer_kind="channel",
+            peer_id=f"channel:{channel_id}",
+        ),
+        secret_token="mattermost-bot-token",
+    )
+
+    assert route.kind == "mattermost"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "mattermost"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -17116,6 +17137,98 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_synology_chat_n
             {"Content-Type": "application/x-www-form-urlencoded"},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_mattermost_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-mattermost"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="mattermost-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "mattermost",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"channel:{channel_id}",
+        },
+    )
+    mattermost_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert isinstance(payload, dict)
+        mattermost_posts.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"id": "post-123", "channel_id": channel_id, "root_id": "post-parent"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="mattermost",
+        to=f"channel:{channel_id}",
+        message="Mattermost **native** parity.",
+        reply_to_id="post-parent",
+        account_id="default",
+        idempotency_key="idem-native-mattermost-send",
+    )
+
+    assert result["messageId"] == "post-123"
+    assert result["chatId"] == channel_id
+    assert result["channelId"] == channel_id
+    assert mattermost_posts == [
+        (
+            "POST",
+            "https://mattermost.example.com/api/v4/posts",
+            {
+                "channel_id": channel_id,
+                "message": "Mattermost **native** parity.",
+                "root_id": "post-parent",
+            },
+            "Authorization",
+            "Bearer mattermost-bot-token",
+            None,
+        )
+    ]
+
 
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(

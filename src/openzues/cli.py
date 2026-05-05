@@ -220,6 +220,12 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": True,
         "polls": False,
     },
+    "mattermost": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": True,
+        "media": False,
+        "polls": False,
+    },
     "zalo": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7374,6 +7380,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "googlechat",
     "line",
     "matrix",
+    "mattermost",
     "nextcloud-talk",
     "slack",
     "synology-chat",
@@ -29283,7 +29290,7 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, nextcloud-talk, synology-chat, line, or matrix."
+            "googlechat, nextcloud-talk, synology-chat, mattermost, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29346,12 +29353,14 @@ def routes_create_command(
         "googlechat",
         "nextcloud-talk",
         "synology-chat",
+        "mattermost",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
-            "zalo, feishu, googlechat, nextcloud-talk, synology-chat, line, matrix."
+            "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
+            "line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29368,6 +29377,7 @@ def routes_create_command(
                 "googlechat",
                 "nextcloud-talk",
                 "synology-chat",
+                "mattermost",
                 "line",
                 "matrix",
             }
@@ -29387,6 +29397,7 @@ def routes_create_command(
                 "googlechat",
                 "nextcloud-talk",
                 "synology-chat",
+                "mattermost",
                 "line",
                 "matrix",
             ],

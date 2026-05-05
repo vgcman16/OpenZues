@@ -255,6 +255,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "googlechat",
     "nextcloud-talk",
     "synology-chat",
+    "mattermost",
     "line",
     "matrix",
 }
@@ -3203,6 +3204,61 @@ def _synology_chat_payload(
     if "text" not in body and "file_url" not in body:
         raise RuntimeError("Message must be non-empty for Synology Chat sends.")
     return {"payload": json.dumps(body, separators=(",", ":"))}
+
+
+def _mattermost_base_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip().rstrip("/")
+    if target.lower().endswith("/api/v4"):
+        target = target[: -len("/api/v4")].rstrip("/")
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Mattermost route target must be an http(s) base URL.")
+    return target
+
+
+def _mattermost_api_endpoint(target: str | None, path: str) -> str:
+    suffix = str(path or "").strip().lstrip("/")
+    return f"{_mattermost_base_url(target)}/api/v4/{suffix}"
+
+
+def _mattermost_channel_id(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    lower = target.lower()
+    for prefix in ("channel:", "group:"):
+        if lower.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            break
+    if target.startswith("#"):
+        target = target[1:].strip()
+    return target or None
+
+
+def _mattermost_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Mattermost route is missing a bot token.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _mattermost_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _mattermost_result_channel_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("channel_id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
@@ -10145,6 +10201,8 @@ class OpsMeshService:
             return self._post_nextcloud_talk_provider_event
         if route_kind == "synology-chat":
             return self._post_synology_chat_provider_event
+        if route_kind == "mattermost":
+            return self._post_mattermost_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -19987,6 +20045,64 @@ class OpsMeshService:
             "chatId": recipient or "synology-chat",
             "channelId": recipient or "synology-chat",
         }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_mattermost_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Mattermost native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        channel_id = _mattermost_channel_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if channel_id is None:
+            raise RuntimeError("Mattermost route is missing a channel id target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = "\n".join(part for part in message_parts if part).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for Mattermost sends.")
+        payload: dict[str, object] = {
+            "channel_id": channel_id,
+            "message": message,
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["root_id"] = reply_to_id
+        result = self._request_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "posts"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Mattermost API returned a non-JSON response.")
+        result_channel_id = _mattermost_result_channel_id(result) or channel_id
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": _mattermost_message_id(result) or "unknown",
+            "chatId": result_channel_id,
+            "channelId": result_channel_id,
+        }
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result

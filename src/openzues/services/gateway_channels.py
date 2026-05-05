@@ -54,6 +54,11 @@ _CHANNEL_META = (
         "detailLabel": "Synology Chat",
     },
     {
+        "id": "mattermost",
+        "label": "Mattermost",
+        "detailLabel": "Mattermost",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

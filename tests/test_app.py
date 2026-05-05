@@ -4815,6 +4815,7 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "googlechat",
         "nextcloud-talk",
         "synology-chat",
+        "mattermost",
         "line",
         "matrix",
     ]
@@ -5056,9 +5057,45 @@ def test_gateway_channels_endpoint_classifies_synology_chat_native_route(tmp_pat
     assert payload["channelDefaultAccountId"]["synology-chat"] == "default"
 
 
+def test_gateway_channels_endpoint_classifies_mattermost_native_route(tmp_path) -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Mattermost Native Gateway",
+                "kind": "mattermost",
+                "target": "https://mattermost.example.com",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "mattermost",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": f"channel:{channel_id}",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "mattermost" in payload["channelOrder"]
+    assert payload["channelLabels"]["mattermost"] == "Mattermost"
+    assert payload["channelDetailLabels"]["mattermost"] == "Mattermost"
+    assert payload["channels"]["mattermost"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["mattermost"] == "default"
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
-    '"nextcloud-talk", "synology-chat", "line", "matrix"].includes(routeKind)'
+    '"nextcloud-talk", "synology-chat", "mattermost", "line", "matrix"].includes(routeKind)'
 )
 
 
@@ -5131,6 +5168,18 @@ def test_notification_route_operator_form_offers_synology_chat_native_routes() -
     )
 
     assert '<option value="synology-chat">Synology Chat native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_mattermost_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="mattermost">Mattermost native route</option>' in template
     assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
