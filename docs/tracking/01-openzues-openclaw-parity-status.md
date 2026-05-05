@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~65.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~65.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -327,6 +327,11 @@ may lag behind this tracker.
   OpenClaw's `<media:image>` / `<media:document>` fallback before deeper
   attachment download staging.
   - Status: checkpointed in `86f9fa74`
+
+- [x] Microsoft Teams personal welcome-card lifecycle, preserving OpenClaw's
+  bot-added `conversationUpdate` Adaptive Card welcome send with configured
+  prompt starters.
+  - Status: checkpointed in `72b1e637`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for

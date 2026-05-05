@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.6% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.7% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10875,6 +10875,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`5 passed, 320 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `86f9fa74`.
+
+- Microsoft Teams personal welcome-card lifecycle now mirrors OpenClaw's
+  `onMembersAdded` path from `extensions/msteams/src/monitor-handler.ts` and
+  `welcome-card.ts`: when the bot is added to a personal Teams conversation,
+  OpenZues resolves native Teams app credentials from config, obtains a Bot
+  Framework bearer, and posts the Adaptive Card 1.5 welcome message with
+  configured prompt starters through the conversation activities endpoint.
+  This closes `OZ-PROV-001AW`; repo-wide parity is now estimated at ~65.7%.
+  Remaining Microsoft Teams lifecycle breadth is group welcome handling,
+  downloadable inbound media staging, and feedback reflection follow-up.
+- Verified the Microsoft Teams personal welcome-card slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback or msteams_personal_welcome"`
+  (`6 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `72b1e637`.
 
 ## References
 
