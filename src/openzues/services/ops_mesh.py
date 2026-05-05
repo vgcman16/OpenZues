@@ -237,6 +237,7 @@ MSTEAMS_REACTION_EMOJIS = {
     "sad": "\U0001f622",
     "angry": "\U0001f621",
 }
+MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -348,6 +349,12 @@ class _MSTeamsRouteConfig:
     conversation_type: str | None
     graph_chat_id: str | None
     share_point_site_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsSsoConfig:
+    connection_name: str
+    user_token_base_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -4183,6 +4190,54 @@ def _msteams_signin_sso_metadata(
             value_mapping.get("state")
         ) is not None
     return metadata
+
+
+def _msteams_sso_enabled(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _msteams_sso_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsSsoConfig | None:
+    channels = _msteams_inbound_mapping(snapshot.get("channels"))
+    channel_config = _msteams_inbound_mapping(
+        channels.get("msteams") or channels.get("teams")
+    )
+    account_config: Mapping[str, Any] = {}
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
+    if accounts:
+        account_config = _msteams_inbound_mapping(
+            accounts.get(normalized_account_id)
+            or accounts.get(DEFAULT_ACCOUNT_ID)
+            or {}
+        )
+    sso_config = _msteams_inbound_mapping(
+        account_config.get("sso") or channel_config.get("sso")
+    )
+    if not _msteams_sso_enabled(sso_config.get("enabled")):
+        return None
+    connection_name = _msteams_inbound_optional_string(
+        sso_config.get("connectionName") or sso_config.get("connection_name")
+    )
+    if connection_name is None:
+        return None
+    user_token_base_url = (
+        _msteams_inbound_optional_string(
+            sso_config.get("userTokenBaseUrl") or sso_config.get("user_token_base_url")
+        )
+        or MSTEAMS_USER_TOKEN_BASE_URL
+    )
+    return _MSTeamsSsoConfig(
+        connection_name=connection_name,
+        user_token_base_url=user_token_base_url,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -8903,9 +8958,242 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
-    def _handle_msteams_signin_invoke(
+    def _msteams_sso_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> _MSTeamsSsoConfig | None:
+        if self.gateway_config_service is None:
+            return None
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return None
+        if not isinstance(snapshot, Mapping):
+            return None
+        return _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
+
+    async def _msteams_sso_route_credentials(
+        self,
+    ) -> tuple[_MSTeamsRouteConfig, str] | None:
+        for route in await self.database.list_notification_routes():
+            if str(route.get("kind") or "").strip().lower() != "msteams":
+                continue
+            if not bool(route.get("enabled", True)):
+                continue
+            try:
+                route_config = _msteams_route_config(str(route.get("target") or ""))
+            except RuntimeError:
+                continue
+            if not route_config.app_id or not route_config.tenant_id:
+                continue
+            secret_token = await self._notification_route_secret_token(route)
+            if not str(secret_token or "").strip():
+                continue
+            return route_config, str(secret_token)
+        return None
+
+    def _msteams_sso_error_metadata(
+        self,
+        base_metadata: Mapping[str, object],
+        *,
+        code: str,
+        message: str,
+        status: int | None = None,
+    ) -> dict[str, object]:
+        del self
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "error"
+        metadata["code"] = code
+        metadata["message"] = message
+        if status is not None:
+            metadata["httpStatus"] = status
+        return metadata
+
+    async def _msteams_handle_signin_token_exchange(
         self,
         activity: Mapping[str, Any],
+        *,
+        base_metadata: Mapping[str, object],
+        sso_config: _MSTeamsSsoConfig,
+        user_id: str,
+        channel_id: str,
+    ) -> dict[str, object]:
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if not user_id:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_user",
+                message="no user id on invoke activity",
+            )
+        connection_name = (
+            _msteams_inbound_optional_string(value.get("connectionName"))
+            or sso_config.connection_name
+        )
+        if not connection_name:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_connection",
+                message="no OAuth connection name",
+            )
+        exchange_token = _msteams_inbound_optional_string(value.get("token"))
+        if exchange_token is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_token",
+                message="no exchangeable token on invoke",
+            )
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_route",
+                message="no native Microsoft Teams route with app credentials is configured",
+            )
+        route_config, app_password = credentials
+        try:
+            bearer_token = await asyncio.to_thread(
+                self._msteams_fetch_bot_token,
+                tenant_id=route_config.tenant_id or "",
+                app_id=route_config.app_id or "",
+                app_password=app_password,
+            )
+            result = await asyncio.to_thread(
+                self._msteams_request_user_token_service,
+                base_url=sso_config.user_token_base_url,
+                path="/api/usertoken/exchange",
+                query={
+                    "userId": user_id,
+                    "connectionName": connection_name,
+                    "channelId": channel_id or "msteams",
+                },
+                method="POST",
+                body={"token": exchange_token},
+                bearer_token=bearer_token,
+            )
+        except Exception as exc:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="service_error",
+                message=str(exc).strip() or type(exc).__name__,
+            )
+        token = _msteams_inbound_optional_string(result.get("token"))
+        result_connection_name = _msteams_inbound_optional_string(
+            result.get("connectionName")
+        )
+        if token is None or result_connection_name is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="unexpected_response",
+                message="User Token service response missing token/connectionName",
+            )
+        expires_at = _msteams_inbound_optional_string(result.get("expiration"))
+        await self.database.upsert_msteams_sso_token(
+            connection_name=connection_name,
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at,
+        )
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "exchanged"
+        metadata["connectionName"] = connection_name
+        metadata["stored"] = True
+        metadata["hasExpiry"] = expires_at is not None
+        if expires_at is not None:
+            metadata["expiresAt"] = expires_at
+        return metadata
+
+    async def _msteams_handle_signin_verify_state(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        base_metadata: Mapping[str, object],
+        sso_config: _MSTeamsSsoConfig,
+        user_id: str,
+        channel_id: str,
+    ) -> dict[str, object]:
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if not user_id:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_user",
+                message="no user id on invoke activity",
+            )
+        state = _msteams_inbound_optional_string(value.get("state"))
+        if state is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_state",
+                message="no state code on invoke",
+            )
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_route",
+                message="no native Microsoft Teams route with app credentials is configured",
+            )
+        route_config, app_password = credentials
+        try:
+            bearer_token = await asyncio.to_thread(
+                self._msteams_fetch_bot_token,
+                tenant_id=route_config.tenant_id or "",
+                app_id=route_config.app_id or "",
+                app_password=app_password,
+            )
+            result = await asyncio.to_thread(
+                self._msteams_request_user_token_service,
+                base_url=sso_config.user_token_base_url,
+                path="/api/usertoken/GetToken",
+                query={
+                    "userId": user_id,
+                    "connectionName": sso_config.connection_name,
+                    "channelId": channel_id or "msteams",
+                    "code": state,
+                },
+                method="GET",
+                bearer_token=bearer_token,
+            )
+        except Exception as exc:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="service_error",
+                message=str(exc).strip() or type(exc).__name__,
+            )
+        token = _msteams_inbound_optional_string(result.get("token"))
+        result_connection_name = _msteams_inbound_optional_string(
+            result.get("connectionName")
+        )
+        if token is None or result_connection_name is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="unexpected_response",
+                message="User Token service response missing token/connectionName",
+            )
+        expires_at = _msteams_inbound_optional_string(result.get("expiration"))
+        await self.database.upsert_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at,
+        )
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "verified"
+        metadata["connectionName"] = sso_config.connection_name
+        metadata["stored"] = True
+        metadata["hasExpiry"] = expires_at is not None
+        if expires_at is not None:
+            metadata["expiresAt"] = expires_at
+        return metadata
+
+    async def _handle_msteams_signin_invoke(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
     ) -> dict[str, object] | None:
         if str(activity.get("type") or "").strip().lower() != "invoke":
             return None
@@ -8913,6 +9201,30 @@ class OpsMeshService:
         if name not in {"signin/tokenExchange", "signin/verifyState"}:
             return None
         user_id, channel_id = _msteams_signin_user(activity)
+        sso_metadata = _msteams_signin_sso_metadata(
+            name,
+            activity.get("value"),
+            user_id=user_id,
+            channel_id=channel_id,
+        )
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is not None:
+            if name == "signin/tokenExchange":
+                sso_metadata = await self._msteams_handle_signin_token_exchange(
+                    activity,
+                    base_metadata=sso_metadata,
+                    sso_config=sso_config,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                )
+            else:
+                sso_metadata = await self._msteams_handle_signin_verify_state(
+                    activity,
+                    base_metadata=sso_metadata,
+                    sso_config=sso_config,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                )
         return {
             "ok": True,
             "channel": "msteams",
@@ -8923,12 +9235,7 @@ class OpsMeshService:
                 "type": "invokeResponse",
                 "value": {"status": 200, "body": {}},
             },
-            "sso": _msteams_signin_sso_metadata(
-                name,
-                activity.get("value"),
-                user_id=user_id,
-                channel_id=channel_id,
-            ),
+            "sso": sso_metadata,
         }
 
     async def _handle_msteams_feedback_invoke(
@@ -9018,7 +9325,10 @@ class OpsMeshService:
         *,
         account_id: str | None = None,
     ) -> dict[str, object]:
-        signin_result = self._handle_msteams_signin_invoke(activity)
+        signin_result = await self._handle_msteams_signin_invoke(
+            activity,
+            account_id=account_id,
+        )
         if signin_result is not None:
             return signin_result
         feedback_result = await self._handle_msteams_feedback_invoke(
@@ -22037,6 +22347,49 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _msteams_request_user_token_service(
+        self,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        encoded_query = urlencode(query)
+        target = f"{base_url.rstrip('/')}{path}"
+        if encoded_query:
+            target = f"{target}?{encoded_query}"
+        result = self._request_json_provider_url(
+            target,
+            method=method,
+            payload=body,
+            secret_header_name="Authorization",
+            secret_token=f"Bearer {bearer_token}",
+            extra_headers={
+                "Accept": "application/json",
+                "User-Agent": "OpenZues",
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("User Token service returned a non-JSON response.")
+        token = _msteams_inbound_optional_string(result.get("token"))
+        connection_name = _msteams_inbound_optional_string(result.get("connectionName"))
+        if token is None or connection_name is None:
+            raise RuntimeError("User Token service response missing token/connectionName.")
+        response: dict[str, object] = {
+            "connectionName": connection_name,
+            "token": token,
+        }
+        channel_id = _msteams_inbound_optional_string(result.get("channelId"))
+        if channel_id is not None:
+            response["channelId"] = channel_id
+        expiration = _msteams_inbound_optional_string(result.get("expiration"))
+        if expiration is not None:
+            response["expiration"] = expiration
+        return response
 
     def _msteams_fetch_bot_token(
         self,
