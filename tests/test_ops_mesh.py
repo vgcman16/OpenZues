@@ -19409,6 +19409,64 @@ async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_sessio
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_consumes_msteams_feedback_invoke_when_disabled(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {"channels": {"msteams": {"feedbackEnabled": False}}}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-invoke-disabled-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {"id": "a:personal-dm", "conversationType": "personal"},
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Do not store this."}),
+                },
+                "replyToId": "bot-message-888",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "message/submitAction",
+        "action": "feedback",
+        "feedback": {
+            "messageId": "bot-message-888",
+            "value": "negative",
+            "comment": "Do not store this.",
+        },
+        "recorded": False,
+        "disabled": True,
+    }
+    assert await database.list_control_chat_messages(limit=10) == []
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_acks_msteams_signin_token_exchange_without_sso(
     tmp_path: Path,
 ) -> None:

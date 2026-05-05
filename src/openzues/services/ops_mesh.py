@@ -9879,21 +9879,39 @@ class OpsMeshService:
                 user_comment = _msteams_inbound_optional_string(
                     parsed_feedback.get("feedbackText")
                 )
-        context = _msteams_inbound_session_context(activity, account_id=account_id)
         feedback_message_id = (
             _msteams_inbound_optional_string(value.get("replyToId"))
             or _msteams_inbound_optional_string(activity.get("replyToId"))
             or "unknown"
         )
-        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
-        if user_comment is not None:
-            content = f"{content}\nComment: {user_comment}"
         feedback_payload: dict[str, object] = {
             "messageId": feedback_message_id,
             "value": feedback_value,
         }
         if user_comment is not None:
             feedback_payload["comment"] = user_comment
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        if (
+            _msteams_bool_config(
+                channel_config.get("feedbackEnabled"),
+                default=True,
+            )
+            is False
+        ):
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "activityType": "invoke",
+                "name": "message/submitAction",
+                "action": "feedback",
+                "feedback": feedback_payload,
+                "recorded": False,
+                "disabled": True,
+            }
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
+        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
+        if user_comment is not None:
+            content = f"{content}\nComment: {user_comment}"
         await self.database.append_control_chat_message(
             role="system",
             content=content,
