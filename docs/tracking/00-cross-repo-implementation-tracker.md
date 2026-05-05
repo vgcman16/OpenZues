@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~67.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~67.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams edit message action slice is checkpointed in `df3f4f0d`.
+The Microsoft Teams delete message action slice is checkpointed in `fd98306a`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams edit message action checkpointed in `df3f4f0d` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Bot Framework action breadth: delete and upload-file |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams delete message action checkpointed in `fd98306a` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Bot Framework action breadth: upload-file |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BS` Microsoft Teams delete message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="delete"` resolves Teams conversation targets plus `messageId`,
+    obtains Bot Framework bearer credentials through route config, DELETEs
+    `/activities/{messageId}`, and returns OpenClaw-shaped `{ok, channel,
+    conversationId}`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `fd98306a`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams delete proof (`1
+    passed`), adjacent Teams action/provider proof (`19 passed, 327
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001BR` Microsoft Teams edit message action
   - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
