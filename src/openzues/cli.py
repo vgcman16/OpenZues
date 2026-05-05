@@ -227,6 +227,13 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": False,
         "polls": False,
     },
+    "msteams": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": False,
+        "media": False,
+        "polls": False,
+        "threads": False,
+    },
     "signal": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7400,6 +7407,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "line",
     "matrix",
     "mattermost",
+    "msteams",
     "nextcloud-talk",
     "irc",
     "signal",
@@ -29312,8 +29320,8 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, irc, "
-            "twitch, line, or matrix."
+            "googlechat, nextcloud-talk, synology-chat, mattermost, msteams, "
+            "signal, irc, twitch, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29377,6 +29385,7 @@ def routes_create_command(
         "nextcloud-talk",
         "synology-chat",
         "mattermost",
+        "msteams",
         "signal",
         "irc",
         "twitch",
@@ -29386,7 +29395,7 @@ def routes_create_command(
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
             "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
-            "signal, irc, twitch, line, matrix."
+            "msteams, signal, irc, twitch, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29404,6 +29413,7 @@ def routes_create_command(
                 "nextcloud-talk",
                 "synology-chat",
                 "mattermost",
+                "msteams",
                 "signal",
                 "irc",
                 "twitch",
@@ -29427,6 +29437,7 @@ def routes_create_command(
                 "nextcloud-talk",
                 "synology-chat",
                 "mattermost",
+                "msteams",
                 "signal",
                 "irc",
                 "twitch",

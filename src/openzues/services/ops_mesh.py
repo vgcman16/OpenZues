@@ -258,6 +258,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "nextcloud-talk",
     "synology-chat",
     "mattermost",
+    "msteams",
     "signal",
     "irc",
     "twitch",
@@ -324,6 +325,13 @@ class _TwitchRouteConfig:
     client_id: str
     token: str
     default_channel: str | None
+
+
+@dataclass(frozen=True)
+class _MSTeamsRouteConfig:
+    service_url: str
+    app_id: str | None
+    tenant_id: str | None
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -3286,6 +3294,70 @@ def _mattermost_result_channel_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
+    target = str(raw_target or "").strip()
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Microsoft Teams route target must be an http(s) service URL.")
+    parsed = urlparse(target)
+    query = {key.lower(): value for key, value in parse_qsl(parsed.query, keep_blank_values=True)}
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/v3"):
+        path = path[:-3].rstrip("/")
+    service_url = parsed._replace(path=path, query="", fragment="").geturl().rstrip("/")
+    return _MSTeamsRouteConfig(
+        service_url=service_url,
+        app_id=query.get("appid") or None,
+        tenant_id=query.get("tenantid") or None,
+    )
+
+
+def _msteams_conversation_id(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    normalized_target = target.lower()
+    for prefix in ("msteams:", "teams:"):
+        if normalized_target.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            normalized_target = target.lower()
+            break
+    if target.lower().startswith("conversation:"):
+        target = target[len("conversation:") :].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    if target.lower().startswith("user:"):
+        raise RuntimeError(
+            "Microsoft Teams user targets require a stored conversation reference; "
+            "use a conversation:<id> target for native routes."
+        )
+    target = re.split(r";messageid=", target, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    return target
+
+
+def _msteams_activity_endpoint(
+    *,
+    service_url: str,
+    conversation_id: str,
+) -> str:
+    encoded_conversation_id = quote(conversation_id, safe="")
+    return f"{service_url.rstrip('/')}/v3/conversations/{encoded_conversation_id}/activities"
+
+
+def _msteams_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("id", "activityId", "messageId"):
+        value = result.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def _signal_base_url(raw_target: str | None) -> str:
     target = str(raw_target or "").strip().rstrip("/")
     if _normalized_http_webhook_url(target) is None:
@@ -5623,6 +5695,13 @@ def _conversation_target_peer_id_matches(
         route_twitch_target = str(_twitch_normalize_channel(route_peer_id) or "").strip()
         event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
         return bool(route_twitch_target and route_twitch_target == event_twitch_target)
+    if channel == "msteams":
+        try:
+            route_msteams_target = _msteams_conversation_id(route_peer_id).strip().lower()
+            event_msteams_target = _msteams_conversation_id(event_peer_id).strip().lower()
+        except RuntimeError:
+            return False
+        return bool(route_msteams_target and route_msteams_target == event_msteams_target)
     return False
 
 
@@ -10499,6 +10578,8 @@ class OpsMeshService:
             return self._post_synology_chat_provider_event
         if route_kind == "mattermost":
             return self._post_mattermost_provider_event
+        if route_kind == "msteams":
+            return self._post_msteams_provider_event
         if route_kind == "signal":
             return self._post_signal_provider_event
         if route_kind == "irc":
@@ -20515,6 +20596,140 @@ class OpsMeshService:
             native_result["replyToId"] = reply_to_id
         if media_urls:
             native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _msteams_fetch_bot_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "client_credentials",
+                "scope": "https://api.botframework.com/.default",
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Microsoft Teams token HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Microsoft Teams token request failed: {exc.reason}") from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Microsoft Teams token response was not JSON.") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Microsoft Teams token response was not an object.")
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            raise RuntimeError("Microsoft Teams token response did not include access_token.")
+        return token
+
+    def _msteams_bearer_token(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+    ) -> str:
+        secret = str(secret_token or "").strip()
+        if secret.lower().startswith("bearer "):
+            return secret
+        if not route_config.app_id or not route_config.tenant_id or not secret:
+            raise RuntimeError(
+                "Microsoft Teams route requires appId, tenantId, and app password "
+                "configuration."
+            )
+        access_token = self._msteams_fetch_bot_token(
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret,
+        )
+        return f"Bearer {access_token}"
+
+    def _post_msteams_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Microsoft Teams native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        conversation_id = _msteams_conversation_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        message = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            raise RuntimeError(
+                "Microsoft Teams native media delivery requires FileConsentCard or "
+                "Graph upload support and is not available for this route yet."
+            )
+        if not message:
+            raise RuntimeError("Microsoft Teams send requires text.")
+
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        payload: dict[str, object] = {
+            "type": "message",
+            "channelData": {"feedbackLoopEnabled": False},
+            "entities": [
+                {
+                    "type": "https://schema.org/Message",
+                    "@type": "Message",
+                    "@id": "",
+                    "additionalType": ["AIGeneratedContent"],
+                }
+            ],
+        }
+        if message:
+            payload["text"] = message
+        result = self._request_json_provider_url(
+            _msteams_activity_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+            ),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams API returned a non-JSON response.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": _msteams_message_id(result) or "unknown",
+            "chatId": conversation_id,
+            "channelId": conversation_id,
+            "conversationId": conversation_id,
+        }
         return native_result
 
     def _post_signal_provider_event(

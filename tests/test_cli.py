@@ -19908,6 +19908,63 @@ def test_routes_create_command_accepts_twitch_native_route(
     assert routes[0]["conversation_target"]["channel"] == "twitch"
 
 
+def test_routes_create_command_accepts_msteams_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Microsoft Teams Native Gateway",
+            "--kind",
+            "msteams",
+            "--target",
+            "https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            "--conversation-channel",
+            "msteams",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "conversation:19:ops-thread@thread.tacv2",
+            "--secret-token",
+            "teams-app-password",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Microsoft Teams Native Gateway"
+    assert payload["kind"] == "msteams"
+    assert (
+        payload["target"]
+        == "https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id"
+    )
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "msteams"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "conversation:19:ops-thread@thread.tacv2"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "msteams"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "msteams"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

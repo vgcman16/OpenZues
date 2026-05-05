@@ -59,6 +59,11 @@ _CHANNEL_META = (
         "detailLabel": "Mattermost",
     },
     {
+        "id": "msteams",
+        "label": "Microsoft Teams",
+        "detailLabel": "Microsoft Teams",
+    },
+    {
         "id": "signal",
         "label": "Signal",
         "detailLabel": "Signal",
