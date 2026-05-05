@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -884,6 +884,11 @@ may lag behind this tracker.
   OpenClaw `file_key` precedence, file-to-media retry behavior, inbound
   attachment storage, and read action media metadata projection.
   - Status: checkpointed in `65da0455`
+
+- [x] Feishu/Lark post/rich-text embedded media hydration support,
+  preserving OpenClaw localized post parsing, embedded image/media key
+  collection, resource downloads, and ordered read action media metadata.
+  - Status: checkpointed in `ed3aedb5`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1936,7 +1941,8 @@ may lag behind this tracker.
     Feishu/Lark mediaMaxMb limits checkpointed in `45d6a6bc`; Feishu/Lark
     channel capability discovery checkpointed in `326f471f`; Feishu/Lark
     direct provider-route media sends checkpointed in `77149f94`; Feishu/Lark
-    read-media resource hydration checkpointed in `65da0455`; Signal native
+    read-media resource hydration checkpointed in `65da0455`; Feishu/Lark
+    post-media resource hydration checkpointed in `ed3aedb5`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 

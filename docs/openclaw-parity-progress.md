@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~70.3% overall, with a reasonable band of ~50-70%.
+- Estimated repo-wide parity: ~70.4% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -107,6 +107,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `image_key`, retries Feishu file downloads as `type=media` on the upstream
   iOS-video 502 edge, stores bytes in the inbound attachment workspace, and
   projects media path/type/hash metadata.
+- Provider-native Feishu/Lark post-media parity now hydrates rich-text post
+  `img.image_key` and `media.file_key` elements from localized post payloads,
+  downloads embedded resources, stores inbound attachment bytes, and preserves
+  ordered media metadata.
 - Provider-native Google Chat direct text/thread parity now accepts native
   Google Chat routes, normalizes upstream-style `googlechat:`/`gchat:` space
   targets, sends OpenClaw-shaped `{text, thread}` message payloads through the
@@ -2126,7 +2130,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 ## Remaining Not-Fully-Complete Areas
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
-- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/direct-media/read-media/local-media-root/audio-as-voice/media-max/capabilities/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; Feishu/Lark post/rich-text embedded media hydration remains open.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/direct-media/read-media/post-media/local-media-root/audio-as-voice/media-max/capabilities/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; broader Feishu inbound receiver/audio transcription and other provider edge cases remain open.
 - Remote marketplace clone/update breadth and deeper runtime plugin activation/import metadata beyond metadata-only config load-path discovery and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
@@ -11683,6 +11687,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `65da0455`.
+- Feishu/Lark post/rich-text embedded media hydration now mirrors the embedded
+  post branch of OpenClaw `extensions/feishu/src/post.ts` and
+  `extensions/feishu/src/bot-content.ts`: native read actions resolve
+  localized `post` payloads, collect `img.image_key` and `media.file_key`
+  elements in order, download image resources as `type=image` and media
+  resources as `type=file`, save bytes under the inbound gateway attachment
+  workspace, and project ordered media metadata. This closes `OZ-PROV-001CR`;
+  repo-wide parity is now estimated at ~70.4%. The next repo-wide queue head is
+  imported OpenClaw plugin runtime entry execution through `tools.invoke`.
+- Verified the Feishu/Lark post-media slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_feishu_read_post_hydrates_embedded_media -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`29 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `ed3aedb5`.
 
 ## References
 
