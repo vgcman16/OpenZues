@@ -18037,12 +18037,53 @@ const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
 
 function normalizeLowercaseStringOrEmpty(value) {
-  return String(value ?? "").trim().toLowerCase();
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function readStringValue(value) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeNullableString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalString(value) {
+  return normalizeNullableString(value) || undefined;
+}
+
+function normalizeStringifiedOptionalString(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return normalizeOptionalString(String(value));
+  }
+  return undefined;
 }
 
 function normalizeOptionalLowercaseString(value) {
-  const text = normalizeLowercaseStringOrEmpty(value);
-  return text || undefined;
+  return normalizeOptionalString(value)?.toLowerCase();
+}
+
+function lowercasePreservingWhitespace(value) {
+  return String(value ?? "").toLowerCase();
+}
+
+function localeLowercasePreservingWhitespace(value) {
+  return String(value ?? "").toLocaleLowerCase();
+}
+
+function hasNonEmptyString(value) {
+  return normalizeOptionalString(value) !== undefined;
 }
 
 function passthrough(value) {
@@ -18050,14 +18091,28 @@ function passthrough(value) {
 }
 
 const textRuntime = {
+  hasNonEmptyString,
+  localeLowercasePreservingWhitespace,
+  lowercasePreservingWhitespace,
   normalizeLowercaseStringOrEmpty,
+  normalizeNullableString,
   normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+  normalizeStringifiedOptionalString,
+  readStringValue,
 };
 
 const genericSdk = new Proxy(
   {
+    hasNonEmptyString,
+    localeLowercasePreservingWhitespace,
+    lowercasePreservingWhitespace,
     normalizeLowercaseStringOrEmpty,
+    normalizeNullableString,
     normalizeOptionalLowercaseString,
+    normalizeOptionalString,
+    normalizeStringifiedOptionalString,
+    readStringValue,
   },
   {
     get(target, prop) {

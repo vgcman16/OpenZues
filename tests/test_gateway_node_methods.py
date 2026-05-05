@@ -6128,6 +6128,104 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_text_runtime_normalization_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-text-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  hasNonEmptyString,
+  normalizeNullableString,
+  normalizeOptionalString,
+  normalizeStringifiedOptionalString
+} = require("openclaw/plugin-sdk/text-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.text_helpers",
+      description: "Use OpenClaw text-runtime helpers",
+      parameters: {
+        type: "object",
+        properties: { value: {}, stringified: {} }
+      },
+      execute(_toolCallId, args) {
+        return {
+          optional: normalizeOptionalString(args.value),
+          nullableBlank: normalizeNullableString("   "),
+          stringified: normalizeStringifiedOptionalString(args.stringified),
+          hasText: hasNonEmptyString(args.value)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-text-plugin",
+                    "name": "Runtime Text Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-text-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.text_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.text_helpers",
+            "args": {"value": "  Hello  ", "stringified": 42},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "optional": "Hello",
+        "nullableBlank": None,
+        "stringified": "42",
+        "hasText": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
