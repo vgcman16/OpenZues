@@ -5807,6 +5807,38 @@ def _feishu_directory_peer_views(
     return peers
 
 
+def _feishu_reaction_views(data: object) -> list[dict[str, object]]:
+    if not isinstance(data, Mapping):
+        return []
+    items = data.get("items")
+    reactions: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        reaction_type = item.get("reaction_type")
+        operator_id = item.get("operator_id")
+        operator_value = ""
+        if isinstance(operator_id, Mapping):
+            for key in ("open_id", "user_id", "union_id"):
+                value = str(operator_id.get(key) or "").strip()
+                if value:
+                    operator_value = value
+                    break
+        reactions.append(
+            {
+                "reactionId": str(item.get("reaction_id") or ""),
+                "emojiType": (
+                    str(reaction_type.get("emoji_type") or "")
+                    if isinstance(reaction_type, Mapping)
+                    else ""
+                ),
+                "operatorType": "app" if item.get("operator_type") == "app" else "user",
+                "operatorId": operator_value,
+            }
+        )
+    return reactions
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15777,6 +15809,29 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_channel_list_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action in {"react", "reactions"}:
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Feishu route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            if action == "react":
+                return await asyncio.to_thread(
+                    self._dispatch_feishu_react_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            return await asyncio.to_thread(
+                self._dispatch_feishu_reactions_message_action,
                 route,
                 request,
                 secret_token,
@@ -27440,6 +27495,156 @@ class OpsMeshService:
             "action": "channel-list",
             "groups": list_groups(),
             "peers": list_peers(),
+        }
+
+    def _feishu_list_reactions(
+        self,
+        route: dict[str, Any],
+        *,
+        message_id: str,
+        emoji_type: str | None,
+        secret_token: str | None,
+    ) -> list[dict[str, object]]:
+        query = {"reaction_type": emoji_type} if emoji_type else None
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/messages/{quote(message_id, safe='')}/reactions",
+                query=query,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu list reactions failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        return _feishu_reaction_views(data)
+
+    def _feishu_delete_reaction(
+        self,
+        route: dict[str, Any],
+        *,
+        message_id: str,
+        reaction_id: str,
+        secret_token: str | None,
+    ) -> None:
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/messages/{quote(message_id, safe='')}/reactions/"
+                f"{quote(reaction_id, safe='')}",
+            ),
+            method="DELETE",
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu remove reaction failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+
+    def _dispatch_feishu_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _feishu_action_message_id(request.params, action="reaction")
+        emoji = _message_action_param_string(request.params, "emoji")
+        remove = request.params.get("remove") is True
+        clear_all = request.params.get("clearAll") is True
+        if remove:
+            if emoji is None:
+                raise RuntimeError("Emoji is required to remove a Feishu reaction.")
+            matches = self._feishu_list_reactions(
+                route,
+                message_id=message_id,
+                emoji_type=emoji,
+                secret_token=secret_token,
+            )
+            own_reaction = next(
+                (reaction for reaction in matches if reaction.get("operatorType") == "app"),
+                None,
+            )
+            if own_reaction is None:
+                return {"ok": True, "removed": None}
+            reaction_id = str(own_reaction.get("reactionId") or "").strip()
+            if reaction_id:
+                self._feishu_delete_reaction(
+                    route,
+                    message_id=message_id,
+                    reaction_id=reaction_id,
+                    secret_token=secret_token,
+                )
+            return {"ok": True, "removed": emoji}
+        if emoji is None:
+            if not clear_all:
+                raise RuntimeError(
+                    "Emoji is required to add a Feishu reaction. "
+                    "Set clearAll=true to remove all bot reactions."
+                )
+            reactions = self._feishu_list_reactions(
+                route,
+                message_id=message_id,
+                emoji_type=None,
+                secret_token=secret_token,
+            )
+            removed = 0
+            for reaction in reactions:
+                if reaction.get("operatorType") != "app":
+                    continue
+                reaction_id = str(reaction.get("reactionId") or "").strip()
+                if not reaction_id:
+                    continue
+                self._feishu_delete_reaction(
+                    route,
+                    message_id=message_id,
+                    reaction_id=reaction_id,
+                    secret_token=secret_token,
+                )
+                removed += 1
+            return {"ok": True, "removed": removed}
+        result = self._request_json_provider_url(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                f"im/v1/messages/{quote(message_id, safe='')}/reactions",
+            ),
+            method="POST",
+            payload={"reaction_type": {"emoji_type": emoji}},
+            secret_header_name="Authorization",
+            secret_token=_feishu_bearer_token(secret_token),
+        )
+        if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu add reaction failed: "
+                f"{result.get('msg') or result.get('message') or result.get('code')}"
+            )
+        data = result.get("data") if isinstance(result, Mapping) else None
+        add_reaction_id = data.get("reaction_id") if isinstance(data, Mapping) else None
+        if not str(add_reaction_id or "").strip():
+            raise RuntimeError("Feishu add reaction failed: no reaction_id returned")
+        return {"ok": True, "added": emoji}
+
+    def _dispatch_feishu_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        message_id = _feishu_action_message_id(request.params, action="reactions lookup")
+        return {
+            "ok": True,
+            "reactions": self._feishu_list_reactions(
+                route,
+                message_id=message_id,
+                emoji_type=None,
+                secret_token=secret_token,
+            ),
         }
 
     def _post_msteams_provider_event(
