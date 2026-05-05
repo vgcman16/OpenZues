@@ -238,6 +238,7 @@ MSTEAMS_REACTION_EMOJIS = {
     "angry": "\U0001f621",
 }
 MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
+MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -4107,12 +4108,63 @@ def _msteams_html_attachment_text(activity: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _msteams_attachment_file_name(attachment: Mapping[str, Any]) -> str:
+    name = str(attachment.get("name") or attachment.get("fileName") or "").strip()
+    if name:
+        return name
+    content = attachment.get("content")
+    if isinstance(content, Mapping):
+        return str(content.get("fileName") or content.get("name") or "").strip()
+    return ""
+
+
+def _msteams_attachment_file_type(attachment: Mapping[str, Any]) -> str:
+    file_type = str(attachment.get("fileType") or "").strip()
+    if file_type:
+        return file_type
+    content = attachment.get("content")
+    if isinstance(content, Mapping):
+        return str(content.get("fileType") or "").strip()
+    return ""
+
+
+def _msteams_attachment_is_likely_image(attachment: Mapping[str, Any]) -> bool:
+    content_type = str(attachment.get("contentType") or "").strip().lower()
+    if content_type.startswith("image/"):
+        return True
+    name = _msteams_attachment_file_name(attachment).lower()
+    if name and MSTEAMS_IMAGE_EXT_RE.search(name):
+        return True
+    file_type = _msteams_attachment_file_type(attachment).lower().lstrip(".")
+    return bool(file_type and MSTEAMS_IMAGE_EXT_RE.search(f"x.{file_type}"))
+
+
+def _msteams_attachment_placeholder(activity: Mapping[str, Any]) -> str | None:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return None
+    attachments = [
+        attachment for attachment in raw_attachments if isinstance(attachment, Mapping)
+    ]
+    if not attachments:
+        return None
+    image_count = sum(
+        1 for attachment in attachments if _msteams_attachment_is_likely_image(attachment)
+    )
+    if image_count > 0:
+        return f"<media:image>{f' ({image_count} images)' if image_count > 1 else ''}"
+    count = len(attachments)
+    return f"<media:document>{f' ({count} files)' if count > 1 else ''}"
+
+
 def _msteams_inbound_activity_text(activity: Mapping[str, Any]) -> str | None:
     activity_type = str(activity.get("type") or "").strip().lower()
     if activity_type == "message":
         text = str(activity.get("text") or "").strip()
         if not text:
             text = _msteams_html_attachment_text(activity) or ""
+        if not text:
+            text = _msteams_attachment_placeholder(activity) or ""
         text = _msteams_strip_mention_tags(text)
         return text or None
     if (

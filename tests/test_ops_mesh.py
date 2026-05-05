@@ -18999,6 +18999,73 @@ async def test_ops_mesh_service_routes_msteams_html_attachment_text_fallback() -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-media-placeholder"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-media-placeholder-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-media-1",
+            "type": "message",
+            "text": " ",
+            "attachments": [
+                {"contentType": "image/png", "name": "diagram.png"},
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "content": {"fileName": "screenshot.jpg", "fileType": "jpg"},
+                },
+            ],
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image> (2 images)")]
+    assert result["text"] == "<media:image> (2 images)"
+    assert result["messageId"] == "inbound-media-placeholder-1"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session() -> None:
     conversation_id = "19:ops-thread@thread.tacv2"
     tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-inbound"
