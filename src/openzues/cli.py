@@ -203,6 +203,21 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "reply": True,
         "media": True,
     },
+    "feishu": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": True,
+        "reactions": True,
+        "edit": True,
+        "polls": False,
+        "tts": {
+            "voice": {
+                "synthesisTarget": "voice-note",
+                "transcodesAudio": True,
+            },
+        },
+    },
     "googlechat": {
         "chatTypes": ["direct", "channel"],
         "reply": True,
