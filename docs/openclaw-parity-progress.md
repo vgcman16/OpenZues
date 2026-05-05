@@ -9859,7 +9859,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   web_content_extractor_contracts or migration_provider_contracts or
   external_auth_provider_contracts or plugins_list_json_preserves_manifest_config_contracts"`
   (`6 passed, 486 deselected`), `ruff check src\openzues\cli.py
-  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpoint pending.
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `cbd59d1d`.
 
 ## References
 

@@ -185,7 +185,7 @@ may lag behind this tracker.
   `contracts.embeddedExtensionFactories` and
   `contracts.agentToolResultMiddleware` in `plugins list --json` records and
   capability strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `cbd59d1d`
 
 - [x] Canvas shortcode text normalization, preserving OpenClaw's visible
   assistant-message cleanup after valid `[embed ...]` removals.
@@ -681,7 +681,7 @@ may lag behind this tracker.
     `openclaw-main/src/agents/codex-app-server.extensions.test.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `cbd59d1d`
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_runtime_extension_contracts

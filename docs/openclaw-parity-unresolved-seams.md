@@ -5595,7 +5595,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `embedded-extension-factory:<id>` / `agent-tool-result-middleware:<id>`
   capability strings. Repo-wide parity is now estimated at ~60.8%. Verified
   with focused runtime-extension contract pytest, adjacent plugin manifest
-  contract proof, `ruff check`, and `mypy`; checkpoint pending.
+  contract proof, `ruff check`, and `mypy`; checkpointed in `cbd59d1d`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
