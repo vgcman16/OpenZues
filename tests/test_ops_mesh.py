@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import io
@@ -20848,6 +20849,117 @@ async def test_ops_mesh_service_probe_channel_account_uses_msteams_native_route(
         ("bot", "tenant-id", "teams-app-id", "teams-app-password"),
         ("graph", "tenant-id", "teams-app-id", "teams-app-password"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_probe_msteams_reports_delegated_auth_status(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Delegated Probe Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    jwt_payload = base64.urlsafe_b64encode(
+        json.dumps(
+            {
+                "scp": "Chat.ReadWrite User.Read",
+                "preferred_username": "user@example.com",
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    expires_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    await database.upsert_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="u1",
+        token=f"header.{jwt_payload}.sig",
+        expires_at=expires_at,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                        }
+                    }
+                }
+            }
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self, tenant_id, app_id, app_password
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+
+    result = await service.probe_channel_account(
+        channel="msteams",
+        account_id="default",
+        timeout_ms=2500,
+    )
+
+    assert result["delegatedAuth"] == {
+        "ok": True,
+        "scopes": ["Chat.ReadWrite", "User.Read"],
+        "userPrincipalName": "user@example.com",
+        "userId": "u1",
+        "expiresAt": expires_at,
+    }
 
 
 @pytest.mark.asyncio

@@ -4908,6 +4908,37 @@ def _msteams_graph_probe_metadata(token: str) -> dict[str, object]:
     return metadata
 
 
+def _msteams_delegated_auth_probe_metadata(
+    token_row: Mapping[str, Any],
+) -> dict[str, object]:
+    token = _msteams_inbound_optional_string(token_row.get("token"))
+    if token is None:
+        return {"ok": False, "error": "stored delegated token is missing"}
+    metadata = _msteams_graph_probe_metadata(token)
+    delegated: dict[str, object] = {"ok": True}
+    scopes = metadata.get("scopes")
+    if isinstance(scopes, list) and scopes:
+        delegated["scopes"] = [str(scope) for scope in scopes]
+    payload = _msteams_decode_jwt_payload(token)
+    if isinstance(payload, dict):
+        user_principal_name = _msteams_inbound_optional_string(
+            payload.get("preferred_username") or payload.get("upn")
+        )
+        if user_principal_name is not None:
+            delegated["userPrincipalName"] = user_principal_name
+    user_id = _msteams_inbound_optional_string(token_row.get("user_id"))
+    if user_id is not None:
+        delegated["userId"] = user_id
+    expires_at = _msteams_inbound_optional_string(token_row.get("expires_at"))
+    if expires_at is not None:
+        delegated["expiresAt"] = expires_at
+        parsed_expiry = _parse_timestamp(expires_at)
+        if parsed_expiry is not None and parsed_expiry <= datetime.now(UTC):
+            delegated["ok"] = False
+            delegated["error"] = "token expired (will auto-refresh on next use)"
+    return delegated
+
+
 def _signal_base_url(raw_target: str | None) -> str:
     target = str(raw_target or "").strip().rstrip("/")
     if _normalized_http_webhook_url(target) is None:
@@ -9378,6 +9409,25 @@ class OpsMeshService:
             return None
         return f"Bearer {token}"
 
+    async def _msteams_delegated_auth_probe(
+        self,
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is None:
+            return None
+        try:
+            tokens = await self.database.list_msteams_sso_tokens(
+                connection_name=sso_config.connection_name,
+                limit=1,
+            )
+        except Exception:
+            return {"ok": False, "error": "failed to load delegated tokens"}
+        if not tokens:
+            return {"ok": False, "error": "no delegated tokens found (run setup wizard)"}
+        return _msteams_delegated_auth_probe_metadata(tokens[0])
+
     async def _msteams_sso_route_credentials(
         self,
     ) -> tuple[_MSTeamsRouteConfig, str] | None:
@@ -11871,12 +11921,18 @@ class OpsMeshService:
                 }
         if route_kind == "msteams":
             try:
-                return await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     self._probe_msteams_provider_route,
                     route,
                     secret_token,
                     timeout_ms,
                 )
+                delegated_auth = await self._msteams_delegated_auth_probe(
+                    account_id=normalized_account_id,
+                )
+                if delegated_auth is not None:
+                    result["delegatedAuth"] = delegated_auth
+                return result
             except Exception as exc:
                 return {
                     "ok": False,
