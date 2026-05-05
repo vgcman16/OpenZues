@@ -12719,6 +12719,223 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-facade.cjs"
+    runtime_entry.write_text(
+        """
+const providerAuth = require("openclaw/plugin-sdk/provider-auth");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_facade",
+      description: "Use OpenClaw provider-auth SDK facade shims",
+      parameters: { type: "object" },
+      async execute() {
+        const oldOpenAiKey = process.env.OPENAI_API_KEY;
+        process.env.OPENAI_API_KEY = "sk-openzues-provider-auth-test";
+        const saved = [];
+        const fetchedCall = {};
+        try {
+          const cached = await providerAuth.resolveCopilotApiToken({
+            githubToken: "unused",
+            cachePath: "cache.json",
+            loadJsonFileImpl: () => ({
+              token: "cached-token;proxy-ep=proxy.cached.example.com;",
+              expiresAt: Date.now() + 10 * 60 * 1000,
+              updatedAt: 1
+            }),
+            saveJsonFileImpl: () => {
+              throw new Error("cache hit should not write");
+            },
+            fetchImpl: async () => {
+              throw new Error("cache hit should not fetch");
+            }
+          });
+          const fetched = await providerAuth.resolveCopilotApiToken({
+            githubToken: "github-token",
+            cachePath: "fetch.json",
+            loadJsonFileImpl: () => undefined,
+            saveJsonFileImpl: (path, value) => saved.push({ path, value }),
+            fetchImpl: async (url, options) => {
+              fetchedCall.url = url;
+              fetchedCall.options = options;
+              return {
+                ok: true,
+                json: async () => ({
+                  token: "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+                  expires_at: 12345678901
+                })
+              };
+            }
+          });
+          return {
+            exportTypes: [
+              typeof providerAuth.buildCopilotIdeHeaders,
+              typeof providerAuth.deriveCopilotApiBaseUrlFromToken,
+              typeof providerAuth.resolveCopilotApiToken,
+              typeof providerAuth.isProviderApiKeyConfigured,
+              typeof providerAuth.formatApiKeyPreview,
+              typeof providerAuth.buildOauthProviderAuthResult,
+              typeof genericSdk.resolveCopilotApiToken
+            ],
+            headers: providerAuth.buildCopilotIdeHeaders({ includeApiVersion: true }),
+            bases: [
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=https://proxy.individual.githubcopilot.com;"
+              ),
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=proxy.example.com:8443;"
+              ),
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=javascript:alert(1);"
+              )
+            ],
+            configured: {
+              openai: providerAuth.isProviderApiKeyConfigured({ provider: "openai" }),
+              missing: providerAuth.isProviderApiKeyConfigured({ provider: "missing-provider" })
+            },
+            cached: {
+              token: cached.token,
+              source: cached.source,
+              baseUrl: cached.baseUrl
+            },
+            fetched: {
+              ...fetched,
+              saved: saved.map((entry) => ({
+                path: entry.path,
+                value: {
+                  token: entry.value.token,
+                  expiresAt: entry.value.expiresAt,
+                  updatedAtType: typeof entry.value.updatedAt
+                }
+              })),
+              call: {
+                url: fetchedCall.url,
+                method: fetchedCall.options && fetchedCall.options.method,
+                authorization:
+                  fetchedCall.options &&
+                  fetchedCall.options.headers &&
+                  fetchedCall.options.headers.Authorization,
+                apiVersion:
+                  fetchedCall.options &&
+                  fetchedCall.options.headers &&
+                  fetchedCall.options.headers["X-Github-Api-Version"]
+              }
+            }
+          };
+        } finally {
+          if (oldOpenAiKey === undefined) {
+            delete process.env.OPENAI_API_KEY;
+          } else {
+            process.env.OPENAI_API_KEY = oldOpenAiKey;
+          }
+        }
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-facade-plugin",
+                    "name": "Runtime Provider Auth Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-facade.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_facade"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_facade"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 7,
+        "headers": {
+            "Editor-Version": "vscode/1.96.2",
+            "Editor-Plugin-Version": "copilot-chat/0.35.0",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "X-Github-Api-Version": "2025-04-01",
+        },
+        "bases": [
+            "https://api.individual.githubcopilot.com",
+            "https://api.example.com",
+            None,
+        ],
+        "configured": {"openai": True, "missing": False},
+        "cached": {
+            "token": "cached-token;proxy-ep=proxy.cached.example.com;",
+            "source": "cache:cache.json",
+            "baseUrl": "https://api.cached.example.com",
+        },
+        "fetched": {
+            "token": "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+            "expiresAt": 12345678901000,
+            "source": "fetched:https://api.github.com/copilot_internal/v2/token",
+            "baseUrl": "https://api.individual.githubcopilot.com",
+            "saved": [
+                {
+                    "path": "fetch.json",
+                    "value": {
+                        "token": (
+                            "fresh-token;proxy-ep="
+                            "https://proxy.individual.githubcopilot.com;"
+                        ),
+                        "expiresAt": 12345678901000,
+                        "updatedAtType": "number",
+                    },
+                }
+            ],
+            "call": {
+                "url": "https://api.github.com/copilot_internal/v2/token",
+                "method": "GET",
+                "authorization": "Bearer github-token",
+                "apiVersion": "2025-04-01",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

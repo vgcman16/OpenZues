@@ -20799,6 +20799,225 @@ async function providerAuthLoginUnavailable() {
   throw new Error("Provider auth login helpers require an interactive OpenClaw login runtime.");
 }
 
+const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
+const COPILOT_EDITOR_VERSION = "vscode/1.96.2";
+const COPILOT_USER_AGENT = "GitHubCopilotChat/0.26.7";
+const COPILOT_EDITOR_PLUGIN_VERSION = "copilot-chat/0.35.0";
+const COPILOT_GITHUB_API_VERSION = "2025-04-01";
+const DEFAULT_COPILOT_API_BASE_URL = "https://api.individual.githubcopilot.com";
+
+function buildCopilotIdeHeaders(params = {}) {
+  return {
+    "Editor-Version": COPILOT_EDITOR_VERSION,
+    "Editor-Plugin-Version": COPILOT_EDITOR_PLUGIN_VERSION,
+    "User-Agent": COPILOT_USER_AGENT,
+    ...(params.includeApiVersion
+      ? { "X-Github-Api-Version": COPILOT_GITHUB_API_VERSION }
+      : {}),
+  };
+}
+
+function resolveCopilotProxyHost(proxyEp) {
+  const trimmed = normalizeOptionalString(proxyEp);
+  if (!trimmed) {
+    return null;
+  }
+  const urlText = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(urlText);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return normalizeOptionalLowercaseString(url.hostname) || null;
+  } catch {
+    return null;
+  }
+}
+
+function deriveCopilotApiBaseUrlFromToken(token) {
+  const trimmed = normalizeOptionalString(token);
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/(?:^|;)\s*proxy-ep=([^;\s]+)/i);
+  const proxyEp = match && match[1] ? match[1].trim() : "";
+  if (!proxyEp) {
+    return null;
+  }
+  const proxyHost = resolveCopilotProxyHost(proxyEp);
+  if (!proxyHost) {
+    return null;
+  }
+  const host = proxyHost.replace(/^proxy\./i, "api.");
+  const baseUrl = `https://${host}`;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" ? baseUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCopilotTokenResponse(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Unexpected response from GitHub Copilot token endpoint");
+  }
+  const token = normalizeOptionalString(value.token);
+  if (!token) {
+    throw new Error("Copilot token response missing token");
+  }
+  const expiresAt = value.expires_at;
+  let expiresAtMs;
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) {
+    expiresAtMs = expiresAt < 100000000000 ? expiresAt * 1000 : expiresAt;
+  } else if (typeof expiresAt === "string" && expiresAt.trim()) {
+    const parsed = Number.parseInt(expiresAt, 10);
+    if (!Number.isFinite(parsed)) {
+      throw new Error("Copilot token response has invalid expires_at");
+    }
+    expiresAtMs = parsed < 100000000000 ? parsed * 1000 : parsed;
+  } else {
+    throw new Error("Copilot token response missing expires_at");
+  }
+  return { token, expiresAt: expiresAtMs };
+}
+
+async function resolveCopilotApiToken(params) {
+  const cachePath =
+    normalizeOptionalString(params && params.cachePath) ||
+    path.join(os.homedir(), ".openclaw", "credentials", "github-copilot.token.json");
+  const loadJsonFileFn =
+    params && typeof params.loadJsonFileImpl === "function"
+      ? params.loadJsonFileImpl
+      : (targetPath) => {
+          if (!fs.existsSync(targetPath)) {
+            return undefined;
+          }
+          return JSON.parse(fs.readFileSync(targetPath, "utf8"));
+        };
+  const saveJsonFileFn =
+    params && typeof params.saveJsonFileImpl === "function"
+      ? params.saveJsonFileImpl
+      : (targetPath, value) => {
+          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+          fs.writeFileSync(targetPath, JSON.stringify(value, null, 2));
+        };
+  const cached = loadJsonFileFn(cachePath);
+  if (
+    cached &&
+    typeof cached.token === "string" &&
+    typeof cached.expiresAt === "number" &&
+    cached.expiresAt - Date.now() > 5 * 60 * 1000
+  ) {
+    return {
+      token: cached.token,
+      expiresAt: cached.expiresAt,
+      source: `cache:${cachePath}`,
+      baseUrl: deriveCopilotApiBaseUrlFromToken(cached.token) || DEFAULT_COPILOT_API_BASE_URL,
+    };
+  }
+  const fetchImpl =
+    params && typeof params.fetchImpl === "function" ? params.fetchImpl : globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Copilot token exchange requires fetch");
+  }
+  const res = await fetchImpl(COPILOT_TOKEN_URL, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${params.githubToken}`,
+      ...buildCopilotIdeHeaders({ includeApiVersion: true }),
+    },
+  });
+  if (!res || !res.ok) {
+    throw new Error(`Copilot token exchange failed: HTTP ${res && res.status}`);
+  }
+  const json = parseCopilotTokenResponse(await res.json());
+  const payload = {
+    token: json.token,
+    expiresAt: json.expiresAt,
+    updatedAt: Date.now(),
+  };
+  saveJsonFileFn(cachePath, payload);
+  return {
+    token: payload.token,
+    expiresAt: payload.expiresAt,
+    source: `fetched:${COPILOT_TOKEN_URL}`,
+    baseUrl: deriveCopilotApiBaseUrlFromToken(payload.token) || DEFAULT_COPILOT_API_BASE_URL,
+  };
+}
+
+const PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+  anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  voyage: ["VOYAGE_API_KEY"],
+  cerebras: ["CEREBRAS_API_KEY"],
+  "anthropic-openai": ["ANTHROPIC_API_KEY"],
+  "qwen-dashscope": ["DASHSCOPE_API_KEY"],
+  minimax: ["MINIMAX_API_KEY"],
+  "minimax-cn": ["MINIMAX_API_KEY"],
+};
+
+function resolveEnvApiKey(provider, env = process.env, options = {}) {
+  const normalized = normalizeOptionalLowercaseString(provider);
+  if (!normalized) {
+    return null;
+  }
+  const candidateMap = options.candidateMap || PROVIDER_AUTH_ENV_VAR_CANDIDATES;
+  const candidates = Object.prototype.hasOwnProperty.call(candidateMap, normalized)
+    ? candidateMap[normalized]
+    : undefined;
+  if (!Array.isArray(candidates)) {
+    return null;
+  }
+  for (const envVar of candidates) {
+    const value = normalizeSecretInputString(env && env[envVar]);
+    if (value) {
+      return { apiKey: value, source: `env: ${envVar}` };
+    }
+  }
+  return null;
+}
+
+function listUsableProviderAuthProfileIds(params = {}) {
+  const cfg = params.cfg || params.config || {};
+  const provider = resolveProviderIdForAuth(params.provider);
+  const auth = cfg.auth || {};
+  const profiles = auth.profiles || {};
+  const order = auth.order || {};
+  const configuredOrder =
+    order[provider] ||
+    Object.entries(order).find(([key]) => resolveProviderIdForAuth(key) === provider)?.[1];
+  const profileIds = Array.isArray(configuredOrder)
+    ? configuredOrder
+    : Object.entries(profiles)
+        .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === provider)
+        .map(([profileId]) => profileId);
+  const usable = profileIds.filter((profileId) => {
+    const profile = profiles[profileId];
+    return !profile || resolveProviderIdForAuth(profile.provider) === provider;
+  });
+  return { agentDir: normalizeOptionalString(params.agentDir) || "", profileIds: usable };
+}
+
+function isProviderAuthProfileConfigured(params = {}) {
+  return listUsableProviderAuthProfileIds(params).profileIds.length > 0;
+}
+
+async function resolveProviderAuthProfileApiKey() {
+  return undefined;
+}
+
+function isProviderApiKeyConfigured(params = {}) {
+  if (resolveEnvApiKey(params.provider, process.env)) {
+    return true;
+  }
+  if (isProviderAuthProfileConfigured(params)) {
+    return true;
+  }
+  return false;
+}
+
 function resolveGlobalSingleton(key, create) {
   const globalStore = globalThis;
   if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
@@ -29625,6 +29844,84 @@ const providerAuthLoginRuntime = {
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
 };
 
+const providerAuthFacadeRuntime = {
+  CLAUDE_CLI_PROFILE_ID: "claude-cli",
+  CODEX_CLI_PROFILE_ID: "codex-cli",
+  COPILOT_EDITOR_PLUGIN_VERSION,
+  COPILOT_EDITOR_VERSION,
+  COPILOT_GITHUB_API_VERSION,
+  COPILOT_USER_AGENT,
+  CUSTOM_LOCAL_AUTH_MARKER: "__openclaw_custom_local_auth__",
+  DEFAULT_COPILOT_API_BASE_URL,
+  DEFAULT_OAUTH_REFRESH_MARGIN_MS: 5 * 60 * 1000,
+  MINIMAX_OAUTH_MARKER: "__openclaw_minimax_oauth__",
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  buildCopilotIdeHeaders,
+  buildOauthProviderAuthResult,
+  buildTokenProfileId: (provider, tokenProvider) =>
+    `${resolveProviderIdForAuth(provider)}:${resolveProviderIdForAuth(tokenProvider || "token")}`,
+  coerceSecretRef,
+  createProviderApiKeyAuthMethod,
+  deriveCopilotApiBaseUrlFromToken,
+  ensureApiKeyFromEnvOrPrompt,
+  ensureApiKeyFromOptionEnvOrPrompt,
+  ensureAuthProfileStore: () => ({ profiles: {}, order: {} }),
+  ensureAuthProfileStoreForLocalUpdate: () => ({ profiles: {}, order: {} }),
+  formatApiKeyPreview,
+  generateHexPkceVerifierChallenge: passthrough,
+  generatePkceVerifierChallenge: passthrough,
+  hasConfiguredSecretInput,
+  hasUsableOAuthCredential: passthrough,
+  isKnownEnvApiKeyMarker: passthrough,
+  isNonSecretApiKeyMarker: passthrough,
+  isProviderApiKeyConfigured,
+  isProviderAuthProfileConfigured,
+  listKnownProviderAuthEnvVarNames: () =>
+    Array.from(new Set(Object.values(PROVIDER_AUTH_ENV_VAR_CANDIDATES).flat())),
+  listProfilesForProvider: (store, provider) => {
+    const normalized = resolveProviderIdForAuth(provider);
+    const profiles = (store && store.profiles) || {};
+    return Object.entries(profiles)
+      .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === normalized)
+      .map(([profileId]) => profileId);
+  },
+  listUsableProviderAuthProfileIds,
+  normalizeApiKeyConfig: passthrough,
+  normalizeApiKeyInput,
+  normalizeOptionalSecretInput: normalizeSecretInput,
+  normalizeSecretInput,
+  normalizeSecretInputModeInput,
+  omitEnvKeysCaseInsensitive: (env, keys) => {
+    const denied = new Set(Array.from(keys || []).map((key) => String(key).toUpperCase()));
+    return Object.fromEntries(
+      Object.entries(env || {}).filter(([key]) => !denied.has(String(key).toUpperCase())),
+    );
+  },
+  promptSecretRefForSetup,
+  readClaudeCliCredentialsCached: () => undefined,
+  removeProviderAuthProfilesWithLock: () => undefined,
+  resolveApiKeyForProfile: resolveProviderAuthProfileApiKey,
+  resolveDefaultSecretProviderAlias: () => DEFAULT_SECRET_PROVIDER_ALIAS,
+  resolveEnvApiKey,
+  resolveNonEnvSecretRefApiKeyMarker: passthrough,
+  resolveOAuthApiKeyMarker: passthrough,
+  resolveOpenClawAgentDir: () => path.join(os.homedir(), ".openclaw"),
+  resolveProviderAuthProfileApiKey,
+  resolveRequiredHomeDir: () => os.homedir(),
+  resolveSecretInputModeForEnvSelection,
+  resolveCopilotApiToken,
+  suggestOAuthProfileIdForLegacyDefault: passthrough,
+  toFormUrlEncoded: (value) => new URLSearchParams(value || {}).toString(),
+  updateAuthProfileStoreWithLock: () => undefined,
+  upsertApiKeyProfile,
+  upsertAuthProfile,
+  upsertAuthProfileWithLock: upsertAuthProfile,
+  validateAnthropicSetupToken: passthrough,
+  validateApiKeyInput,
+  writeOAuthCredentials: () => undefined,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -30210,6 +30507,7 @@ const genericSdk = new Proxy(
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
     ...providerAuthLoginRuntime,
+    ...providerAuthFacadeRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -30687,6 +30985,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-login"
   ) {
     return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth" ||
+    request === "@openclaw/plugin-sdk/provider-auth"
+  ) {
+    return providerAuthFacadeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
