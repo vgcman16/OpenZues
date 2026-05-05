@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~62.4% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~62.5% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -111,6 +111,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   upload endpoint, sends attachment refs through the message-create payload,
   and preserves ordered media token, URL, filename, chat, and message metadata.
   This slice is checkpointed in `7086dcb3`.
+- Provider-native Nextcloud Talk direct text/reply/media-link parity now accepts
+  native `kind="nextcloud-talk"` routes, normalizes upstream-style
+  `nextcloud-talk:`/`nc-talk:`/`nc:` room targets, signs bot messages with the
+  OpenClaw HMAC header contract, sends `{message, replyTo}` payloads through
+  the Spreed bot message endpoint, maps outbound media URLs to the upstream
+  `Attachment: <url>` fallback text shape, and preserves provider message,
+  chat/channel, timestamp, reply, and media URL metadata. This slice is
+  checkpointed in `a6732846`.
+- Verified the Nextcloud Talk native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -10150,6 +10161,32 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_list_json_reports_persisted_registry_source_after_refresh"` (`4
   passed, 497 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
   and `mypy src\openzues\cli.py`. Checkpointed in `54c2fd49`.
+
+- Nextcloud Talk native outbound route support now mirrors OpenClaw's
+  `extensions/nextcloud-talk/src/send.ts` and target normalization contract:
+  native `kind="nextcloud-talk"` routes accept Nextcloud Talk base URLs,
+  normalize `nextcloud-talk:`/`nc-talk:`/`nc:`/`room:` room tokens, post signed
+  bot messages to `/ocs/v2.php/apps/spreed/api/v1/bot/{room}/message`, forward
+  `replyTo`, append outbound media URLs as `Attachment: <url>` fallback lines,
+  and preserve provider `messageId`, room chat/channel ids, timestamp, reply,
+  and media URL metadata. This closes `OZ-PROV-001Q`; repo-wide parity is now
+  estimated at ~62.5%.
+- Verified the Nextcloud Talk native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_nextcloud_talk_native_route_kind -q`
+  (`1 passed`),
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_nextcloud_talk_native_route -q`
+  (`1 passed`),
+  `python -m pytest tests\test_cli.py::test_routes_create_command_accepts_nextcloud_talk_native_route -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -q -k
+  "nextcloud_talk_native_route"` (`2 passed, 197 deselected`), adjacent
+  provider route proof (`11 passed, 276 deselected`), adjacent CLI route proof
+  (`4 passed, 499 deselected`), adjacent app route proof (`11 passed, 188
+  deselected`), `ruff check src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py tests\test_ops_mesh.py tests\test_cli.py
+  tests\test_app.py`, and `mypy src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py`. Checkpointed in `a6732846`.
 
 ## References
 

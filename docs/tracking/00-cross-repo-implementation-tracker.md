@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~62.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~62.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Google Chat media/DM provider route slice is checkpointed in `7086dcb3`.
+The Nextcloud Talk native provider route slice is checkpointed in `a6732846`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -44,6 +44,7 @@ Any follow-up changes should target the next queue head only:
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
 - `docs/tracking/01-openzues-openclaw-parity-status.md`
+- `docs/tracking/02-openclaw-source-domain-map.md`
 
 Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
@@ -57,9 +58,36 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Google Chat media/DM route checkpointed in `7086dcb3` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Nextcloud Talk native route checkpointed in `a6732846` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001Q` Nextcloud Talk native outbound route
+  - Source: `openclaw-main/extensions/nextcloud-talk/src/send.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/normalize.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="nextcloud-talk"` sends normalize upstream
+    room token aliases, post HMAC-signed bot messages to the Spreed bot
+    message endpoint, forward `replyTo`, append media URLs as
+    `Attachment: <url>` fallback text, and persist provider `messageId`,
+    room chat/channel ids, timestamp, reply, and media URL metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `a6732846`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused schema proof (`1 passed`), focused
+    service proof (`1 passed`), focused CLI proof (`1 passed`), focused app
+    proof (`2 passed, 197 deselected`), adjacent provider route proof (`11
+    passed, 276 deselected`), adjacent CLI route proof (`4 passed, 499
+    deselected`), adjacent app route proof (`11 passed, 188 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001P` Google Chat media and DM-resolution delivery
   - Source: `openclaw-main/extensions/googlechat/src/api.ts`,

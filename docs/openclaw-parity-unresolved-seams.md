@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.5% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5741,9 +5741,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   filename, message, and chat metadata. Repo-wide parity is now estimated at
   ~62.4%. Verified with focused media/DM pytest, adjacent provider route proof,
   `ruff check`, and `mypy`; checkpointed in `7086dcb3`.
+- Closed the Nextcloud Talk native outbound route seam from OpenClaw
+  `extensions/nextcloud-talk/src/send.ts`,
+  `extensions/nextcloud-talk/src/normalize.ts`, and
+  `extensions/nextcloud-talk/src/channel.ts`: native `kind="nextcloud-talk"`
+  routes now accept Nextcloud Talk base URLs, normalize upstream
+  `nextcloud-talk:`/`nc-talk:`/`nc:`/`room:` room tokens, post signed HMAC bot
+  messages to `/ocs/v2.php/apps/spreed/api/v1/bot/{room}/message`, forward
+  `replyTo`, append outbound media URLs as `Attachment: <url>` fallback text,
+  and persist provider message, room chat/channel, timestamp, reply, and media
+  URL metadata. Repo-wide parity is now estimated at ~62.5%. Verified with
+  focused schema/service/CLI/app pytest, adjacent provider/CLI/app route proof,
+  `ruff check`, and `mypy`; checkpointed in `a6732846`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  provider-specific send/poll/replay metadata gap or packaging/plugin breadth
-  seam.
+  provider-specific send/poll/replay metadata gap, starting with another
+  source-backed channel/provider route or action adapter, or packaging/plugin
+  breadth seam if provider discovery proves no smaller route slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

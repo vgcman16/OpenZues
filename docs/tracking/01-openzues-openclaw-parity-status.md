@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~62.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~62.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -150,6 +150,12 @@ may lag behind this tracker.
   `spaces:findDirectMessage`, attachment upload, message attachment refs,
   caption handling, and ordered media result metadata.
   - Status: checkpointed in `7086dcb3`
+
+- [x] Nextcloud Talk native outbound route support, preserving OpenClaw
+  room-token normalization, HMAC bot signature headers, Spreed bot message
+  endpoint payloads, `replyTo`, media URL fallback text, and provider result
+  metadata.
+  - Status: checkpointed in `a6732846`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
@@ -1501,7 +1507,9 @@ may lag behind this tracker.
     WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
     thread result fallback checkpointed in `e47324f4`; Slack agent-request
     thread metadata checkpointed in `e3671d6f`; Feishu/Lark native outbound
-    route checkpointed in `d1515da1`
+    route checkpointed in `d1515da1`; Google Chat native/media route
+    checkpoints in `edb67dfc` and `7086dcb3`; Nextcloud Talk native route
+    checkpointed in `a6732846`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.
