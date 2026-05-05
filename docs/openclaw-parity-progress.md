@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~62.1% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~62.2% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -75,7 +75,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `import ... from "openclaw/plugin-sdk/*"` and `export default` syntax.
 - Plugin manifest provider metadata now preserves OpenClaw provider endpoint
   suffix/Vertex fields plus provider-scoped `modelIdNormalization` and
-  `providerRequest` contracts in `plugins list --json`.
+  `providerRequest` contracts in `plugins list --json` and persisted registry
+  refresh/inspect payloads.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -10118,6 +10119,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`6 passed, 494 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
   `9b2bf4fc`.
+
+- Persisted plugin registry refresh now carries the same provider metadata
+  fields as live plugin rows, so `plugins registry --refresh --json` and the
+  subsequent registry inspect preserve provider endpoints,
+  `modelIdNormalization`, and `providerRequest` data instead of collapsing
+  rows to `pluginId`/`enabled`. This closes `OZ-PLUGIN-001BN`; repo-wide
+  parity is now estimated at ~62.2%.
+- Verified the persisted registry provider metadata slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_registry_refresh_json_persists_provider_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_registry_refresh_json_persists_provider_metadata or
+  plugins_registry_refresh_json_persists_current_index or
+  plugins_registry_json_reports_missing_persisted_registry or
+  plugins_list_json_reports_persisted_registry_source_after_refresh"` (`4
+  passed, 497 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\cli.py`. Checkpointed in `54c2fd49`.
 
 ## References
 
