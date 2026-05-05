@@ -22967,6 +22967,10 @@ def _resolve_qr_gateway_url(
         return _normalize_pairing_setup_url(explicit_url), (
             "cli.url" if str(url or "").strip() else "cli.publicUrl"
         )
+    if remote:
+        raise ValueError(
+            "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
+        )
     scheme = "wss" if remote else "ws"
     return (
         _normalize_pairing_setup_url(

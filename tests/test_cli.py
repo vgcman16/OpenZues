@@ -174,6 +174,22 @@ def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
     assert not (data_dir / "devices" / "bootstrap.json").exists()
 
 
+def test_qr_remote_requires_explicit_remote_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["qr", "--setup-code-only", "--remote"])
+
+    assert result.exit_code == 1
+    assert (
+        "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
+        in result.stderr
+    )
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
