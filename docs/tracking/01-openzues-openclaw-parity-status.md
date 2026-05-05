@@ -174,7 +174,7 @@ may lag behind this tracker.
 - [x] Manifest migration provider contract metadata, preserving
   `contracts.migrationProviders` in `plugins list --json` records and
   capability strings.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `17e62174`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -617,7 +617,7 @@ may lag behind this tracker.
     `openclaw-main/src/plugins/migration-provider-runtime.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `17e62174`.
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_plugins_list_json_preserves_manifest_migration_provider_contracts
