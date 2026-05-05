@@ -58,6 +58,7 @@ from openzues.services.memory_protocol import (
 )
 from openzues.services.ops_mesh import (
     OUTBOUND_DELIVERY_MAX_RETRIES,
+    GatewayMSTeamsFeedbackReflectionRequest,
     GatewayMSTeamsInboundMediaFetchRequest,
     OpsMeshService,
     _saved_outbound_delivery_replay_message,
@@ -19607,6 +19608,127 @@ async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_sessio
     assert metadata["feedback"]["messageId"] == "bot-message-777"
     assert metadata["feedback"]["comment"] == "Needs a clearer source link."
     assert metadata["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_runs_msteams_feedback_reflection_learning_followup() -> None:
+    conversation_id = "a:personal-dm"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-reflection"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    reflection_requests: list[GatewayMSTeamsFeedbackReflectionRequest] = []
+    followups: list[GatewayOutboundRuntimeMessageRequest] = []
+
+    async def reflect(
+        request: GatewayMSTeamsFeedbackReflectionRequest,
+    ) -> dict[str, object]:
+        reflection_requests.append(request)
+        return {
+            "learning": "Be more specific and cite the runbook.",
+            "followUp": True,
+            "userMessage": "Thanks, I will tighten the source link next time.",
+        }
+
+    async def deliver_followup(
+        request: GatewayOutboundRuntimeMessageRequest,
+    ) -> dict[str, object]:
+        followups.append(request)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": "reflection-followup-1",
+        }
+
+    runtime = GatewayOutboundRuntimeService()
+    runtime.bind_native_message_deliverer(
+        channel="msteams",
+        deliverer=deliver_followup,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        outbound_runtime_service=runtime,
+        msteams_feedback_reflection_service=reflect,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-reflection-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "personal",
+            },
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Too vague."}),
+                },
+                "replyToId": "bot-message-999",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    encoded_session = base64.urlsafe_b64encode(expected_session_key.encode("utf-8")).decode(
+        "ascii"
+    ).rstrip("=")
+    if len(encoded_session) > 120:
+        digest = hashlib.sha256(expected_session_key.encode("utf-8")).hexdigest()
+        encoded_session = f"sha256-{digest}"
+    learnings_path = (
+        tmp_path / "msteams-feedback-learnings" / f"{encoded_session}.learnings.json"
+    )
+
+    assert len(reflection_requests) == 1
+    assert reflection_requests[0].session_key == expected_session_key
+    assert reflection_requests[0].feedback_message_id == "bot-message-999"
+    assert reflection_requests[0].user_comment == "Too vague."
+    assert "previous response wasn't helpful" in reflection_requests[0].prompt
+    assert "Too vague." in reflection_requests[0].prompt
+    assert json.loads(learnings_path.read_text(encoding="utf-8")) == [
+        "Be more specific and cite the runbook."
+    ]
+    assert len(followups) == 1
+    assert followups[0].target == f"conversation:{conversation_id}"
+    assert followups[0].message == "Thanks, I will tighten the source link next time."
+    assert followups[0].session_key == expected_session_key
+    assert result["reflection"] == {
+        "learning": "Be more specific and cite the runbook.",
+        "stored": True,
+        "followUp": {
+            "attempted": True,
+            "sent": True,
+            "messageId": "reflection-followup-1",
+        },
+    }
 
 
 @pytest.mark.asyncio

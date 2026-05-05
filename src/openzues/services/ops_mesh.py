@@ -277,6 +277,8 @@ MSTEAMS_GRAPH_SHARED_LINK_HOST_SUFFIXES: tuple[str, ...] = (
     "onedrive.live.com",
     "onedrive.com",
 )
+MSTEAMS_FEEDBACK_REFLECTION_COOLDOWN_MS = 300_000
+MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS = 500
 MSTEAMS_DEFAULT_PROMPT_STARTERS = (
     "What can you do?",
     "Summarize my last meeting",
@@ -428,6 +430,26 @@ GatewayMSTeamsInboundMediaFetchService = Callable[
 
 
 @dataclass(frozen=True, slots=True)
+class GatewayMSTeamsFeedbackReflectionRequest:
+    prompt: str
+    session_key: str
+    account_id: str | None
+    feedback_message_id: str
+    feedback_value: Literal["negative"]
+    user_comment: str | None
+    conversation_id: str
+    conversation_type: str
+    sender_id: str | None
+    sender_name: str | None
+
+
+GatewayMSTeamsFeedbackReflectionService = Callable[
+    [GatewayMSTeamsFeedbackReflectionRequest],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True, slots=True)
 class _MSTeamsInboundMediaCandidate:
     url: str
     source_url: str
@@ -445,6 +467,13 @@ class _MSTeamsStagedInboundMedia:
     placeholder: str
     sha256: str
     byte_length: int
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsFeedbackReflectionResult:
+    learning: str
+    follow_up: bool
+    user_message: str | None
 
 
 MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -4457,6 +4486,127 @@ def _msteams_staged_media_metadata(
             item["contentType"] = media.content_type
         metadata.append(item)
     return metadata
+
+
+def _msteams_feedback_reflection_prompt(
+    *,
+    user_comment: str | None,
+    thumbed_down_response: str | None = None,
+) -> str:
+    parts = ["A user indicated your previous response wasn't helpful."]
+    if thumbed_down_response:
+        response = (
+            f"{thumbed_down_response[:MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS]}..."
+            if len(thumbed_down_response) > MSTEAMS_FEEDBACK_REFLECTION_MAX_RESPONSE_CHARS
+            else thumbed_down_response
+        )
+        parts.append(f"\nYour response was:\n> {response}")
+    if user_comment:
+        parts.append(f'\nUser\'s comment: "{user_comment}"')
+    parts.append(
+        "\nBriefly reflect: what could you improve? Consider tone, length, "
+        "accuracy, relevance, and specificity. Reply with a single JSON object "
+        'only, no markdown or prose, using this exact shape:\n{"learning":"...",'
+        '"followUp":false,"userMessage":""}\n'
+        "- learning: a short internal adjustment note (1-2 sentences) for your "
+        "future behavior in this conversation.\n"
+        "- followUp: true only if the user needs a direct follow-up message.\n"
+        "- userMessage: only the exact user-facing message to send; empty string "
+        "when followUp is false."
+    )
+    return "\n".join(parts)
+
+
+def _msteams_bool_like(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes"}:
+            return True
+        if normalized in {"false", "no"}:
+            return False
+    return None
+
+
+def _msteams_parse_feedback_reflection_mapping(
+    value: Mapping[str, object],
+) -> _MSTeamsFeedbackReflectionResult | None:
+    learning = _msteams_inbound_optional_string(value.get("learning"))
+    if learning is None:
+        return None
+    user_message = _msteams_inbound_optional_string(value.get("userMessage"))
+    return _MSTeamsFeedbackReflectionResult(
+        learning=learning,
+        follow_up=_msteams_bool_like(value.get("followUp")) or False,
+        user_message=user_message,
+    )
+
+
+def _msteams_parse_feedback_reflection_response(
+    response: object,
+) -> _MSTeamsFeedbackReflectionResult | None:
+    if isinstance(response, Mapping):
+        return _msteams_parse_feedback_reflection_mapping(response)
+    if not isinstance(response, str):
+        return None
+    text = response.strip()
+    if not text:
+        return None
+    candidates = [text]
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+    if fence is not None:
+        candidates.append(fence.group(1).strip())
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, Mapping):
+            result = _msteams_parse_feedback_reflection_mapping(parsed)
+            if result is not None:
+                return result
+    return _MSTeamsFeedbackReflectionResult(
+        learning=text,
+        follow_up=False,
+        user_message=None,
+    )
+
+
+def _msteams_feedback_learning_file(
+    *,
+    storage_root: Path,
+    session_key: str,
+) -> Path:
+    encoded = base64.urlsafe_b64encode(session_key.encode("utf-8")).decode("ascii").rstrip("=")
+    if len(encoded) > 120:
+        encoded = f"sha256-{hashlib.sha256(session_key.encode('utf-8')).hexdigest()}"
+    return storage_root / "msteams-feedback-learnings" / f"{encoded}.learnings.json"
+
+
+def _msteams_store_feedback_learning(
+    *,
+    storage_root: Path,
+    session_key: str,
+    learning: str,
+) -> Path:
+    learning_file = _msteams_feedback_learning_file(
+        storage_root=storage_root,
+        session_key=session_key,
+    )
+    learnings: list[str] = []
+    if learning_file.exists():
+        try:
+            parsed = json.loads(learning_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            parsed = []
+        if isinstance(parsed, list):
+            learnings = [str(item) for item in parsed if isinstance(item, str)]
+    learnings.append(learning)
+    learnings = learnings[-10:]
+    learning_file.parent.mkdir(parents=True, exist_ok=True)
+    learning_file.write_text(json.dumps(learnings, indent=2), encoding="utf-8")
+    return learning_file
 
 
 def _msteams_attachment_placeholder(activity: Mapping[str, Any]) -> str | None:
@@ -9611,6 +9761,7 @@ class OpsMeshService:
     outbound_runtime_service: GatewayOutboundRuntimeService | None = None
     session_delivery_service: Callable[[str, str], Awaitable[object]] | None = None
     msteams_inbound_media_fetch_service: GatewayMSTeamsInboundMediaFetchService | None = None
+    msteams_feedback_reflection_service: GatewayMSTeamsFeedbackReflectionService | None = None
     discord_presence_runtime: GatewayDiscordPresenceRuntime | None = None
     gateway_config_service: GatewayConfigService | None = None
     canvas_state_dir: Path | None = None
@@ -9624,6 +9775,10 @@ class OpsMeshService:
     _direct_delivery_inflight_lock: asyncio.Lock = field(
         init=False,
         default_factory=asyncio.Lock,
+    )
+    _msteams_feedback_reflection_times: dict[str, float] = field(
+        init=False,
+        default_factory=dict,
     )
 
     async def start(self) -> None:
@@ -9859,6 +10014,141 @@ class OpsMeshService:
             if staged is not None:
                 staged_media.append(staged)
         return staged_media
+
+    def _msteams_feedback_reflection_cooldown_ms(
+        self,
+        *,
+        account_id: str | None,
+    ) -> int:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        value = channel_config.get("feedbackReflectionCooldownMs")
+        if isinstance(value, int | float) and value >= 0:
+            return int(value)
+        return MSTEAMS_FEEDBACK_REFLECTION_COOLDOWN_MS
+
+    def _msteams_feedback_learning_storage_root(self) -> Path:
+        return (
+            self.canvas_state_dir
+            if self.canvas_state_dir is not None
+            else self.database.path.parent
+        )
+
+    def _msteams_feedback_reflection_allowed(
+        self,
+        *,
+        session_key: str,
+        cooldown_ms: int,
+    ) -> bool:
+        if cooldown_ms <= 0:
+            return True
+        now_ms = datetime.now(UTC).timestamp() * 1000
+        last_ms = self._msteams_feedback_reflection_times.get(session_key)
+        return last_ms is None or now_ms - last_ms >= cooldown_ms
+
+    def _record_msteams_feedback_reflection_time(
+        self,
+        *,
+        session_key: str,
+    ) -> None:
+        self._msteams_feedback_reflection_times[session_key] = (
+            datetime.now(UTC).timestamp() * 1000
+        )
+
+    async def _send_msteams_feedback_followup(
+        self,
+        *,
+        context: _MSTeamsInboundSessionContext,
+        account_id: str | None,
+        message: str,
+    ) -> dict[str, object]:
+        followup: dict[str, object] = {"attempted": True, "sent": False}
+        if context.conversation_type.strip().lower() != "personal":
+            followup["reason"] = "not_personal"
+            return followup
+        try:
+            delivery = await self.send_direct_channel_message(
+                channel="msteams",
+                to=f"conversation:{context.conversation_id}",
+                message=message,
+                account_id=account_id,
+                session_key=context.session_key,
+                requester_session_key=context.session_key,
+                requester_account_id=account_id,
+                requester_sender_id=context.sender_id,
+                requester_sender_name=context.sender_name,
+            )
+        except Exception as exc:
+            followup["error"] = str(exc)
+            return followup
+        followup["sent"] = True
+        message_id = _session_delivery_message_id(delivery) or _msteams_inbound_optional_string(
+            delivery.get("message_id")
+        )
+        if message_id is not None:
+            followup["messageId"] = message_id
+        return followup
+
+    async def _run_msteams_feedback_reflection(
+        self,
+        *,
+        context: _MSTeamsInboundSessionContext,
+        account_id: str | None,
+        feedback_payload: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        if self.msteams_feedback_reflection_service is None:
+            return None
+        if feedback_payload.get("value") != "negative":
+            return None
+        cooldown_ms = self._msteams_feedback_reflection_cooldown_ms(account_id=account_id)
+        if not self._msteams_feedback_reflection_allowed(
+            session_key=context.session_key,
+            cooldown_ms=cooldown_ms,
+        ):
+            return {"skipped": "cooldown"}
+        feedback_message_id = _msteams_inbound_optional_string(
+            feedback_payload.get("messageId")
+        )
+        if feedback_message_id is None:
+            feedback_message_id = "unknown"
+        user_comment = _msteams_inbound_optional_string(feedback_payload.get("comment"))
+        prompt = _msteams_feedback_reflection_prompt(user_comment=user_comment)
+        request = GatewayMSTeamsFeedbackReflectionRequest(
+            prompt=prompt,
+            session_key=context.session_key,
+            account_id=account_id,
+            feedback_message_id=feedback_message_id,
+            feedback_value="negative",
+            user_comment=user_comment,
+            conversation_id=context.conversation_id,
+            conversation_type=context.conversation_type,
+            sender_id=context.sender_id,
+            sender_name=context.sender_name,
+        )
+        try:
+            response = await self.msteams_feedback_reflection_service(request)
+        except Exception as exc:
+            return {"error": str(exc)}
+        parsed = _msteams_parse_feedback_reflection_response(response)
+        if parsed is None:
+            return {"skipped": "unstructured"}
+        learning_file = _msteams_store_feedback_learning(
+            storage_root=self._msteams_feedback_learning_storage_root(),
+            session_key=context.session_key,
+            learning=parsed.learning,
+        )
+        self._record_msteams_feedback_reflection_time(session_key=context.session_key)
+        reflection: dict[str, object] = {
+            "learning": parsed.learning,
+            "stored": True,
+            "path": str(learning_file),
+        }
+        if parsed.follow_up and parsed.user_message:
+            reflection["followUp"] = await self._send_msteams_feedback_followup(
+                context=context,
+                account_id=account_id,
+                message=parsed.user_message,
+            )
+        return reflection
 
     async def _msteams_stored_delegated_graph_secret_token(
         self,
@@ -10475,6 +10765,11 @@ class OpsMeshService:
                 "conversationTarget": context.conversation_target.model_dump(mode="json"),
             },
         )
+        reflection = await self._run_msteams_feedback_reflection(
+            context=context,
+            account_id=account_id,
+            feedback_payload=feedback_payload,
+        )
         result: dict[str, object] = {
             "ok": True,
             "channel": "msteams",
@@ -10489,6 +10784,12 @@ class OpsMeshService:
             "feedback": feedback_payload,
             "recorded": True,
         }
+        if reflection is not None:
+            result["reflection"] = {
+                key: value
+                for key, value in reflection.items()
+                if key != "path"
+            }
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:
