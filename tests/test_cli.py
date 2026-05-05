@@ -1690,6 +1690,137 @@ def test_setup_msteams_delegated_auth_json_builds_openclaw_auth_url(
     assert config["channels"]["msteams"]["delegatedAuth"] == {"enabled": True}
 
 
+def test_setup_msteams_delegated_auth_complete_exchanges_and_stores_tokens(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Delegated Complete")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams OAuth Complete Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    def encode_segment(payload: dict[str, object]) -> str:
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    access_token = ".".join(
+        [
+            encode_segment({"alg": "none"}),
+            encode_segment(
+                {
+                    "oid": "aad-user-1",
+                    "preferred_username": "alex@example.test",
+                }
+            ),
+            "sig",
+        ]
+    )
+    token_requests: list[tuple[str, dict[str, list[str]]]] = []
+
+    class FakeTokenResponse:
+        def __enter__(self) -> "FakeTokenResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "access_token": access_token,
+                    "refresh_token": "refresh-token-1",
+                    "expires_in": 3600,
+                    "scope": "ChatMessage.Send offline_access",
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout: float = 10.0) -> FakeTokenResponse:
+        del timeout
+        target = request.full_url
+        body = request.data.decode("utf-8")
+        token_requests.append((target, dict(parse_qs(body))))
+        return FakeTokenResponse()
+
+    monkeypatch.setattr("openzues.services.ops_mesh.urlopen", fake_urlopen)
+
+    result = runner.invoke(
+        app,
+        [
+            "setup",
+            "msteams-delegated-auth",
+            "--callback-url",
+            "http://localhost:8086/oauth2callback?code=auth-code&state=expected-state",
+            "--state",
+            "expected-state",
+            "--pkce-verifier",
+            "pkce-verifier",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "teams-app-password" not in result.stdout
+    assert access_token not in result.stdout
+    assert "refresh-token-1" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["status"] == "stored"
+    assert payload["provider"] == "msteams"
+    assert payload["accountId"] == "default"
+    assert payload["connectionName"] == "msteams-delegated"
+    assert payload["userId"] == "aad-user-1"
+    assert payload["userPrincipalName"] == "alex@example.test"
+    assert payload["scopes"] == ["ChatMessage.Send", "offline_access"]
+    assert payload["config"]["delegatedAuth"]["enabled"] is True
+
+    assert token_requests == [
+        (
+            "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token",
+            {
+                "client_id": ["teams-app-id"],
+                "client_secret": ["teams-app-password"],
+                "grant_type": ["authorization_code"],
+                "scope": ["ChatMessage.Send ChannelMessage.Send Chat.ReadWrite offline_access"],
+                "code": ["auth-code"],
+                "redirect_uri": ["http://localhost:8086/oauth2callback"],
+                "code_verifier": ["pkce-verifier"],
+            },
+        )
+    ]
+    stored = asyncio.run(
+        database.get_msteams_sso_token(
+            connection_name="msteams-delegated",
+            user_id="aad-user-1",
+        )
+    )
+    assert stored is not None
+    assert stored["token"] == access_token
+    assert stored["refresh_token"] == "refresh-token-1"
+    assert json.loads(stored["scopes_json"]) == ["ChatMessage.Send", "offline_access"]
+    assert stored["user_principal_name"] == "alex@example.test"
+    assert isinstance(stored["expires_at"], str)
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

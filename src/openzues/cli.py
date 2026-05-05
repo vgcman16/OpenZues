@@ -1647,8 +1647,19 @@ def _emit_msteams_delegated_auth_bootstrap(
         return
     typer.echo("Microsoft Teams delegated OAuth")
     typer.echo(f"account: {payload.get('accountId') or DEFAULT_ACCOUNT_ID}")
+    status = _optional_cli_string(payload.get("status"))
+    if status is not None:
+        typer.echo(f"status: {status}")
+    connection_name = _optional_cli_string(payload.get("connectionName"))
+    if connection_name is not None:
+        typer.echo(f"connection: {connection_name}")
+    user_id = _optional_cli_string(payload.get("userId"))
+    if user_id is not None:
+        typer.echo(f"user: {user_id}")
     typer.echo(f"redirect: {payload.get('redirectUri') or ''}")
-    typer.echo(f"auth URL: {payload.get('authUrl') or ''}")
+    auth_url = _optional_cli_string(payload.get("authUrl"))
+    if auth_url is not None:
+        typer.echo(f"auth URL: {auth_url}")
     pkce = payload.get("pkce")
     if isinstance(pkce, Mapping):
         verifier = _optional_cli_string(pkce.get("verifier"))
@@ -30353,12 +30364,22 @@ def setup_msteams_delegated_auth(
     state: str | None = typer.Option(
         None,
         "--state",
-        help="OAuth CSRF state. Generated when omitted.",
+        help="OAuth CSRF state. Generated for start; expected state for completion.",
     ),
     pkce_verifier: str | None = typer.Option(
         None,
         "--pkce-verifier",
         help="PKCE verifier. Generated when omitted.",
+    ),
+    callback_url: str | None = typer.Option(
+        None,
+        "--callback-url",
+        help="Complete delegated auth from the full redirect URL.",
+    ),
+    user_id: str | None = typer.Option(
+        None,
+        "--user-id",
+        help="Teams/AAD user id for token storage; inferred from the access token when omitted.",
     ),
     scopes: Annotated[
         list[str] | None,
@@ -30385,13 +30406,23 @@ def setup_msteams_delegated_auth(
     ),
 ) -> None:
     async def _action(services: CliServices) -> dict[str, object]:
-        payload = await services.ops_mesh.build_msteams_delegated_auth_bootstrap(
-            account_id=account_id,
-            state=state,
-            pkce_verifier=pkce_verifier,
-            scopes=scopes,
-            manual=manual,
-        )
+        if _optional_cli_string(callback_url) is not None:
+            payload = await services.ops_mesh.complete_msteams_delegated_auth_bootstrap(
+                account_id=account_id,
+                callback_url=str(callback_url or ""),
+                expected_state=state,
+                pkce_verifier=pkce_verifier,
+                user_id=user_id,
+                scopes=scopes,
+            )
+        else:
+            payload = await services.ops_mesh.build_msteams_delegated_auth_bootstrap(
+                account_id=account_id,
+                state=state,
+                pkce_verifier=pkce_verifier,
+                scopes=scopes,
+                manual=manual,
+            )
         if enable_config:
             config_result = services.gateway_config.patch_object(
                 _msteams_delegated_auth_config_patch(account_id)

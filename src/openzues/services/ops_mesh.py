@@ -243,6 +243,7 @@ MSTEAMS_OAUTH_REDIRECT_URI = "http://localhost:8086/oauth2callback"
 MSTEAMS_OAUTH_CALLBACK_PORT = 8086
 MSTEAMS_OAUTH_CALLBACK_PATH = "/oauth2callback"
 MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME = "msteams-delegated"
+MSTEAMS_DEFAULT_DELEGATED_USER_ID = "delegated"
 MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
     "ChatMessage.Send",
     "ChannelMessage.Send",
@@ -615,6 +616,33 @@ def _msteams_build_delegated_auth_url(
         }
     )
     return f"{endpoint}?{query}"
+
+
+def _msteams_parse_delegated_oauth_callback(
+    callback_url: str,
+    *,
+    expected_state: str,
+) -> tuple[str, str]:
+    trimmed = str(callback_url or "").strip()
+    if not trimmed:
+        raise ValueError("No input provided")
+    parsed = urlparse(trimmed)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError(
+            "Paste the full redirect URL (including code and state parameters), "
+            "not just the authorization code."
+        )
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    code = _msteams_inbound_optional_string(query.get("code"))
+    if code is None:
+        raise ValueError("Missing 'code' parameter in URL")
+    state = _msteams_inbound_optional_string(query.get("state"))
+    if state is None:
+        raise ValueError("Missing 'state' parameter in URL. Paste the full redirect URL.")
+    normalized_expected = str(expected_state or "").strip()
+    if state != normalized_expected:
+        raise ValueError("OAuth state mismatch - please try again")
+    return code, state
 
 
 def _requires_secret(auth_scheme: str) -> bool:
@@ -10089,6 +10117,131 @@ class OpsMeshService:
             },
         }
 
+    async def complete_msteams_delegated_auth_bootstrap(
+        self,
+        *,
+        account_id: str | None = None,
+        callback_url: str,
+        expected_state: str | None,
+        pkce_verifier: str | None,
+        user_id: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        normalized_account_id = (
+            normalize_optional_account_id(str(account_id or "").strip())
+            or DEFAULT_ACCOUNT_ID
+        )
+        code, returned_state = _msteams_parse_delegated_oauth_callback(
+            callback_url,
+            expected_state=str(expected_state or "").strip(),
+        )
+        verifier = str(pkce_verifier or "").strip()
+        if not verifier:
+            raise ValueError(
+                "Microsoft Teams delegated auth completion requires --pkce-verifier."
+            )
+        route = await self._provider_route_for_channel_account(
+            channel="msteams",
+            account_id=normalized_account_id,
+        )
+        if route is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "No native Microsoft Teams route is configured for delegated auth setup."
+            )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        if not route_config.app_id or not route_config.tenant_id:
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires appId and tenantId "
+                "in the route target."
+            )
+        secret_token = await self._notification_route_secret_token(route)
+        secret_value = str(secret_token or "").strip()
+        if not secret_value or secret_value.lower().startswith("bearer "):
+            raise RuntimeError(
+                "Microsoft Teams delegated auth setup requires a route app password secret."
+            )
+        resolved_scopes = tuple(
+            str(scope).strip()
+            for scope in (scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+            if str(scope).strip()
+        ) or MSTEAMS_DEFAULT_DELEGATED_SCOPES
+        exchanged = await asyncio.to_thread(
+            self._msteams_exchange_delegated_graph_token,
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret_value,
+            code=code,
+            verifier=verifier,
+            scopes=resolved_scopes,
+        )
+        access_token = _msteams_inbound_optional_string(
+            exchanged.get("accessToken") or exchanged.get("access_token")
+        )
+        refresh_token = _msteams_inbound_optional_string(
+            exchanged.get("refreshToken") or exchanged.get("refresh_token")
+        )
+        if access_token is None or refresh_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was incomplete."
+            )
+        expires_at = _msteams_inbound_optional_string(
+            exchanged.get("expiresAt") or exchanged.get("expires_at")
+        )
+        raw_scopes = exchanged.get("scopes")
+        if isinstance(raw_scopes, str):
+            next_scopes = tuple(scope for scope in raw_scopes.split() if scope)
+        elif isinstance(raw_scopes, list):
+            next_scopes = tuple(str(scope).strip() for scope in raw_scopes if str(scope).strip())
+        else:
+            next_scopes = resolved_scopes
+        token_payload = _msteams_decode_jwt_payload(access_token) or {}
+        user_principal_name = _msteams_inbound_optional_string(
+            token_payload.get("preferred_username") or token_payload.get("upn")
+        )
+        resolved_user_id = (
+            _msteams_inbound_optional_string(user_id)
+            or _msteams_inbound_optional_string(token_payload.get("oid"))
+            or _msteams_inbound_optional_string(token_payload.get("aadObjectId"))
+            or _msteams_inbound_optional_string(token_payload.get("sub"))
+            or user_principal_name
+            or MSTEAMS_DEFAULT_DELEGATED_USER_ID
+        )
+        delegated_config = self._msteams_delegated_auth_config(
+            account_id=normalized_account_id,
+        )
+        connection_name = (
+            delegated_config.connection_name
+            if delegated_config is not None
+            else MSTEAMS_DEFAULT_DELEGATED_CONNECTION_NAME
+        )
+        await self.database.upsert_msteams_sso_token(
+            connection_name=connection_name,
+            user_id=resolved_user_id,
+            token=access_token,
+            expires_at=expires_at,
+            refresh_token=refresh_token,
+            scopes=list(next_scopes),
+            user_principal_name=user_principal_name,
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "status": "stored",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": normalized_account_id,
+            "tenantId": route_config.tenant_id,
+            "clientId": route_config.app_id,
+            "connectionName": connection_name,
+            "userId": resolved_user_id,
+            "state": returned_state,
+            "scopes": list(next_scopes),
+        }
+        if expires_at is not None:
+            result["expiresAt"] = expires_at
+        if user_principal_name is not None:
+            result["userPrincipalName"] = user_principal_name
+        return result
+
     def _msteams_signin_channel_config(
         self,
         *,
@@ -10652,6 +10805,88 @@ class OpsMeshService:
         refresh_token_value = _msteams_inbound_optional_string(payload.get("refresh_token"))
         if refresh_token_value is not None:
             result["refreshToken"] = refresh_token_value
+        expires_in = payload.get("expires_in")
+        if isinstance(expires_in, int | float) and expires_in > 0:
+            result["expiresAt"] = (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=max(0, int(expires_in) - MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS)
+                )
+            ).isoformat()
+        scope = _msteams_inbound_optional_string(payload.get("scope"))
+        if scope is not None:
+            result["scopes"] = [part for part in scope.split() if part]
+        else:
+            result["scopes"] = list(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES)
+        return result
+
+    def _msteams_exchange_delegated_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+        code: str,
+        verifier: str,
+        scopes: tuple[str, ...],
+    ) -> dict[str, object]:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "authorization_code",
+                "scope": " ".join(scopes or MSTEAMS_DEFAULT_DELEGATED_SCOPES),
+                "code": code,
+                "redirect_uri": MSTEAMS_OAUTH_REDIRECT_URI,
+                "code_verifier": verifier,
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams delegated token exchange HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams delegated token exchange failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was not JSON."
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response was not an object."
+            )
+        access_token = _msteams_inbound_optional_string(payload.get("access_token"))
+        if access_token is None:
+            raise RuntimeError(
+                "Microsoft Teams delegated token exchange response missing access_token."
+            )
+        refresh_token = _msteams_inbound_optional_string(payload.get("refresh_token"))
+        if refresh_token is None:
+            raise RuntimeError("No refresh token received from Azure AD. Please try again.")
+        result: dict[str, object] = {
+            "accessToken": access_token,
+            "refreshToken": refresh_token,
+        }
         expires_in = payload.get("expires_in")
         if isinstance(expires_in, int | float) and expires_in > 0:
             result["expiresAt"] = (
