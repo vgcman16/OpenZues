@@ -534,6 +534,17 @@ def _timestamp_ms(value: datetime | str | None) -> int | None:
     return int(parsed.timestamp() * 1000)
 
 
+def _msteams_token_expired(value: str | None) -> bool:
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    else:
+        parsed = parsed.astimezone(UTC)
+    return parsed <= datetime.now(UTC)
+
+
 def _requires_secret(auth_scheme: str) -> bool:
     return auth_scheme.strip().lower() not in {"", "none", "anonymous"}
 
@@ -10276,6 +10287,9 @@ class OpsMeshService:
             user_id=normalized_user_id,
         )
         if not isinstance(stored, Mapping):
+            return None
+        expires_at = _msteams_inbound_optional_string(stored.get("expires_at"))
+        if _msteams_token_expired(expires_at):
             return None
         token = _msteams_inbound_optional_string(stored.get("token"))
         if token is None:
