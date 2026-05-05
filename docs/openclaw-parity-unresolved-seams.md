@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~67.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~67.7% overall, with a reasonable
   band of ~50-68%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6330,9 +6330,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~67.6%. Verified with focused runtime pytest, adjacent Teams
   action/provider proof, `ruff check`, and `mypy`; source/test checkpointed in
   `cf1b7f18`.
+- Closed the Microsoft Teams channel-info action seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-teams.ts`, and
+  `extensions/msteams/src/graph-teams.test.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="msteams"`,
+  `action="channel-info"`, trims `teamId`/`channelId`, uses route-backed Graph
+  auth with stored delegated-token preference when available, fetches the
+  Graph team channel with the upstream `$select` field set, and projects
+  OpenClaw-shaped `{ok, channel, action, channelInfo}` results. Repo-wide
+  parity is now estimated at ~67.7%. Verified with focused runtime pytest,
+  adjacent Teams action/provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `4e6fc71a`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams
-  channel-info Graph adapter.
+  send/poll/replay metadata gap, starting with Microsoft Teams Bot Framework
+  action adapters: upload-file, edit, and delete.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
