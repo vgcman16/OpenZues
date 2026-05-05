@@ -6017,6 +6017,117 @@ export default {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_executes_imported_openclaw_runtime_tool_factory_with_context(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-factory.cjs"
+    runtime_entry.write_text(
+        """
+module.exports = {
+  register(api) {
+    api.registerTool((ctx) => ({
+      name: "runtime.context_echo",
+      description: "Echo trusted runtime context",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      execute(toolCallId, args) {
+        return {
+          ok: true,
+          toolCallId,
+          message: args.message,
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+          workspaceDir: ctx.workspaceDir,
+          senderIsOwner: ctx.senderIsOwner,
+          messageChannel: ctx.messageChannel,
+          agentAccountId: ctx.agentAccountId,
+          deliveryThreadId: ctx.deliveryContext && ctx.deliveryContext.threadId,
+          configAssistantName: ctx.config && ctx.config.assistantName
+        };
+      }
+    }), { name: "runtime.context_echo" });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-factory-plugin",
+                    "name": "Runtime Factory Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-factory-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.context_echo"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.context_echo",
+            "sessionKey": "agent:main:factory",
+            "args": {"message": "hello"},
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+            message_channel="slack",
+            message_account_id="workspace-1",
+            message_to="U123",
+            message_thread_id="166.0001",
+        ),
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["message"] == "hello"
+    assert payload["result"]["agentId"] == "main"
+    assert payload["result"]["sessionKey"] == "agent:main:factory"
+    assert payload["result"]["workspaceDir"] == str(tmp_path)
+    assert payload["result"]["senderIsOwner"] is True
+    assert payload["result"]["messageChannel"] == "slack"
+    assert payload["result"]["agentAccountId"] == "workspace-1"
+    assert payload["result"]["deliveryThreadId"] == "166.0001"
+    assert payload["result"]["configAssistantName"] == "OpenZues"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

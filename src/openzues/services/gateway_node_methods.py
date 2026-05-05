@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import math
 import posixpath
@@ -1033,6 +1034,75 @@ def _tools_invoke_plugin_executor_allowed(
         return False
     plugin_token = _tools_invoke_policy_token(resolution.plugin_id)
     return bool(plugin_token and plugin_token in allow_tokens) or "group:plugins" in allow_tokens
+
+
+async def _call_tools_invoke_plugin_executor(
+    executor: GatewayPluginExecutor,
+    tool_call_id: str,
+    args: dict[str, Any],
+    *,
+    context: Mapping[str, object],
+) -> object:
+    if _tools_invoke_executor_accepts_context(executor):
+        return await executor(tool_call_id, args, context)
+    return await executor(tool_call_id, args)
+
+
+def _tools_invoke_executor_accepts_context(executor: GatewayPluginExecutor) -> bool:
+    try:
+        signature = inspect.signature(executor)
+    except (TypeError, ValueError):
+        return False
+    positional = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }:
+            positional += 1
+    return positional >= 3
+
+
+def _tools_invoke_plugin_context(
+    config_service: GatewayConfigService | None,
+    *,
+    requester: GatewayNodeMethodRequester,
+    agent_id: str,
+    session_key: str,
+) -> dict[str, object]:
+    context: dict[str, object] = {
+        "agentId": agent_id,
+        "sessionKey": session_key,
+        "senderIsOwner": _tools_invoke_requester_is_owner(requester),
+        "sandboxed": False,
+    }
+    if config_service is not None:
+        try:
+            snapshot = config_service.build_snapshot()
+        except Exception:
+            snapshot = None
+        if isinstance(snapshot, Mapping) and is_plugin_json_value(snapshot):
+            config_payload = copy_plugin_json_value(snapshot)
+            context["config"] = config_payload
+            context["runtimeConfig"] = config_payload
+        data_dir = getattr(config_service, "_data_dir", None)
+        if isinstance(data_dir, Path):
+            context["workspaceDir"] = str(data_dir)
+    route_context = _requester_route_context(requester)
+    if route_context is not None:
+        context["deliveryContext"] = dict(route_context)
+    message_channel = _string_or_none(requester.message_channel)
+    if message_channel is not None:
+        context["messageChannel"] = message_channel
+    account_id = _string_or_none(requester.message_account_id)
+    if account_id is not None:
+        context["agentAccountId"] = account_id
+    sender_id = _string_or_none(requester.message_to)
+    if sender_id is not None:
+        context["requesterSenderId"] = sender_id
+    return context
 
 
 def _tools_invoke_merge_action_into_args_if_supported(
@@ -2616,7 +2686,19 @@ class GatewayNodeMethodService:
                 tool_args = dict(rewritten_params)
         if plugin_executor is not None:
             try:
-                result = await plugin_executor(tool_call_id, tool_args)
+                result = await _call_tools_invoke_plugin_executor(
+                    plugin_executor,
+                    tool_call_id,
+                    tool_args,
+                    context=_tools_invoke_plugin_context(
+                        self._config_service,
+                        requester=requester,
+                        agent_id=hook_agent_id,
+                        session_key=str(
+                            tool_args.get("sessionKey") or session_key or DEFAULT_MAIN_KEY
+                        ),
+                    ),
+                )
             except GatewayNodeMethodError:
                 raise
             except Exception as exc:

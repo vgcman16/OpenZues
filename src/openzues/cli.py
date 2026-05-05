@@ -18163,14 +18163,26 @@ function unwrapRuntimeExport(moduleValue) {
   return value;
 }
 
-function toolNamesFromDefinition(definition) {
+function toolNamesFromDefinition(definition, opts) {
   if (typeof definition === "string") {
     return [definition];
   }
-  if (!definition || typeof definition !== "object") {
-    return [];
-  }
   const names = [];
+  if (opts && typeof opts === "object") {
+    if (typeof opts.name === "string") {
+      names.push(opts.name);
+    }
+    if (Array.isArray(opts.names)) {
+      for (const name of opts.names) {
+        if (typeof name === "string") {
+          names.push(name);
+        }
+      }
+    }
+  }
+  if (!definition || typeof definition !== "object") {
+    return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+  }
   if (typeof definition.name === "string") {
     names.push(definition.name);
   }
@@ -18182,6 +18194,25 @@ function toolNamesFromDefinition(definition) {
     }
   }
   return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+}
+
+function listToolsFromFactoryResult(result) {
+  if (!result) {
+    return [];
+  }
+  return Array.isArray(result) ? result : [result];
+}
+
+function findToolDefinitionByName(list, toolName) {
+  for (const definition of list) {
+    if (toolNamesFromDefinition(definition).includes(toolName)) {
+      return definition;
+    }
+  }
+  if (list.length === 1 && list[0] && typeof list[0] === "object") {
+    return list[0];
+  }
+  return null;
 }
 
 async function activatePlugin(plugin) {
@@ -18201,27 +18232,34 @@ async function activatePlugin(plugin) {
     return null;
   }
   const tools = [];
-  const registerTool = (definition) => {
-    const names = toolNamesFromDefinition(definition);
+  const registerTool = (definition, opts) => {
+    const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
       return;
     }
+    const isFactory = typeof definition === "function";
+    const metadata = isFactory && opts && typeof opts === "object" ? opts : definition;
     tools.push({
       pluginId: plugin.id || plugin.pluginId,
       pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
       source: "openclaw-plugin",
       names,
+      factory: isFactory ? definition : undefined,
+      factoryTool: isFactory,
       runtimeEntrySource: entryPath,
       description:
-        definition && typeof definition === "object" && typeof definition.description === "string"
-          ? definition.description
+        metadata && typeof metadata === "object" && typeof metadata.description === "string"
+          ? metadata.description
           : undefined,
       parameters:
-        definition && typeof definition === "object" && definition.parameters
-          ? definition.parameters
+        metadata && typeof metadata === "object" && metadata.parameters
+          ? metadata.parameters
           : undefined,
       execute:
-        definition && typeof definition === "object" && typeof definition.execute === "function"
+        !isFactory &&
+        definition &&
+        typeof definition === "object" &&
+        typeof definition.execute === "function"
           ? definition.execute
           : undefined,
     });
@@ -18252,7 +18290,16 @@ async function activatePlugin(plugin) {
       throw new Error("OpenClaw plugin runtime execution failed: plugin did not activate");
     }
     const toolName = String(context.toolName || "").trim();
-    const tool = result.tools.find((entry) => entry.names.includes(toolName));
+    const toolEntry = result.tools.find((entry) => entry.names.includes(toolName));
+    const tool =
+      toolEntry && typeof toolEntry.factory === "function"
+        ? findToolDefinitionByName(
+            listToolsFromFactoryResult(
+              await Promise.resolve(toolEntry.factory(context.toolContext || {})),
+            ),
+            toolName,
+          )
+        : toolEntry;
     if (!tool || typeof tool.execute !== "function") {
       throw new Error(`OpenClaw plugin runtime tool is not executable: ${toolName}`);
     }
@@ -18348,6 +18395,7 @@ def _execute_native_plugin_runtime_tool(
     tool: str,
     tool_call_id: str,
     args: dict[str, Any],
+    tool_context: Mapping[str, object] | None = None,
 ) -> object:
     if shutil.which("node") is None:
         raise RuntimeError("Node.js is required to execute OpenClaw plugin runtimes.")
@@ -18364,6 +18412,7 @@ def _execute_native_plugin_runtime_tool(
                     "toolName": tool,
                     "toolCallId": tool_call_id,
                     "args": args,
+                    "toolContext": dict(tool_context or {}),
                 },
                 default=str,
             ),
@@ -18393,13 +18442,18 @@ def _native_plugin_runtime_executor_factory(
     plugin: dict[str, object],
     tool: str,
 ) -> GatewayPluginExecutor:
-    async def execute(tool_call_id: str, args: dict[str, Any]) -> object:
+    async def execute(
+        tool_call_id: str,
+        args: dict[str, Any],
+        tool_context: Mapping[str, object] | None = None,
+    ) -> object:
         return await asyncio.to_thread(
             _execute_native_plugin_runtime_tool,
             plugin=plugin,
             tool=tool,
             tool_call_id=tool_call_id,
             args=args,
+            tool_context=tool_context,
         )
 
     return execute

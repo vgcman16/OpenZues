@@ -4,14 +4,14 @@ import json
 import math
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from openzues.services.gateway_method_policy import (
     ADMIN_GATEWAY_METHOD_SCOPE,
     ORDERED_OPERATOR_SCOPES,
 )
 
-type GatewayPluginExecutor = Callable[[str, dict[str, Any]], Awaitable[object]]
+type GatewayPluginExecutor = Callable[..., Awaitable[object]]
 type GatewayPluginSessionExtensionProjector = Callable[[dict[str, object]], object]
 
 _PLUGIN_JSON_VALUE_MAX_DEPTH = 32
