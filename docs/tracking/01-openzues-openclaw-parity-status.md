@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~67.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~67.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -234,6 +234,11 @@ may lag behind this tracker.
   `$search`, 1..50 limit clamping, quote stripping, sender filter escaping,
   `ConsistencyLevel=eventual`, and message summary projection.
   - Status: checkpointed in `29547a56`
+
+- [x] Microsoft Teams member-info action support, preserving OpenClaw Graph
+  user profile lookup, `$select` field coverage, route-backed Graph auth, and
+  user profile projection.
+  - Status: checkpointed in `8aa5f0a6`
 
 - [x] Microsoft Teams native readiness probe support, preserving OpenClaw Bot
   Framework credential posture, Graph app-token posture metadata, optional
