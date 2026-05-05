@@ -17501,7 +17501,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             adapter = candidate
             break
     if adapter is None:
-        return ()
+        adapter = _NativeInstalledPluginRuntimeActivationAdapter()
     only_plugin_ids = _dedupe_cli_strings(
         [
             plugin_id
@@ -17841,6 +17841,304 @@ def _call_plugin_runtime_activation_adapter(
     if callable(adapter):
         return adapter(dict(context))
     return None
+
+
+_NATIVE_PLUGIN_RUNTIME_LOADER_JS = r"""
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const { pathToFileURL } = require("url");
+const Module = require("module");
+
+const contextPath = process.argv[2];
+const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+
+function normalizeLowercaseStringOrEmpty(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeOptionalLowercaseString(value) {
+  const text = normalizeLowercaseStringOrEmpty(value);
+  return text || undefined;
+}
+
+function passthrough(value) {
+  return value;
+}
+
+const textRuntime = {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+};
+
+const genericSdk = new Proxy(
+  {
+    normalizeLowercaseStringOrEmpty,
+    normalizeOptionalLowercaseString,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
+const originalLoad = Module._load;
+Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  if (
+    request === "openclaw/plugin-sdk/text-runtime" ||
+    request === "@openclaw/plugin-sdk/text-runtime"
+  ) {
+    return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk" ||
+    request === "@openclaw/plugin-sdk" ||
+    request.startsWith("openclaw/plugin-sdk/") ||
+    request.startsWith("@openclaw/plugin-sdk/")
+  ) {
+    return genericSdk;
+  }
+  return originalLoad.apply(this, arguments);
+};
+
+async function loadRuntimeModule(entryPath) {
+  const resolved = path.resolve(entryPath);
+  try {
+    return require(resolved);
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (
+      error &&
+      (error.code === "ERR_REQUIRE_ESM" || message.includes("Cannot use import statement"))
+    ) {
+      return await import(pathToFileURL(resolved).href);
+    }
+    throw error;
+  }
+}
+
+function unwrapRuntimeExport(moduleValue) {
+  let value = moduleValue;
+  for (let index = 0; index < 4; index += 1) {
+    if (
+      value &&
+      typeof value === "object" &&
+      "default" in value &&
+      value.default &&
+      (typeof value.default === "function" ||
+        typeof value.default.register === "function" ||
+        typeof value.default.activate === "function")
+    ) {
+      value = value.default;
+      continue;
+    }
+    break;
+  }
+  return value;
+}
+
+function toolNamesFromDefinition(definition) {
+  if (typeof definition === "string") {
+    return [definition];
+  }
+  if (!definition || typeof definition !== "object") {
+    return [];
+  }
+  const names = [];
+  if (typeof definition.name === "string") {
+    names.push(definition.name);
+  }
+  if (Array.isArray(definition.names)) {
+    for (const name of definition.names) {
+      if (typeof name === "string") {
+        names.push(name);
+      }
+    }
+  }
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+}
+
+async function activatePlugin(plugin) {
+  const entryPath = plugin.runtimeEntrySource;
+  if (typeof entryPath !== "string" || !entryPath.trim()) {
+    return null;
+  }
+  const loaded = await loadRuntimeModule(entryPath);
+  const runtime = unwrapRuntimeExport(loaded);
+  const activate =
+    runtime && typeof runtime === "object"
+      ? runtime.register || runtime.activate
+      : typeof runtime === "function"
+        ? runtime
+        : null;
+  if (typeof activate !== "function") {
+    return null;
+  }
+  const tools = [];
+  const registerTool = (definition) => {
+    const names = toolNamesFromDefinition(definition);
+    if (!names.length) {
+      return;
+    }
+    tools.push({
+      pluginId: plugin.id || plugin.pluginId,
+      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      source: "openclaw-plugin",
+      names,
+      description:
+        definition && typeof definition === "object" && typeof definition.description === "string"
+          ? definition.description
+          : undefined,
+    });
+  };
+  const api = {
+    pluginId: plugin.id || plugin.pluginId,
+    pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    registerTool,
+    tools: { register: registerTool, registerTool },
+    tool: { register: registerTool, registerTool },
+  };
+  const returned = await Promise.resolve(activate(api));
+  if (returned && typeof returned === "object" && Array.isArray(returned.tools)) {
+    for (const definition of returned.tools) {
+      registerTool(definition);
+    }
+  }
+  return {
+    pluginId: plugin.id || plugin.pluginId,
+    tools,
+  };
+}
+
+(async () => {
+  const tools = [];
+  const importedPluginIds = [];
+  for (const plugin of Array.isArray(context.plugins) ? context.plugins : []) {
+    if (!plugin || typeof plugin !== "object") {
+      continue;
+    }
+    if (plugin.status && plugin.status !== "loaded") {
+      continue;
+    }
+    const result = await activatePlugin(plugin);
+    if (!result) {
+      continue;
+    }
+    if (result.pluginId) {
+      importedPluginIds.push(result.pluginId);
+    }
+    tools.push(...result.tools);
+  }
+  process.stdout.write(JSON.stringify({ tools, importedPluginIds }));
+})().catch((error) => {
+  const message = error && error.stack ? error.stack : String(error);
+  process.stderr.write(message);
+  process.exit(1);
+});
+"""
+
+
+class _NativeInstalledPluginRuntimeActivationAdapter:
+    def activate_installed_plugins(
+        self,
+        context: dict[str, object],
+    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+        plugins = context.get("plugins")
+        if not isinstance(plugins, list):
+            return ()
+        if not any(
+            isinstance(plugin, Mapping)
+            and _optional_cli_string(plugin.get("runtimeEntrySource")) is not None
+            for plugin in plugins
+        ):
+            return ()
+        if shutil.which("node") is None:
+            raise RuntimeError("Node.js is required to import OpenClaw plugin runtimes.")
+        with tempfile.TemporaryDirectory(prefix="openzues-plugin-runtime-") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loader_path = tmp_path / "loader.cjs"
+            context_path = tmp_path / "context.json"
+            loader_path.write_text(_NATIVE_PLUGIN_RUNTIME_LOADER_JS, encoding="utf-8")
+            context_path.write_text(
+                json.dumps({"plugins": plugins}, default=str),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                ["node", str(loader_path), str(context_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "unknown error").strip()
+            raise RuntimeError(detail[:1000])
+        try:
+            payload = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("plugin runtime loader returned invalid JSON") from exc
+        return _native_plugin_runtime_specs_from_loader_payload(payload)
+
+
+async def _native_plugin_runtime_executor(
+    tool: str,
+    _args: dict[str, Any],
+) -> dict[str, object]:
+    return {
+        "ok": False,
+        "tool": tool,
+        "error": "OpenClaw plugin runtime execution is not available in this native loader.",
+    }
+
+
+def _native_plugin_runtime_specs_from_loader_payload(
+    payload: object,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    if not isinstance(payload, Mapping):
+        return ()
+    entries = payload.get("tools")
+    if not isinstance(entries, list):
+        return ()
+    specs: list[GatewayPluginRuntimeExecutorSpec] = []
+    seen: set[tuple[str, str | None]] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(entry.get("pluginId", entry.get("plugin_id")))
+        raw_names = entry.get("names")
+        names = _string_list_or_none(raw_names)
+        if not names:
+            maybe_name = _optional_cli_string(entry.get("name"))
+            names = [maybe_name] if maybe_name is not None else []
+        for name in names:
+            tool_name = name.strip()
+            if not tool_name:
+                continue
+            key = (tool_name.lower(), plugin_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool=tool_name,
+                    executor=_native_plugin_runtime_executor,
+                    plugin_id=plugin_id,
+                    plugin_name=_optional_cli_string(
+                        entry.get("pluginName", entry.get("plugin_name"))
+                    ),
+                    description=_optional_cli_string(entry.get("description")),
+                    source=_optional_cli_string(entry.get("source")) or "openclaw-plugin",
+                )
+            )
+    return tuple(specs)
 
 
 def _plugin_runtime_tool_entries(
