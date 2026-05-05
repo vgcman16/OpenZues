@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The bundled plugin runtime entry import slice is checkpointed in `8cb314f4`.
+The ESM plugin runtime entry import slice is checkpointed in `eb11e22f`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/cli.py`
@@ -48,12 +48,33 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled runtime entry import checkpointed in `8cb314f4` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue ESM/import-depth and executor invocation breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | ESM runtime entry import checkpointed in `eb11e22f` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark native outbound route checkpointed in `d1515da1` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001BL` ESM plugin runtime entry import
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/sdk-alias.ts`,
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native plugin runtime import also supports common package ESM
+    syntax (`import ... from "openclaw/plugin-sdk/*"` plus `export default`)
+    by transforming it into a temporary CommonJS module beside the runtime
+    entry, preserving SDK alias shims, relative import posture, registered
+    tool collection, imported-state projection, and manifest contract
+    satisfaction.
+  - Evidence required: focused ESM no-fake-adapter plugin doctor test,
+    adjacent plugin import/activation tests, gateway plugin runtime tests,
+    ruff, mypy
+  - Status: checkpointed in `eb11e22f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused ESM plugin runtime import proof (`1
+    passed`), adjacent plugin activation proof (`8 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PLUGIN-001BK` bundled plugin runtime entry import
   - Source: `openclaw-main/src/plugins/loader.ts`,

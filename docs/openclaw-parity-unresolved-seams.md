@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.6% overall, with a reasonable
   band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5662,6 +5662,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   imported. Repo-wide parity is now estimated at ~61.5%. Verified with focused
   plugin runtime import pytest, adjacent activation/import proof, gateway
   plugin runtime tests, `ruff check`, and `mypy`; checkpointed in `8cb314f4`.
+- Closed the ESM plugin runtime entry import seam from OpenClaw
+  `src/plugins/loader.ts`, `src/plugins/sdk-alias.ts`, and
+  `src/plugins/loader.test.ts`: native runtime import now supports common
+  `import ... from "openclaw/plugin-sdk/*"` plus `export default` syntax by
+  rewriting the entry to a temporary CommonJS module beside the source, while
+  preserving SDK alias shims and registered tool collection. Repo-wide parity
+  is now estimated at ~61.6%. Verified with focused ESM runtime import pytest,
+  adjacent plugin activation/import proof, gateway plugin runtime tests,
+  `ruff check`, and `mypy`; checkpointed in `eb11e22f`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.5% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.6% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -61,6 +61,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
   CommonJS package entries: OpenZues shims OpenClaw plugin-SDK aliases, calls
   `register`/`activate`, and records registered tools without requiring a fake
   activation adapter.
+- ESM-style bundled plugin runtime entries now use the same native import path
+  through a temporary CommonJS transform for common OpenClaw
+  `import ... from "openclaw/plugin-sdk/*"` and `export default` syntax.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -10000,6 +10003,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
   Checkpointed in `8cb314f4`.
+
+- ESM-style bundled OpenClaw plugin runtime entries now follow the same native
+  import/activation path: when a runtime entry uses common
+  `import ... from "openclaw/plugin-sdk/*"` plus `export default` syntax,
+  OpenZues rewrites the entry to a temporary CommonJS module beside the source
+  file, preserving SDK alias shims, relative import posture, registered tool
+  collection, imported-state projection, and manifest contract satisfaction.
+  This closes `OZ-PLUGIN-001BL`; repo-wide parity is now estimated at ~61.6%.
+- Verified the ESM plugin runtime entry import slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_imports_bundled_esm_sdk_runtime_entry_without_fake_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "imports_bundled_esm_sdk_runtime_entry_without_fake_adapter or
+  imports_bundled_sdk_runtime_entry_without_fake_adapter or
+  plugin_sdk_alias_to_activation_adapter or source_plugin_sdk_subpath_aliases or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_reports_metadata_only_tool_activation or
+  rejects_installed_activation_adapter_tool_outside_manifest_contract or
+  activation_adapter_skips_disabled_manifest_plugins"` (`8 passed, 488
+  deselected`), `python -m pytest tests\test_gateway_plugin_runtime.py -q`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
+  Checkpointed in `eb11e22f`.
 
 ## References
 
