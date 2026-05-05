@@ -7094,6 +7094,237 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_history_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-history.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  HISTORY_CONTEXT_MARKER,
+  buildHistoryContext,
+  buildHistoryContextFromEntries,
+  buildHistoryContextFromMap,
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntries,
+  clearHistoryEntriesIfEnabled,
+  evictOldHistoryKeys,
+  recordPendingHistoryEntry,
+  recordPendingHistoryEntryIfEnabled
+} = require("openclaw/plugin-sdk/reply-history");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const formatEntry = (entry) => `${entry.sender}: ${entry.body}`;
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_history",
+      description: "Use OpenClaw reply history SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const historyMap = new Map();
+        recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Ada", body: "one", messageId: "m1" },
+          limit: 2
+        });
+        const capped = recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Grace", body: "two", messageId: "m2" },
+          limit: 2
+        });
+        const cappedSnapshot = capped.map((entry) => entry.body);
+        recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Lin", body: "three", messageId: "m3" },
+          limit: 2
+        });
+        const skippedNull = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "room",
+          entry: null,
+          limit: 2
+        });
+        const skippedLimit = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Skip", body: "zero" },
+          limit: 0
+        });
+        const enabled = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "enabled",
+          entry: { sender: "Eve", body: "enabled" },
+          limit: 1
+        });
+
+        const pendingContext = buildPendingHistoryContextFromMap({
+          historyMap,
+          historyKey: "room",
+          limit: 2,
+          currentMessage: "now",
+          formatEntry,
+          lineBreak: "|"
+        });
+        const appendedContext = buildHistoryContextFromMap({
+          historyMap,
+          historyKey: "room",
+          limit: 3,
+          entry: { sender: "You", body: "latest" },
+          currentMessage: "reply?",
+          formatEntry
+        });
+        const entriesContext = buildHistoryContextFromEntries({
+          entries: [
+            { sender: "A", body: "old" },
+            { sender: "B", body: "current" }
+          ],
+          currentMessage: "fresh",
+          formatEntry
+        });
+        const includeLastContext = buildHistoryContextFromEntries({
+          entries: [
+            { sender: "A", body: "old" },
+            { sender: "B", body: "current" }
+          ],
+          currentMessage: "fresh",
+          formatEntry,
+          excludeLast: false
+        });
+        const emptyContext = buildHistoryContext({
+          historyText: "   ",
+          currentMessage: "current only"
+        });
+        const retainedBeforeClear = historyMap.get("room").map((entry) => entry.body);
+
+        clearHistoryEntries({ historyMap, historyKey: "enabled" });
+        clearHistoryEntriesIfEnabled({ historyMap, historyKey: "room", limit: 0 });
+        const sizeAfterSkippedClear = historyMap.get("room").length;
+        clearHistoryEntriesIfEnabled({ historyMap, historyKey: "room", limit: 2 });
+
+        const evictionMap = new Map([
+          ["a", [1]],
+          ["b", [2]],
+          ["c", [3]]
+        ]);
+        evictOldHistoryKeys(evictionMap, 2);
+
+        const genericContext = genericSdk.buildHistoryContext({
+          historyText: "Ada: hi",
+          currentMessage: "Now"
+        });
+
+        return {
+          constants: [DEFAULT_GROUP_HISTORY_LIMIT, HISTORY_CONTEXT_MARKER],
+          capped: cappedSnapshot,
+          retained: retainedBeforeClear,
+          skipped: [skippedNull.length, skippedLimit.length, enabled[0].body],
+          pendingContext,
+          appendedContext: [
+            appendedContext.includes("Grace: two"),
+            appendedContext.includes("Lin: three"),
+            appendedContext.includes("You: latest"),
+            appendedContext.includes("[Current message - respond to this]")
+          ],
+          entriesContext: [
+            entriesContext.includes("A: old"),
+            entriesContext.includes("B: current")
+          ],
+          includeLastContext: [
+            includeLastContext.includes("A: old"),
+            includeLastContext.includes("B: current")
+          ],
+          emptyContext,
+          cleared: [
+            historyMap.get("enabled").length,
+            sizeAfterSkippedClear,
+            historyMap.get("room").length
+          ],
+          eviction: Array.from(evictionMap.keys()),
+          genericContext: genericContext.includes(HISTORY_CONTEXT_MARKER)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-history-plugin",
+                    "name": "Runtime Reply History Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-history-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_history"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_history"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": [
+            50,
+            "[Chat messages since your last reply - for context]",
+        ],
+        "capped": ["one", "two"],
+        "retained": ["two", "three", "latest"],
+        "skipped": [0, 0, "enabled"],
+        "pendingContext": (
+            "[Chat messages since your last reply - for context]|"
+            "Grace: two|Lin: three||[Current message - respond to this]|now"
+        ),
+        "appendedContext": [True, True, False, True],
+        "entriesContext": [True, False],
+        "includeLastContext": [True, True],
+        "emptyContext": "current only",
+        "cleared": [0, 3, 0],
+        "eviction": ["b", "c"],
+        "genericContext": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

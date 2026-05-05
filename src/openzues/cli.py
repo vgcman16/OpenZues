@@ -19099,6 +19099,133 @@ function convertMarkdownTables(markdown, mode) {
   return changed ? output.join("\n") : markdown;
 }
 
+const HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]";
+const CURRENT_MESSAGE_MARKER = "[Current message - respond to this]";
+const DEFAULT_GROUP_HISTORY_LIMIT = 50;
+
+function evictOldHistoryKeys(historyMap, maxKeys = 1000) {
+  if (historyMap.size <= maxKeys) {
+    return;
+  }
+  const keysToDelete = historyMap.size - maxKeys;
+  const iterator = historyMap.keys();
+  for (let index = 0; index < keysToDelete; index += 1) {
+    const key = iterator.next().value;
+    if (key !== undefined) {
+      historyMap.delete(key);
+    }
+  }
+}
+
+function buildHistoryContext(params) {
+  const lineBreak = params.lineBreak ?? "\n";
+  if (!String(params.historyText || "").trim()) {
+    return params.currentMessage;
+  }
+  return [
+    HISTORY_CONTEXT_MARKER,
+    params.historyText,
+    "",
+    CURRENT_MESSAGE_MARKER,
+    params.currentMessage,
+  ].join(lineBreak);
+}
+
+function appendHistoryEntry(params) {
+  if (params.limit <= 0) {
+    return [];
+  }
+  const history = params.historyMap.get(params.historyKey) || [];
+  history.push(params.entry);
+  while (history.length > params.limit) {
+    history.shift();
+  }
+  if (params.historyMap.has(params.historyKey)) {
+    params.historyMap.delete(params.historyKey);
+  }
+  params.historyMap.set(params.historyKey, history);
+  evictOldHistoryKeys(params.historyMap);
+  return history;
+}
+
+function recordPendingHistoryEntry(params) {
+  return appendHistoryEntry(params);
+}
+
+function recordPendingHistoryEntryIfEnabled(params) {
+  if (!params.entry || params.limit <= 0) {
+    return [];
+  }
+  return recordPendingHistoryEntry({
+    historyMap: params.historyMap,
+    historyKey: params.historyKey,
+    entry: params.entry,
+    limit: params.limit,
+  });
+}
+
+function buildHistoryContextFromEntries(params) {
+  const lineBreak = params.lineBreak ?? "\n";
+  const entries =
+    params.excludeLast === false ? params.entries : params.entries.slice(0, -1);
+  if (entries.length === 0) {
+    return params.currentMessage;
+  }
+  return buildHistoryContext({
+    historyText: entries.map(params.formatEntry).join(lineBreak),
+    currentMessage: params.currentMessage,
+    lineBreak,
+  });
+}
+
+function buildPendingHistoryContextFromMap(params) {
+  if (params.limit <= 0) {
+    return params.currentMessage;
+  }
+  return buildHistoryContextFromEntries({
+    entries: params.historyMap.get(params.historyKey) || [],
+    currentMessage: params.currentMessage,
+    formatEntry: params.formatEntry,
+    lineBreak: params.lineBreak,
+    excludeLast: false,
+  });
+}
+
+function buildHistoryContextFromMap(params) {
+  if (params.limit <= 0) {
+    return params.currentMessage;
+  }
+  const entries = params.entry
+    ? appendHistoryEntry({
+        historyMap: params.historyMap,
+        historyKey: params.historyKey,
+        entry: params.entry,
+        limit: params.limit,
+      })
+    : params.historyMap.get(params.historyKey) || [];
+  return buildHistoryContextFromEntries({
+    entries,
+    currentMessage: params.currentMessage,
+    formatEntry: params.formatEntry,
+    lineBreak: params.lineBreak,
+    excludeLast: params.excludeLast,
+  });
+}
+
+function clearHistoryEntries(params) {
+  params.historyMap.set(params.historyKey, []);
+}
+
+function clearHistoryEntriesIfEnabled(params) {
+  if (params.limit <= 0) {
+    return;
+  }
+  clearHistoryEntries({
+    historyMap: params.historyMap,
+    historyKey: params.historyKey,
+  });
+}
+
 function createDedupeCache(options) {
   const ttlMs = Math.max(0, options.ttlMs);
   const maxSize = Math.max(0, Math.floor(options.maxSize));
@@ -22538,6 +22665,20 @@ const markdownTableRuntime = {
   resolveMarkdownTableMode,
 };
 
+const replyHistoryRuntime = {
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  HISTORY_CONTEXT_MARKER,
+  buildHistoryContext,
+  buildHistoryContextFromEntries,
+  buildHistoryContextFromMap,
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntries,
+  clearHistoryEntriesIfEnabled,
+  evictOldHistoryKeys,
+  recordPendingHistoryEntry,
+  recordPendingHistoryEntryIfEnabled,
+};
+
 const keyedAsyncQueueRuntime = {
   KeyedAsyncQueue,
   enqueueKeyedTask,
@@ -22775,6 +22916,7 @@ const replyPayloadRuntime = {
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
+    DEFAULT_GROUP_HISTORY_LIMIT,
     DEFAULT_MAIN_KEY,
     PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
@@ -22794,6 +22936,10 @@ const genericSdk = new Proxy(
     buildRuntimeAccountStatusSnapshot,
     buildTokenChannelStatusSummary,
     buildWebhookChannelStatusSummary,
+    buildHistoryContext,
+    buildHistoryContextFromEntries,
+    buildHistoryContextFromMap,
+    buildPendingHistoryContextFromMap,
     coerceSecretRef,
     collectErrorGraphCandidates,
     collectIssuesForEnabledAccounts,
@@ -22818,6 +22964,8 @@ const genericSdk = new Proxy(
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
     createUnionActionGate,
+    clearHistoryEntries,
+    clearHistoryEntriesIfEnabled,
     chunkMarkdownTextWithMode,
     chunkText,
     chunkTextForOutbound,
@@ -22830,6 +22978,7 @@ const genericSdk = new Proxy(
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
     enqueueKeyedTask,
+    evictOldHistoryKeys,
     extensionForMime,
     extractErrorCode,
     extractToolPayload,
@@ -22849,6 +22998,7 @@ const genericSdk = new Proxy(
     hasConfiguredSecretInput,
     hasControlCommand,
     hasInlineCommandTokens,
+    HISTORY_CONTEXT_MARKER,
     KeyedAsyncQueue,
     hasOutboundMedia,
     hasOutboundReplyContent,
@@ -22919,6 +23069,8 @@ const genericSdk = new Proxy(
     resolveMarkdownTableMode,
     resolveRetryConfig,
     runTasksWithConcurrency,
+    recordPendingHistoryEntry,
+    recordPendingHistoryEntryIfEnabled,
     readStringValue,
     readStringArrayParam,
     readStringOrNumberParam,
@@ -23102,6 +23254,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/markdown-table-runtime"
   ) {
     return markdownTableRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-history" ||
+    request === "@openclaw/plugin-sdk/reply-history"
+  ) {
+    return replyHistoryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||
