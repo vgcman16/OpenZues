@@ -40769,6 +40769,88 @@ async def test_node_event_agent_request_routes_deep_link_to_chat_runtime(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "node-event-agent-request-slack-thread.db")
+    await database.initialize()
+    registry = GatewayNodeRegistry()
+    _register_ios_node(registry)
+    observed: list[dict[str, object | None]] = []
+
+    async def fake_chat_send_service(
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+        thinking: str | None,
+        deliver: bool | None,
+        timeout_ms: int | None,
+        channel: str | None = None,
+        to: str | None = None,
+        account_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict[str, object]:
+        observed.append(
+            {
+                "session_key": session_key,
+                "message": message,
+                "idempotency_key": idempotency_key,
+                "thinking": thinking,
+                "deliver": deliver,
+                "timeout_ms": timeout_ms,
+                "channel": channel,
+                "to": to,
+                "account_id": account_id,
+                "thread_id": thread_id,
+            }
+        )
+        return {"runId": idempotency_key, "status": "ok"}
+
+    service = GatewayNodeMethodService(
+        registry,
+        database=database,
+        hub=BroadcastHub(),
+        chat_send_service=fake_chat_send_service,
+    )
+    requester = GatewayNodeMethodRequester(node_id="node-1")
+
+    response = await service.call(
+        "node.event",
+        {
+            "event": "agent.request",
+            "payload": {
+                "key": "node-slack-thread-announce-1",
+                "sessionKey": "agent:main:main",
+                "message": "  Announce completion back to the Slack thread.  ",
+                "deliver": True,
+                "channel": "slack",
+                "accountId": "acct-1",
+                "to": "channel:C123",
+                "threadId": "171.222",
+            },
+        },
+        requester=requester,
+    )
+
+    assert response == {"ok": True}
+    assert observed == [
+        {
+            "session_key": "agent:main:main",
+            "message": "Announce completion back to the Slack thread.",
+            "idempotency_key": "node-slack-thread-announce-1",
+            "thinking": None,
+            "deliver": True,
+            "timeout_ms": None,
+            "channel": "slack",
+            "to": "channel:C123",
+            "account_id": "acct-1",
+            "thread_id": "171.222",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_node_event_agent_request_disables_delivery_without_route(tmp_path) -> None:
     database = Database(tmp_path / "node-event-agent-request-no-route.db")
     await database.initialize()

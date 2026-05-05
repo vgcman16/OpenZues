@@ -2255,6 +2255,8 @@ def create_app(
         image_order: list[str] | None = None,
         channel: str | None = None,
         to: str | None = None,
+        account_id: str | None = None,
+        thread_id: str | None = None,
         node_id: str | None = None,
     ) -> dict[str, object]:
         persisted_attachments = _persist_gateway_chat_attachments(
@@ -2277,6 +2279,8 @@ def create_app(
             timeout_ms=timeout_ms,
             channel=channel,
             to=to,
+            account_id=account_id,
+            thread_id=thread_id,
             metadata=(
                 {"imageOrder": list(image_order)}
                 if image_order is not None

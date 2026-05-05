@@ -1353,7 +1353,9 @@ def _node_agent_request_timeout_ms(raw: object) -> int | None:
     return min(int(raw * 1000), 2_592_000_000)
 
 
-def _node_agent_request_delivery_route(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+def _node_agent_request_delivery_route(
+    payload: dict[str, Any],
+) -> tuple[str | None, str | None, str | None, str | None]:
     channel_raw = payload.get("channel")
     to_raw = payload.get("to")
     channel = (
@@ -1363,8 +1365,10 @@ def _node_agent_request_delivery_route(payload: dict[str, Any]) -> tuple[str | N
     )
     to = to_raw.strip() if isinstance(to_raw, str) and to_raw.strip() else None
     if channel is None or to is None:
-        return None, None
-    return channel, to
+        return None, None, None, None
+    account_id = _string_or_none(payload.get("accountId"))
+    thread_id = _stringified_route_id(payload.get("threadId"))
+    return channel, to, account_id, thread_id
 
 
 _NODE_PENDING_WAKE_RECONNECT_WAIT_MS = 3_000
@@ -12574,7 +12578,12 @@ class GatewayNodeMethodService:
             if isinstance(payload.get("thinking"), str) and payload["thinking"].strip()
             else None
         )
-        delivery_channel, delivery_to = _node_agent_request_delivery_route(payload)
+        (
+            delivery_channel,
+            delivery_to,
+            delivery_account_id,
+            delivery_thread_id,
+        ) = _node_agent_request_delivery_route(payload)
         deliver = payload.get("deliver") is True and delivery_channel is not None
         timeout_ms = _node_agent_request_timeout_ms(payload.get("timeoutSeconds"))
         timestamp_ms = _timestamp_ms(now_ms)
@@ -12611,6 +12620,14 @@ class GatewayNodeMethodService:
                     message,
                     sandbox_media_paths,
                 )
+            delivery_kwargs: dict[str, object | None] = {
+                "channel": delivery_channel,
+                "to": delivery_to,
+            }
+            if delivery_account_id is not None:
+                delivery_kwargs["account_id"] = delivery_account_id
+            if delivery_thread_id is not None:
+                delivery_kwargs["thread_id"] = delivery_thread_id
             send_result = await self._chat_attachment_send_service(
                 session_key=session_key,
                 message=runtime_message,
@@ -12619,12 +12636,19 @@ class GatewayNodeMethodService:
                 deliver=deliver,
                 timeout_ms=timeout_ms,
                 attachments=runtime_attachments,
-                channel=delivery_channel,
-                to=delivery_to,
                 node_id=node_id,
+                **delivery_kwargs,
             )
         else:
             assert self._chat_send_service is not None
+            delivery_kwargs = {
+                "channel": delivery_channel,
+                "to": delivery_to,
+            }
+            if delivery_account_id is not None:
+                delivery_kwargs["account_id"] = delivery_account_id
+            if delivery_thread_id is not None:
+                delivery_kwargs["thread_id"] = delivery_thread_id
             send_result = await self._chat_send_service(
                 session_key=session_key,
                 message=message,
@@ -12632,8 +12656,7 @@ class GatewayNodeMethodService:
                 thinking=thinking,
                 deliver=deliver,
                 timeout_ms=timeout_ms,
-                channel=delivery_channel,
-                to=delivery_to,
+                **delivery_kwargs,
             )
         self._remember_gateway_chat_run(
             session_key,
