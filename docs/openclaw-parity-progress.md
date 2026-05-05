@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.3% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~66.4% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11002,6 +11002,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 324 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `eda4db73`.
+- Microsoft Teams feedback reflection now mirrors OpenClaw
+  `extensions/msteams/src/feedback-reflection.ts`,
+  `extensions/msteams/src/feedback-reflection-store.ts`, and
+  `extensions/msteams/src/feedback-reflection-prompt.ts`: negative Teams
+  feedback builds the native reflection prompt, calls a fakeable reflection
+  service, parses JSON, fenced JSON, or plain-text reflection responses, stores
+  a bounded max-10 learning file with Windows-safe session naming, respects the
+  upstream cooldown, and can send a personal-chat follow-up through the native
+  outbound runtime. This closes `OZ-PROV-001BD`; repo-wide parity is now
+  estimated at ~66.4%. Remaining Teams breadth is delegated auth setup
+  breadth, richer Bot Framework/Graph auth fallback depth, and broader
+  channel/provider queue heads.
+- Verified the Microsoft Teams feedback reflection slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_runs_msteams_feedback_reflection_learning_followup -q`
+  (`1 passed`), adjacent Teams invoke/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_feedback or msteams_signin or msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card"`
+  (`16 passed, 317 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `45c4ca7a`.
 
 ## References
 

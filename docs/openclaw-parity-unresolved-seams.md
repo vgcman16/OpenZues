@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.4% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6177,11 +6177,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   limit. Repo-wide parity is now estimated at ~66.3%. Verified with focused
   runtime pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`;
   source/test checkpointed in `eda4db73`.
+- Closed the Microsoft Teams feedback reflection learning/follow-up seam from
+  OpenClaw `extensions/msteams/src/feedback-reflection.ts`,
+  `extensions/msteams/src/feedback-reflection-store.ts`, and
+  `extensions/msteams/src/feedback-reflection-prompt.ts`: negative Teams
+  feedback now builds the native reflection prompt, calls a fakeable
+  reflection service, parses JSON/fenced/plain responses, stores bounded
+  session learnings in a Windows-safe companion file, respects cooldown, and
+  sends personal follow-up messages through the native outbound runtime when
+  the reflection result requests it. Repo-wide parity is now estimated at
+  ~66.4%. Verified with focused runtime pytest, adjacent Teams invoke/inbound
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `45c4ca7a`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams feedback
-  reflection learning/follow-up generation, delegated auth setup breadth,
-  richer Teams Bot Framework/Graph auth fallback depth, or another
-  source-backed channel/provider route/action adapter.
+  send/poll/replay metadata gap, starting with Microsoft Teams delegated auth
+  setup breadth, richer Teams Bot Framework/Graph auth fallback depth, or
+  another source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~66.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~66.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams inbound media staging slice is checkpointed in `eda4db73`.
+The Microsoft Teams feedback reflection slice is checkpointed in `45c4ca7a`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams inbound media staging checkpointed in `eda4db73` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams feedback reflection learning/follow-up, delegated auth setup breadth, richer Teams Bot Framework/Graph auth fallback depth, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams feedback reflection checkpointed in `45c4ca7a` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue delegated auth setup breadth, richer Teams Bot Framework/Graph auth fallback depth, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BD` Microsoft Teams feedback reflection learning/follow-up
+  - Source: `openclaw-main/extensions/msteams/src/feedback-reflection.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection-store.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection-prompt.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: negative Teams feedback builds the reflection prompt, runs a
+    fakeable reflection service, stores a bounded session learning file with
+    Windows-safe naming, respects cooldown, and sends personal follow-up
+    messages through the native outbound runtime when requested.
+  - Evidence required: focused runtime test, adjacent Teams invoke/inbound
+    tests, ruff, mypy
+  - Status: checkpointed in `45c4ca7a`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused feedback reflection proof (`1 passed`),
+    adjacent Teams invoke/inbound proof (`16 passed, 317 deselected`), `ruff
+    check`, and `mypy`.
 
 - [x] `OZ-PROV-001BC` Microsoft Teams inbound media staging
   - Source: `openclaw-main/extensions/msteams/src/attachments/download.ts`,
