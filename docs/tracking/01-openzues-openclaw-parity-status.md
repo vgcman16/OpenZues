@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~68.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~69.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -784,6 +784,74 @@ may lag behind this tracker.
   message-create payloads, target normalization, bearer auth, and provider
   message/chat metadata persistence.
   - Status: checkpointed in `d1515da1`
+
+- [x] Feishu/Lark send message action support, preserving OpenClaw `to` /
+  `target`, `text` / `message`, `toolContext.currentChannelId` fallback,
+  route-backed Feishu sender reuse, bearer auth, and message/chat result
+  projection.
+  - Status: checkpointed in `249f3dbf`
+
+- [x] Feishu/Lark thread-reply message action support, preserving OpenClaw
+  `messageId` aliases, Feishu reply endpoint routing, `reply_in_thread=true`,
+  bearer auth, and reply result projection.
+  - Status: checkpointed in `641c8fc7`
+
+- [x] Feishu/Lark read message action support, preserving OpenClaw message-id
+  aliases, Feishu message GET routing, text/post/card content parsing,
+  message metadata projection, and not-found error envelope.
+  - Status: checkpointed in `38f27358`
+
+- [x] Feishu/Lark edit message action support, preserving OpenClaw message-id
+  aliases, exactly-one text/card validation, Feishu message PATCH routing, and
+  `contentType` result projection.
+  - Status: checkpointed in `2203efa7`
+
+- [x] Feishu/Lark pin message action support, preserving OpenClaw message-id
+  aliases, Feishu pin-create routing, pin metadata normalization, and pin
+  result projection.
+  - Status: checkpointed in `1615bdf6`
+
+- [x] Feishu/Lark unpin message action support, preserving OpenClaw
+  message-id aliases, Feishu pin-delete routing, and message-id result
+  projection.
+  - Status: checkpointed in `4f42eae0`
+
+- [x] Feishu/Lark list-pins message action support, preserving OpenClaw
+  chat/channel aliases, time/page query options, page-size clamping, pin
+  metadata normalization, and pagination result projection.
+  - Status: checkpointed in `b1bfb9e2`
+
+- [x] Feishu/Lark channel-info message action support, preserving OpenClaw
+  chat/channel aliases, Feishu chat GET routing, and chat metadata projection.
+  - Status: checkpointed in `f0bd7837`
+
+- [x] Feishu/Lark member-info message action support, preserving OpenClaw
+  member id aliases, Feishu id-type inference, direct profile routing,
+  chat-member listing, page-size clamping, and member metadata projection.
+  - Status: checkpointed in `ff50511d`
+
+- [x] Feishu/Lark channel-list message action support, preserving OpenClaw
+  live directory discovery, group/user scope aliases, query filtering, provider
+  page-size caps, and directory metadata projection.
+  - Status: checkpointed in `dd915f30`
+
+- [x] Feishu/Lark reaction message action support, preserving OpenClaw
+  add/remove-own/clear-all reaction behavior and reaction listing projection.
+  - Status: checkpointed in `1c6b44af`
+
+- [x] Feishu/Lark presentation-card send support, preserving OpenClaw
+  presentation fallback rendering, Feishu interactive-card payloads, and
+  reply-in-thread/fallback routing.
+  - Status: checkpointed in `75edc136`
+
+- [x] Feishu/Lark image media send support, preserving OpenClaw image upload,
+  image-key message sends, and route-backed send metadata.
+  - Status: checkpointed in `64375b92`
+
+- [x] Feishu/Lark file media send support, preserving OpenClaw file upload,
+  file-key message sends, provider file-type routing, and route-backed send
+  metadata.
+  - Status: checkpointed in `152dcb38`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1817,7 +1885,19 @@ may lag behind this tracker.
     checkpointed in `a6732846`; Synology Chat native route checkpointed in
     `b69d5489`; Mattermost native route checkpointed in `44541ef9`; Signal
     native route checkpointed in `81491ab7`; IRC native route checkpointed in
-    `8726ab49`; Twitch native route checkpointed in `6185301b`; Signal native
+    `8726ab49`; Twitch native route checkpointed in `6185301b`; Twitch send
+    action checkpointed in `9baee646`; Feishu/Lark send action checkpointed
+    in `249f3dbf`; Feishu/Lark thread-reply action checkpointed in
+    `641c8fc7`; Feishu/Lark read action checkpointed in `38f27358`;
+    Feishu/Lark edit action checkpointed in `2203efa7`; Feishu/Lark pin
+    action checkpointed in `1615bdf6`; Feishu/Lark unpin action checkpointed
+    in `4f42eae0`; Feishu/Lark list-pins action checkpointed in `b1bfb9e2`;
+    Feishu/Lark channel-info action checkpointed in `f0bd7837`; Feishu/Lark
+    member-info action checkpointed in `ff50511d`; Feishu/Lark channel-list
+    action checkpointed in `dd915f30`; Feishu/Lark reaction actions
+    checkpointed in `1c6b44af`; Feishu/Lark presentation-card sends
+    checkpointed in `75edc136`; Feishu/Lark image media sends checkpointed in
+    `64375b92`; Feishu/Lark file media sends checkpointed in `152dcb38`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 

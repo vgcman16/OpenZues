@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.2% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~69.6% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -2109,14 +2109,14 @@ These are complete within the bounded OpenZues-local parity contract verified in
 | CLI + operator control plane | Strong partial | ~98.7% | Health, status JSON breadth flags with fakeable usage/security adapters, text `status --all`, native `acp client` interactive replay, continue, queue, recover/harden, gateway doctor, top-level sandbox/Docker doctor warning plus session-lock health notes, delivery replay, route creation, direct route send/poll, sandbox inventory/config-backed explain/recreate plus human summaries, sessions inventory/spawn/wait plus cleanup dry-run/no-op apply, `--fix-missing` metadata pruning, stale `updatedAt` preview/enforce, count-cap preview/enforce, native disk-budget preview/enforce, and all-agent grouped cleanup JSON, read-only `tasks`/`tasks list`/`tasks show` inspection plus `tasks audit`, `tasks maintenance`, metadata-backed `tasks notify`, mission-backed `tasks cancel`, and `tasks flow list/show/cancel` over native mission/task-blueprint state, cron status/list/runs/run/rm/enable/disable plus add/edit schedule, delivery, payload, failure-alert, and one-shot cleanup flags, models list/status plus auth-status probe fallback, root `models set` / `models set-image` mutations, `models scan` metadata/no-probe/non-interactive/live probe posture, aliases list/add/remove, fallbacks list/add/remove/clear, image fallback list/add/remove/clear, auth order get/set/clear, and auth add/login/login-github-copilot/setup-token/paste-token with fakeable auth probes/check exits, `infer`/`capability` metadata list/inspect plus model run/list/inspect/providers/auth status/login/logout, image providers/generate/edit/describe/describe-many, audio providers/transcribe, video providers/generate/describe, web providers/search/fetch, embedding providers/create, and TTS providers/status/personas/voices/enable/disable/set-provider/set-persona/convert, channel status/probe/capabilities/resolve/logs, plugins list with saved install records, metadata-only `plugins.load.paths` manifest discovery with command aliases, activation/setup descriptors, auth/env metadata, QA runner descriptors, channel config metadata, model-support metadata, config-contract metadata, root identity/classification metadata, package manifest setup/startup/channel metadata, package min-host skip diagnostics, explicit Codex/Claude/Cursor bundle manifest metadata, manifestless Claude bundle metadata, JSON5 bundle manifest parsing, Claude bundle command projection, and bundle MCP/LSP server projection, top-level runtime executor inventory, runtime-backed inspect tool projection with optional metadata, doctor with compatibility notices, inspect/info/marketplace list/local marketplace install/update/uninstall/enable/disable, local path link/copy install, ClawHub/npm install, npm-not-found bundled fallback, npm install-record update with explicit npm spec override selection, and operator monitor surfaces exist; broader runtime CLI/TUI breadth remains. |
 | Routing + session identity | Strong partial | ~84% | Session keys, routed targeting, custom-agent session creation/filtering/identity/workspace files, snapshot filtering, compaction inventory, spawned-session visibility, parent/child aliases, and direct session-history replay are real; provider-owned routing remains open. |
 | Skills + Ops Mesh | Partial | ~72% | Skill pins, skillbooks, inbox/snapshots/inventory, Hermes-inspired toolsets, recall/learning surfaces, and lane-aware supervision are useful but not complete OpenClaw/Hermes parity. |
-| Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
+| Channels + direct announce delivery | Strong partial | ~97% | Shared outbound runtime ownership spans direct send/poll, explicit announce, saved replays, direct-announce provider metadata/replay, native adapters, Slack/Telegram/Discord/WhatsApp/Zalo routes, CLI route send/poll commands, gateway-owned channel status/capability probe metadata with route-backed Slack/Telegram/Discord account probes, Zalo capability reporting, and WhatsApp's upstream no-hook probe posture, saved-target plus route-backed Slack channel/user resolve with OpenClaw-style auto-kind grouping, route-backed Telegram username resolve, route-backed Discord channel-id/guild-qualified/global channel-name and user resolve, fakeable live channel resolve, fakeable `message.action` dispatch, route-backed Slack `send`, `react` add/remove/remove-own, `reactions` list, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, threaded `read`, `member-info`, `emoji-list`, local-path-backed `upload-file`, and scoped `download-file` action dispatch, route-backed Discord `send`, `edit`, `delete`, `pin`, `unpin`, `list-pins`, channel-history `read`, `permissions`, `thread-create`, active/archived `thread-list`, core `thread-reply`, `search`, `sticker`, `sticker-upload`, gateway-backed `set-presence`, guild-admin `member-info`, `role-info`, `emoji-list`, `emoji-upload`, `channel-info`, `channel-list`, `channel-create`, `channel-edit`, `channel-delete`, `channel-move`, `category-create`, `category-edit`, `category-delete`, `voice-status`, `event-list`, core `event-create`, `timeout`, `kick`, `ban`, `role-add`, and `role-remove`, `react` add/remove/remove-own plus `reactions` list action dispatch, route-backed Telegram `react` add/remove/clear action dispatch, route-backed WhatsApp `react` add/remove plus scoped current-message fallback action dispatch, route-backed Zalo `send` text/media action dispatch, route-backed Feishu/Lark `send`, presentation-card `send`/`thread-reply`, image/file media `send`, `read`, `edit`, `pin`, `unpin`, `list-pins`, `channel-info`, `member-info`, `channel-list`, `react`, and `reactions` action dispatch, structured channel log tailing, provider result metadata, OpenClaw-style send reply/thread/silent/document fields, Telegram native document/reply/silent/thread payloads plus topic-qualified send target parsing, parent-route matching, and poll duration validation, anonymous and duration-seconds poll capability guarding, Telegram/Discord poll option caps, WhatsApp native reply/document/gif-video payloads plus long-text chunking and upstream-style media captions, admin-scoped chat origin/system provenance, A2A announce/reply loops, and idle `sessions.steer` runtime sends; other production per-provider action adapters and broader provider option coverage remain open. |
 | Browser/canvas/nodes/voice | Locked bounded family | ~99% | Canvas documents/A2UI/live-reload/capability routing, node event wakes, APNS wake paths, managed attachments, native browser runtimes, guarded artifacts, action grammar, scoped settings, batch execution, dashboard lifecycle, AI chat command routing, iOS provider command bridges, clipboard controls, storage/cookie mutation, HAR capture, confirmation handling, auth profile login/delete, and password-safe auth save are now landed. |
 | Packaging + companion apps | Minimal | ~5% | Still largely outside the current shipped OpenZues surface. |
 
 ## Remaining Not-Fully-Complete Areas
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
-- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, and Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; Feishu/Lark audio/video media breadth remains open.
 - Remote marketplace clone/update breadth and deeper runtime plugin activation/import metadata beyond metadata-only config load-path discovery and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
@@ -11345,6 +11345,229 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `9baee646`.
+- Feishu/Lark send message actions now mirror the text-send branch of OpenClaw
+  `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/message-action-contract.ts`: native
+  `message.action` dispatch for `channel="feishu"` or `channel="lark"`,
+  `action="send"` accepts upstream `to` / `target` plus `text` / `message`,
+  falls back to `toolContext.currentChannelId`, reuses the route-backed
+  Feishu post sender, preserves bearer auth and target normalization, and
+  returns OpenClaw-shaped `{ok, channel, action, messageId, chatId,
+  channelId}` results. This closes `OZ-PROV-001BW`; repo-wide parity is now
+  estimated at ~68.3%. The next Feishu message-action seam is
+  `thread-reply`.
+- Verified the Feishu/Lark send action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_send_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`3 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `249f3dbf`.
+- Feishu/Lark thread-reply message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="thread-reply"` requires
+  upstream `messageId` / `message_id` / `replyTo` / `reply_to`, accepts the
+  same `to` / `target` and `text` / `message` inputs as send, posts to the
+  Feishu reply endpoint with `reply_in_thread=true`, and returns
+  OpenClaw-shaped `{ok, channel, action, messageId, chatId, channelId,
+  replyToId}` results. This closes `OZ-PROV-001BX`; repo-wide parity is now
+  estimated at ~68.4%. The next Feishu message-action seam is `read`.
+- Verified the Feishu/Lark thread-reply action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_thread_reply_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`4 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `641c8fc7`.
+- Feishu/Lark read message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="read"` accepts upstream message-id aliases,
+  calls Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+  supports list or single-message API response shapes, parses text/post/card
+  content into the OpenClaw message projection, and returns `{ok, channel,
+  action, message}` or the upstream-shaped not-found error envelope. This
+  closes `OZ-PROV-001BY`; repo-wide parity is now estimated at ~68.5%. The
+  next Feishu message-action seam is `edit`.
+- Verified the Feishu/Lark read action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_read_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`5 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `38f27358`.
+- Feishu/Lark edit message actions now mirror the text/card edit branch of
+  OpenClaw `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/send.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="edit"` requires upstream
+  message-id aliases, enforces exactly one of `text` / `message` or `card`,
+  PATCHes Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+  and returns OpenClaw-shaped `{ok, channel, action, messageId, contentType}`
+  results. This closes `OZ-PROV-001BZ`; repo-wide parity is now estimated at
+  ~68.6%. The next Feishu message-action seam is `pin`.
+- Verified the Feishu/Lark edit action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_edit_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`6 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `2203efa7`.
+- Feishu/Lark pin message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="pin"` accepts upstream message-id aliases,
+  POSTs Feishu `im/v1/pins` with route-backed bearer auth, normalizes Feishu
+  pin metadata, and returns OpenClaw-shaped `{ok, channel, action, pin}`
+  results. This closes `OZ-PROV-001CA`; repo-wide parity is now estimated at
+  ~68.7%. The next Feishu message-action seam is `unpin`.
+- Verified the Feishu/Lark pin action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_pin_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`7 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `1615bdf6`.
+- Feishu/Lark unpin message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="unpin"` accepts upstream message-id aliases,
+  DELETEs Feishu `im/v1/pins/{messageId}` with route-backed bearer auth, and
+  returns OpenClaw-shaped `{ok, channel, action, messageId}` results. This
+  closes `OZ-PROV-001CB`; repo-wide parity is now estimated at ~68.8%. The
+  next Feishu message-action seam is `list-pins`.
+- Verified the Feishu/Lark unpin action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_unpin_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`8 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `4f42eae0`.
+- Feishu/Lark list-pins message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="list-pins"` accepts upstream chat/channel target
+  aliases, forwards `startTime` / `endTime` / `pageSize` / `pageToken`
+  options with OpenClaw's page-size clamp, GETs Feishu `im/v1/pins` with
+  route-backed bearer auth, normalizes pin entries, and returns
+  OpenClaw-shaped `{ok, channel, action, chatId, pins, hasMore, pageToken}`
+  results. This closes `OZ-PROV-001CC`; repo-wide parity is now estimated at
+  ~68.9%. The next Feishu message-action seam is `channel-info`.
+- Verified the Feishu/Lark list-pins action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_list_pins_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`9 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `b1bfb9e2`.
+- Feishu/Lark channel-info message actions now mirror the base chat-info
+  branch of OpenClaw `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/chat.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="channel-info"` accepts
+  upstream chat/channel aliases, GETs Feishu `im/v1/chats/{chatId}` with
+  route-backed bearer auth, and returns OpenClaw-shaped `{ok, provider,
+  action, channel}` chat metadata. This closes `OZ-PROV-001CD`; repo-wide
+  parity is now estimated at ~69.0%. The next Feishu message-action seam is
+  `member-info`.
+- Verified the Feishu/Lark channel-info action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_channel_info_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`10 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `f0bd7837`.
+- Feishu/Lark member-info message actions now mirror the direct member lookup
+  and chat-member listing branches of OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/chat.ts`:
+  native `message.action` dispatch for `channel="feishu"` or
+  `channel="lark"`, `action="member-info"` infers `open_id`/`user_id`/
+  `union_id` from upstream aliases, GETs Feishu `contact/v3/users/{userId}`
+  or `im/v1/chats/{chatId}/members` with route-backed bearer auth, applies
+  the upstream page-size clamp, and returns OpenClaw-shaped member/profile or
+  member-list metadata. This closes `OZ-PROV-001CE`; repo-wide parity is now
+  estimated at ~69.1%. The next Feishu message-action seam is `channel-list`.
+- Verified the Feishu/Lark member-info action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_member_info_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_member_info_chat_route -q`
+  (`2 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`12 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `ff50511d`.
+- Feishu/Lark channel-list message actions now mirror OpenClaw live directory
+  discovery from `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/directory.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="channel-list"` supports
+  all/group/user scopes, route-backed Feishu chat/user list endpoints, client
+  side query filtering, provider page-size caps, and OpenClaw-shaped `{ok,
+  channel, action, groups, peers}` directory metadata. This closes
+  `OZ-PROV-001CF`; repo-wide parity is now estimated at ~69.2%. The next
+  Feishu message-action seam is reaction action breadth.
+- Verified the Feishu/Lark channel-list action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_channel_list_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_channel_list_peer_scope -q`
+  (`2 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`14 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `dd915f30`.
+- Feishu/Lark reaction message actions now mirror OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/reactions.ts`:
+  native `message.action` dispatch for `react` adds emoji reactions, removes
+  the bot-owned reaction for an emoji, supports `clearAll=true` bot reaction
+  cleanup, and `reactions` lists provider reactions with
+  `{reactionId, emojiType, operatorType, operatorId}` projection. This closes
+  `OZ-PROV-001CG`; repo-wide parity is now estimated at ~69.3%. The next
+  Feishu message-action seam is media/card action breadth.
+- Verified the Feishu/Lark reaction action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_react_add_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_reactions_routes -q`
+  (`2 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`16 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `1c6b44af`.
+- Feishu/Lark presentation-card sends now mirror the card branch of OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native `message.action` dispatch for `send` and `thread-reply` accepts
+  `presentation` blocks, renders an OpenClaw-style Feishu interactive card,
+  sends `msg_type="interactive"` through the route-backed Feishu message API,
+  and preserves the existing reply-in-thread/fallback behavior. This closes
+  `OZ-PROV-001CH`; repo-wide parity is now estimated at ~69.4%. The next
+  Feishu message-action seam is native media send breadth.
+- Verified the Feishu/Lark presentation-card send slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_send_presentation_card_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`17 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `75edc136`.
+- Feishu/Lark image media sends now mirror the first native-media branch of
+  OpenClaw `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/media.ts`: native `message.action` dispatch for
+  `send`/`thread-reply` accepts `media`, loads image bytes, uploads through
+  Feishu `im/v1/images`, sends `msg_type="image"` with the returned
+  `image_key`, and preserves route-backed send metadata. This closes
+  `OZ-PROV-001CI`; repo-wide parity is now estimated at ~69.5%. The next
+  Feishu message-action seam is file/audio/video native media breadth.
+- Verified the Feishu/Lark image media send slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_send_image_media_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`18 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `64375b92`.
+- Feishu/Lark file media sends now mirror the generic file branch of OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/media.ts`:
+  native `message.action` dispatch uploads non-image files through Feishu
+  `im/v1/files`, maps document extensions to Feishu `file_type`, sends
+  `msg_type="file"` with the returned `file_key`, and preserves route-backed
+  send metadata. This closes `OZ-PROV-001CJ`; repo-wide parity is now
+  estimated at ~69.6%. The next Feishu message-action seam is audio/video
+  media routing.
+- Verified the Feishu/Lark file media send slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_send_file_media_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`19 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `152dcb38`.
 
 ## References
 

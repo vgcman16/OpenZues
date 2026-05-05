@@ -16687,6 +16687,1954 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_send_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_action_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "text": "Feishu action parity.",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_action_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload["receive_id"] == "oc_chat_1"
+    assert payload["msg_type"] == "post"
+    assert json.loads(str(payload["content"])) == {
+        "zh_cn": {
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": "Feishu action parity.",
+                    }
+                ]
+            ]
+        }
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_send_presentation_card_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-card-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Card Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_card_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="lark",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "message": "fallback",
+                "presentation": {
+                    "title": "Status",
+                    "blocks": [
+                        {"type": "text", "text": "Build completed"},
+                        {
+                            "type": "buttons",
+                            "buttons": [{"label": "Open run", "value": "open"}],
+                        },
+                    ],
+                },
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-card-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_card_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload["receive_id"] == "oc_chat_1"
+    assert payload["msg_type"] == "interactive"
+    assert json.loads(str(payload["content"])) == {
+        "schema": "2.0",
+        "config": {"width_mode": "fill"},
+        "header": {
+            "title": {"tag": "plain_text", "content": "Status"},
+            "template": "blue",
+        },
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "Build completed\n- Open run",
+                }
+            ]
+        },
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_send_image_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-media-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Media Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"image_key": "img_v3_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_image_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": "data:image/png;base64,aW1hZ2U=",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-media-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_image_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/images",
+            {"image_type": "message"},
+            "media.png",
+            b"image",
+            "image/png",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"image_key": "img_v3_1"}, separators=(",", ":")),
+        "msg_type": "image",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_send_file_media_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-file-send"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action File Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_uploads: list[
+        tuple[str, dict[str, str], str, bytes, str | None, str | None]
+    ] = []
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_load_feishu_media(
+        self: OpsMeshService,
+        media_url: str,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str, str]:
+        del self, max_bytes
+        assert media_url == "https://example.test/report.pdf"
+        return b"pdf-bytes", "application/pdf", "report.pdf"
+
+    def fake_request_feishu_multipart_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, object]:
+        del self, file_field, timeout_seconds
+        feishu_uploads.append((target, fields, filename, content, content_type, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"file_key": "file_v3_1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_file_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_load_feishu_media", fake_load_feishu_media)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_feishu_multipart_provider_url",
+        fake_request_feishu_multipart_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="send",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "media": "https://example.test/report.pdf",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-file-send-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "send",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_file_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert feishu_uploads == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/files",
+            {"file_type": "pdf", "file_name": "report.pdf"},
+            "report.pdf",
+            b"pdf-bytes",
+            "application/pdf",
+            "Bearer tenant-access-token",
+        )
+    ]
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload == {
+        "receive_id": "oc_chat_1",
+        "content": json.dumps({"file_key": "file_v3_1"}, separators=(",", ":")),
+        "msg_type": "file",
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_thread_reply_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-thread-reply"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Thread Reply Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_reply_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="thread-reply",
+            params={
+                "to": "feishu:chat:oc_chat_1",
+                "messageId": "om_parent_1",
+                "message": "Feishu threaded reply.",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-thread-reply-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "thread-reply",
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_reply_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+        "replyToId": "om_parent_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages/om_parent_1/reply"
+    assert payload["msg_type"] == "post"
+    assert payload["reply_in_thread"] is True
+    assert json.loads(str(payload["content"])) == {
+        "zh_cn": {
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": "Feishu threaded reply.",
+                    }
+                ]
+            ]
+        }
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_read_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-read"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Read Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_read_1",
+                        "chat_id": "oc_chat_1",
+                        "chat_type": "group",
+                        "msg_type": "text",
+                        "body": {"content": json.dumps({"text": "Feishu read parity."})},
+                        "sender": {
+                            "id": "ou_sender_1",
+                            "id_type": "open_id",
+                            "sender_type": "user",
+                        },
+                        "create_time": "1710000000000",
+                        "thread_id": "omt_thread_1",
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="read",
+            params={"messageId": "om_read_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-read-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "read",
+        "message": {
+            "messageId": "om_read_1",
+            "chatId": "oc_chat_1",
+            "chatType": "group",
+            "senderId": "ou_sender_1",
+            "senderOpenId": "ou_sender_1",
+            "senderType": "user",
+            "content": "Feishu read parity.",
+            "contentType": "text",
+            "createTime": 1710000000000,
+            "threadId": "omt_thread_1",
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_read_1",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Edit Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[
+        tuple[str, str, dict[str, object] | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers, timeout_seconds
+        feishu_requests.append(
+            (
+                target,
+                method,
+                dict(payload) if isinstance(payload, dict) else None,
+                secret_header_name,
+                secret_token,
+            )
+        )
+        return {"code": 0, "msg": "ok"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="edit",
+            params={
+                "messageId": "om_edit_1",
+                "text": "Feishu edit parity.",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "edit",
+        "messageId": "om_edit_1",
+        "contentType": "post",
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_edit_1",
+            "PATCH",
+            {
+                "content": json.dumps(
+                    {
+                        "zh_cn": {
+                            "content": [
+                                [
+                                    {
+                                        "tag": "md",
+                                        "text": "Feishu edit parity.",
+                                    }
+                                ]
+                            ]
+                        }
+                    },
+                    separators=(",", ":"),
+                )
+            },
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_pin_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-pin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Pin Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[
+        tuple[str, str, dict[str, object] | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers, timeout_seconds
+        feishu_requests.append(
+            (
+                target,
+                method,
+                dict(payload) if isinstance(payload, dict) else None,
+                secret_header_name,
+                secret_token,
+            )
+        )
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "pin": {
+                    "message_id": "om_pin_1",
+                    "chat_id": "oc_chat_1",
+                    "operator_id": "ou_operator_1",
+                    "operator_id_type": "open_id",
+                    "create_time": "1710000000000",
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="pin",
+            params={"messageId": "om_pin_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-pin-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "pin",
+        "pin": {
+            "messageId": "om_pin_1",
+            "chatId": "oc_chat_1",
+            "operatorId": "ou_operator_1",
+            "operatorIdType": "open_id",
+            "createTime": "1710000000000",
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/pins",
+            "POST",
+            {"message_id": "om_pin_1"},
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_unpin_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-unpin"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Unpin Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {"code": 0, "msg": "ok"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="unpin",
+            params={"messageId": "om_pin_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-unpin-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "unpin",
+        "messageId": "om_pin_1",
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/pins/om_pin_1",
+            "DELETE",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_list_pins_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-list-pins"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action List Pins Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "message_id": "om_pin_1",
+                        "chat_id": "oc_chat_1",
+                        "operator_id": "ou_operator_1",
+                        "operator_id_type": "open_id",
+                        "create_time": "1710000000000",
+                    }
+                ],
+                "has_more": True,
+                "page_token": "next-page",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="list-pins",
+            params={
+                "chatId": "feishu:chat:oc_chat_1",
+                "startTime": "1710000000000",
+                "endTime": "1710009999999",
+                "pageSize": 200,
+                "pageToken": "prev-page",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-list-pins-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "list-pins",
+        "chatId": "oc_chat_1",
+        "pins": [
+            {
+                "messageId": "om_pin_1",
+                "chatId": "oc_chat_1",
+                "operatorId": "ou_operator_1",
+                "operatorIdType": "open_id",
+                "createTime": "1710000000000",
+            }
+        ],
+        "hasMore": True,
+        "pageToken": "next-page",
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/pins?"
+            "chat_id=oc_chat_1&start_time=1710000000000&end_time=1710009999999&"
+            "page_size=100&page_token=prev-page",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_channel_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-channel-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Channel Info Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "name": "Engineering",
+                "description": "Build channel",
+                "owner_id": "ou_owner",
+                "tenant_key": "tenant-1",
+                "user_count": 42,
+                "chat_mode": "group",
+                "chat_type": "group",
+                "join_message_visibility": "all_members",
+                "leave_message_visibility": "all_members",
+                "membership_approval": "no_approval_required",
+                "moderation_permission": "all_members",
+                "avatar": "https://example.test/avatar.png",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="channel-info",
+            params={"chatId": "feishu:chat:oc_chat_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-channel-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "provider": "feishu",
+        "action": "channel-info",
+        "channel": {
+            "chat_id": "oc_chat_1",
+            "name": "Engineering",
+            "description": "Build channel",
+            "owner_id": "ou_owner",
+            "tenant_key": "tenant-1",
+            "user_count": 42,
+            "chat_mode": "group",
+            "chat_type": "group",
+            "join_message_visibility": "all_members",
+            "leave_message_visibility": "all_members",
+            "membership_approval": "no_approval_required",
+            "moderation_permission": "all_members",
+            "avatar": "https://example.test/avatar.png",
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/chats/oc_chat_1",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_member_info_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-member-info"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Member Info Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "user": {
+                    "open_id": "ou_user_1",
+                    "user_id": "u_user_1",
+                    "union_id": "on_user_1",
+                    "name": "Alice",
+                    "en_name": "Alice Example",
+                    "nickname": "alice",
+                    "email": "alice@example.test",
+                    "enterprise_email": "alice@enterprise.example.test",
+                    "mobile": "+15550101",
+                    "mobile_visible": True,
+                    "status": {"is_activated": True},
+                    "avatar": {"avatar_72": "https://example.test/avatar.png"},
+                    "department_ids": ["od_dep_1"],
+                    "department_path": [{"department_id": "od_dep_1"}],
+                    "leader_user_id": "u_lead_1",
+                    "city": "Chicago",
+                    "country": "US",
+                    "work_station": "Desk 7",
+                    "join_time": 1710000000,
+                    "is_tenant_manager": False,
+                    "employee_no": "E-1",
+                    "employee_type": 1,
+                    "description": "Engineer",
+                    "job_title": "Staff Engineer",
+                    "geo": "US",
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="lark",
+            action="member-info",
+            params={"userId": "u_user_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-member-info-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "member-info",
+        "member": {
+            "member_id": "u_user_1",
+            "member_id_type": "user_id",
+            "open_id": "ou_user_1",
+            "user_id": "u_user_1",
+            "union_id": "on_user_1",
+            "name": "Alice",
+            "en_name": "Alice Example",
+            "nickname": "alice",
+            "email": "alice@example.test",
+            "enterprise_email": "alice@enterprise.example.test",
+            "mobile": "+15550101",
+            "mobile_visible": True,
+            "status": {"is_activated": True},
+            "avatar": {"avatar_72": "https://example.test/avatar.png"},
+            "department_ids": ["od_dep_1"],
+            "department_path": [{"department_id": "od_dep_1"}],
+            "leader_user_id": "u_lead_1",
+            "city": "Chicago",
+            "country": "US",
+            "work_station": "Desk 7",
+            "join_time": 1710000000,
+            "is_tenant_manager": False,
+            "employee_no": "E-1",
+            "employee_type": 1,
+            "description": "Engineer",
+            "job_title": "Staff Engineer",
+            "geo": "US",
+        },
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/contact/v3/users/u_user_1?"
+            "user_id_type=user_id&department_id_type=open_department_id",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_member_info_chat_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-member-list"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Member List Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {
+                        "member_id": "ou_member_1",
+                        "name": "Bob",
+                        "tenant_key": "tenant-1",
+                        "member_id_type": "open_id",
+                    }
+                ],
+                "has_more": True,
+                "page_token": "next-member-page",
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="member-info",
+            params={"chatId": "feishu:chat:oc_chat_1", "pageSize": 0, "pageToken": "prev-page"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-member-list-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "member-info",
+        "chat_id": "oc_chat_1",
+        "has_more": True,
+        "page_token": "next-member-page",
+        "members": [
+            {
+                "member_id": "ou_member_1",
+                "name": "Bob",
+                "tenant_key": "tenant-1",
+                "member_id_type": "open_id",
+            }
+        ],
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/chats/oc_chat_1/members?"
+            "page_size=1&page_token=prev-page&member_id_type=open_id",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_channel_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-channel-list"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Channel List Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        if target.endswith("/im/v1/chats?page_size=5"):
+            return {
+                "code": 0,
+                "msg": "ok",
+                "data": {
+                    "items": [
+                        {"chat_id": "oc_eng_1", "name": "Engineering"},
+                        {"chat_id": "oc_sales_1", "name": "Sales"},
+                    ]
+                },
+            }
+        if target.endswith("/contact/v3/users?page_size=5"):
+            return {
+                "code": 0,
+                "msg": "ok",
+                "data": {
+                    "items": [
+                        {"open_id": "ou_eng_1", "name": "Eng User"},
+                        {"open_id": "ou_support_1", "name": "Support User"},
+                    ]
+                },
+            }
+        raise AssertionError(f"unexpected Feishu request: {target}")
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="channel-list",
+            params={"query": "eng", "limit": 5},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-channel-list-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "channel-list",
+        "groups": [{"kind": "group", "id": "oc_eng_1", "name": "Engineering"}],
+        "peers": [{"kind": "user", "id": "ou_eng_1", "name": "Eng User"}],
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/chats?page_size=5",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+        (
+            "https://open.feishu.cn/open-apis/contact/v3/users?page_size=5",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_channel_list_peer_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-peer-list"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Peer List Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "items": [
+                    {"open_id": "ou_alpha_1", "name": "Alpha"},
+                    {"open_id": "ou_beta_1", "name": "Beta"},
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="lark",
+            action="channel-list",
+            params={"scope": "users", "limit": 200},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-peer-list-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "channel-list",
+        "peers": [
+            {"kind": "user", "id": "ou_alpha_1", "name": "Alpha"},
+            {"kind": "user", "id": "ou_beta_1", "name": "Beta"},
+        ],
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/contact/v3/users?page_size=50",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_react_add_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-react-add"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action React Add Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, payload, secret_header_name, secret_token))
+        return {"code": 0, "msg": "ok", "data": {"reaction_id": "r_add_1"}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="lark",
+            action="react",
+            params={"messageId": "om_msg_1", "emoji": "THUMBSUP"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-react-add-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "THUMBSUP"}
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions",
+            "POST",
+            {"reaction_type": {"emoji_type": "THUMBSUP"}},
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_reactions_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Reactions Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[tuple[str, str, str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, payload, extra_headers, timeout_seconds
+        feishu_requests.append((target, method, secret_header_name, secret_token))
+        if target.endswith("/im/v1/messages/om_msg_1/reactions?reaction_type=THUMBSUP"):
+            return {
+                "code": 0,
+                "msg": "ok",
+                "data": {
+                    "items": [
+                        {
+                            "reaction_id": "r_app_thumb",
+                            "reaction_type": {"emoji_type": "THUMBSUP"},
+                            "operator_type": "app",
+                            "operator_id": {"open_id": "ou_bot"},
+                        }
+                    ]
+                },
+            }
+        if target.endswith("/im/v1/messages/om_msg_1/reactions"):
+            return {
+                "code": 0,
+                "msg": "ok",
+                "data": {
+                    "items": [
+                        {
+                            "reaction_id": "r_user_heart",
+                            "reaction_type": {"emoji_type": "HEART"},
+                            "operator_type": "user",
+                            "operator_id": {"open_id": "ou_user"},
+                        },
+                        {
+                            "reaction_id": "r_app_thumb",
+                            "reaction_type": {"emoji_type": "THUMBSUP"},
+                            "operator_type": "app",
+                            "operator_id": {"open_id": "ou_bot"},
+                        },
+                    ]
+                },
+            }
+        return {"code": 0, "msg": "ok"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    listed = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="reactions",
+            params={"messageId": "om_msg_1"},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-reactions-list-action",
+        )
+    )
+    removed_one = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="react",
+            params={"messageId": "om_msg_1", "emoji": "THUMBSUP", "remove": True},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-react-remove-action",
+        )
+    )
+    removed_all = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="react",
+            params={"messageId": "om_msg_1", "clearAll": True},
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-react-clear-action",
+        )
+    )
+
+    assert listed == {
+        "ok": True,
+        "reactions": [
+            {
+                "reactionId": "r_user_heart",
+                "emojiType": "HEART",
+                "operatorType": "user",
+                "operatorId": "ou_user",
+            },
+            {
+                "reactionId": "r_app_thumb",
+                "emojiType": "THUMBSUP",
+                "operatorType": "app",
+                "operatorId": "ou_bot",
+            },
+        ],
+    }
+    assert removed_one == {"ok": True, "removed": "THUMBSUP"}
+    assert removed_all == {"ok": True, "removed": 1}
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions?"
+            "reaction_type=THUMBSUP",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions/r_app_thumb",
+            "DELETE",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions",
+            "GET",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_msg_1/reactions/r_app_thumb",
+            "DELETE",
+            "Authorization",
+            "Bearer tenant-access-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

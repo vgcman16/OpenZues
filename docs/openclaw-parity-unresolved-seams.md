@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~68.2% overall, with a reasonable
-  band of ~50-69%.
+- Repo-wide OpenClaw parity is estimated at ~69.6% overall, with a reasonable
+  band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -6395,9 +6395,142 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~68.2%. Verified with focused runtime pytest,
   adjacent Twitch provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `9baee646`.
+- Closed the Feishu/Lark send message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/message-action-contract.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="feishu"` or
+  `channel="lark"`, `action="send"`, accepts upstream `to` / `target` plus
+  `text` / `message`, falls back to `toolContext.currentChannelId`, reuses the
+  native route-backed Feishu sender, and projects OpenClaw-shaped `{ok,
+  channel, action, messageId, chatId, channelId}` results. Repo-wide parity is
+  now estimated at ~68.3%. Verified with focused runtime pytest, adjacent
+  Feishu provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `249f3dbf`.
+- Closed the Feishu/Lark thread-reply message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts`: native OpenZues `message.action`
+  dispatch now supports `channel="feishu"` or `channel="lark"`,
+  `action="thread-reply"`, requires upstream `messageId` / `message_id` /
+  `replyTo` / `reply_to`, reuses the Feishu route-backed reply sender,
+  sends `reply_in_thread=true`, and projects OpenClaw-shaped `{ok, channel,
+  action, messageId, chatId, channelId, replyToId}` results. Repo-wide parity
+  is now estimated at ~68.4%. Verified with focused runtime pytest, adjacent
+  Feishu provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `641c8fc7`.
+- Closed the Feishu/Lark read message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="read"`, accepts upstream message-id aliases,
+  GETs Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+  parses list and single-message response shapes into the OpenClaw message
+  projection, and preserves the upstream-shaped not-found error envelope.
+  Repo-wide parity is now estimated at ~68.5%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `38f27358`.
+- Closed the Feishu/Lark edit message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="edit"`, accepts upstream message-id aliases,
+  enforces exactly one of text/message or card content, PATCHes
+  `im/v1/messages/{messageId}` with route-backed bearer auth, and projects
+  OpenClaw-shaped `{ok, channel, action, messageId, contentType}` results.
+  Repo-wide parity is now estimated at ~68.6%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `2203efa7`.
+- Closed the Feishu/Lark pin message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="pin"`, accepts upstream message-id aliases,
+  POSTs `im/v1/pins` with route-backed bearer auth, normalizes Feishu pin
+  metadata, and projects OpenClaw-shaped `{ok, channel, action, pin}` results.
+  Repo-wide parity is now estimated at ~68.7%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `1615bdf6`.
+- Closed the Feishu/Lark unpin message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="unpin"`, accepts upstream message-id aliases,
+  DELETEs `im/v1/pins/{messageId}` with route-backed bearer auth, and
+  projects OpenClaw-shaped `{ok, channel, action, messageId}` results.
+  Repo-wide parity is now estimated at ~68.8%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `4f42eae0`.
+- Closed the Feishu/Lark list-pins message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/pins.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="list-pins"`, accepts upstream chat/channel
+  aliases, forwards time/page options with the upstream page-size clamp, GETs
+  `im/v1/pins` with route-backed bearer auth, normalizes pin entries, and
+  projects OpenClaw-shaped `{ok, channel, action, chatId, pins, hasMore,
+  pageToken}` results. Repo-wide parity is now estimated at ~68.9%. Verified
+  with focused runtime pytest, adjacent Feishu provider proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `b1bfb9e2`.
+- Closed the Feishu/Lark channel-info message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/chat.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="channel-info"`, accepts upstream
+  chat/channel aliases, GETs `im/v1/chats/{chatId}` with route-backed bearer
+  auth, and projects OpenClaw-shaped `{ok, provider, action, channel}` chat
+  metadata. Repo-wide parity is now estimated at ~69.0%. Verified with
+  focused runtime pytest, adjacent Feishu provider proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `f0bd7837`.
+- Closed the Feishu/Lark member-info message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/chat.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="member-info"`, infers Feishu
+  `open_id`/`user_id`/`union_id` lookup mode from upstream member aliases,
+  GETs `contact/v3/users/{userId}` for direct user profiles or
+  `im/v1/chats/{chatId}/members` for chat-member listings with route-backed
+  bearer auth, applies the upstream page-size clamp, and projects
+  OpenClaw-shaped member/profile or member-list metadata. Repo-wide parity is
+  now estimated at ~69.1%. Verified with focused runtime pytest, adjacent
+  Feishu provider proof, `ruff check`, and `mypy`; source/test checkpointed
+  in `ff50511d`.
+- Closed the Feishu/Lark channel-list message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/directory.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="channel-list"`, all/group/user scopes,
+  route-backed Feishu chat/user list endpoints, client-side query filtering,
+  provider page-size caps, and OpenClaw-shaped `{ok, channel, action, groups,
+  peers}` directory metadata. Repo-wide parity is now estimated at ~69.2%.
+  Verified with focused runtime pytest, adjacent Feishu provider proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `dd915f30`.
+- Closed the Feishu/Lark reaction message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/reactions.ts`:
+  native OpenZues `message.action` dispatch now supports `react` add,
+  remove-own, and `clearAll=true` bot cleanup plus `reactions` listing through
+  route-backed Feishu message-reaction endpoints, with OpenClaw-shaped
+  `{ok, added}` / `{ok, removed}` / `{ok, reactions}` projections.
+  Repo-wide parity is now estimated at ~69.3%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `1c6b44af`.
+- Closed the Feishu/Lark presentation-card send seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native OpenZues `message.action` dispatch now accepts `presentation`
+  blocks for `send`/`thread-reply`, renders Feishu interactive cards, sends
+  `msg_type="interactive"` through the route-backed message API, and preserves
+  reply-in-thread/fallback behavior. Repo-wide parity is now estimated at
+  ~69.4%. Verified with focused runtime pytest, adjacent Feishu provider
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `75edc136`.
+- Closed the Feishu/Lark image media send seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/media.ts`:
+  native OpenZues `message.action` dispatch now accepts image `media` for
+  `send`/`thread-reply`, loads image bytes, uploads through Feishu
+  `im/v1/images`, sends `msg_type="image"` with the returned `image_key`,
+  and preserves route-backed send metadata. Repo-wide parity is now estimated
+  at ~69.5%. Verified with focused runtime pytest, adjacent Feishu provider
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `64375b92`.
+- Closed the Feishu/Lark file media send seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/media.ts`:
+  native OpenZues `message.action` dispatch now accepts non-image file
+  `media` for `send`/`thread-reply`, uploads through Feishu `im/v1/files`
+  with provider file-type detection, sends the returned `file_key` with
+  `msg_type="file"`, and preserves route-backed send metadata. Repo-wide
+  parity is now estimated at ~69.6%. Verified with focused runtime pytest,
+  adjacent Feishu provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `152dcb38`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Feishu/Lark message-action
-  contract breadth from `extensions/feishu/src/message-action-contract.ts`.
+  send/poll/replay metadata gap, continuing Feishu/Lark audio/video native media verification
+  from `extensions/feishu/src/channel.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

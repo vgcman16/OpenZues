@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~68.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~69.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Twitch send message action slice is checkpointed in `9baee646`.
+The Feishu/Lark file media send slice is checkpointed in `152dcb38`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,276 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Twitch send message action checkpointed in `9baee646` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark message-action contract breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark file media sends checkpointed in `152dcb38` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark audio/video media verification |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001CJ` Feishu/Lark file media sends
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` accepts non-image file `media`, uploads through Feishu
+    `im/v1/files`, maps provider file types, sends `msg_type="file"` with
+    the returned `file_key`, and preserves route-backed send metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `152dcb38`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu file media send proof (`1
+    passed`), adjacent Feishu provider proof (`19 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CI` Feishu/Lark image media sends
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` accepts image `media`, loads bytes, uploads through
+    Feishu `im/v1/images`, sends `msg_type="image"` with the returned
+    `image_key`, and preserves route-backed send metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `64375b92`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu image media send proof (`1
+    passed`), adjacent Feishu provider proof (`18 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CH` Feishu/Lark presentation-card sends
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` accepts `presentation` blocks on `send`/`thread-reply`,
+    renders a Feishu interactive card, sends `msg_type="interactive"` through
+    the route-backed message API, and preserves reply-in-thread/fallback
+    behavior.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `75edc136`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu presentation-card send proof (`1
+    passed`), adjacent Feishu provider proof (`17 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CG` Feishu/Lark reaction message actions
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/reactions.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` supports `react` add, remove-own, and `clearAll=true`
+    bot cleanup plus `reactions` listing through Feishu message-reaction
+    endpoints, returning OpenClaw-shaped `{ok, added}`, `{ok, removed}`, and
+    `{ok, reactions}` payloads.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `1c6b44af`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu reaction action proofs (`2
+    passed`), adjacent Feishu provider proof (`16 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CF` Feishu/Lark channel-list message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/directory.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="channel-list"` supports all/group/user scopes,
+    GETs Feishu chat/user directory endpoints with route-backed bearer auth,
+    filters query matches client-side, applies provider page-size caps, and
+    returns OpenClaw-shaped `{ok, channel, action, groups, peers}` directory
+    metadata.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `dd915f30`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu channel-list action proofs (`2
+    passed`), adjacent Feishu provider proof (`14 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CE` Feishu/Lark member-info message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/chat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="member-info"` infers Feishu
+    `open_id`/`user_id`/`union_id` mode from upstream member aliases, GETs
+    `contact/v3/users/{userId}` for direct profiles or
+    `im/v1/chats/{chatId}/members` for chat-member listings with route-backed
+    bearer auth, applies the upstream page-size clamp, and returns
+    OpenClaw-shaped member/profile or member-list metadata.
+  - Evidence required: focused runtime tests, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `ff50511d`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu member-info action proofs (`2
+    passed`), adjacent Feishu provider proof (`12 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CD` Feishu/Lark channel-info message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/chat.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="channel-info"` accepts upstream chat/channel
+    aliases, GETs Feishu `im/v1/chats/{chatId}` with route-backed bearer auth,
+    and returns OpenClaw-shaped `{ok, provider, action, channel}` chat
+    metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `f0bd7837`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu channel-info action proof (`1
+    passed`), adjacent Feishu provider proof (`10 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CC` Feishu/Lark list-pins message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/pins.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="list-pins"` accepts upstream chat/channel
+    aliases, forwards time/page options with the upstream page-size clamp,
+    GETs Feishu `im/v1/pins` with route-backed bearer auth, normalizes pin
+    entries, and returns OpenClaw-shaped `{ok, channel, action, chatId, pins,
+    hasMore, pageToken}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `b1bfb9e2`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu list-pins action proof (`1
+    passed`), adjacent Feishu provider proof (`9 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CB` Feishu/Lark unpin message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/pins.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="unpin"` accepts upstream message-id aliases,
+    DELETEs Feishu `im/v1/pins/{messageId}` with route-backed bearer auth,
+    and returns OpenClaw-shaped `{ok, channel, action, messageId}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `4f42eae0`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu unpin action proof (`1
+    passed`), adjacent Feishu provider proof (`8 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001CA` Feishu/Lark pin message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/pins.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="pin"` accepts upstream message-id aliases,
+    POSTs Feishu `im/v1/pins` with route-backed bearer auth, normalizes Feishu
+    pin metadata, and returns OpenClaw-shaped `{ok, channel, action, pin}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `1615bdf6`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu pin action proof (`1 passed`),
+    adjacent Feishu provider proof (`7 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001BZ` Feishu/Lark edit message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="edit"` accepts upstream message-id aliases,
+    enforces exactly one of text/message or card content, PATCHes Feishu
+    `im/v1/messages/{messageId}` with route-backed bearer auth, and returns
+    OpenClaw-shaped `{ok, channel, action, messageId, contentType}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `2203efa7`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu edit action proof (`1 passed`),
+    adjacent Feishu provider proof (`6 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001BY` Feishu/Lark read message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="read"` accepts upstream message-id aliases,
+    GETs Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+    parses list and single-message response shapes into the OpenClaw message
+    projection, and preserves the upstream-shaped not-found error envelope.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `38f27358`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu read action proof (`1 passed`),
+    adjacent Feishu provider proof (`5 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001BX` Feishu/Lark thread-reply message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="thread-reply"` requires upstream `messageId` /
+    `message_id` / `replyTo` / `reply_to`, accepts the same target and text
+    inputs as send, posts to the Feishu reply endpoint with
+    `reply_in_thread=true`, and returns OpenClaw-shaped `{ok, channel,
+    action, messageId, chatId, channelId, replyToId}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `641c8fc7`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu thread-reply action proof (`1
+    passed`), adjacent Feishu provider proof (`4 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001BW` Feishu/Lark send message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/message-action-contract.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="send"` accepts upstream `to` / `target` plus
+    `text` / `message`, falls back to `toolContext.currentChannelId`, reuses
+    the route-backed Feishu post sender, preserves bearer auth and target
+    normalization, and returns OpenClaw-shaped `{ok, channel, action,
+    messageId, chatId, channelId}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `249f3dbf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu send action proof (`1 passed`),
+    adjacent Feishu provider proof (`3 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
 
 - [x] `OZ-PROV-001BV` Twitch send message action
   - Source: `openclaw-main/extensions/twitch/src/actions.ts`,
