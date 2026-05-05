@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord thread result fallback slice is checkpointed in `e47324f4`.
+The Slack agent-request thread metadata slice is checkpointed in `e3671d6f`.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/services/ops_mesh.py`
-- `tests/test_ops_mesh.py`
+- `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/app.py`
+- `tests/test_gateway_node_methods.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -51,9 +52,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord thread result fallback checkpointed in `e47324f4` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack agent-request thread metadata checkpointed in `e3671d6f` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001M` Slack agent-request thread metadata
+  - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/app.py`, `tests/test_gateway_node_methods.py`
+  - Contract: `node.event` `agent.request` route payloads that target Slack
+    preserve `accountId` and Slack timestamp-shaped `threadId` as
+    `account_id` / `thread_id` on the fakeable chat runtime path, while
+    preserving the existing no-route delivery disable behavior.
+  - Evidence required: focused Slack agent-request route test, adjacent
+    agent-request route/no-route/receipt/attachment tests, adjacent Slack
+    provider direct-send tests, ruff, mypy
+  - Status: checkpointed in `e3671d6f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused
+    `python -m pytest tests\test_gateway_node_methods.py::test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime -q`
+    (`1 passed`), adjacent gateway proof (`5 passed, 807 deselected`),
+    adjacent Slack provider proof (`3 passed, 276 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PROV-001L` Discord thread result fallback
   - Source: `openclaw-main/extensions/discord/src/send.webhook.ts`,

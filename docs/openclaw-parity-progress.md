@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.1% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.2% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -50,6 +50,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native Slack media parity now iterates multi-media uploads with the
   caption on the first upload, returns the final media id as `messageId`, and
   preserves the ordered `mediaIds`/`mediaUrls` result metadata.
+- Slack agent-request route metadata parity now forwards OpenClaw-shaped
+  `accountId` and Slack `threadId` fields into the fakeable chat runtime path
+  as `account_id` / `thread_id` when a valid external route is present.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -9908,6 +9911,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_poll_uses_discord"` (`4 passed, 275 deselected`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `e47324f4`.
+- Slack agent-request thread metadata parity is now landed: `node.event`
+  `agent.request` payloads that target Slack preserve `accountId` and
+  Slack `threadId` through the gateway route helper and forward them as
+  `account_id` / `thread_id` to the fakeable chat runtime path, while keeping
+  no-route delivery disabled. This closes `OZ-PROV-001M`; repo-wide parity is
+  now estimated at ~61.2%.
+- Verified the Slack agent-request thread metadata slice with `python -m
+  pytest
+  tests\test_gateway_node_methods.py::test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "agent_request_routes_deep_link_to_chat_runtime
+  or forwards_slack_account_and_thread or disables_delivery_without_route or
+  sends_receipt_ack_when_route_is_present or
+  agent_request_uses_attachment_runtime_when_wired"` (`5 passed, 807
+  deselected`), adjacent Slack provider proof (`3 passed, 276 deselected`),
+  `ruff check`, and `mypy`. Checkpointed in `e3671d6f`.
 
 ## References
 

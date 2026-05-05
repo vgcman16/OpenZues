@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.2% overall, with a reasonable
   band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5624,6 +5624,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   message id without `channel_id`. Repo-wide parity is now estimated at
   ~61.1%. Verified with focused Discord thread-query pytest, adjacent Discord
   native route proof, `ruff check`, and `mypy`; checkpointed in `e47324f4`.
+- Closed the Slack agent-request thread metadata seam from OpenClaw
+  `src/agents/subagent-announce-delivery.ts` and
+  `extensions/slack/src/outbound-adapter.ts`: `node.event` `agent.request`
+  route payloads that target Slack now preserve `accountId` and Slack
+  `threadId` through the native gateway route helper and forward them as
+  `account_id` / `thread_id` to the fakeable chat runtime path. Repo-wide
+  parity is now estimated at ~61.2%. Verified with focused Slack
+  agent-request pytest, adjacent gateway route/no-route/receipt/attachment
+  proof, adjacent Slack provider direct-send proof, `ruff check`, and `mypy`;
+  checkpointed in `e3671d6f`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

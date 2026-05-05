@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -410,6 +410,11 @@ may lag behind this tracker.
   uploads, first-upload captioning, final-id `messageId`, and ordered media
   metadata projection.
   - Status: checkpointed in `e3b5bbc0`
+
+- [x] Slack agent-request route metadata forwarding for direct announce-style
+  delivery, including `accountId` and Slack `threadId` propagation into the
+  fakeable chat runtime path.
+  - Status: checkpointed in `e3671d6f`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1319,8 +1324,23 @@ may lag behind this tracker.
     checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
     `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
     WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
-    thread result fallback checkpointed in `e47324f4`
+    thread result fallback checkpointed in `e47324f4`; Slack agent-request
+    thread metadata checkpointed in `e3671d6f`
   - Weight: 3
+
+- [x] Slack agent-request thread metadata.
+  - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,
+    `openclaw-main/extensions/slack/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `e3671d6f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_gateway_node_methods.py::test_node_event_agent_request_forwards_slack_account_and_thread_to_chat_runtime
+    -q` (`1 passed`), adjacent gateway proof (`5 passed, 807 deselected`),
+    adjacent Slack provider proof (`3 passed, 276 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Discord thread result fallback.
   - Source: `openclaw-main/extensions/discord/src/send.webhook.ts`,
