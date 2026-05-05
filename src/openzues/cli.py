@@ -22853,6 +22853,207 @@ function normalizeOutboundThreadId(value) {
   return normalizeOptionalStringifiedId(value);
 }
 
+function normalizeRouteThreadId(value) {
+  return normalizeOptionalThreadValue(value);
+}
+
+function stringifyRouteThreadId(value) {
+  const normalized = normalizeRouteThreadId(value);
+  return normalized == null ? undefined : String(normalized);
+}
+
+function normalizeChannelRouteRef(input) {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+  const channel = normalizeLowercaseStringOrEmpty(input.channel);
+  const accountId =
+    typeof input.accountId === "string"
+      ? normalizeOptionalAccountId(input.accountId)
+      : undefined;
+  const to = normalizeOptionalString(input.to);
+  const rawTo = normalizeOptionalString(input.rawTo);
+  const threadId = normalizeRouteThreadId(input.threadId);
+  if (!channel && !to && !accountId && threadId == null) {
+    return undefined;
+  }
+  return {
+    ...(channel ? { channel } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(to
+      ? {
+          target: {
+            to,
+            ...(rawTo && rawTo !== to ? { rawTo } : {}),
+            ...(input.chatType ? { chatType: input.chatType } : {}),
+          },
+        }
+      : {}),
+    ...(threadId != null
+      ? {
+          thread: {
+            id: threadId,
+            ...(input.threadKind ? { kind: input.threadKind } : {}),
+            ...(input.threadSource ? { source: input.threadSource } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function channelRouteTarget(route) {
+  return route && route.target ? route.target.to : undefined;
+}
+
+function channelRouteThreadId(route) {
+  return route && route.thread ? route.thread.id : undefined;
+}
+
+function normalizeChannelRouteTarget(input) {
+  return input ? normalizeChannelRouteRef(input) : undefined;
+}
+
+function resolveChannelRouteTargetWithParser(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  const rawTo = normalizeOptionalString(params && params.rawTarget);
+  if (!channel || !rawTo) {
+    return null;
+  }
+  const parser =
+    params && typeof params.parseExplicitTarget === "function"
+      ? params.parseExplicitTarget
+      : () => null;
+  const parsed = parser(channel, rawTo);
+  const fallbackThreadId = normalizeOptionalThreadValue(
+    params && params.fallbackThreadId,
+  );
+  return {
+    channel,
+    rawTo,
+    to: (parsed && parsed.to) || rawTo,
+    threadId: normalizeOptionalThreadValue(
+      (parsed && parsed.threadId) ?? fallbackThreadId,
+    ),
+    chatType: parsed && parsed.chatType,
+  };
+}
+
+function channelRouteDedupeKey(input) {
+  const route = normalizeChannelRouteTarget(input);
+  return JSON.stringify([
+    (route && route.channel) || "",
+    (route && route.target && route.target.to) || "",
+    (route && route.accountId) || "",
+    stringifyRouteThreadId(route && route.thread && route.thread.id) || "",
+  ]);
+}
+
+function channelRouteIdentityKey(input) {
+  return channelRouteDedupeKey(input);
+}
+
+function channelRouteThreadIdsEqual(left, right) {
+  return stringifyRouteThreadId(left) === stringifyRouteThreadId(right);
+}
+
+function channelRouteAccountsCompatible(left, right) {
+  return !left || !right || left === right;
+}
+
+function channelRouteAccountsEqual(left, right) {
+  return (left || "") === (right || "");
+}
+
+function channelRoutesMatchExact(params) {
+  const left = params && params.left;
+  const right = params && params.right;
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.channel === right.channel &&
+    channelRouteTarget(left) === channelRouteTarget(right) &&
+    channelRouteAccountsEqual(left.accountId, right.accountId) &&
+    channelRouteThreadIdsEqual(channelRouteThreadId(left), channelRouteThreadId(right))
+  );
+}
+
+function channelRoutesShareConversation(params) {
+  const left = params && params.left;
+  const right = params && params.right;
+  if (!left || !right) {
+    return false;
+  }
+  if (
+    left.channel !== right.channel ||
+    channelRouteTarget(left) !== channelRouteTarget(right) ||
+    !channelRouteAccountsCompatible(left.accountId, right.accountId)
+  ) {
+    return false;
+  }
+  const leftThread = channelRouteThreadId(left);
+  const rightThread = channelRouteThreadId(right);
+  if (leftThread == null || rightThread == null) {
+    return true;
+  }
+  return channelRouteThreadIdsEqual(leftThread, rightThread);
+}
+
+function channelRouteTargetsMatchExact(params) {
+  return channelRoutesMatchExact({
+    left: normalizeChannelRouteTarget(params && params.left),
+    right: normalizeChannelRouteTarget(params && params.right),
+  });
+}
+
+function channelRouteTargetsShareConversation(params) {
+  return channelRoutesShareConversation({
+    left: normalizeChannelRouteTarget(params && params.left),
+    right: normalizeChannelRouteTarget(params && params.right),
+  });
+}
+
+function isChannelRouteRef(route) {
+  return (
+    route &&
+    typeof route === "object" &&
+    (Object.prototype.hasOwnProperty.call(route, "target") ||
+      Object.prototype.hasOwnProperty.call(route, "thread"))
+  );
+}
+
+function normalizeChannelRouteKeyInput(route) {
+  if (!route || typeof route !== "object") {
+    return undefined;
+  }
+  if (isChannelRouteRef(route)) {
+    return normalizeChannelRouteRef({
+      channel: route.channel,
+      to: route.target && route.target.to,
+      accountId: route.accountId,
+      threadId: route.thread && route.thread.id,
+    });
+  }
+  return normalizeChannelRouteTarget(route);
+}
+
+function channelRouteCompactKey(route) {
+  const normalized = normalizeChannelRouteKeyInput(route);
+  if (!normalized || !normalized.channel || !(normalized.target && normalized.target.to)) {
+    return undefined;
+  }
+  return [
+    normalized.channel,
+    normalized.target.to,
+    normalized.accountId || "",
+    stringifyRouteThreadId(normalized.thread && normalized.thread.id) || "",
+  ].join("|");
+}
+
+function channelRouteKey(route) {
+  return channelRouteCompactKey(route);
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -23767,6 +23968,24 @@ const channelInboundRuntime = {
   toLocationContext,
 };
 
+const channelRouteRuntime = {
+  channelRouteCompactKey,
+  channelRouteDedupeKey,
+  channelRouteIdentityKey,
+  channelRouteKey,
+  channelRouteTarget,
+  channelRouteTargetsMatchExact,
+  channelRouteTargetsShareConversation,
+  channelRouteThreadId,
+  channelRoutesMatchExact,
+  channelRoutesShareConversation,
+  normalizeChannelRouteRef,
+  normalizeChannelRouteTarget,
+  normalizeRouteThreadId,
+  resolveChannelRouteTargetWithParser,
+  stringifyRouteThreadId,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -24095,6 +24314,16 @@ const genericSdk = new Proxy(
     chunkText,
     chunkTextForOutbound,
     chunkTextWithMode,
+    channelRouteCompactKey,
+    channelRouteDedupeKey,
+    channelRouteIdentityKey,
+    channelRouteKey,
+    channelRouteTarget,
+    channelRouteTargetsMatchExact,
+    channelRouteTargetsShareConversation,
+    channelRouteThreadId,
+    channelRoutesMatchExact,
+    channelRoutesShareConversation,
     convertMarkdownTables,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
@@ -24181,7 +24410,10 @@ const genericSdk = new Proxy(
     normalizeOptionalLowercaseString,
     normalizeOptionalString,
     normalizeOutboundThreadId,
+    normalizeChannelRouteRef,
+    normalizeChannelRouteTarget,
     normalizeResolvedSecretInputString,
+    normalizeRouteThreadId,
     normalizeSecretInput,
     normalizeSecretInputString,
     normalizeStringEntries,
@@ -24245,6 +24477,7 @@ const genericSdk = new Proxy(
     resolveReactionMessageId,
     resolveBatchedReplyThreadingPolicy,
     resolveChannelSourceReplyDeliveryMode,
+    resolveChannelRouteTargetWithParser,
     resolveToolEmoji,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
@@ -24268,6 +24501,7 @@ const genericSdk = new Proxy(
     shouldAckReactionForWhatsApp,
     shouldDebounceTextInbound,
     stringEnum,
+    stringifyRouteThreadId,
     stringifyToolPayload,
     stripPlainTextToolCallBlocks,
     textResult,
@@ -24420,6 +24654,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound"
   ) {
     return channelInboundRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-route" ||
+    request === "@openclaw/plugin-sdk/channel-route"
+  ) {
+    return channelRouteRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

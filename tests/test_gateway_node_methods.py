@@ -7250,6 +7250,253 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_route_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-route.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  channelRouteCompactKey,
+  channelRouteDedupeKey,
+  channelRouteIdentityKey,
+  channelRouteKey,
+  channelRouteTargetsMatchExact,
+  channelRouteTargetsShareConversation,
+  channelRoutesMatchExact,
+  channelRoutesShareConversation,
+  channelRouteTarget,
+  channelRouteThreadId,
+  normalizeChannelRouteRef,
+  resolveChannelRouteTargetWithParser,
+  stringifyRouteThreadId
+} = require("openclaw/plugin-sdk/channel-route");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_route",
+      description: "Use OpenClaw channel route SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const normalized = normalizeChannelRouteRef({
+          channel: " Slack ",
+          accountId: " Work ",
+          rawTo: " channel:C1 ",
+          to: " C1 ",
+          threadId: " 171234.567 "
+        });
+        const telegram = normalizeChannelRouteRef({
+          channel: "telegram",
+          to: "-100123",
+          threadId: 42.9
+        });
+        const dedupeLeft = channelRouteDedupeKey({
+          channel: " Telegram ",
+          to: " -100123 ",
+          accountId: " Work ",
+          threadId: 42.9
+        });
+        const dedupeRight = channelRouteDedupeKey({
+          channel: "telegram",
+          to: "-100123",
+          accountId: "work",
+          threadId: "42"
+        });
+        const input = {
+          channel: "telegram",
+          to: "-100123",
+          accountId: "work",
+          threadId: "42"
+        };
+        const parsed = resolveChannelRouteTargetWithParser({
+          channel: "Mock",
+          rawTarget: " room-a:topic:77 ",
+          fallbackThreadId: 11,
+          parseExplicitTarget: (_channel, rawTarget) => {
+            const match = /^(.*):topic:(\\d+)$/.exec(rawTarget);
+            return match
+              ? { to: match[1] || rawTarget, threadId: Number.parseInt(match[2] || "", 10) }
+              : null;
+          }
+        });
+        return {
+          normalized,
+          routeAccessors: [channelRouteTarget(normalized), channelRouteThreadId(normalized)],
+          numeric: [
+            stringifyRouteThreadId(telegram.thread.id),
+            channelRouteCompactKey(telegram),
+            channelRouteKey(telegram)
+          ],
+          compactRaw: channelRouteCompactKey({
+            channel: " Slack ",
+            to: " C1 ",
+            accountId: " Work ",
+            threadId: " 171234.567 "
+          }),
+          dedupeStable: dedupeLeft === dedupeRight,
+          identityAlias: channelRouteIdentityKey(input) === channelRouteDedupeKey(input),
+          exact: [
+            channelRoutesMatchExact({
+              left: normalizeChannelRouteRef({
+                channel: "telegram",
+                to: "-100123",
+                threadId: 42
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "telegram",
+                to: "-100123",
+                threadId: "42"
+              })
+            }),
+            channelRouteTargetsMatchExact({
+              left: {
+                channel: "telegram",
+                to: "-100123",
+                threadId: 42
+              },
+              right: {
+                channel: "telegram",
+                to: "-100123",
+                threadId: "42"
+              }
+            }),
+            channelRouteTargetsMatchExact({
+              left: {
+                channel: "telegram",
+                to: "-100123",
+                accountId: "work"
+              },
+              right: {
+                channel: "telegram",
+                to: "-100123"
+              }
+            })
+          ],
+          share: [
+            channelRoutesShareConversation({
+              left: normalizeChannelRouteRef({
+                channel: "slack",
+                to: "channel:C1",
+                threadId: "171234.567"
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "slack",
+                to: "channel:C1"
+              })
+            }),
+            channelRouteTargetsShareConversation({
+              left: {
+                channel: "slack",
+                to: "channel:C1",
+                threadId: "171234.567"
+              },
+              right: {
+                channel: "slack",
+                to: "channel:C1"
+              }
+            }),
+            channelRoutesShareConversation({
+              left: normalizeChannelRouteRef({
+                channel: "matrix",
+                to: "room:abc",
+                threadId: "root-1"
+              }),
+              right: normalizeChannelRouteRef({
+                channel: "matrix",
+                to: "room:abc",
+                threadId: "root-2"
+              })
+            })
+          ],
+          parsed,
+          exportTypes: [
+            typeof normalizeChannelRouteRef,
+            typeof channelRouteCompactKey,
+            typeof genericSdk.channelRouteCompactKey,
+            typeof genericSdk.resolveChannelRouteTargetWithParser
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-route-plugin",
+                    "name": "Runtime Channel Route Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-route-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_route"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_route"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": {
+            "channel": "slack",
+            "accountId": "work",
+            "target": {"rawTo": "channel:C1", "to": "C1"},
+            "thread": {"id": "171234.567"},
+        },
+        "routeAccessors": ["C1", "171234.567"],
+        "numeric": ["42", "telegram|-100123||42", "telegram|-100123||42"],
+        "compactRaw": "slack|C1|work|171234.567",
+        "dedupeStable": True,
+        "identityAlias": True,
+        "exact": [True, True, False],
+        "share": [True, True, False],
+        "parsed": {
+            "channel": "mock",
+            "rawTo": "room-a:topic:77",
+            "to": "room-a",
+            "threadId": 77,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
