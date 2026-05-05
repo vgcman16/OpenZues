@@ -17004,6 +17004,120 @@ async def test_ops_mesh_service_message_action_dispatches_feishu_read_route(
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_feishu_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-feishu-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Feishu Action Edit Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": "feishu:chat:oc_chat_1",
+        },
+    )
+    feishu_requests: list[
+        tuple[str, str, dict[str, object] | None, str | None, str | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self, extra_headers, timeout_seconds
+        feishu_requests.append(
+            (
+                target,
+                method,
+                dict(payload) if isinstance(payload, dict) else None,
+                secret_header_name,
+                secret_token,
+            )
+        )
+        return {"code": 0, "msg": "ok"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="feishu",
+            action="edit",
+            params={
+                "messageId": "om_edit_1",
+                "text": "Feishu edit parity.",
+            },
+            account_id="feishu-bot",
+            idempotency_key="idem-feishu-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "feishu",
+        "action": "edit",
+        "messageId": "om_edit_1",
+        "contentType": "post",
+    }
+    assert feishu_requests == [
+        (
+            "https://open.feishu.cn/open-apis/im/v1/messages/om_edit_1",
+            "PATCH",
+            {
+                "content": json.dumps(
+                    {
+                        "zh_cn": {
+                            "content": [
+                                [
+                                    {
+                                        "tag": "md",
+                                        "text": "Feishu edit parity.",
+                                    }
+                                ]
+                            ]
+                        }
+                    },
+                    separators=(",", ":"),
+                )
+            },
+            "Authorization",
+            "Bearer tenant-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
