@@ -20838,6 +20838,152 @@ async def test_ops_mesh_service_blocks_msteams_signin_verify_for_group_sender_al
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_search_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-search"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Search Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[dict[str, object | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        graph_gets.append(
+            {
+                "method": method,
+                "target": target,
+                "payload": payload,
+                "secretHeaderName": secret_header_name,
+                "secretToken": secret_token,
+                "extraHeaders": extra_headers,
+            }
+        )
+        return {
+            "value": [
+                {
+                    "id": "msg-1",
+                    "body": {"content": "Meeting notes from Monday"},
+                    "from": {"user": {"id": "u1", "displayName": "Alice"}},
+                    "createdDateTime": "2026-03-25T10:00:00Z",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="search",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "query": 'meeting "notes"',
+                "limit": 100,
+                "from": "O'Brien",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-search-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "search",
+        "messages": [
+            {
+                "id": "msg-1",
+                "text": "Meeting notes from Monday",
+                "from": {"user": {"id": "u1", "displayName": "Alice"}},
+                "createdAt": "2026-03-25T10:00:00Z",
+            }
+        ],
+    }
+    assert graph_gets == [
+        {
+            "method": "GET",
+            "target": (
+                "https://graph.microsoft.com/v1.0/chats/"
+                "19%3Aops-thread%40thread.tacv2/messages?"
+                "$search=%22meeting%20notes%22&$top=50&"
+                "$filter=from%2Fuser%2FdisplayName%20eq%20'O''Brien'"
+            ),
+            "payload": None,
+            "secretHeaderName": "Authorization",
+            "secretToken": "Bearer graph-access-token",
+            "extraHeaders": {"ConsistencyLevel": "eventual"},
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_list_pins_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

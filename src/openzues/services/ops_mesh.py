@@ -252,6 +252,8 @@ MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
 )
 MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS = 300
 MSTEAMS_LIST_PINS_MAX_PAGES = 10
+MSTEAMS_SEARCH_DEFAULT_LIMIT = 25
+MSTEAMS_SEARCH_MAX_LIMIT = 50
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
 MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -5550,6 +5552,37 @@ def _msteams_message_summary(result: object, *, fallback_message_id: str) -> dic
     if isinstance(created_at, str):
         message["createdAt"] = created_at
     return message
+
+
+def _msteams_encode_query_component(value: str) -> str:
+    return quote(value, safe="-_.!~*'()")
+
+
+def _msteams_odata_escape(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _msteams_search_limit(raw_limit: object) -> int:
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, (int, float)):
+        return MSTEAMS_SEARCH_DEFAULT_LIMIT
+    if not math.isfinite(float(raw_limit)):
+        return MSTEAMS_SEARCH_DEFAULT_LIMIT
+    return min(max(math.floor(float(raw_limit)), 1), MSTEAMS_SEARCH_MAX_LIMIT)
+
+
+def _msteams_search_messages(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    messages: list[dict[str, object]] = []
+    raw_messages = result.get("value")
+    if not isinstance(raw_messages, list):
+        return messages
+    for raw_message in raw_messages:
+        if not isinstance(raw_message, dict):
+            continue
+        fallback_id = str(raw_message.get("id") or "")
+        messages.append(_msteams_message_summary(raw_message, fallback_message_id=fallback_id))
+    return messages
 
 
 def _msteams_pin_page(result: object) -> tuple[list[dict[str, object]], str | None]:
@@ -14828,6 +14861,29 @@ class OpsMeshService:
             )
             return await asyncio.to_thread(
                 self._dispatch_msteams_list_pins_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "search":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action search."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_search_message_action,
                 route,
                 request,
                 graph_secret_token,
@@ -25676,6 +25732,65 @@ class OpsMeshService:
             "channel": "msteams",
             "action": "list-pins",
             "pins": pins,
+        }
+
+    def _dispatch_msteams_search_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        query = _message_action_param_string(request.params, "query")
+        if query is None:
+            raise RuntimeError("Search requires a target (to) and query.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_graph_conversation_target_for_route(
+            route_config=route_config,
+            raw_target=target,
+        )
+        if "/" in conversation_id:
+            team_id, channel_id = conversation_id.split("/", 1)
+            if not team_id.strip() or not channel_id.strip():
+                raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+            base_endpoint = (
+                "https://graph.microsoft.com/v1.0/teams/"
+                f"{quote(team_id.strip(), safe='')}/channels/"
+                f"{quote(channel_id.strip(), safe='')}/messages"
+            )
+        else:
+            base_endpoint = (
+                "https://graph.microsoft.com/v1.0/chats/"
+                f"{quote(conversation_id, safe='')}/messages"
+            )
+        sanitized_query = query.replace('"', "")
+        query_parts = [
+            f"$search={_msteams_encode_query_component(f'\"{sanitized_query}\"')}",
+            f"$top={_msteams_search_limit(request.params.get('limit'))}",
+        ]
+        sender = _message_action_param_string(request.params, "from")
+        if sender is not None:
+            query_parts.append(
+                "$filter="
+                + _msteams_encode_query_component(
+                    f"from/user/displayName eq '{_msteams_odata_escape(sender)}'"
+                )
+            )
+        result = self._request_json_provider_url(
+            f"{base_endpoint}?{'&'.join(query_parts)}",
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+            extra_headers={"ConsistencyLevel": "eventual"},
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "search",
+            "messages": _msteams_search_messages(result),
         }
 
     def _dispatch_msteams_react_message_action(
