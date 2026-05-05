@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.8% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.9% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10910,6 +10910,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`7 passed, 320 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Proof checkpointed in `299a8655`.
+
+- Microsoft Teams feedback-disabled invoke handling now mirrors the
+  `msteamsCfg?.feedbackEnabled === false` branch in OpenClaw
+  `extensions/msteams/src/monitor-handler.ts`: feedback invokes are still
+  consumed and projected as successful gateway results, but OpenZues skips
+  session transcript persistence when configured feedback handling is disabled.
+  This closes `OZ-PROV-001AY`; repo-wide parity is now estimated at ~65.9%.
+  Remaining Microsoft Teams feedback breadth is background reflection learning
+  and optional personal follow-up delivery.
+- Verified the Microsoft Teams feedback-disabled slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_consumes_msteams_feedback_invoke_when_disabled -q`
+  (`1 passed`), adjacent Teams invoke/inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_feedback or msteams_signin or msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card"`
+  (`15 passed, 313 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `34346a60`.
 
 ## References
 

@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.9% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6128,10 +6128,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~65.8%. Verified with focused runtime
   pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; proof
   checkpointed in `299a8655`.
+- Closed the Microsoft Teams feedback-disabled invoke seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts`: `feedbackEnabled: false` now
+  consumes `message/submitAction` feedback invokes without resolving/writing a
+  session transcript event, while returning explicit disabled delivery metadata
+  for the native gateway result. Repo-wide parity is now estimated at ~65.9%.
+  Verified with focused runtime pytest, adjacent Teams invoke/inbound proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `34346a60`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
-  consumers, feedback reflection follow-up generation, downloadable inbound
-  media staging, or another
+  consumers, feedback reflection learning/follow-up generation, downloadable
+  inbound media staging, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
