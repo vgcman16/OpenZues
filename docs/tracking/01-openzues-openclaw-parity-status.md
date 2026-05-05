@@ -187,7 +187,7 @@ may lag behind this tracker.
 
 - [x] Package distribution inventory validation, preserving OpenClaw's
   invalid-inventory warning posture in `doctor --json`.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `3bf0ff86`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -666,7 +666,7 @@ may lag behind this tracker.
     `openclaw-main/src/infra/update-global.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `3bf0ff86`.
   - Weight: 1
   - Last verified: 2026-05-04, focused package inventory test (`1 passed`),
     adjacent package/runtime doctor proof (`3 passed`), `ruff check`, and

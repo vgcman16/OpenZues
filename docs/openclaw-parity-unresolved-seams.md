@@ -5551,7 +5551,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   presence-only inventory. Repo-wide parity is now estimated at ~60.3%;
   runtime/CLI/doctor bounded path remains ~99.9%. Verified with focused
   package inventory pytest, adjacent package/runtime doctor proof, `ruff
-  check`, and `mypy`; checkpoint pending commit.
+  check`, and `mypy`; checkpointed in `3bf0ff86`.
 - Next repo-wide queue head: rotate to Telegram audio/voice routing,
   companion remote-bin discovery, or update-status channel projection based on
   the strongest source-backed seam.

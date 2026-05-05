@@ -9765,7 +9765,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
   "package_dist_inventory or package_distribution or runtime_bridge_posture"`
   (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
-  `mypy src\openzues\cli.py`. Checkpoint pending commit.
+  `mypy src\openzues\cli.py`. Checkpointed in `3bf0ff86`.
 
 ## References
 
