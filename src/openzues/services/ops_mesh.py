@@ -5427,6 +5427,32 @@ def _msteams_graph_message_endpoint(
     )
 
 
+def _msteams_graph_message_endpoint_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    message_id: str,
+) -> str:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}"
+        )
+    return (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
+    )
+
+
 def _msteams_graph_conversation_target_for_route(
     *,
     route_config: _MSTeamsRouteConfig,
@@ -5481,6 +5507,24 @@ def _msteams_reaction_type(raw_reaction: str | None) -> str:
     if lowered in MSTEAMS_REACTION_EMOJIS:
         return lowered
     return normalized
+
+
+def _msteams_message_summary(result: object, *, fallback_message_id: str) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    message: dict[str, object] = {"id": str(result.get("id") or fallback_message_id)}
+    body = result.get("body")
+    if isinstance(body, dict):
+        content = body.get("content")
+        if isinstance(content, str):
+            message["text"] = content
+    sender = result.get("from")
+    if isinstance(sender, dict):
+        message["from"] = sender
+    created_at = result.get("createdDateTime")
+    if isinstance(created_at, str):
+        message["createdAt"] = created_at
+    return message
 
 
 def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
@@ -14641,6 +14685,29 @@ class OpsMeshService:
                 route,
                 request,
                 secret_token,
+            )
+        if channel == "msteams" and action == "read":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action read."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_read_message_action,
+                route,
+                request,
+                graph_secret_token,
             )
         if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
@@ -25335,6 +25402,41 @@ class OpsMeshService:
         return {
             "ok": True,
             "reactions": _msteams_reaction_summaries(result),
+        }
+
+    def _dispatch_msteams_read_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams read requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            _msteams_graph_message_endpoint_for_route(
+                route_config=route_config,
+                target=target,
+                message_id=message_id,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "read",
+            "message": _msteams_message_summary(result, fallback_message_id=message_id),
         }
 
     def _dispatch_msteams_react_message_action(
