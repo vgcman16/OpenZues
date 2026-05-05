@@ -3320,6 +3320,69 @@ def _signal_target_params(raw_target: str | None) -> tuple[dict[str, object], st
     return {"recipient": [target]}, target
 
 
+def _signal_reaction_normalized_id(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if target.lower().startswith("signal:"):
+        target = target[len("signal:") :].strip()
+    if target.lower().startswith("uuid:"):
+        target = target[len("uuid:") :].strip()
+    return target
+
+
+def _signal_reaction_target_params(
+    raw_target: str | None,
+) -> tuple[dict[str, object], str | None]:
+    target = _signal_reaction_normalized_id(raw_target)
+    if not target:
+        raise RuntimeError("recipient or group required")
+    if target.lower().startswith("group:"):
+        group_id = target[len("group:") :].strip()
+        if not group_id:
+            raise RuntimeError("recipient or group required")
+        return {"groupIds": [group_id]}, None
+    return {"recipients": [target]}, target
+
+
+def _signal_reaction_target_author(
+    params: dict[str, Any],
+    *,
+    fallback: str | None,
+) -> str | None:
+    for key in ("targetAuthor", "targetAuthorUuid"):
+        candidate = _message_action_param_string(params, key)
+        normalized = _signal_reaction_normalized_id(candidate)
+        if normalized:
+            return normalized
+    return fallback
+
+
+def _signal_reaction_message_timestamp(
+    request: GatewayMessageActionDispatchRequest,
+) -> int:
+    message_id = _message_action_param_string_or_number(request.params, "messageId")
+    if message_id is None and request.tool_context is not None:
+        current_message_id = request.tool_context.get("currentMessageId")
+        if current_message_id is not None:
+            if isinstance(current_message_id, bool) or not isinstance(
+                current_message_id,
+                (str, int, float),
+            ):
+                raise RuntimeError("toolContext.currentMessageId must be a string or number.")
+            message_id = str(current_message_id).strip() or None
+    if message_id is None:
+        raise RuntimeError(
+            "messageId (timestamp) required. Provide messageId explicitly "
+            "or react to the current inbound message."
+        )
+    match = re.match(r"^[+-]?\d+", message_id)
+    if match is None:
+        raise RuntimeError(f"Invalid messageId: {message_id}. Expected numeric timestamp.")
+    timestamp = int(match.group(0))
+    if timestamp <= 0:
+        raise RuntimeError("Valid targetTimestamp is required for Signal reaction")
+    return timestamp
+
+
 def _signal_rpc_result_timestamp(result: object) -> int | None:
     if isinstance(result, dict) and isinstance(result.get("result"), dict):
         timestamp = result["result"].get("timestamp")
@@ -10557,6 +10620,20 @@ class OpsMeshService:
             )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "signal" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Signal route is configured for message.action react."
+                )
+            return await asyncio.to_thread(
+                self._dispatch_signal_react_message_action,
+                route,
+                request,
+            )
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
         if channel == "matrix" and action in {"edit", "editMessage"}:
@@ -20495,6 +20572,68 @@ class OpsMeshService:
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result
+
+    def _dispatch_signal_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        raw_target = _message_action_param_string(request.params, "recipient")
+        if raw_target is None:
+            raw_target = _message_action_param_string(
+                request.params,
+                "to",
+                required=True,
+            )
+        target_params, direct_target_author = _signal_reaction_target_params(raw_target)
+        timestamp = _signal_reaction_message_timestamp(request)
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji required to remove reaction.")
+        if not remove and not emoji:
+            raise RuntimeError("Emoji required to add reaction.")
+
+        target_author = _signal_reaction_target_author(
+            request.params,
+            fallback=direct_target_author,
+        )
+        if "groupIds" in target_params and not target_author:
+            raise RuntimeError("targetAuthor or targetAuthorUuid required for group reactions.")
+
+        params: dict[str, object] = {
+            "emoji": emoji,
+            "targetTimestamp": timestamp,
+        }
+        if remove:
+            params["remove"] = True
+        if target_author:
+            params["targetAuthor"] = target_author
+        params.update(target_params)
+        payload: dict[str, object] = {
+            "jsonrpc": "2.0",
+            "method": "sendReaction",
+            "params": params,
+            "id": uuid.uuid4().hex,
+        }
+        result = self._request_json_provider_url(
+            _signal_rpc_endpoint(str(route.get("target") or "")),
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": emoji}
+        return {"ok": True, "added": emoji}
 
     def _post_irc_provider_event(
         self,

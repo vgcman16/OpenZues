@@ -17370,6 +17370,283 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_r
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-signal-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "signal:+15551234567",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000123}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "to": "signal:+15551234567",
+                "messageId": "1700000000000",
+                "emoji": "\U0001f44d",
+            },
+            account_id="default",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:signal:direct:+15551234567",
+            idempotency_key="idem-signal-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\U0001f44d"}
+    assert len(signal_posts) == 1
+    method, target, payload = signal_posts[0]
+    assert method == "POST"
+    assert target == "http://signal.example.com:8080/api/v1/rpc"
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["method"] == "sendReaction"
+    assert isinstance(payload["id"], str)
+    assert payload["params"] == {
+        "emoji": "\U0001f44d",
+        "targetTimestamp": 1700000000000,
+        "targetAuthor": "+15551234567",
+        "recipients": ["+15551234567"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_group_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-signal-group-react-remove"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Group Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "group",
+            "peer_id": "signal:group:ops-group-id",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000456}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "recipient": "signal:group:ops-group-id",
+                "targetAuthorUuid": "uuid:author-uuid",
+                "messageId": 1700000000001,
+                "emoji": "\u2764\ufe0f",
+                "remove": True,
+            },
+            account_id="default",
+            requester_sender_id="author-uuid",
+            sender_is_owner=True,
+            session_key="agent:main:signal:group:ops-group-id",
+            idempotency_key="idem-signal-group-react-remove-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": "\u2764\ufe0f"}
+    assert len(signal_posts) == 1
+    method, target, payload = signal_posts[0]
+    assert method == "POST"
+    assert target == "http://signal.example.com:8080/api/v1/rpc"
+    assert payload["method"] == "sendReaction"
+    assert payload["params"] == {
+        "emoji": "\u2764\ufe0f",
+        "targetTimestamp": 1700000000001,
+        "remove": True,
+        "targetAuthor": "author-uuid",
+        "groupIds": ["ops-group-id"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_react_current_message_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-signal-react-context"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Context Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "signal:uuid:sender-uuid",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000789}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "to": "signal:uuid:sender-uuid",
+                "emoji": "\u2705",
+            },
+            account_id="default",
+            requester_sender_id="sender-uuid",
+            sender_is_owner=True,
+            session_key="agent:main:signal:direct:sender-uuid",
+            idempotency_key="idem-signal-react-context-action",
+            tool_context={"currentMessageId": "1737630212345"},
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert len(signal_posts) == 1
+    payload = signal_posts[0][2]
+    assert payload["params"] == {
+        "emoji": "\u2705",
+        "targetTimestamp": 1737630212345,
+        "targetAuthor": "sender-uuid",
+        "recipients": ["sender-uuid"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
