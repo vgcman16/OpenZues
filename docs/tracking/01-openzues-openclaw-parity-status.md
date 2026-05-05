@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -210,6 +210,10 @@ may lag behind this tracker.
 - [x] Update status git branch channel label, preserving OpenClaw's
   `dev (<branch>)` channel source projection.
   - Status: checkpointed in `8673e35d`
+
+- [x] Update status package-manager dependency posture, preserving OpenClaw's
+  `packageManager` detection and `deps` lockfile/install-marker metadata.
+  - Status: checkpointed in `f1ac67da`
 
 - [x] Companion remote macOS bin discovery, preserving OpenClaw's
   `system.which`/`system.run command -v` probe, paired-node `bins`
@@ -546,7 +550,11 @@ may lag behind this tracker.
 
 - [ ] Runtime command/packaging breadth.
   - Source: OpenClaw runtime, CLI, package, and doctor surfaces.
-  - Status: open
+  - Status: open; package distribution doctor diagnostics checkpointed in
+    `47d73351`, package dist inventory validation checkpointed in `3bf0ff86`,
+    update status channel projection checkpointed in `e32d4d47`, update status
+    git branch channel label checkpointed in `8673e35d`, and update status
+    package-manager dependency posture checkpointed in `f1ac67da`.
   - Weight: 5
 
 - [ ] Runtime-control hard gaps.
@@ -774,6 +782,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused update-status pair (`2 passed`),
     adjacent update/package doctor proof (`4 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Update status package-manager dependency posture.
+  - Source: `openclaw-main/src/infra/detect-package-manager.ts`,
+    `openclaw-main/src/infra/update-check.ts`, and
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f1ac67da`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused update-status package-manager test (`1
+    passed`), adjacent update/package doctor proof (`5 passed, 488
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] Package distribution doctor diagnostics.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,

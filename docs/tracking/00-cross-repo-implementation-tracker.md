@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,12 +29,12 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Slack agent-request thread metadata slice is checkpointed in `e3671d6f`.
+The update status package-manager dependency posture slice is checkpointed in
+`f1ac67da`.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/services/gateway_node_methods.py`
-- `src/openzues/app.py`
-- `tests/test_gateway_node_methods.py`
+- `src/openzues/cli.py`
+- `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -48,13 +48,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
-| OZ-PKG-001 | Packaging/distribution breadth | Update status git branch channel label checkpointed in `8673e35d` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
+| OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack agent-request thread metadata checkpointed in `e3671d6f` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PKG-001E` update status package-manager dependency posture
+  - Source: `openclaw-main/src/infra/detect-package-manager.ts`,
+    `openclaw-main/src/infra/update-check.ts`,
+    `openclaw-main/src/cli/update-cli/status.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues update status --json` detects `packageManager` from
+    `package.json` or lockfiles and projects OpenClaw-shaped `deps` metadata
+    with manager, status, lockfile path, marker path, and stale/missing/unknown
+    reasons while preserving existing update/channel/availability payloads.
+  - Evidence required: focused update-status package-manager test, adjacent
+    update/package doctor tests, ruff, mypy
+  - Status: checkpointed in `f1ac67da`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused
+    `python -m pytest tests\test_cli.py::test_update_status_json_detects_package_manager_deps -q`
+    (`1 passed`), adjacent update/package doctor proof (`5 passed, 488
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001M` Slack agent-request thread metadata
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.2% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.3% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -53,6 +53,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Slack agent-request route metadata parity now forwards OpenClaw-shaped
   `accountId` and Slack `threadId` fields into the fakeable chat runtime path
   as `account_id` / `thread_id` when a valid external route is present.
+- Update status package-manager dependency posture now mirrors OpenClaw's
+  package runtime check surface by detecting `packageManager` from
+  `package.json`/lockfiles and projecting `deps` lockfile/install-marker state
+  in `openzues update status --json`.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -9927,6 +9931,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   agent_request_uses_attachment_runtime_when_wired"` (`5 passed, 807
   deselected`), adjacent Slack provider proof (`3 passed, 276 deselected`),
   `ruff check`, and `mypy`. Checkpointed in `e3671d6f`.
+
+- `openzues update status --json` now mirrors OpenClaw's package-manager
+  dependency posture: package installs detect `packageManager` from
+  `package.json` or lockfiles, and the update payload includes `deps` metadata
+  for manager, status, lockfile path, marker path, and stale/missing/unknown
+  reasons while preserving the existing channel and availability projections.
+  This closes `OZ-PKG-001E`; repo-wide parity is now estimated at ~61.3%.
+- Verified the update status package-manager dependency posture slice with
+  `python -m pytest
+  tests\test_cli.py::test_update_status_json_detects_package_manager_deps -q`
+  (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_detects_package_manager_deps or
+  update_status_json_includes_openclaw_channel_projection or
+  update_status_json_uses_git_branch_channel_label or
+  doctor_json_includes_windows_package_distribution_diagnostics or
+  doctor_json_warns_on_invalid_package_dist_inventory"` (`5 passed, 488
+  deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `f1ac67da`.
 
 ## References
 

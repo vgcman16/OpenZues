@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.3% overall, with a reasonable
   band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5634,6 +5634,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   agent-request pytest, adjacent gateway route/no-route/receipt/attachment
   proof, adjacent Slack provider direct-send proof, `ruff check`, and `mypy`;
   checkpointed in `e3671d6f`.
+- Closed the update-status package-manager dependency posture seam from
+  OpenClaw `src/infra/detect-package-manager.ts`,
+  `src/infra/update-check.ts`, and `src/cli/update-cli/status.ts`: native
+  `openzues update status --json` now detects `packageManager` from
+  `package.json` or lockfiles and projects `deps` metadata for manager,
+  status, lockfile path, marker path, and stale/missing/unknown reasons.
+  Repo-wide parity is now estimated at ~61.3%. Verified with focused
+  update-status package-manager pytest, adjacent update/package doctor proof,
+  `ruff check`, and `mypy`; checkpointed in `f1ac67da`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
