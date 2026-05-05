@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.9% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~62.0% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -51,6 +51,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   token/password overrides; invalid URL overrides now fail before token issue
   with the OpenClaw-shaped `Configured publicUrl is invalid.` diagnostic, and
   `--remote` now fails closed until an explicit remote URL source is provided.
+  JSON output is narrowed to OpenClaw's `setupCode`, `gatewayUrl`, `auth`, and
+  `urlSource` contract.
 - Provider-native Slack route parity now validates Slack `thread_ts` values
   before setting `thread_ts`, falls back from internal reply ids to valid Slack
   thread ids, and leaves invalid internal ids out of Slack API payloads.
@@ -10080,6 +10082,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\cli.py
   src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
   `12dee789`.
+
+- QR JSON setup-code output now matches OpenClaw's public contract exactly:
+  `openzues qr --json --url ... --token ...` returns `setupCode`,
+  `gatewayUrl`, `auth`, and `urlSource` only, keeps the raw token out of
+  stdout, and keeps the encoded setup payload limited to `{url,
+  bootstrapToken}`. This closes `OZ-COMP-001F`; repo-wide parity is now
+  estimated at ~62.0%.
+- Verified the QR JSON setup-code contract slice with `python -m pytest
+  tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_json_output or qr_remote_requires_explicit_remote_url or
+  qr_setup_code_only"` (`4 passed, 496 deselected`), `ruff check
+  src\openzues\cli.py src\openzues\services\device_bootstrap_tokens.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `b79b87c3`.
 
 ## References
 
