@@ -6,6 +6,7 @@ import binascii
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import math
@@ -345,6 +346,30 @@ class _MSTeamsRouteConfig:
     conversation_id: str | None
     conversation_type: str | None
     graph_chat_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsFileConsentInvoke:
+    action: Literal["accept", "decline"]
+    upload_id: str
+    upload_info: Mapping[str, object] | None
+    conversation_id: str | None
+
+
+MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.de",
+    "sharepoint.cn",
+    "sharepoint-df.com",
+    "storage.live.com",
+    "onedrive.com",
+    "1drv.ms",
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
+)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -3421,6 +3446,20 @@ def _msteams_activity_endpoint(
     return f"{service_url.rstrip('/')}/v3/conversations/{encoded_conversation_id}/activities"
 
 
+def _msteams_activity_update_endpoint(
+    *,
+    service_url: str,
+    conversation_id: str,
+    activity_id: str,
+) -> str:
+    encoded_conversation_id = quote(conversation_id, safe="")
+    encoded_activity_id = quote(activity_id, safe="")
+    return (
+        f"{service_url.rstrip('/')}/v3/conversations/"
+        f"{encoded_conversation_id}/activities/{encoded_activity_id}"
+    )
+
+
 def _msteams_activity_conversation_id(
     *,
     conversation_id: str,
@@ -3436,6 +3475,18 @@ def _msteams_activity_conversation_id(
     if re.search(r";messageid=", conversation_id, flags=re.IGNORECASE):
         return conversation_id
     return f"{conversation_id};messageid={thread_id}"
+
+
+def _msteams_base_conversation_id(raw_conversation_id: str | None) -> str:
+    conversation_id = str(raw_conversation_id or "").strip()
+    if not conversation_id:
+        return ""
+    return re.split(
+        r";messageid=",
+        conversation_id,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
 
 
 def _msteams_message_id(result: object) -> str | None:
@@ -3664,6 +3715,103 @@ def _msteams_file_consent_card_from_event(
         },
     }
     return card, upload_id
+
+
+def _msteams_file_consent_invoke_from_params(
+    params: Mapping[str, Any],
+) -> _MSTeamsFileConsentInvoke | None:
+    raw_activity = params.get("activity")
+    activity = raw_activity if isinstance(raw_activity, Mapping) else params
+    activity_name = str(activity.get("name") or "").strip()
+    if activity_name and activity_name != "fileConsent/invoke":
+        return None
+    raw_value = activity.get("value")
+    value = raw_value if isinstance(raw_value, Mapping) else params.get("value")
+    if not isinstance(value, Mapping):
+        value = params
+    value_type = str(value.get("type") or "").strip()
+    if value_type and value_type != "fileUpload":
+        return None
+    raw_action = str(value.get("action") or params.get("consentAction") or "").strip().lower()
+    action: Literal["accept", "decline"] = "accept" if raw_action == "accept" else "decline"
+    context = value.get("context")
+    if not isinstance(context, Mapping):
+        context = params.get("context")
+    upload_id = ""
+    if isinstance(context, Mapping):
+        upload_id = str(context.get("uploadId") or "").strip()
+    if not upload_id:
+        upload_id = str(value.get("uploadId") or params.get("uploadId") or "").strip()
+    if not upload_id:
+        raise RuntimeError("Microsoft Teams file consent invoke requires uploadId.")
+    raw_upload_info = value.get("uploadInfo") or params.get("uploadInfo")
+    upload_info = (
+        cast(Mapping[str, object], raw_upload_info)
+        if isinstance(raw_upload_info, Mapping)
+        else None
+    )
+    raw_conversation = activity.get("conversation")
+    conversation_id: str | None = None
+    if isinstance(raw_conversation, Mapping):
+        conversation_id = str(raw_conversation.get("id") or "").strip() or None
+    if conversation_id is None:
+        conversation_id = (
+            str(value.get("conversationId") or params.get("conversationId") or "").strip()
+            or None
+        )
+    if conversation_id is not None:
+        conversation_id = _msteams_base_conversation_id(conversation_id) or None
+    return _MSTeamsFileConsentInvoke(
+        action=action,
+        upload_id=upload_id,
+        upload_info=upload_info,
+        conversation_id=conversation_id,
+    )
+
+
+def _msteams_file_consent_upload_info_value(
+    upload_info: Mapping[str, object],
+    key: str,
+) -> str:
+    value = str(upload_info.get(key) or "").strip()
+    if not value:
+        raise RuntimeError(f"Microsoft Teams file consent uploadInfo requires {key}.")
+    return value
+
+
+def _msteams_file_info_card_from_upload_info(
+    upload_info: Mapping[str, object],
+) -> dict[str, object]:
+    filename = _msteams_file_consent_upload_info_value(upload_info, "name")
+    content_url = _msteams_file_consent_upload_info_value(upload_info, "contentUrl")
+    unique_id = _msteams_file_consent_upload_info_value(upload_info, "uniqueId")
+    file_type = _msteams_file_consent_upload_info_value(upload_info, "fileType")
+    return {
+        "contentType": "application/vnd.microsoft.teams.card.file.info",
+        "contentUrl": content_url,
+        "name": filename,
+        "content": {
+            "uniqueId": unique_id,
+            "fileType": file_type,
+        },
+    }
+
+
+def _msteams_file_consent_content_type(
+    *,
+    event_payload: Mapping[str, Any],
+    downloaded_content_type: str | None,
+    filename: str | None,
+) -> str:
+    file_consent = _msteams_file_consent_entry(event_payload)
+    if file_consent is not None:
+        configured = _msteams_file_info_value(file_consent, "contentType", "mimeType")
+        if configured is not None:
+            return configured
+    if downloaded_content_type:
+        return downloaded_content_type
+    guessed = mimetypes.guess_type(str(filename or ""))[0]
+    return guessed or "application/octet-stream"
 
 
 def _msteams_poll_card(
@@ -11481,6 +11629,25 @@ class OpsMeshService:
                     "No native Microsoft Teams route is configured for message.action poll-vote."
                 )
             return await self._dispatch_msteams_poll_vote_message_action(request)
+        if channel == "msteams" and action in {
+            "file-consent",
+            "file-consent-invoke",
+            "fileConsent/invoke",
+        }:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Microsoft Teams route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await self._dispatch_msteams_file_consent_message_action(
+                route,
+                request,
+                secret_token,
+            )
         if channel == "msteams" and action in {"react", "unreact", "reactions"}:
             route = await self._provider_route_for_channel_account(
                 channel=channel,
@@ -19288,6 +19455,32 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_bytes_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        request = Request(
+            target,
+            data=body,
+            headers={str(key): str(value) for key, value in (headers or {}).items()},
+            method=str(method or "GET").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response.read()
+                return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_form_provider_url(
         self,
         target: str,
@@ -21519,6 +21712,51 @@ class OpsMeshService:
         )
         return f"Bearer {access_token}"
 
+    def _msteams_validate_file_consent_upload_url(self, target: str) -> None:
+        parsed = urlparse(str(target or "").strip())
+        if parsed.scheme.lower() != "https":
+            raise RuntimeError("Consent upload URL must use HTTPS.")
+        hostname = str(parsed.hostname or "").strip().lower()
+        if not hostname:
+            raise RuntimeError("Consent upload URL hostname is required.")
+        if not any(
+            hostname == allowed or hostname.endswith(f".{allowed}")
+            for allowed in MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST
+        ):
+            raise RuntimeError(
+                f'Consent upload URL hostname "{hostname}" is not in the allowed domains.'
+            )
+        try:
+            resolved = socket.getaddrinfo(hostname, None)
+        except OSError as exc:
+            raise RuntimeError(
+                f'Failed to resolve consent upload URL hostname "{hostname}".'
+            ) from exc
+        addresses = {
+            str(entry[4][0])
+            for entry in resolved
+            if len(entry) >= 5 and isinstance(entry[4], tuple) and entry[4]
+        }
+        if not addresses:
+            raise RuntimeError(
+                f'Failed to resolve consent upload URL hostname "{hostname}".'
+            )
+        for address in addresses:
+            try:
+                ip = ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_unspecified
+            ):
+                raise RuntimeError(
+                    f"Consent upload URL resolves to a private/reserved IP ({address})."
+                )
+
     def _msteams_poll_vote_voter_id(
         self,
         request: GatewayMessageActionDispatchRequest,
@@ -21561,6 +21799,260 @@ class OpsMeshService:
             if str(provider_result.get("pollId") or "").strip() == poll_id:
                 return delivery
         return None
+
+    async def _msteams_file_consent_delivery_for_upload(
+        self,
+        upload_id: str,
+    ) -> dict[str, Any] | None:
+        for delivery in await self.database.list_outbound_deliveries(limit=1000):
+            if str(delivery.get("event_type") or "") != "gateway/send":
+                continue
+            event_payload = delivery.get("event_payload")
+            if not isinstance(event_payload, dict):
+                continue
+            if str(event_payload.get("channel") or "").strip().lower() != "msteams":
+                continue
+            route_scope = delivery.get("route_scope")
+            if not isinstance(route_scope, dict):
+                continue
+            provider_result = route_scope.get("provider_result")
+            if not isinstance(provider_result, dict):
+                continue
+            if str(provider_result.get("pendingUploadId") or "").strip() == upload_id:
+                return delivery
+        return None
+
+    async def _dispatch_msteams_file_consent_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        invoke = _msteams_file_consent_invoke_from_params(request.params)
+        if invoke is None:
+            raise RuntimeError("Microsoft Teams file consent invoke payload is invalid.")
+        delivery = await self._msteams_file_consent_delivery_for_upload(invoke.upload_id)
+        if delivery is None:
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "action": "file-consent",
+                "uploadId": invoke.upload_id,
+                "accepted": invoke.action == "accept",
+                "uploaded": False,
+                "recorded": False,
+                "reason": "pending_upload_not_found",
+            }
+        result, updated_route_scope = await asyncio.to_thread(
+            self._complete_msteams_file_consent_message_action,
+            route,
+            request,
+            secret_token,
+            delivery,
+            invoke,
+        )
+        if updated_route_scope is not None:
+            await self.database.update_outbound_delivery(
+                int(delivery["id"]),
+                route_scope=updated_route_scope,
+            )
+        return result
+
+    def _complete_msteams_file_consent_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        delivery: dict[str, Any],
+        invoke: _MSTeamsFileConsentInvoke,
+    ) -> tuple[dict[str, object], dict[str, Any] | None]:
+        del request
+        event_payload = delivery.get("event_payload")
+        route_scope = delivery.get("route_scope")
+        if not isinstance(event_payload, dict) or not isinstance(route_scope, dict):
+            raise RuntimeError("Microsoft Teams file consent could not load pending upload.")
+        raw_provider_result = route_scope.get("provider_result")
+        provider_result = (
+            dict(cast(Mapping[str, object], raw_provider_result))
+            if isinstance(raw_provider_result, dict)
+            else {}
+        )
+        expected_conversation_id = _msteams_base_conversation_id(
+            str(provider_result.get("conversationId") or "")
+        )
+        if (
+            invoke.conversation_id is not None
+            and expected_conversation_id
+            and invoke.conversation_id != expected_conversation_id
+        ):
+            return (
+                {
+                    "ok": True,
+                    "channel": "msteams",
+                    "action": "file-consent",
+                    "uploadId": invoke.upload_id,
+                    "accepted": invoke.action == "accept",
+                    "uploaded": False,
+                    "recorded": False,
+                    "reason": "conversation_mismatch",
+                },
+                None,
+            )
+        raw_meta = provider_result.get("meta")
+        meta = (
+            dict(cast(Mapping[str, object], raw_meta))
+            if isinstance(raw_meta, dict)
+            else {}
+        )
+        if invoke.action == "decline":
+            meta["fileConsent"] = {
+                "uploadId": invoke.upload_id,
+                "status": "declined",
+                "updatedAt": utcnow(),
+            }
+            provider_result["meta"] = meta
+            updated_route_scope = dict(route_scope)
+            updated_route_scope["provider_result"] = provider_result
+            return (
+                {
+                    "ok": True,
+                    "channel": "msteams",
+                    "action": "file-consent",
+                    "uploadId": invoke.upload_id,
+                    "accepted": False,
+                    "uploaded": False,
+                    "recorded": True,
+                },
+                updated_route_scope,
+            )
+        if invoke.upload_info is None:
+            raise RuntimeError("Microsoft Teams file consent accept requires uploadInfo.")
+        upload_url = _msteams_file_consent_upload_info_value(
+            invoke.upload_info,
+            "uploadUrl",
+        )
+        raw_media_urls = event_payload.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=(
+                event_payload.get("mediaUrl")
+                if isinstance(event_payload.get("mediaUrl"), str)
+                else None
+            ),
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not media_urls:
+            raise RuntimeError("Microsoft Teams file consent pending upload has no media.")
+        media_bytes, downloaded_content_type, downloaded_filename = (
+            self._download_matrix_media_url(media_urls[0])
+        )
+        if not media_bytes:
+            raise RuntimeError("Microsoft Teams file consent pending upload is empty.")
+        content_type = _msteams_file_consent_content_type(
+            event_payload=event_payload,
+            downloaded_content_type=downloaded_content_type,
+            filename=downloaded_filename,
+        )
+        self._msteams_validate_file_consent_upload_url(upload_url)
+        self._request_bytes_provider_url(
+            upload_url,
+            method="PUT",
+            body=media_bytes,
+            headers={
+                "User-Agent": "OpenZues",
+                "Content-Type": content_type,
+                "Content-Range": f"bytes 0-{len(media_bytes) - 1}/{len(media_bytes)}",
+            },
+            timeout_seconds=60.0,
+        )
+        file_info_card = _msteams_file_info_card_from_upload_info(invoke.upload_info)
+        file_info_activity: dict[str, object] = {
+            "type": "message",
+            "attachments": [file_info_card],
+        }
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = expected_conversation_id or route_config.conversation_id
+        if not conversation_id:
+            raise RuntimeError("Microsoft Teams file consent requires a conversation id.")
+        bearer_token = self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        activity_id = str(provider_result.get("messageId") or "").strip()
+        result: object | None
+        if activity_id:
+            try:
+                result = self._request_json_provider_url(
+                    _msteams_activity_update_endpoint(
+                        service_url=route_config.service_url,
+                        conversation_id=conversation_id,
+                        activity_id=activity_id,
+                    ),
+                    method="PUT",
+                    payload=file_info_activity,
+                    secret_header_name="Authorization",
+                    secret_token=bearer_token,
+                )
+            except RuntimeError:
+                result = self._request_json_provider_url(
+                    _msteams_activity_endpoint(
+                        service_url=route_config.service_url,
+                        conversation_id=conversation_id,
+                    ),
+                    method="POST",
+                    payload=file_info_activity,
+                    secret_header_name="Authorization",
+                    secret_token=bearer_token,
+                )
+        else:
+            result = self._request_json_provider_url(
+                _msteams_activity_endpoint(
+                    service_url=route_config.service_url,
+                    conversation_id=conversation_id,
+                ),
+                method="POST",
+                payload=file_info_activity,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+        message_id = _msteams_message_id(result) or activity_id or "unknown"
+        filename = _msteams_file_consent_upload_info_value(invoke.upload_info, "name")
+        content_url = _msteams_file_consent_upload_info_value(
+            invoke.upload_info,
+            "contentUrl",
+        )
+        unique_id = _msteams_file_consent_upload_info_value(invoke.upload_info, "uniqueId")
+        file_type = _msteams_file_consent_upload_info_value(invoke.upload_info, "fileType")
+        meta["fileConsent"] = {
+            "uploadId": invoke.upload_id,
+            "status": "uploaded",
+            "filename": filename,
+            "contentUrl": content_url,
+            "uniqueId": unique_id,
+            "fileType": file_type,
+            "messageId": message_id,
+        }
+        provider_result["meta"] = meta
+        updated_route_scope = dict(route_scope)
+        updated_route_scope["provider_result"] = provider_result
+        return (
+            {
+                "ok": True,
+                "channel": "msteams",
+                "action": "file-consent",
+                "uploadId": invoke.upload_id,
+                "accepted": True,
+                "uploaded": True,
+                "messageId": message_id,
+                "fileId": unique_id,
+                "filename": filename,
+                "contentUrl": content_url,
+            },
+            updated_route_scope,
+        )
 
     async def _dispatch_msteams_poll_vote_message_action(
         self,

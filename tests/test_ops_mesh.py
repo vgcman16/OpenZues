@@ -17948,6 +17948,246 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_co
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_accepts_msteams_file_consent_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "a:personal-dm-conversation"
+    user_id = "alice-aad-id"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-consent-accept"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    report_path = tmp_path / "big-report.pdf"
+    report_bytes = b"%PDF-1.7 openzues file consent payload"
+    report_path.write_bytes(report_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native File Consent Accept Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=personal"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": f"user:{user_id}",
+        },
+    )
+    msteams_json_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None]
+    ] = []
+    uploads: list[tuple[str, str, bytes, dict[str, str]]] = []
+    validated_upload_urls: list[str] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_validate_upload_url(self: OpsMeshService, target: str) -> None:
+        del self
+        validated_upload_urls.append(target)
+
+    def fake_request_bytes_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        uploads.append((method, target, body, dict(headers or {})))
+        return {"status": 200}
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_json_posts.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        if method == "PUT":
+            return {"id": "teams-consent-message-123"}
+        return {"id": "teams-consent-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_validate_file_consent_upload_url",
+        fake_validate_upload_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bytes_provider_url",
+        fake_request_bytes_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    send_result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:user:{user_id}",
+        message="Please approve this upload.",
+        media_urls=[str(report_path)],
+        channel_data={
+            "msteamsFileConsent": {
+                "filename": "big-report.pdf",
+                "sizeInBytes": len(report_bytes),
+                "uploadId": "upload-consent-123",
+                "description": "Please approve this upload.",
+                "contentType": "application/pdf",
+            }
+        },
+        account_id="default",
+        idempotency_key="idem-native-msteams-file-consent-accept-send",
+    )
+    assert send_result["pendingUploadId"] == "upload-consent-123"
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="file-consent",
+            params={
+                "activity": {
+                    "type": "invoke",
+                    "name": "fileConsent/invoke",
+                    "conversation": {
+                        "id": f"{conversation_id};messageid=teams-consent-message-123"
+                    },
+                    "value": {
+                        "type": "fileUpload",
+                        "action": "accept",
+                        "context": {"uploadId": "upload-consent-123"},
+                        "uploadInfo": {
+                            "name": "big-report.pdf",
+                            "uploadUrl": (
+                                "https://tenant.sharepoint.com/upload/session"
+                            ),
+                            "contentUrl": (
+                                "https://tenant.sharepoint.com/drive/big-report.pdf"
+                            ),
+                            "uniqueId": "drive-item-777",
+                            "fileType": "pdf",
+                        },
+                    },
+                }
+            },
+            account_id="default",
+            idempotency_key="idem-msteams-file-consent-accept",
+        )
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "file-consent",
+        "uploadId": "upload-consent-123",
+        "accepted": True,
+        "uploaded": True,
+        "messageId": "teams-consent-message-123",
+        "fileId": "drive-item-777",
+        "filename": "big-report.pdf",
+        "contentUrl": "https://tenant.sharepoint.com/drive/big-report.pdf",
+    }
+    assert validated_upload_urls == ["https://tenant.sharepoint.com/upload/session"]
+    assert uploads == [
+        (
+            "PUT",
+            "https://tenant.sharepoint.com/upload/session",
+            report_bytes,
+            {
+                "User-Agent": "OpenZues",
+                "Content-Type": "application/pdf",
+                "Content-Range": f"bytes 0-{len(report_bytes) - 1}/{len(report_bytes)}",
+            },
+        )
+    ]
+    assert msteams_json_posts[-1] == (
+        "PUT",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "a%3Apersonal-dm-conversation/activities/teams-consent-message-123"
+        ),
+        {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.card.file.info",
+                    "contentUrl": (
+                        "https://tenant.sharepoint.com/drive/big-report.pdf"
+                    ),
+                    "name": "big-report.pdf",
+                    "content": {
+                        "uniqueId": "drive-item-777",
+                        "fileType": "pdf",
+                    },
+                }
+            ],
+        },
+        "Authorization",
+        "Bearer teams-access-token",
+    )
+    assert delivery is not None
+    provider_result = delivery["route_scope"]["provider_result"]
+    assert provider_result["meta"]["fileConsent"] == {
+        "uploadId": "upload-consent-123",
+        "status": "uploaded",
+        "filename": "big-report.pdf",
+        "contentUrl": "https://tenant.sharepoint.com/drive/big-report.pdf",
+        "uniqueId": "drive-item-777",
+        "fileType": "pdf",
+        "messageId": "teams-consent-message-123",
+    }
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
