@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~70.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.8% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6610,10 +6610,120 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plugin-SDK alias shim. Repo-wide parity is now estimated at ~70.6%.
   Verified with focused ESM invoke pytest, adjacent plugin invoke proof, `ruff
   check`, and `mypy`; source/test checkpointed in `311f37e1`.
-- Next repo-wide queue head: rotate to the next provider-specific
-  runtime/plugin gap, continuing richer plugin SDK execution-context breadth
-  for imported runtime tools from `src/plugins/tools.ts`,
-  `src/plugins/registry.ts`, and `src/gateway/tools-invoke-shared.ts`.
+- Closed the imported OpenClaw plugin runtime tool factory context seam from
+  `src/plugins/tool-types.ts`, `src/plugins/registry.ts`,
+  `src/plugins/tools.ts`, and `src/gateway/tools-invoke-shared.ts`:
+  `api.registerTool(factory, { name })` entries are now preserved by the
+  native runtime importer, resolved at `tools.invoke` time, and passed a
+  trusted OpenClaw-shaped tool context with config/runtimeConfig, workspace,
+  agent/session identity, sender ownership, and delivery route metadata.
+  Repo-wide parity is now estimated at ~70.7%. Verified with focused runtime
+  factory-context pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `ef254cbf`.
+- Closed the imported OpenClaw plugin SDK text-runtime helper seam from
+  `src/plugin-sdk/text-runtime.ts` and `src/shared/string-coerce.ts`:
+  native runtime entries can now import common string-coerce helpers including
+  `normalizeOptionalString`, `normalizeNullableString`,
+  `normalizeStringifiedOptionalString`, and `hasNonEmptyString` from
+  `openclaw/plugin-sdk/text-runtime` and execute them through `tools.invoke`.
+  Repo-wide parity is now estimated at ~70.8%. Verified with focused
+  text-runtime helper pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `91918c38`.
+- Closed the imported OpenClaw plugin SDK error-runtime helper seam from
+  `src/plugin-sdk/error-runtime.ts` and `src/infra/errors.ts`: native runtime
+  entries can now import `formatErrorMessage`, `formatUncaughtError`,
+  `extractErrorCode`, `readErrorName`, and `collectErrorGraphCandidates` from
+  `openclaw/plugin-sdk/error-runtime` and execute them through
+  `tools.invoke`. Repo-wide parity is now estimated at ~70.9%. Verified with
+  focused error-runtime helper pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `7888c8de`.
+- Closed the imported OpenClaw plugin SDK temp-path helper seam from
+  `src/plugin-sdk/temp-path.ts` and `src/infra/temp-download.ts`: native
+  runtime entries can now import `sanitizeTempFileName`,
+  `buildRandomTempFilePath`, `resolvePreferredOpenClawTmpDir`,
+  `createTempDownloadTarget`, and `withTempDownloadPath` from
+  `openclaw/plugin-sdk/temp-path` and execute them through `tools.invoke`.
+  Repo-wide parity is now estimated at ~71.0%. Verified with focused
+  temp-path helper pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `d6a73b21`.
+- Closed the imported OpenClaw plugin SDK secret-input helper seam from
+  `src/plugin-sdk/secret-input.ts` and `src/config/types.secrets.ts`: native
+  runtime entries can now import literal-secret normalization, SecretRef
+  coercion, inspect-mode resolution, and configured-secret detection helpers
+  from `openclaw/plugin-sdk/secret-input` and execute them through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.1%. Verified with
+  focused secret-input helper pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `76e3c638`.
+- Closed the imported OpenClaw plugin SDK routing helper seam from
+  `src/plugin-sdk/routing.ts`, `src/routing/session-key.ts`,
+  `src/sessions/session-key-utils.ts`, `src/routing/account-id.ts`,
+  `src/routing/account-lookup.ts`, and `src/infra/outbound/thread-id.ts`:
+  native runtime entries can now import common routing/session helper exports
+  from `openclaw/plugin-sdk/routing` and execute account/agent normalization,
+  session key parsing/building, thread suffix handling, account lookup,
+  message-channel normalization, and outbound thread id normalization through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.2%. Verified with
+  focused routing helper pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `2cf7fb27`.
+- Closed the imported OpenClaw plugin SDK reply-chunking helper seam from
+  `src/plugin-sdk/reply-chunking.ts`, `src/auto-reply/chunk.ts`, and
+  `src/auto-reply/tokens.ts`: native runtime entries can now import
+  length/newline text chunking, provider/account chunk limit and chunk mode
+  resolution, and silent reply token helpers from
+  `openclaw/plugin-sdk/reply-chunking` and execute them through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.3%. Verified with
+  focused reply-chunking helper pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `b000f51c`.
+- Closed the imported OpenClaw plugin SDK reply-payload helper seam from
+  `src/plugin-sdk/reply-payload.ts` and
+  `src/channels/plugins/media-payload.ts`: native runtime entries can now
+  import outbound payload normalization, media URL extraction/counting,
+  sendable content projection, reasoning payload detection, attachment-link
+  formatting, and source-shaped media/text send helper exports from
+  `openclaw/plugin-sdk/reply-payload` and execute them through `tools.invoke`.
+  Repo-wide parity is now estimated at ~71.4%. Verified with focused
+  reply-payload helper pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `5d628f16`.
+- Closed the imported OpenClaw plugin SDK account-helper seam from
+  `src/plugin-sdk/account-helpers.ts`,
+  `src/channels/plugins/account-helpers.ts`, and
+  `src/channels/plugins/account-action-gate.ts`: native runtime entries can now
+  import account list/default resolution, normalized account lookup, merged
+  account config projection, account/webhook snapshots, and account action
+  gates from `openclaw/plugin-sdk/account-helpers` and execute them through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.5%. Verified with
+  focused account-helper pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `6d2cf33b`.
+- Closed the imported OpenClaw plugin SDK account-core/account-resolution seam
+  from `src/plugin-sdk/account-core.ts`, `src/plugin-sdk/account-resolution.ts`,
+  `src/plugin-sdk/account-resolution-runtime.ts`, `src/channels/chat-type.ts`,
+  `src/plugin-sdk/account-configured-ids.ts`, and `src/utils.ts`: native
+  runtime entries can now import account-core reexports, configured id
+  listing, default-account credential fallback, chat-type normalization, E.164
+  normalization, home-relative path resolution, and path existence checks from
+  `openclaw/plugin-sdk/account-core` / `account-resolution` and execute them
+  through `tools.invoke`. Repo-wide parity is now estimated at ~71.6%.
+  Verified with focused account-core pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `47fa2f39`.
+- Closed the imported OpenClaw plugin SDK tool-payload seam from
+  `src/plugin-sdk/tool-payload.ts`: native runtime entries can now import
+  structured tool result payload extraction plus standalone plain-text
+  tool-call block parse/strip helpers from `openclaw/plugin-sdk/tool-payload`
+  and execute them through `tools.invoke`. Repo-wide parity is now estimated at
+  ~71.7%. Verified with focused tool-payload pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `387717ed`.
+- Closed the imported OpenClaw plugin SDK boolean-param seam from
+  `src/plugin-sdk/boolean-param.ts`: native runtime entries can now import the
+  loose boolean tool parameter reader from `openclaw/plugin-sdk/boolean-param`
+  and execute it through `tools.invoke`. Repo-wide parity is now estimated at
+  ~71.8%. Verified with focused boolean-param pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `65bd842f`.
+- Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
+  breadth beyond the verified runtime import/execution/factory-context and
+  text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  reply-payload/account-helper/account-core/tool-payload/boolean-param path,
+  starting with the next source-backed SDK subpath or deeper route-resolution
+  binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -6017,6 +6017,1553 @@ export default {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_executes_imported_openclaw_runtime_tool_factory_with_context(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-factory.cjs"
+    runtime_entry.write_text(
+        """
+module.exports = {
+  register(api) {
+    api.registerTool((ctx) => ({
+      name: "runtime.context_echo",
+      description: "Echo trusted runtime context",
+      parameters: {
+        type: "object",
+        properties: { message: { type: "string" } }
+      },
+      execute(toolCallId, args) {
+        return {
+          ok: true,
+          toolCallId,
+          message: args.message,
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+          workspaceDir: ctx.workspaceDir,
+          senderIsOwner: ctx.senderIsOwner,
+          messageChannel: ctx.messageChannel,
+          agentAccountId: ctx.agentAccountId,
+          deliveryThreadId: ctx.deliveryContext && ctx.deliveryContext.threadId,
+          configAssistantName: ctx.config && ctx.config.assistantName
+        };
+      }
+    }), { name: "runtime.context_echo" });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-factory-plugin",
+                    "name": "Runtime Factory Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-factory-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.context_echo"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.context_echo",
+            "sessionKey": "agent:main:factory",
+            "args": {"message": "hello"},
+        },
+        requester=GatewayNodeMethodRequester(
+            caller_scopes=(ADMIN_GATEWAY_METHOD_SCOPE,),
+            message_channel="slack",
+            message_account_id="workspace-1",
+            message_to="U123",
+            message_thread_id="166.0001",
+        ),
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["ok"] is True
+    assert payload["result"]["message"] == "hello"
+    assert payload["result"]["agentId"] == "main"
+    assert payload["result"]["sessionKey"] == "agent:main:factory"
+    assert payload["result"]["workspaceDir"] == str(tmp_path)
+    assert payload["result"]["senderIsOwner"] is True
+    assert payload["result"]["messageChannel"] == "slack"
+    assert payload["result"]["agentAccountId"] == "workspace-1"
+    assert payload["result"]["deliveryThreadId"] == "166.0001"
+    assert payload["result"]["configAssistantName"] == "OpenZues"
+    assert str(payload["result"]["toolCallId"]).startswith("http-")
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_text_runtime_normalization_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-text-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  hasNonEmptyString,
+  normalizeNullableString,
+  normalizeOptionalString,
+  normalizeStringifiedOptionalString
+} = require("openclaw/plugin-sdk/text-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.text_helpers",
+      description: "Use OpenClaw text-runtime helpers",
+      parameters: {
+        type: "object",
+        properties: { value: {}, stringified: {} }
+      },
+      execute(_toolCallId, args) {
+        return {
+          optional: normalizeOptionalString(args.value),
+          nullableBlank: normalizeNullableString("   "),
+          stringified: normalizeStringifiedOptionalString(args.stringified),
+          hasText: hasNonEmptyString(args.value)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-text-plugin",
+                    "name": "Runtime Text Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-text-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.text_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.text_helpers",
+            "args": {"value": "  Hello  ", "stringified": 42},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "optional": "Hello",
+        "nullableBlank": None,
+        "stringified": "42",
+        "hasText": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-error-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  extractErrorCode,
+  formatErrorMessage,
+  formatUncaughtError,
+  readErrorName
+} = require("openclaw/plugin-sdk/error-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.error_helpers",
+      description: "Use OpenClaw error-runtime helpers",
+      parameters: { type: "object" },
+      execute() {
+        const err = new Error("outer");
+        err.cause = new Error("inner");
+        const coded = new Error("coded");
+        coded.code = 429;
+        return {
+          message: formatErrorMessage(err),
+          uncaught: formatUncaughtError("plain failure"),
+          code: extractErrorCode(coded),
+          name: readErrorName(err)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-error-plugin",
+                    "name": "Runtime Error Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-error-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.error_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.error_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "message": "outer | inner",
+        "uncaught": "plain failure",
+        "code": "429",
+        "name": "Error",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_temp_path_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-temp-path.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildRandomTempFilePath,
+  sanitizeTempFileName
+} = require("openclaw/plugin-sdk/temp-path");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.temp_path",
+      description: "Use OpenClaw temp-path helpers",
+      parameters: {
+        type: "object",
+        properties: { tmpDir: { type: "string" } }
+      },
+      execute(_toolCallId, args) {
+        return {
+          sanitized: sanitizeTempFileName("../bad name?.png"),
+          randomPath: buildRandomTempFilePath({
+            prefix: "bad prefix!",
+            extension: "txt",
+            tmpDir: args.tmpDir,
+            now: 123,
+            uuid: "fixed-id"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-temp-plugin",
+                    "name": "Runtime Temp Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-temp-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.temp_path"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.temp_path",
+            "args": {"tmpDir": str(tmp_path / "runtime-tmp")},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["sanitized"] == "bad-name-.png"
+    assert payload["result"]["randomPath"] == str(
+        tmp_path / "runtime-tmp" / "bad-prefix-123-fixed-id.txt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secret_input_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secret-input.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  resolveSecretInputString
+} = require("openclaw/plugin-sdk/secret-input");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_input",
+      description: "Use OpenClaw secret-input helpers",
+      parameters: { type: "object" },
+      execute() {
+        const ref = { source: "env", id: "API_TOKEN" };
+        return {
+          literal: normalizeResolvedSecretInputString({
+            value: "  token-value  ",
+            path: "plugins.demo.apiKey"
+          }),
+          missingStatus: resolveSecretInputString({
+            value: "   ",
+            path: "plugins.demo.apiKey"
+          }).status,
+          inspectStatus: resolveSecretInputString({
+            value: { source: "env", id: "API_TOKEN" },
+            path: "plugins.demo.apiKey",
+            mode: "inspect"
+          }).status,
+          inspectProvider: resolveSecretInputString({
+            value: { source: "env", id: "API_TOKEN" },
+            path: "plugins.demo.apiKey",
+            mode: "inspect"
+          }).ref.provider,
+          coercedProvider: coerceSecretRef(ref, { env: "runtime" }).provider,
+          configured: hasConfiguredSecretInput(ref, { env: "runtime" }),
+          exactRef: isSecretRef({ source: "env", provider: "default", id: "API_TOKEN" })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-plugin",
+                    "name": "Runtime Secret Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-secret-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_input"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_input"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "literal": "token-value",
+        "missingStatus": "missing",
+        "inspectStatus": "configured_unavailable",
+        "inspectProvider": "default",
+        "coercedProvider": "runtime",
+        "configured": True,
+        "exactRef": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_routing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-routing.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_MAIN_KEY,
+  buildAgentMainSessionKey,
+  buildAgentSessionKey,
+  buildGroupHistoryKey,
+  normalizeAccountId,
+  normalizeAgentId,
+  normalizeMainKey,
+  normalizeMessageChannel,
+  normalizeOptionalAccountId,
+  normalizeOutboundThreadId,
+  parseAgentSessionKey,
+  parseThreadSessionSuffix,
+  resolveAccountEntry,
+  resolveAgentIdFromSessionKey,
+  resolveThreadSessionKeys,
+  sanitizeAgentId
+} = require("openclaw/plugin-sdk/routing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.routing",
+      description: "Use OpenClaw routing helpers",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          constants: [DEFAULT_ACCOUNT_ID, DEFAULT_MAIN_KEY],
+          agentId: normalizeAgentId(" Research Agent! "),
+          sanitizedAgentId: sanitizeAgentId("Research Agent!"),
+          accountId: normalizeAccountId(" Workspace One! "),
+          optionalAccountId: normalizeOptionalAccountId(" ") ?? null,
+          mainKey: normalizeMainKey(" Inbox "),
+          mainSession: buildAgentMainSessionKey({ agentId: "Research Agent!" }),
+          directSession: buildAgentSessionKey({
+            agentId: "Research Agent!",
+            channel: "Slack",
+            accountId: "Workspace One!",
+            peer: { kind: "direct", id: "U123" },
+            dmScope: "per-account-channel-peer"
+          }),
+          groupHistory: buildGroupHistoryKey({
+            channel: "Slack",
+            accountId: "Workspace One!",
+            peerKind: "channel",
+            peerId: "C123"
+          }),
+          parsed: parseAgentSessionKey(" Agent:Research-Agent:Slack:Workspace:Channel:ABC "),
+          parsedThread: parseThreadSessionSuffix(
+            "agent:main:Slack:Default:channel:C123:thread:166.001"
+          ),
+          agentFromSession: resolveAgentIdFromSessionKey("agent:Research:main"),
+          threadKeys: resolveThreadSessionKeys({
+            baseSessionKey: "agent:main:slack:default:channel:c123",
+            threadId: "166.001"
+          }),
+          accountEntry: resolveAccountEntry({ Default: { ok: true } }, "default"),
+          normalizedChannel: normalizeMessageChannel(" Slack "),
+          threadId: normalizeOutboundThreadId(166.001)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-routing-plugin",
+                    "name": "Runtime Routing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-routing-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.routing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.routing"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": ["default", "main"],
+        "agentId": "research-agent",
+        "sanitizedAgentId": "research-agent",
+        "accountId": "workspace-one",
+        "optionalAccountId": None,
+        "mainKey": "inbox",
+        "mainSession": "agent:research-agent:main",
+        "directSession": "agent:research-agent:slack:workspace-one:direct:u123",
+        "groupHistory": "slack:workspace-one:channel:c123",
+        "parsed": {
+            "agentId": "research-agent",
+            "rest": "slack:workspace:channel:abc",
+        },
+        "parsedThread": {
+            "baseSessionKey": "agent:main:Slack:Default:channel:C123",
+            "threadId": "166.001",
+        },
+        "agentFromSession": "research",
+        "threadKeys": {
+            "sessionKey": "agent:main:slack:default:channel:c123:thread:166.001",
+        },
+        "accountEntry": {"ok": True},
+        "normalizedChannel": "slack",
+        "threadId": "166",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_chunking_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-chunking.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  SILENT_REPLY_TOKEN,
+  chunkText,
+  chunkTextWithMode,
+  isSilentReplyPayloadText,
+  isSilentReplyText,
+  resolveChunkMode,
+  resolveTextChunkLimit
+} = require("openclaw/plugin-sdk/reply-chunking");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_chunking",
+      description: "Use OpenClaw reply-chunking helpers",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              textChunkLimit: 1234,
+              chunkMode: "length",
+              accounts: {
+                Primary: {
+                  textChunkLimit: 777,
+                  streaming: { chunkMode: "newline" }
+                }
+              }
+            }
+          }
+        };
+        return {
+          token: SILENT_REPLY_TOKEN,
+          hardBreak: chunkText("Supercalifragilisticexpialidocious", 10),
+          parenthetical: chunkText("Heads up now (Though now I'm curious)ok", 35),
+          newlineMode: chunkTextWithMode("Para one\\n\\nPara two", 1000, "newline"),
+          fallbackLimit: resolveTextChunkLimit(undefined, "telegram", undefined, {
+            fallbackLimit: 2000
+          }),
+          providerLimit: resolveTextChunkLimit(cfg, "telegram"),
+          accountLimit: resolveTextChunkLimit(cfg, "telegram", "primary"),
+          providerMode: resolveChunkMode(cfg, "telegram"),
+          accountMode: resolveChunkMode(cfg, "telegram", "primary"),
+          silentExact: isSilentReplyText(" NO_REPLY "),
+          silentPayload: isSilentReplyPayloadText('{"action":"NO_REPLY"}'),
+          visibleText: isSilentReplyText("hello NO_REPLY")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-chunking-plugin",
+                    "name": "Runtime Reply Chunking Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-chunking-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_chunking"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_chunking"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "token": "NO_REPLY",
+        "hardBreak": ["Supercalif", "ragilistic", "expialidoc", "ious"],
+        "parenthetical": ["Heads up now", "(Though now I'm curious)ok"],
+        "newlineMode": ["Para one", "Para two"],
+        "fallbackLimit": 2000,
+        "providerLimit": 1234,
+        "accountLimit": 777,
+        "providerMode": "length",
+        "accountMode": "newline",
+        "silentExact": True,
+        "silentPayload": True,
+        "visibleText": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-payload.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  countOutboundMedia,
+  formatTextWithAttachmentLinks,
+  hasOutboundMedia,
+  hasOutboundReplyContent,
+  hasOutboundText,
+  isNumericTargetId,
+  isReasoningReplyPayload,
+  normalizeOutboundReplyPayload,
+  resolveOutboundMediaUrls,
+  resolveSendableOutboundReplyParts,
+  resolveTextChunksWithFallback
+} = require("openclaw/plugin-sdk/reply-payload");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_payload",
+      description: "Use OpenClaw reply-payload helpers",
+      parameters: { type: "object" },
+      execute() {
+        const normalized = normalizeOutboundReplyPayload({
+          text: "hello",
+          mediaUrls: ["https://a", "", 7, "https://b"],
+          mediaUrl: "https://legacy",
+          trustedLocalMedia: true,
+          sensitiveMedia: true,
+          replyToId: "abc123"
+        });
+        return {
+          reasoning: [
+            isReasoningReplyPayload({ text: "> Reasoning:\\n> hidden" }),
+            isReasoningReplyPayload({ text: "Intro\\nReasoning: visible" })
+          ],
+          normalized,
+          mediaUrls: resolveOutboundMediaUrls(normalized),
+          mediaCount: countOutboundMedia(normalized),
+          hasMedia: hasOutboundMedia(normalized),
+          hasRawText: hasOutboundText({ text: "   " }),
+          hasTrimmedText: hasOutboundText({ text: "   " }, { trim: true }),
+          hasContent: hasOutboundReplyContent({ text: "   ", mediaUrl: "https://m" }, {
+            trimText: true
+          }),
+          sendable: resolveSendableOutboundReplyParts({
+            mediaUrls: [" https://a ", "   "]
+          }),
+          fallbackChunks: resolveTextChunksWithFallback("hello", []),
+          keptChunks: resolveTextChunksWithFallback("hello", ["a", "b"]),
+          numeric: [isNumericTargetId("12345"), isNumericTargetId("ab12")],
+          attachmentText: formatTextWithAttachmentLinks("hello", ["https://a", "https://b"])
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-payload-plugin",
+                    "name": "Runtime Reply Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-payload-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_payload"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "reasoning": [True, False],
+        "normalized": {
+            "text": "hello",
+            "mediaUrls": ["https://a", "https://b"],
+            "mediaUrl": "https://legacy",
+            "sensitiveMedia": True,
+            "replyToId": "abc123",
+        },
+        "mediaUrls": ["https://a", "https://b"],
+        "mediaCount": 2,
+        "hasMedia": True,
+        "hasRawText": True,
+        "hasTrimmedText": False,
+        "hasContent": True,
+        "sendable": {
+            "text": "",
+            "trimmedText": "",
+            "mediaUrls": ["https://a"],
+            "mediaCount": 1,
+            "hasText": False,
+            "hasMedia": True,
+            "hasContent": True,
+        },
+        "fallbackChunks": ["hello"],
+        "keptChunks": ["a", "b"],
+        "numeric": [True, False],
+        "attachmentText": "hello\n\nAttachment: https://a\nAttachment: https://b",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-account-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  describeWebhookAccountSnapshot,
+  mergeAccountConfig,
+  resolveMergedAccountConfig
+} = require("openclaw/plugin-sdk/account-helpers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_helpers",
+      description: "Use OpenClaw account-helper SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              defaultAccount: "Primary",
+              timeout: 10,
+              nested: { a: 1, b: 2 },
+              actions: { send: false, react: true },
+              accounts: {
+                Primary: {
+                  enabled: false,
+                  timeout: 20,
+                  nested: { b: 3, c: 4 },
+                  actions: { send: true }
+                },
+                Backup: { name: "Backup" }
+              }
+            }
+          }
+        };
+        const helpers = createAccountListHelpers("telegram");
+        const normalized = createAccountListHelpers("telegram", {
+          normalizeAccountId: (id) => id.trim().toLowerCase().replace(/\\s+/g, "-")
+        });
+        const gate = createAccountActionGate({
+          baseActions: cfg.channels.telegram.actions,
+          accountActions: cfg.channels.telegram.accounts.Primary.actions
+        });
+        return {
+          configuredIds: helpers.listConfiguredAccountIds(cfg),
+          normalizedIds: normalized.listConfiguredAccountIds({
+            channels: {
+              telegram: {
+                accounts: {
+                  "Router D": {},
+                  "router-d": {},
+                  "Personal A": {}
+                }
+              }
+            }
+          }),
+          accountIds: helpers.listAccountIds({
+            channels: { telegram: { accounts: { Backup: {}, Primary: {} } } }
+          }),
+          fallbackIds: helpers.listAccountIds({ channels: { telegram: {} } }),
+          defaultId: helpers.resolveDefaultAccountId(cfg),
+          preservedDefault: createAccountListHelpers("telegram", {
+            allowUnlistedDefaultAccount: true
+          }).resolveDefaultAccountId({
+            channels: { telegram: { defaultAccount: "Ops", accounts: { default: {} } } }
+          }),
+          merged: mergeAccountConfig({
+            channelConfig: cfg.channels.telegram,
+            accountConfig: cfg.channels.telegram.accounts.Primary,
+            omitKeys: ["defaultAccount"],
+            nestedObjectKeys: ["nested", "actions"]
+          }),
+          resolvedMerged: resolveMergedAccountConfig({
+            channelConfig: cfg.channels.telegram,
+            accounts: cfg.channels.telegram.accounts,
+            accountId: "primary",
+            omitKeys: ["defaultAccount"],
+            nestedObjectKeys: ["nested", "actions"]
+          }),
+          snapshot: describeAccountSnapshot({
+            account: { accountId: "primary", name: " Primary ", enabled: false },
+            configured: true,
+            extra: { kind: "bot" }
+          }),
+          webhook: describeWebhookAccountSnapshot({
+            account: {},
+            configured: false,
+            extra: { url: "set" }
+          }),
+          gate: {
+            send: gate("send"),
+            react: gate("react"),
+            delete: gate("delete", false),
+            edit: gate("edit")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-helpers-plugin",
+                    "name": "Runtime Account Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-helpers-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.account_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "configuredIds": ["Primary", "Backup"],
+        "normalizedIds": ["router-d", "personal-a"],
+        "accountIds": ["Backup", "Primary"],
+        "fallbackIds": ["default"],
+        "defaultId": "primary",
+        "preservedDefault": "ops",
+        "merged": {
+            "timeout": 20,
+            "nested": {"a": 1, "b": 3, "c": 4},
+            "actions": {"send": True, "react": True},
+            "enabled": False,
+        },
+        "resolvedMerged": {
+            "timeout": 20,
+            "nested": {"a": 1, "b": 3, "c": 4},
+            "actions": {"send": True, "react": True},
+            "enabled": False,
+        },
+        "snapshot": {
+            "accountId": "primary",
+            "name": "Primary",
+            "enabled": False,
+            "configured": True,
+            "kind": "bot",
+        },
+        "webhook": {
+            "accountId": "default",
+            "enabled": True,
+            "configured": False,
+            "mode": "webhook",
+            "url": "set",
+        },
+        "gate": {"send": True, "react": True, "delete": False, "edit": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    existing_file = tmp_path / "existing.txt"
+    existing_file.write_text("present", encoding="utf-8")
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    runtime_entry = tmp_path / "runtime-plugin-account-core.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  createAccountListHelpers,
+  listCombinedAccountIds,
+  listConfiguredAccountIds,
+  normalizeAccountId,
+  normalizeChatType,
+  normalizeE164,
+  normalizeOptionalAccountId,
+  pathExists,
+  resolveAccountEntry,
+  resolveAccountWithDefaultFallback,
+  resolveListedDefaultAccountId,
+  resolveNormalizedAccountEntry,
+  resolveUserPath
+} = require("openclaw/plugin-sdk/account-core");
+const accountResolution = require("openclaw/plugin-sdk/account-resolution");
+const { resolveMergedAccountConfig } = require("openclaw/plugin-sdk/account-resolution-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_core",
+      description: "Use OpenClaw account-core SDK shims",
+      parameters: {
+        type: "object",
+        properties: {
+          existingPath: { type: "string" },
+          missingPath: { type: "string" },
+          homeDir: { type: "string" }
+        }
+      },
+      async execute(_toolCallId, args) {
+        const accounts = {
+          work: { id: "work", token: "" },
+          default: { id: "default", token: "set" }
+        };
+        const resolvePrimary = (id) => accounts[id] || { id, token: "" };
+        const fallback = resolveAccountWithDefaultFallback({
+          accountId: "",
+          normalizeAccountId: (id) => id && id.trim() ? normalizeAccountId(id) : "work",
+          resolvePrimary,
+          hasCredential: (account) => Boolean(account.token),
+          resolveDefaultAccountId: () => "default"
+        });
+        const explicit = resolveAccountWithDefaultFallback({
+          accountId: "work",
+          normalizeAccountId,
+          resolvePrimary,
+          hasCredential: (account) => Boolean(account.token),
+          resolveDefaultAccountId: () => "default"
+        });
+        return {
+          constants: [DEFAULT_ACCOUNT_ID],
+          normalizedAccount: normalizeAccountId(" Router D! "),
+          optionalBlank: normalizeOptionalAccountId(" ") ?? null,
+          configuredIds: listConfiguredAccountIds({
+            accounts: { "Router D": {}, "router-d": {}, "": {} },
+            normalizeAccountId
+          }),
+          combinedIds: listCombinedAccountIds({
+            configuredAccountIds: ["work", "alerts"],
+            additionalAccountIds: ["default", "work"],
+            implicitAccountId: "ops"
+          }),
+          defaultId: resolveListedDefaultAccountId({
+            accountIds: ["alerts", "work"],
+            ambiguousFallbackAccountId: "default"
+          }),
+          entry: resolveAccountEntry({ Default: { ok: true } }, "default"),
+          normalizedEntry: resolveNormalizedAccountEntry(
+            { "Router D": { ok: true } },
+            "router-d",
+            normalizeAccountId
+          ),
+          fallbackIds: [fallback.id, explicit.id],
+          chatTypes: [
+            normalizeChatType("DM"),
+            normalizeChatType("group"),
+            normalizeChatType("room") ?? null
+          ],
+          phone: normalizeE164("whatsapp:+1 (234) 555-0000"),
+          paths: {
+            home: resolveUserPath(
+              "~/openclaw",
+              { OPENCLAW_HOME: args.homeDir },
+              () => args.homeDir
+            ),
+            exists: await pathExists(args.existingPath),
+            missing: await pathExists(args.missingPath)
+          },
+          resolutionFacade: typeof accountResolution.createAccountListHelpers === "function",
+          runtimeMerged: resolveMergedAccountConfig({
+            channelConfig: { enabled: true },
+            accounts: { Work: { name: "Work" } },
+            accountId: "work"
+          }),
+          helperFacade: typeof createAccountListHelpers("x").listAccountIds === "function"
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-core-plugin",
+                    "name": "Runtime Account Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-core-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.account_core",
+            "args": {
+                "existingPath": str(existing_file),
+                "missingPath": str(tmp_path / "missing.txt"),
+                "homeDir": str(home_dir),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": ["default"],
+        "normalizedAccount": "router-d",
+        "optionalBlank": None,
+        "configuredIds": ["router-d"],
+        "combinedIds": ["alerts", "default", "ops", "work"],
+        "defaultId": "default",
+        "entry": {"ok": True},
+        "normalizedEntry": {"ok": True},
+        "fallbackIds": ["default", "work"],
+        "chatTypes": ["direct", "group", None],
+        "phone": "+12345550000",
+        "paths": {
+            "home": str((home_dir / "openclaw").resolve()),
+            "exists": True,
+            "missing": False,
+        },
+        "resolutionFacade": True,
+        "runtimeMerged": {"enabled": True, "name": "Work"},
+        "helperFacade": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_tool_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-tool-payload.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  extractToolPayload,
+  parseStandalonePlainTextToolCallBlocks,
+  stripPlainTextToolCallBlocks
+} = require("openclaw/plugin-sdk/tool-payload");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.tool_payload",
+      description: "Use OpenClaw tool-payload SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const standalone = [
+          "[send]",
+          "{\\"text\\":\\"hi\\"}",
+          "[/send]",
+          "",
+          "[react]",
+          "{\\"emoji\\":\\"+\\"}",
+          "[END_TOOL_REQUEST]"
+        ].join("\\n");
+        const blocks = parseStandalonePlainTextToolCallBlocks(standalone, {
+          allowedToolNames: ["send", "react"]
+        });
+        return {
+          missing: extractToolPayload(null) ?? null,
+          details: extractToolPayload({
+            details: { ok: true },
+            content: [{ type: "text", text: "{\\"ignored\\":true}" }]
+          }),
+          jsonText: extractToolPayload({
+            content: [
+              { type: "image", url: "https://example.com/a.png" },
+              { type: "text", text: "{\\"ok\\":true,\\"count\\":2}" }
+            ]
+          }),
+          rawText: extractToolPayload({ content: [{ type: "text", text: "not json" }] }),
+          contentFallback: extractToolPayload({
+            content: [{ type: "image", url: "https://example.com/a.png" }]
+          }),
+          blockSummary: blocks && blocks.map((block) => ({
+            name: block.name,
+            arguments: block.arguments
+          })),
+          disallowed: parseStandalonePlainTextToolCallBlocks("[send]\\n{}\\n[/send]", {
+            allowedToolNames: ["other"]
+          }) === null,
+          oversized: parseStandalonePlainTextToolCallBlocks("[send]\\n{\\"a\\":1}\\n[/send]", {
+            maxPayloadBytes: 2
+          }) === null,
+          stripped: stripPlainTextToolCallBlocks("[send]\\n{\\"text\\":\\"hi\\"}\\n[/send]")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-tool-payload-plugin",
+                    "name": "Runtime Tool Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-tool-payload-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.tool_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.tool_payload"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "missing": None,
+        "details": {"ok": True},
+        "jsonText": {"ok": True, "count": 2},
+        "rawText": "not json",
+        "contentFallback": [{"type": "image", "url": "https://example.com/a.png"}],
+        "blockSummary": [
+            {"name": "send", "arguments": {"text": "hi"}},
+            {"name": "react", "arguments": {"emoji": "+"}},
+        ],
+        "disallowed": True,
+        "oversized": True,
+        "stripped": "",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_boolean_param_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-boolean-param.cjs"
+    runtime_entry.write_text(
+        """
+const { readBooleanParam } = require("openclaw/plugin-sdk/boolean-param");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.boolean_param",
+      description: "Use OpenClaw boolean-param SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const params = {
+          truthy: " TRUE ",
+          falsy: "false",
+          nativeTrue: true,
+          nativeFalse: false,
+          blank: " ",
+          nope: "yes"
+        };
+        return {
+          truthy: readBooleanParam(params, "truthy"),
+          falsy: readBooleanParam(params, "falsy"),
+          nativeTrue: readBooleanParam(params, "nativeTrue"),
+          nativeFalse: readBooleanParam(params, "nativeFalse"),
+          blank: readBooleanParam(params, "blank") ?? null,
+          nope: readBooleanParam(params, "nope") ?? null,
+          missing: readBooleanParam(params, "missing") ?? null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-boolean-param-plugin",
+                    "name": "Runtime Boolean Param Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-boolean-param-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.boolean_param"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.boolean_param"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "truthy": True,
+        "falsy": False,
+        "nativeTrue": True,
+        "nativeFalse": False,
+        "blank": None,
+        "nope": None,
+        "missing": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

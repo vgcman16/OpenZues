@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -134,6 +134,71 @@ may lag behind this tracker.
   `openclaw/plugin-sdk/text-runtime` alias behavior through the bounded native
   Node bridge.
   - Status: checkpointed in `311f37e1`
+
+- [x] Imported plugin runtime tool factory context through `tools.invoke`,
+  preserving `api.registerTool(factory, { name })` discovery and passing
+  OpenClaw-shaped config, workspace, agent/session, sender ownership, and
+  delivery route metadata to request-time factories.
+  - Status: checkpointed in `ef254cbf`
+
+- [x] Imported plugin SDK text-runtime helper shim for common string-coerce
+  helpers, preserving `normalizeOptionalString`, `normalizeNullableString`,
+  `normalizeStringifiedOptionalString`, and `hasNonEmptyString` for imported
+  runtime tools.
+  - Status: checkpointed in `91918c38`
+
+- [x] Imported plugin SDK error-runtime helper shim for common error
+  formatting and extraction helpers, preserving `formatErrorMessage`,
+  `formatUncaughtError`, `extractErrorCode`, and `readErrorName` for imported
+  runtime tools.
+  - Status: checkpointed in `7888c8de`
+
+- [x] Imported plugin SDK temp-path helper shim for temp filename
+  sanitization, deterministic temp path construction, preferred temp roots, and
+  download-target cleanup helpers.
+  - Status: checkpointed in `d6a73b21`
+
+- [x] Imported plugin SDK secret-input helper shim for literal secret
+  normalization, SecretRef coercion, inspect-mode resolution, and configured
+  secret detection.
+  - Status: checkpointed in `76e3c638`
+
+- [x] Imported plugin SDK routing helper shim for common routing/session
+  helpers, preserving account and agent id normalization, session key
+  parsing/building, thread suffix handling, account lookup, message-channel
+  normalization, and outbound thread id normalization for imported runtime
+  tools.
+  - Status: checkpointed in `2cf7fb27`
+
+- [x] Imported plugin SDK reply-chunking helper shim for length/newline text
+  chunking, provider/account chunk limit and mode resolution, and silent reply
+  token helpers.
+  - Status: checkpointed in `b000f51c`
+
+- [x] Imported plugin SDK reply-payload helper shim for outbound payload
+  normalization, media URL extraction/counting, sendable content projection,
+  reasoning payload detection, attachment-link formatting, and source-shaped
+  media/text send helper exports.
+  - Status: checkpointed in `5d628f16`
+
+- [x] Imported plugin SDK account-helper shim for account list/default
+  resolution, normalized account lookup, merged account config projection,
+  account/webhook snapshots, and account action gates.
+  - Status: checkpointed in `6d2cf33b`
+
+- [x] Imported plugin SDK account-core/account-resolution shim for
+  account-core reexports, configured id listing, default-account credential
+  fallback, chat-type normalization, E.164 normalization, home-relative path
+  resolution, and path existence checks.
+  - Status: checkpointed in `47fa2f39`
+
+- [x] Imported plugin SDK tool-payload shim for structured tool result payload
+  extraction and standalone plain-text tool-call block parsing/stripping.
+  - Status: checkpointed in `387717ed`
+
+- [x] Imported plugin SDK boolean-param shim for loose boolean tool parameter
+  reading.
+  - Status: checkpointed in `65bd842f`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1100,10 +1165,164 @@ may lag behind this tracker.
     in `55e1fb28`, manifest document extractor contract metadata checkpointed
     in `2196c65e`, bundled plugin runtime entry import checkpointed in
     `8cb314f4`, ESM plugin runtime entry import checkpointed in `eb11e22f`,
-    imported CommonJS runtime execution checkpointed in `d80b0252`, and ESM
-    runtime execution checkpointed in `311f37e1`, but deeper plugin SDK
-    execution-context breadth remains.
+    imported CommonJS runtime execution checkpointed in `d80b0252`, ESM
+    runtime execution checkpointed in `311f37e1`, and runtime tool factory
+    context checkpointed in `ef254cbf`, text-runtime helper shim checkpointed
+    in `91918c38`, error-runtime helper shim checkpointed in `7888c8de`, and
+    temp-path helper shim checkpointed in `d6a73b21`, and secret-input helper
+    shim checkpointed in `76e3c638`, routing helper shim checkpointed in
+    `2cf7fb27`, reply-chunking helper shim checkpointed in `b000f51c`,
+    reply-payload helper shim checkpointed in `5d628f16`, account-helper
+    shim checkpointed in `6d2cf33b`, account-core/account-resolution shim
+    checkpointed in `47fa2f39`, tool-payload shim checkpointed in
+    `387717ed`, and boolean-param shim checkpointed in `65bd842f`, but
+    broader plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK boolean-param shim.
+  - Source: `openclaw-main/src/plugin-sdk/boolean-param.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `65bd842f`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused boolean-param proof (`1 passed`),
+    adjacent plugin invoke proof (`23 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK tool-payload shim.
+  - Source: `openclaw-main/src/plugin-sdk/tool-payload.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `387717ed`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused tool-payload proof (`1 passed`),
+    adjacent plugin invoke proof (`22 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK account-core/account-resolution shim.
+  - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
+    `openclaw-main/src/plugin-sdk/account-resolution.ts`,
+    `openclaw-main/src/plugin-sdk/account-resolution-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/account-configured-ids.ts`,
+    `openclaw-main/src/channels/chat-type.ts`, and
+    `openclaw-main/src/utils.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `47fa2f39`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused account-core proof (`1 passed`),
+    adjacent plugin invoke proof (`21 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK account-helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/account-helpers.ts`,
+    `openclaw-main/src/channels/plugins/account-helpers.ts`, and
+    `openclaw-main/src/channels/plugins/account-action-gate.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `6d2cf33b`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused account-helper proof (`1 passed`),
+    adjacent plugin invoke proof (`20 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK reply-payload helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/reply-payload.ts` and
+    `openclaw-main/src/channels/plugins/media-payload.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `5d628f16`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused reply-payload helper proof (`1
+    passed`), adjacent plugin invoke proof (`19 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK reply-chunking helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/reply-chunking.ts`,
+    `openclaw-main/src/auto-reply/chunk.ts`, and
+    `openclaw-main/src/auto-reply/tokens.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `b000f51c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused reply-chunking helper proof (`1
+    passed`), adjacent plugin invoke proof (`18 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK routing helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/routing.ts`,
+    `openclaw-main/src/routing/session-key.ts`,
+    `openclaw-main/src/sessions/session-key-utils.ts`,
+    `openclaw-main/src/routing/account-id.ts`,
+    `openclaw-main/src/routing/account-lookup.ts`, and
+    `openclaw-main/src/infra/outbound/thread-id.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `2cf7fb27`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused routing helper proof (`1 passed`),
+    adjacent plugin invoke proof (`17 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK secret-input helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/secret-input.ts` and
+    `openclaw-main/src/config/types.secrets.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `76e3c638`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused secret-input helper proof (`1
+    passed`), adjacent plugin invoke proof (`16 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK temp-path helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/temp-path.ts` and
+    `openclaw-main/src/infra/temp-download.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d6a73b21`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused temp-path helper proof (`1 passed`),
+    adjacent plugin invoke proof (`15 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK error-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/error-runtime.ts` and
+    `openclaw-main/src/infra/errors.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `7888c8de`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused error-runtime helper proof (`1
+    passed`), adjacent plugin invoke proof (`14 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK text-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/text-runtime.ts` and
+    `openclaw-main/src/shared/string-coerce.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `91918c38`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused text-runtime helper proof (`1
+    passed`), adjacent plugin invoke proof (`13 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin runtime tool factory context.
+  - Source: `openclaw-main/src/plugins/tool-types.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/tools.ts`, and
+    `openclaw-main/src/gateway/tools-invoke-shared.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_plugin_runtime.py`,
+    `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `ef254cbf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused runtime tool factory-context proof (`1
+    passed`), adjacent plugin invoke proof (`12 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] Imported ESM plugin runtime execution.
   - Source: `openclaw-main/src/plugins/loader.ts`,

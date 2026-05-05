@@ -18029,6 +18029,8 @@ _NATIVE_PLUGIN_RUNTIME_LOADER_JS = r"""
 "use strict";
 
 const fs = require("fs");
+const crypto = require("crypto");
+const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const Module = require("module");
@@ -18037,12 +18039,1972 @@ const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
 
 function normalizeLowercaseStringOrEmpty(value) {
-  return String(value ?? "").trim().toLowerCase();
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function readStringValue(value) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function normalizeNullableString(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeOptionalString(value) {
+  return normalizeNullableString(value) || undefined;
+}
+
+function normalizeStringifiedOptionalString(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return normalizeOptionalString(String(value));
+  }
+  return undefined;
 }
 
 function normalizeOptionalLowercaseString(value) {
-  const text = normalizeLowercaseStringOrEmpty(value);
-  return text || undefined;
+  return normalizeOptionalString(value)?.toLowerCase();
+}
+
+function lowercasePreservingWhitespace(value) {
+  return String(value ?? "").toLowerCase();
+}
+
+function localeLowercasePreservingWhitespace(value) {
+  return String(value ?? "").toLocaleLowerCase();
+}
+
+function hasNonEmptyString(value) {
+  return normalizeOptionalString(value) !== undefined;
+}
+
+function extractErrorCode(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const code = err.code;
+  if (typeof code === "string") {
+    return code;
+  }
+  if (typeof code === "number") {
+    return String(code);
+  }
+  return undefined;
+}
+
+function readErrorName(err) {
+  if (!err || typeof err !== "object") {
+    return "";
+  }
+  return typeof err.name === "string" ? err.name : "";
+}
+
+function collectErrorGraphCandidates(err, resolveNested) {
+  const queue = [err];
+  const seen = new Set();
+  const candidates = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current == null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    candidates.push(current);
+    if (!current || typeof current !== "object" || typeof resolveNested !== "function") {
+      continue;
+    }
+    for (const nested of resolveNested(current) || []) {
+      if (nested != null && !seen.has(nested)) {
+        queue.push(nested);
+      }
+    }
+  }
+  return candidates;
+}
+
+function formatErrorMessage(err) {
+  let formatted;
+  if (err instanceof Error) {
+    formatted = err.message || err.name || "Error";
+    let cause = err.cause;
+    const seen = new Set([err]);
+    while (cause && !seen.has(cause)) {
+      seen.add(cause);
+      if (cause instanceof Error) {
+        if (cause.message) {
+          formatted += ` | ${cause.message}`;
+        }
+        cause = cause.cause;
+      } else if (typeof cause === "string") {
+        formatted += ` | ${cause}`;
+        break;
+      } else {
+        break;
+      }
+    }
+  } else if (typeof err === "string") {
+    formatted = err;
+  } else if (
+    typeof err === "number" ||
+    typeof err === "boolean" ||
+    typeof err === "bigint"
+  ) {
+    formatted = String(err);
+  } else {
+    try {
+      formatted = JSON.stringify(err);
+    } catch (_error) {
+      formatted = Object.prototype.toString.call(err);
+    }
+  }
+  return String(formatted);
+}
+
+function formatUncaughtError(err) {
+  if (extractErrorCode(err) === "INVALID_CONFIG") {
+    return formatErrorMessage(err);
+  }
+  if (err instanceof Error) {
+    return err.stack || err.message || err.name;
+  }
+  return formatErrorMessage(err);
+}
+
+function sanitizePrefix(prefix) {
+  const normalized = String(prefix || "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "tmp";
+}
+
+function sanitizeExtension(extension) {
+  if (!extension) {
+    return "";
+  }
+  const normalized = String(extension).startsWith(".") ? String(extension) : `.${extension}`;
+  const suffix = (normalized.match(/[a-zA-Z0-9._-]+$/) || [""])[0];
+  const token = suffix.replace(/^[._-]+/, "");
+  return token ? `.${token}` : "";
+}
+
+function sanitizeTempFileName(fileName) {
+  const base = path.basename(String(fileName || "")).replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const normalized = base.replace(/^-+|-+$/g, "");
+  return normalized || "download.bin";
+}
+
+function resolvePreferredOpenClawTmpDir(options) {
+  const tmpdir =
+    options && typeof options.tmpdir === "function" ? options.tmpdir : () => os.tmpdir();
+  return path.join(tmpdir(), "openclaw");
+}
+
+function resolveTempRoot(tmpDir) {
+  return tmpDir || resolvePreferredOpenClawTmpDir();
+}
+
+function buildRandomTempFilePath(params) {
+  const prefix = sanitizePrefix(params && params.prefix);
+  const extension = sanitizeExtension(params && params.extension);
+  const nowCandidate = params && params.now;
+  const now =
+    typeof nowCandidate === "number" && Number.isFinite(nowCandidate)
+      ? Math.trunc(nowCandidate)
+      : Date.now();
+  const uuid =
+    params && typeof params.uuid === "string" && params.uuid.trim()
+      ? params.uuid.trim()
+      : crypto.randomUUID();
+  return path.join(
+    resolveTempRoot(params && params.tmpDir),
+    `${prefix}-${now}-${uuid}${extension}`,
+  );
+}
+
+async function createTempDownloadTarget(params) {
+  const tempRoot = resolveTempRoot(params && params.tmpDir);
+  const prefix = `${sanitizePrefix(params && params.prefix)}-`;
+  const dir = fs.mkdtempSync(path.join(tempRoot, prefix));
+  return {
+    dir,
+    path: path.join(dir, sanitizeTempFileName((params && params.fileName) || "download.bin")),
+    cleanup: async () => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function withTempDownloadPath(params, fn) {
+  const target = await createTempDownloadTarget(params || {});
+  try {
+    return await fn(target.path);
+  } finally {
+    await target.cleanup();
+  }
+}
+
+const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
+const ENV_SECRET_REF_ID_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
+const LEGACY_SECRETREF_ENV_MARKER_PREFIX = "secretref-env:";
+const ENV_SECRET_TEMPLATE_RE = /^\$\{([A-Z][A-Z0-9_]{0,127})\}$/;
+
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isSecretRef(value) {
+  if (!isRecord(value) || Object.keys(value).length !== 3) {
+    return false;
+  }
+  return (
+    (value.source === "env" || value.source === "file" || value.source === "exec") &&
+    typeof value.provider === "string" &&
+    value.provider.trim().length > 0 &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0
+  );
+}
+
+function isLegacySecretRefWithoutProvider(value) {
+  return (
+    isRecord(value) &&
+    (value.source === "env" || value.source === "file" || value.source === "exec") &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0 &&
+    value.provider === undefined
+  );
+}
+
+function parseEnvTemplateSecretRef(value, provider) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = ENV_SECRET_TEMPLATE_RE.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const normalizedProvider =
+    typeof provider === "string" && provider.trim()
+      ? provider.trim()
+      : DEFAULT_SECRET_PROVIDER_ALIAS;
+  return { source: "env", provider: normalizedProvider, id: match[1] };
+}
+
+function parseLegacySecretRefEnvMarker(value, provider) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith(LEGACY_SECRETREF_ENV_MARKER_PREFIX)) {
+    return null;
+  }
+  const id = trimmed.slice(LEGACY_SECRETREF_ENV_MARKER_PREFIX.length);
+  if (!ENV_SECRET_REF_ID_RE.test(id)) {
+    return null;
+  }
+  const normalizedProvider =
+    typeof provider === "string" && provider.trim()
+      ? provider.trim()
+      : DEFAULT_SECRET_PROVIDER_ALIAS;
+  return { source: "env", provider: normalizedProvider, id };
+}
+
+function coerceSecretRef(value, defaults) {
+  if (isSecretRef(value)) {
+    return value;
+  }
+  if (isLegacySecretRefWithoutProvider(value)) {
+    const provider =
+      value.source === "env"
+        ? (defaults && defaults.env) || DEFAULT_SECRET_PROVIDER_ALIAS
+        : value.source === "file"
+          ? (defaults && defaults.file) || DEFAULT_SECRET_PROVIDER_ALIAS
+          : (defaults && defaults.exec) || DEFAULT_SECRET_PROVIDER_ALIAS;
+    return { source: value.source, provider, id: value.id };
+  }
+  return parseEnvTemplateSecretRef(value, defaults && defaults.env);
+}
+
+function normalizeSecretInputString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function hasConfiguredSecretInput(value, defaults) {
+  return (
+    normalizeSecretInputString(value) !== undefined ||
+    coerceSecretRef(value, defaults) !== null
+  );
+}
+
+function normalizeSecretInput(value, defaults) {
+  return normalizeSecretInputString(value) || coerceSecretRef(value, defaults) || undefined;
+}
+
+function formatSecretRefLabel(ref) {
+  return `${ref.source}:${ref.provider}:${ref.id}`;
+}
+
+function createUnresolvedSecretInputError(params) {
+  return new Error(
+    `${params.path}: unresolved SecretRef "${formatSecretRefLabel(
+      params.ref,
+    )}". Resolve this command against an active gateway runtime snapshot before reading it.`,
+  );
+}
+
+function resolveSecretInputString(params) {
+  const normalized = normalizeSecretInputString(params && params.value);
+  if (normalized) {
+    return { status: "available", value: normalized, ref: null };
+  }
+  const ref = coerceSecretRef(params && params.value, params && params.defaults);
+  if (!ref) {
+    return { status: "missing", value: undefined, ref: null };
+  }
+  if (((params && params.mode) || "strict") === "strict") {
+    throw createUnresolvedSecretInputError({
+      path: (params && params.path) || "secret",
+      ref,
+    });
+  }
+  return { status: "configured_unavailable", value: undefined, ref };
+}
+
+function normalizeResolvedSecretInputString(params) {
+  const resolved = resolveSecretInputString({ ...(params || {}), mode: "strict" });
+  return resolved.status === "available" ? resolved.value : undefined;
+}
+
+const DEFAULT_ACCOUNT_ID = "default";
+const DEFAULT_AGENT_ID = "main";
+const DEFAULT_MAIN_KEY = "main";
+const INTERNAL_MESSAGE_CHANNEL = "webchat";
+const ROUTING_VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const ROUTING_INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
+const ROUTING_BLOCKED_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const ROUTING_CHANNEL_ALIASES = {
+  googlechat: "google-chat",
+  "google chat": "google-chat",
+  tg: "telegram",
+  wa: "whatsapp",
+};
+const ROUTING_KNOWN_GATEWAY_CHANNELS = new Set([
+  "discord",
+  "google-chat",
+  "line",
+  "matrix",
+  "mattermost",
+  "signal",
+  "slack",
+  "telegram",
+  "webchat",
+  "whatsapp",
+  "zalo",
+  "zulip",
+]);
+
+function canonicalizeRoutingId(value) {
+  const trimmed = String(value ?? "").trim();
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
+  if (ROUTING_VALID_ID_RE.test(trimmed)) {
+    return normalized;
+  }
+  return normalized
+    .replace(ROUTING_INVALID_CHARS_RE, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 64);
+}
+
+function normalizeAgentId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return DEFAULT_AGENT_ID;
+  }
+  return canonicalizeRoutingId(trimmed) || DEFAULT_AGENT_ID;
+}
+
+function sanitizeAgentId(value) {
+  return normalizeAgentId(value);
+}
+
+function normalizeAccountId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const normalized = canonicalizeRoutingId(trimmed);
+  if (!normalized || ROUTING_BLOCKED_OBJECT_KEYS.has(normalized)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return normalized;
+}
+
+function normalizeOptionalAccountId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = canonicalizeRoutingId(trimmed);
+  if (!normalized || ROUTING_BLOCKED_OBJECT_KEYS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function normalizeMainKey(value) {
+  return normalizeLowercaseStringOrEmpty(value) || DEFAULT_MAIN_KEY;
+}
+
+function parseAgentSessionKey(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const agentId = normalizeOptionalString(parts[1]);
+  const rest = parts.slice(2).join(":");
+  if (!agentId || !rest) {
+    return null;
+  }
+  return { agentId, rest };
+}
+
+function isCronSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("cron:"));
+}
+
+function isAcpSessionKey(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return false;
+  }
+  if (normalizeLowercaseStringOrEmpty(raw).startsWith("acp:")) {
+    return true;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("acp:"));
+}
+
+function isSubagentSessionKey(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return false;
+  }
+  if (normalizeOptionalLowercaseString(raw)?.startsWith("subagent:")) {
+    return true;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("subagent:"));
+}
+
+function getSubagentDepth(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  return raw ? raw.split(":subagent:").length - 1 : 0;
+}
+
+function parseThreadSessionSuffix(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return { baseSessionKey: undefined, threadId: undefined };
+  }
+  const marker = ":thread:";
+  const markerIndex = normalizeLowercaseStringOrEmpty(raw).lastIndexOf(marker);
+  const baseSessionKey = markerIndex === -1 ? raw : raw.slice(0, markerIndex);
+  const threadIdRaw = markerIndex === -1 ? undefined : raw.slice(markerIndex + marker.length);
+  return { baseSessionKey, threadId: normalizeOptionalString(threadIdRaw) };
+}
+
+function buildAgentMainSessionKey(params) {
+  return `agent:${normalizeAgentId(params && params.agentId)}:${normalizeMainKey(
+    params && params.mainKey,
+  )}`;
+}
+
+function resolveLinkedPeerId(params) {
+  const identityLinks = params && params.identityLinks;
+  if (!identityLinks || typeof identityLinks !== "object") {
+    return null;
+  }
+  const peerId = String((params && params.peerId) || "").trim();
+  if (!peerId) {
+    return null;
+  }
+  const candidates = new Set();
+  const rawCandidate = normalizeLowercaseStringOrEmpty(peerId);
+  if (rawCandidate) {
+    candidates.add(rawCandidate);
+  }
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  if (channel) {
+    candidates.add(normalizeLowercaseStringOrEmpty(`${channel}:${peerId}`));
+  }
+  for (const [canonical, ids] of Object.entries(identityLinks)) {
+    const canonicalName = String(canonical || "").trim();
+    if (!canonicalName || !Array.isArray(ids)) {
+      continue;
+    }
+    for (const id of ids) {
+      const normalized = normalizeLowercaseStringOrEmpty(id);
+      if (normalized && candidates.has(normalized)) {
+        return canonicalName;
+      }
+    }
+  }
+  return null;
+}
+
+function buildAgentPeerSessionKey(params) {
+  const peerKind = (params && params.peerKind) || "direct";
+  if (peerKind === "direct") {
+    const dmScope = (params && params.dmScope) || "main";
+    let peerId = String((params && params.peerId) || "").trim();
+    const linkedPeerId =
+      dmScope === "main"
+        ? null
+        : resolveLinkedPeerId({
+            identityLinks: params && params.identityLinks,
+            channel: params && params.channel,
+            peerId,
+          });
+    if (linkedPeerId) {
+      peerId = linkedPeerId;
+    }
+    peerId = normalizeLowercaseStringOrEmpty(peerId);
+    if (dmScope === "per-account-channel-peer" && peerId) {
+      const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+      return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:${normalizeAccountId(
+        params && params.accountId,
+      )}:direct:${peerId}`;
+    }
+    if (dmScope === "per-channel-peer" && peerId) {
+      const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+      return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:direct:${peerId}`;
+    }
+    if (dmScope === "per-peer" && peerId) {
+      return `agent:${normalizeAgentId(params && params.agentId)}:direct:${peerId}`;
+    }
+    return buildAgentMainSessionKey({
+      agentId: params && params.agentId,
+      mainKey: params && params.mainKey,
+    });
+  }
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const peerId = normalizeLowercaseStringOrEmpty(params && params.peerId) || "unknown";
+  return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:${peerKind}:${peerId}`;
+}
+
+function normalizeRouteBindingId(value) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value).trim();
+  }
+  return "";
+}
+
+function buildAgentSessionKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const peer = params && params.peer;
+  return buildAgentPeerSessionKey({
+    agentId: params && params.agentId,
+    mainKey: DEFAULT_MAIN_KEY,
+    channel,
+    accountId: params && params.accountId,
+    peerKind: (peer && peer.kind) || "direct",
+    peerId: peer ? normalizeRouteBindingId(peer.id) || "unknown" : null,
+    dmScope: params && params.dmScope,
+    identityLinks: params && params.identityLinks,
+  });
+}
+
+function buildGroupHistoryKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const accountId = normalizeAccountId(params && params.accountId);
+  const peerId = normalizeLowercaseStringOrEmpty(params && params.peerId) || "unknown";
+  return `${channel}:${accountId}:${params && params.peerKind}:${peerId}`;
+}
+
+function resolveThreadSessionKeys(params) {
+  const threadId = normalizeOptionalString(params && params.threadId);
+  if (!threadId) {
+    return { sessionKey: params && params.baseSessionKey, parentSessionKey: undefined };
+  }
+  const normalizedThread =
+    params && typeof params.normalizeThreadId === "function"
+      ? params.normalizeThreadId(threadId)
+      : normalizeLowercaseStringOrEmpty(threadId);
+  const useSuffix = params && Object.prototype.hasOwnProperty.call(params, "useSuffix")
+    ? params.useSuffix
+    : true;
+  const sessionKey = useSuffix
+    ? `${params && params.baseSessionKey}:thread:${normalizedThread}`
+    : params && params.baseSessionKey;
+  return { sessionKey, parentSessionKey: params && params.parentSessionKey };
+}
+
+function resolveAgentIdFromSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return normalizeAgentId((parsed && parsed.agentId) || DEFAULT_AGENT_ID);
+}
+
+function resolveAccountEntry(accounts, accountId) {
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(accounts, accountId)) {
+    return accounts[accountId];
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(accountId);
+  const matchKey = Object.keys(accounts).find(
+    (key) => normalizeLowercaseStringOrEmpty(key) === normalized,
+  );
+  return matchKey ? accounts[matchKey] : undefined;
+}
+
+function resolveNormalizedAccountEntry(accounts, accountId, normalizeAccountIdFn) {
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(accounts, accountId)) {
+    return accounts[accountId];
+  }
+  const normalize = typeof normalizeAccountIdFn === "function"
+    ? normalizeAccountIdFn
+    : normalizeAccountId;
+  const normalized = normalize(accountId);
+  const matchKey = Object.keys(accounts).find((key) => normalize(key) === normalized);
+  return matchKey ? accounts[matchKey] : undefined;
+}
+
+function listCombinedAccountIds(params) {
+  const ids = new Set();
+  for (const id of (params && params.configuredAccountIds) || []) {
+    if (id) {
+      ids.add(id);
+    }
+  }
+  for (const id of (params && params.additionalAccountIds) || []) {
+    if (id) {
+      ids.add(id);
+    }
+  }
+  if (params && params.implicitAccountId) {
+    ids.add(params.implicitAccountId);
+  }
+  if (ids.size === 0 && params && params.fallbackAccountIdWhenEmpty) {
+    return [params.fallbackAccountIdWhenEmpty];
+  }
+  return Array.from(ids).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveListedDefaultAccountId(params) {
+  const preferred = params && params.configuredDefaultAccountId;
+  const accountIds = (params && params.accountIds) || [];
+  const normalizeListedAccountId =
+    (params && params.normalizeListedAccountId) || normalizeAccountId;
+  if (
+    preferred &&
+    ((params && params.allowUnlistedDefaultAccount) ||
+      accountIds.some((accountId) => normalizeListedAccountId(accountId) === preferred))
+  ) {
+    return preferred;
+  }
+  if (accountIds.includes(DEFAULT_ACCOUNT_ID)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  if (params && params.ambiguousFallbackAccountId && accountIds.length > 1) {
+    return params.ambiguousFallbackAccountId;
+  }
+  return accountIds[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function resolveChannelAccountSection(cfg, channelKey) {
+  const channels = cfg && cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channel = channels[channelKey];
+  return channel && typeof channel === "object" && !Array.isArray(channel) ? channel : undefined;
+}
+
+function createAccountListHelpers(channelKey, options) {
+  function listConfiguredAccountIdsFromConfig(cfg) {
+    const channel = resolveChannelAccountSection(cfg, channelKey);
+    const accounts = channel && channel.accounts;
+    if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+      return [];
+    }
+    const ids = Object.keys(accounts).filter(Boolean);
+    const normalizeConfiguredAccountId = options && options.normalizeAccountId;
+    if (typeof normalizeConfiguredAccountId !== "function") {
+      return ids;
+    }
+    return Array.from(
+      new Set(ids.map((id) => normalizeConfiguredAccountId(id)).filter(Boolean)),
+    );
+  }
+
+  function listAccountIds(cfg) {
+    return listCombinedAccountIds({
+      configuredAccountIds: listConfiguredAccountIdsFromConfig(cfg),
+      fallbackAccountIdWhenEmpty: DEFAULT_ACCOUNT_ID,
+    });
+  }
+
+  function resolveConfiguredDefaultAccountId(cfg) {
+    const channel = resolveChannelAccountSection(cfg, channelKey);
+    const preferred = normalizeOptionalAccountId(
+      typeof (channel && channel.defaultAccount) === "string"
+        ? channel.defaultAccount
+        : undefined,
+    );
+    if (!preferred) {
+      return undefined;
+    }
+    if (options && options.allowUnlistedDefaultAccount) {
+      return preferred;
+    }
+    const ids = listAccountIds(cfg);
+    return ids.some((id) => normalizeAccountId(id) === preferred) ? preferred : undefined;
+  }
+
+  function resolveDefaultAccountId(cfg) {
+    return resolveListedDefaultAccountId({
+      accountIds: listAccountIds(cfg),
+      configuredDefaultAccountId: resolveConfiguredDefaultAccountId(cfg),
+      allowUnlistedDefaultAccount: options && options.allowUnlistedDefaultAccount,
+    });
+  }
+
+  return {
+    listConfiguredAccountIds: listConfiguredAccountIdsFromConfig,
+    listAccountIds,
+    resolveDefaultAccountId,
+  };
+}
+
+function isMergeableObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeAccountConfig(params) {
+  const omitKeys = new Set(["accounts", ...((params && params.omitKeys) || [])]);
+  const channelConfig =
+    params && isMergeableObject(params.channelConfig) ? params.channelConfig : {};
+  const accountConfig =
+    params && isMergeableObject(params.accountConfig) ? params.accountConfig : {};
+  const base = {};
+  for (const [key, value] of Object.entries(channelConfig)) {
+    if (!omitKeys.has(key)) {
+      base[key] = value;
+    }
+  }
+  const merged = { ...base, ...accountConfig };
+  for (const key of (params && params.nestedObjectKeys) || []) {
+    const baseValue = base[key];
+    const accountValue = accountConfig[key];
+    if (isMergeableObject(baseValue) && isMergeableObject(accountValue)) {
+      merged[key] = { ...baseValue, ...accountValue };
+    }
+  }
+  return merged;
+}
+
+function resolveMergedAccountConfig(params) {
+  const accountConfig =
+    params && typeof params.normalizeAccountId === "function"
+      ? resolveNormalizedAccountEntry(params.accounts, params.accountId, params.normalizeAccountId)
+      : resolveAccountEntry(params && params.accounts, params && params.accountId);
+  return mergeAccountConfig({
+    channelConfig: params && params.channelConfig,
+    accountConfig,
+    omitKeys: params && params.omitKeys,
+    nestedObjectKeys: params && params.nestedObjectKeys,
+  });
+}
+
+function describeAccountSnapshot(params) {
+  const account = (params && params.account) || {};
+  return {
+    accountId: account.accountId ?? DEFAULT_ACCOUNT_ID,
+    name: normalizeOptionalString(account.name),
+    enabled: account.enabled !== false,
+    configured: params && params.configured,
+    ...((params && params.extra) || {}),
+  };
+}
+
+function describeWebhookAccountSnapshot(params) {
+  return describeAccountSnapshot({
+    account: (params && params.account) || {},
+    configured: params && params.configured,
+    extra: {
+      mode: (params && params.mode) || "webhook",
+      ...((params && params.extra) || {}),
+    },
+  });
+}
+
+function createAccountActionGate(params) {
+  return (key, defaultValue = true) => {
+    const accountActions = params && params.accountActions;
+    if (accountActions && accountActions[key] !== undefined) {
+      return accountActions[key];
+    }
+    const baseActions = params && params.baseActions;
+    if (baseActions && baseActions[key] !== undefined) {
+      return baseActions[key];
+    }
+    return defaultValue;
+  };
+}
+
+function listConfiguredAccountIds(params) {
+  const accounts = params && params.accounts;
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return [];
+  }
+  const normalize = typeof (params && params.normalizeAccountId) === "function"
+    ? params.normalizeAccountId
+    : (value) => value;
+  const ids = new Set();
+  for (const key of Object.keys(accounts)) {
+    if (!key) {
+      continue;
+    }
+    ids.add(normalize(key));
+  }
+  return Array.from(ids);
+}
+
+function normalizeChatType(raw) {
+  const value = normalizeOptionalLowercaseString(raw);
+  if (!value) {
+    return undefined;
+  }
+  if (value === "direct" || value === "dm") {
+    return "direct";
+  }
+  if (value === "group") {
+    return "group";
+  }
+  if (value === "channel") {
+    return "channel";
+  }
+  return undefined;
+}
+
+function normalizeE164(number) {
+  const withoutPrefix = String(number || "").replace(/^[a-z][a-z0-9-]*:/i, "").trim();
+  const digits = withoutPrefix.replace(/[^\d+]/g, "");
+  if (digits.startsWith("+")) {
+    return `+${digits.slice(1)}`;
+  }
+  return `+${digits}`;
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.promises.access(targetPath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function normalizeHomeValue(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function normalizeSafeHomedir(homedir) {
+  try {
+    return normalizeHomeValue(typeof homedir === "function" ? homedir() : undefined);
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function resolveRawOsHomeDir(env, homedir) {
+  const sourceEnv = env || process.env;
+  return (
+    normalizeHomeValue(sourceEnv.HOME) ||
+    normalizeHomeValue(sourceEnv.USERPROFILE) ||
+    normalizeSafeHomedir(homedir)
+  );
+}
+
+function resolveRawHomeDir(env, homedir) {
+  const sourceEnv = env || process.env;
+  const explicitHome = normalizeHomeValue(sourceEnv.OPENCLAW_HOME);
+  if (!explicitHome) {
+    return resolveRawOsHomeDir(sourceEnv, homedir);
+  }
+  if (
+    explicitHome === "~" ||
+    explicitHome.startsWith("~/") ||
+    explicitHome.startsWith("~\\")
+  ) {
+    const fallbackHome = resolveRawOsHomeDir(sourceEnv, homedir);
+    return fallbackHome ? explicitHome.replace(/^~(?=$|[\\/])/, fallbackHome) : undefined;
+  }
+  return explicitHome;
+}
+
+function resolveEffectiveHomeDir(env, homedir = () => os.homedir()) {
+  const raw = resolveRawHomeDir(env || process.env, homedir);
+  return raw ? path.resolve(raw) : undefined;
+}
+
+function resolveRequiredHomeDir(env, homedir = () => os.homedir()) {
+  return resolveEffectiveHomeDir(env || process.env, homedir) || path.resolve(process.cwd());
+}
+
+function expandHomePrefix(input, opts) {
+  if (!input.startsWith("~")) {
+    return input;
+  }
+  const home =
+    normalizeHomeValue(opts && opts.home) ||
+    resolveEffectiveHomeDir(
+      (opts && opts.env) || process.env,
+      (opts && opts.homedir) || (() => os.homedir()),
+    );
+  if (!home) {
+    return input;
+  }
+  return input.replace(/^~(?=$|[\\/])/, home);
+}
+
+function resolveHomeRelativePath(input, opts) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("~")) {
+    const expanded = expandHomePrefix(trimmed, {
+      home: resolveRequiredHomeDir(
+        (opts && opts.env) || process.env,
+        (opts && opts.homedir) || (() => os.homedir()),
+      ),
+      env: opts && opts.env,
+      homedir: opts && opts.homedir,
+    });
+    return path.resolve(expanded);
+  }
+  return path.resolve(trimmed);
+}
+
+function resolveUserPath(input, env = process.env, homedir = () => os.homedir()) {
+  if (!input) {
+    return "";
+  }
+  return resolveHomeRelativePath(input, { env, homedir });
+}
+
+function resolveAccountWithDefaultFallback(params) {
+  const rawAccountId = params && params.accountId;
+  const hasExplicitAccountId = Boolean(
+    typeof rawAccountId === "string" ? rawAccountId.trim() : rawAccountId,
+  );
+  const normalize =
+    typeof (params && params.normalizeAccountId) === "function"
+      ? params.normalizeAccountId
+      : normalizeAccountId;
+  const normalizedAccountId = normalize(rawAccountId);
+  const primary = params.resolvePrimary(normalizedAccountId);
+  if (hasExplicitAccountId || params.hasCredential(primary)) {
+    return primary;
+  }
+  const fallbackId = params.resolveDefaultAccountId();
+  if (fallbackId === normalizedAccountId) {
+    return primary;
+  }
+  const fallback = params.resolvePrimary(fallbackId);
+  if (!params.hasCredential(fallback)) {
+    return primary;
+  }
+  return fallback;
+}
+
+function readBooleanParam(params, key) {
+  const raw = params && params[key];
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  const normalized = normalizeOptionalLowercaseString(raw);
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return undefined;
+}
+
+function isToolPayloadTextBlock(block) {
+  return (
+    Boolean(block) &&
+    typeof block === "object" &&
+    block.type === "text" &&
+    typeof block.text === "string"
+  );
+}
+
+function extractToolPayload(result) {
+  if (!result) {
+    return undefined;
+  }
+  if (result.details !== undefined) {
+    return result.details;
+  }
+  const textBlock = Array.isArray(result.content)
+    ? result.content.find(isToolPayloadTextBlock)
+    : undefined;
+  const text = textBlock && textBlock.text;
+  if (!text) {
+    return result.content !== undefined ? result.content : result;
+  }
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return text;
+  }
+}
+
+const DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES = 256000;
+const END_TOOL_REQUEST = "[END_TOOL_REQUEST]";
+
+function isToolNameChar(char) {
+  return Boolean(char && /[A-Za-z0-9_-]/.test(char));
+}
+
+function skipHorizontalWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && (text[index] === " " || text[index] === "\t")) {
+    index += 1;
+  }
+  return index;
+}
+
+function skipWhitespace(text, start) {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index] || "")) {
+    index += 1;
+  }
+  return index;
+}
+
+function consumeLineBreak(text, start) {
+  if (text[start] === "\r") {
+    return text[start + 1] === "\n" ? start + 2 : start + 1;
+  }
+  if (text[start] === "\n") {
+    return start + 1;
+  }
+  return null;
+}
+
+function parsePlainTextToolOpening(text, start) {
+  if (text[start] !== "[") {
+    return null;
+  }
+  let cursor = start + 1;
+  const nameStart = cursor;
+  while (isToolNameChar(text[cursor])) {
+    cursor += 1;
+  }
+  if (cursor === nameStart || text[cursor] !== "]") {
+    return null;
+  }
+  const name = text.slice(nameStart, cursor);
+  cursor += 1;
+  cursor = skipHorizontalWhitespace(text, cursor);
+  const afterLineBreak = consumeLineBreak(text, cursor);
+  if (afterLineBreak === null) {
+    return null;
+  }
+  return { end: afterLineBreak, name };
+}
+
+function consumeJsonObject(text, start, maxPayloadBytes) {
+  const cursor = skipWhitespace(text, start);
+  if (text[cursor] !== "{") {
+    return null;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = cursor; index < text.length; index += 1) {
+    const char = text[index];
+    if (index + 1 - cursor > maxPayloadBytes) {
+      return null;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        const rawJson = text.slice(cursor, index + 1);
+        try {
+          const parsed = JSON.parse(rawJson);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return null;
+          }
+          return { end: index + 1, value: parsed };
+        } catch (_error) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function parsePlainTextToolClosing(text, start, name) {
+  const cursor = skipWhitespace(text, start);
+  if (text.startsWith(END_TOOL_REQUEST, cursor)) {
+    return cursor + END_TOOL_REQUEST.length;
+  }
+  const namedClosing = `[/${name}]`;
+  if (text.startsWith(namedClosing, cursor)) {
+    return cursor + namedClosing.length;
+  }
+  return null;
+}
+
+function parsePlainTextToolCallBlockAt(text, start, options) {
+  const opening = parsePlainTextToolOpening(text, start);
+  if (!opening) {
+    return null;
+  }
+  const allowedToolNames =
+    options && options.allowedToolNames ? new Set(options.allowedToolNames) : undefined;
+  if (allowedToolNames && !allowedToolNames.has(opening.name)) {
+    return null;
+  }
+  const payload = consumeJsonObject(
+    text,
+    opening.end,
+    (options && options.maxPayloadBytes) || DEFAULT_MAX_PLAIN_TEXT_TOOL_PAYLOAD_BYTES,
+  );
+  if (!payload) {
+    return null;
+  }
+  const end = parsePlainTextToolClosing(text, payload.end, opening.name);
+  if (end === null) {
+    return null;
+  }
+  return {
+    arguments: payload.value,
+    end,
+    name: opening.name,
+    raw: text.slice(start, end),
+    start,
+  };
+}
+
+function parseStandalonePlainTextToolCallBlocks(text, options) {
+  const blocks = [];
+  let cursor = skipWhitespace(text, 0);
+  while (cursor < text.length) {
+    const block = parsePlainTextToolCallBlockAt(text, cursor, options);
+    if (!block) {
+      return null;
+    }
+    blocks.push(block);
+    cursor = skipWhitespace(text, block.end);
+  }
+  return blocks.length > 0 ? blocks : null;
+}
+
+function stripPlainTextToolCallBlocks(text) {
+  if (!text || !/\[[A-Za-z0-9_-]+\]/.test(text)) {
+    return text;
+  }
+  let result = "";
+  let cursor = 0;
+  let index = 0;
+  while (index < text.length) {
+    const lineStart = index === 0 || text[index - 1] === "\n";
+    if (!lineStart) {
+      index += 1;
+      continue;
+    }
+    const blockStart = skipHorizontalWhitespace(text, index);
+    const block = parsePlainTextToolCallBlockAt(text, blockStart);
+    if (!block) {
+      index += 1;
+      continue;
+    }
+    result += text.slice(cursor, index);
+    cursor = block.end;
+    index = block.end;
+  }
+  result += text.slice(cursor);
+  return result;
+}
+
+function normalizeMessageChannel(raw) {
+  const normalized = normalizeOptionalLowercaseString(raw);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === INTERNAL_MESSAGE_CHANNEL) {
+    return INTERNAL_MESSAGE_CHANNEL;
+  }
+  return ROUTING_CHANNEL_ALIASES[normalized] || normalized;
+}
+
+function resolveGatewayMessageChannel(raw) {
+  const normalized = normalizeMessageChannel(raw);
+  if (!normalized) {
+    return undefined;
+  }
+  return ROUTING_KNOWN_GATEWAY_CHANNELS.has(normalized) ? normalized : undefined;
+}
+
+function normalizeOptionalThreadValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.trunc(value) : undefined;
+  }
+  return normalizeOptionalString(value);
+}
+
+function normalizeOptionalStringifiedId(value) {
+  const normalized = normalizeOptionalThreadValue(value);
+  return normalized == null ? undefined : String(normalized);
+}
+
+function normalizeOutboundThreadId(value) {
+  return normalizeOptionalStringifiedId(value);
+}
+
+function buildOutboundBaseSessionKey(params) {
+  const cfg = (params && params.cfg) || {};
+  return buildAgentSessionKey({
+    agentId: params && params.agentId,
+    channel: params && params.channel,
+    accountId: params && params.accountId,
+    peer: params && params.peer,
+    dmScope: (cfg.session && cfg.session.dmScope) || "main",
+    identityLinks: cfg.session && cfg.session.identityLinks,
+  });
+}
+
+function deriveLastRoutePolicy(params) {
+  return params && params.sessionKey === params.mainSessionKey ? "main" : "session";
+}
+
+function resolveInboundLastRouteSessionKey(params) {
+  return params && params.route && params.route.lastRoutePolicy === "main"
+    ? params.route.mainSessionKey
+    : params && params.sessionKey;
+}
+
+function formatSetExplicitDefaultInstruction(channelKey) {
+  return `Set channels.${channelKey}.defaultAccount or add channels.${channelKey}.accounts.default`;
+}
+
+function formatSetExplicitDefaultToConfiguredInstruction(params) {
+  const channelKey = params && params.channelKey;
+  return (
+    `Set channels.${channelKey}.defaultAccount to one of these accounts, ` +
+    `or add channels.${channelKey}.accounts.default`
+  );
+}
+
+function listBindings(cfg) {
+  const bindings = cfg && Array.isArray(cfg.bindings) ? cfg.bindings : [];
+  return bindings.filter((binding) => (binding && binding.type) !== "acp");
+}
+
+function normalizeRouteBindingChannelId(raw) {
+  return normalizeMessageChannel(raw) || normalizeLowercaseStringOrEmpty(raw) || null;
+}
+
+function resolveNormalizedRouteBindingMatch(binding) {
+  if (!binding || typeof binding !== "object") {
+    return null;
+  }
+  const match = binding.match;
+  if (!match || typeof match !== "object") {
+    return null;
+  }
+  const channelId = normalizeRouteBindingChannelId(match.channel);
+  const accountId = typeof match.accountId === "string" ? match.accountId.trim() : "";
+  if (!channelId || !accountId || accountId === "*") {
+    return null;
+  }
+  return {
+    agentId: normalizeAgentId(binding.agentId),
+    accountId: normalizeAccountId(accountId),
+    channelId,
+  };
+}
+
+function listBoundAccountIds(cfg, channelId) {
+  const normalizedChannel = normalizeRouteBindingChannelId(channelId);
+  if (!normalizedChannel) {
+    return [];
+  }
+  const ids = new Set();
+  for (const binding of listBindings(cfg)) {
+    const resolved = resolveNormalizedRouteBindingMatch(binding);
+    if (resolved && resolved.channelId === normalizedChannel) {
+      ids.add(resolved.accountId);
+    }
+  }
+  return Array.from(ids).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveDefaultAgentId(cfg) {
+  const agents = cfg && cfg.agents && Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+  const chosen = agents.find((agent) => agent && agent.default) || agents[0];
+  return normalizeAgentId((chosen && chosen.id) || DEFAULT_AGENT_ID);
+}
+
+function resolveDefaultAgentBoundAccountId(cfg, channelId) {
+  const normalizedChannel = normalizeRouteBindingChannelId(channelId);
+  if (!normalizedChannel) {
+    return null;
+  }
+  const defaultAgentId = normalizeAgentId(resolveDefaultAgentId(cfg || {}));
+  for (const binding of listBindings(cfg)) {
+    const resolved = resolveNormalizedRouteBindingMatch(binding);
+    if (
+      resolved &&
+      resolved.channelId === normalizedChannel &&
+      resolved.agentId === defaultAgentId
+    ) {
+      return resolved.accountId;
+    }
+  }
+  return null;
+}
+
+function resolveAgentRoute(input) {
+  const cfg = (input && input.cfg) || {};
+  const channel =
+    normalizeMessageChannel(input && input.channel) ||
+    normalizeLowercaseStringOrEmpty(input && input.channel) ||
+    "unknown";
+  const accountId = normalizeAccountId(input && input.accountId);
+  const agentId = resolveDefaultAgentId(cfg);
+  const mainSessionKey = buildAgentMainSessionKey({ agentId });
+  const sessionKey = buildAgentSessionKey({
+    agentId,
+    channel,
+    accountId,
+    peer: input && input.peer,
+    dmScope: cfg.session && cfg.session.dmScope,
+    identityLinks: cfg.session && cfg.session.identityLinks,
+  });
+  return {
+    agentId,
+    channel,
+    accountId,
+    sessionKey,
+    mainSessionKey,
+    lastRoutePolicy: deriveLastRoutePolicy({ sessionKey, mainSessionKey }),
+    matchedBy: "default",
+  };
+}
+
+const DEFAULT_CHUNK_LIMIT = 4000;
+const DEFAULT_CHUNK_MODE = "length";
+const SILENT_REPLY_TOKEN = "NO_REPLY";
+
+function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    const window = remaining.slice(0, limit);
+    const candidateBreak = resolveBreakIndex(window);
+    const breakIdx =
+      Number.isFinite(candidateBreak) && candidateBreak > 0 && candidateBreak <= limit
+        ? candidateBreak
+        : limit;
+    const rawChunk = remaining.slice(0, breakIdx);
+    const chunk = rawChunk.trimEnd();
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
+    const brokeOnSeparator = breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
+    const nextStart = Math.min(remaining.length, breakIdx + (brokeOnSeparator ? 1 : 0));
+    remaining = remaining.slice(nextStart).trimStart();
+  }
+  if (remaining.length) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
+
+function scanParenAwareBreakpoints(text, start, end) {
+  let lastNewline = -1;
+  let lastWhitespace = -1;
+  let depth = 0;
+  for (let i = start; i < end; i++) {
+    const char = text[i];
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) {
+      continue;
+    }
+    if (char === "\n") {
+      lastNewline = i;
+    } else if (/\s/.test(char)) {
+      lastWhitespace = i;
+    }
+  }
+  return { lastNewline, lastWhitespace };
+}
+
+function chunkText(text, limit) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+  return chunkTextByBreakResolver(text, limit, (window) => {
+    const { lastNewline, lastWhitespace } = scanParenAwareBreakpoints(
+      window,
+      0,
+      window.length,
+    );
+    return lastNewline > 0 ? lastNewline : lastWhitespace;
+  });
+}
+
+function chunkByParagraph(text, limit, opts) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0) {
+    return [text];
+  }
+  const splitLongParagraphs = !(opts && opts.splitLongParagraphs === false);
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const paragraphRe = /\n[\t ]*\n+/;
+  if (!paragraphRe.test(normalized)) {
+    if (normalized.length <= limit) {
+      return [normalized];
+    }
+    return splitLongParagraphs ? chunkText(normalized, limit) : [normalized];
+  }
+  const chunks = [];
+  const parts = normalized.split(/\n[\t ]*\n+/g);
+  for (const part of parts) {
+    const paragraph = part.replace(/\s+$/g, "");
+    if (!paragraph.trim()) {
+      continue;
+    }
+    if (paragraph.length <= limit || !splitLongParagraphs) {
+      chunks.push(paragraph);
+    } else {
+      chunks.push(...chunkText(paragraph, limit));
+    }
+  }
+  return chunks;
+}
+
+function chunkTextWithMode(text, limit, mode) {
+  return mode === "newline" ? chunkByParagraph(text, limit) : chunkText(text, limit);
+}
+
+function chunkMarkdownTextWithMode(text, limit, mode) {
+  return chunkTextWithMode(text, limit, mode);
+}
+
+function resolveProviderChunkConfig(cfg, provider) {
+  if (!cfg || !provider || provider === INTERNAL_MESSAGE_CHANNEL) {
+    return undefined;
+  }
+  const channelsConfig = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+  return channelsConfig[provider] || cfg[provider];
+}
+
+function resolveChunkLimitForProvider(cfgSection, accountId) {
+  if (!cfgSection || typeof cfgSection !== "object") {
+    return undefined;
+  }
+  const accounts = cfgSection.accounts;
+  if (accounts && typeof accounts === "object") {
+    const direct = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    if (direct && typeof direct.textChunkLimit === "number") {
+      return direct.textChunkLimit;
+    }
+  }
+  return typeof cfgSection.textChunkLimit === "number" ? cfgSection.textChunkLimit : undefined;
+}
+
+function resolveTextChunkLimit(cfg, provider, accountId, opts) {
+  const fallback =
+    opts && typeof opts.fallbackLimit === "number" && opts.fallbackLimit > 0
+      ? opts.fallbackLimit
+      : DEFAULT_CHUNK_LIMIT;
+  const providerOverride = resolveChunkLimitForProvider(
+    resolveProviderChunkConfig(cfg, provider),
+    accountId,
+  );
+  return typeof providerOverride === "number" && providerOverride > 0
+    ? providerOverride
+    : fallback;
+}
+
+function resolveChannelStreamingChunkMode(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const streaming = entry.streaming;
+  if (
+    streaming &&
+    typeof streaming === "object" &&
+    (streaming.chunkMode === "length" || streaming.chunkMode === "newline")
+  ) {
+    return streaming.chunkMode;
+  }
+  return entry.chunkMode === "length" || entry.chunkMode === "newline"
+    ? entry.chunkMode
+    : undefined;
+}
+
+function resolveChunkModeForProvider(cfgSection, accountId) {
+  if (!cfgSection || typeof cfgSection !== "object") {
+    return undefined;
+  }
+  const accounts = cfgSection.accounts;
+  if (accounts && typeof accounts === "object") {
+    const direct = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    const directMode = resolveChannelStreamingChunkMode(direct);
+    if (directMode) {
+      return directMode;
+    }
+  }
+  return resolveChannelStreamingChunkMode(cfgSection) || cfgSection.chunkMode;
+}
+
+function resolveChunkMode(cfg, provider, accountId) {
+  if (!provider || provider === INTERNAL_MESSAGE_CHANNEL) {
+    return DEFAULT_CHUNK_MODE;
+  }
+  return resolveChunkModeForProvider(resolveProviderChunkConfig(cfg, provider), accountId) ||
+    DEFAULT_CHUNK_MODE;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getSilentExactRegex(token) {
+  return new RegExp(`^\\s*${escapeRegExp(token)}\\s*$`, "i");
+}
+
+function isSilentReplyText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  return getSilentExactRegex(token).test(text);
+}
+
+function isSilentReplyEnvelopeText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = text.trim();
+  if (!trimmed || !trimmed.startsWith("{") || !trimmed.endsWith("}") || !trimmed.includes(token)) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    const keys = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.keys(parsed)
+      : [];
+    return (
+      keys.length === 1 &&
+      keys[0] === "action" &&
+      typeof parsed.action === "string" &&
+      parsed.action.trim() === token
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isSilentReplyPayloadText(text, token = SILENT_REPLY_TOKEN) {
+  return isSilentReplyText(text, token) || isSilentReplyEnvelopeText(text, token);
+}
+
+const REASONING_PREFIX = "reasoning:";
+
+function trimLeadingMarkdownQuoteMarkers(text) {
+  let candidate = String(text).trimStart();
+  while (candidate.startsWith(">")) {
+    candidate = candidate.replace(/^(?:>[ \t]?)+/, "").trimStart();
+  }
+  return candidate;
+}
+
+function isReasoningReplyPayload(payload) {
+  if (payload && payload.isReasoning === true) {
+    return true;
+  }
+  const text = payload && payload.text;
+  if (typeof text !== "string") {
+    return false;
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(text.trimStart());
+  if (normalized.startsWith(REASONING_PREFIX)) {
+    return true;
+  }
+  return normalizeLowercaseStringOrEmpty(trimLeadingMarkdownQuoteMarkers(text)).startsWith(
+    REASONING_PREFIX,
+  );
+}
+
+function normalizeOutboundReplyPayload(payload) {
+  const record = payload && typeof payload === "object" ? payload : {};
+  const mediaUrls = Array.isArray(record.mediaUrls)
+    ? record.mediaUrls.filter((entry) => typeof entry === "string" && entry.length > 0)
+    : undefined;
+  return {
+    text: readStringValue(record.text),
+    mediaUrls,
+    mediaUrl: readStringValue(record.mediaUrl),
+    sensitiveMedia: record.sensitiveMedia === true ? true : undefined,
+    replyToId: readStringValue(record.replyToId),
+  };
+}
+
+function createNormalizedOutboundDeliverer(handler) {
+  return async (payload) => {
+    const normalized =
+      payload && typeof payload === "object" ? normalizeOutboundReplyPayload(payload) : {};
+    await handler(normalized);
+  };
+}
+
+function resolveOutboundMediaUrls(payload) {
+  if (payload && Array.isArray(payload.mediaUrls) && payload.mediaUrls.length > 0) {
+    return payload.mediaUrls;
+  }
+  if (payload && payload.mediaUrl) {
+    return [payload.mediaUrl];
+  }
+  return [];
+}
+
+function resolvePayloadMediaUrls(payload) {
+  return resolveOutboundMediaUrls(payload);
+}
+
+function countOutboundMedia(payload) {
+  return resolveOutboundMediaUrls(payload).length;
+}
+
+function hasOutboundMedia(payload) {
+  return countOutboundMedia(payload) > 0;
+}
+
+function hasOutboundText(payload, options) {
+  const text =
+    options && options.trim
+      ? payload && payload.text && payload.text.trim()
+      : payload && payload.text;
+  return Boolean(text);
+}
+
+function hasOutboundReplyContent(payload, options) {
+  return (
+    hasOutboundText(payload, { trim: options && options.trimText }) || hasOutboundMedia(payload)
+  );
+}
+
+function resolveSendableOutboundReplyParts(payload, options) {
+  const text = (options && options.text) || (payload && payload.text) || "";
+  const trimmedText = text.trim();
+  const mediaUrls = resolveOutboundMediaUrls(payload)
+    .map((entry) => String(entry).trim())
+    .filter(Boolean);
+  const mediaCount = mediaUrls.length;
+  const hasText = Boolean(trimmedText);
+  const hasMedia = mediaCount > 0;
+  return {
+    text,
+    trimmedText,
+    mediaUrls,
+    mediaCount,
+    hasText,
+    hasMedia,
+    hasContent: hasText || hasMedia,
+  };
+}
+
+function resolveTextChunksWithFallback(text, chunks) {
+  if (Array.isArray(chunks) && chunks.length > 0) {
+    return [...chunks];
+  }
+  return text ? [text] : [];
+}
+
+function buildMediaPayload(mediaList, opts) {
+  const list = Array.isArray(mediaList) ? mediaList : [];
+  const first = list[0];
+  const mediaPaths = list.map((media) => media.path);
+  const rawMediaTypes = list.map((media) => (media && media.contentType) || "");
+  const mediaTypes = opts && opts.preserveMediaTypeCardinality
+    ? rawMediaTypes
+    : rawMediaTypes.filter(Boolean);
+  return {
+    MediaPath: first && first.path,
+    MediaType: first && first.contentType,
+    MediaUrl: first && first.path,
+    MediaPaths: mediaPaths.length > 0 ? mediaPaths : undefined,
+    MediaUrls: mediaPaths.length > 0 ? mediaPaths : undefined,
+    MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
+  };
+}
+
+async function sendPayloadWithChunkedTextAndMedia(params) {
+  const payload = (params && params.ctx && params.ctx.payload) || {};
+  const text = payload.text || "";
+  const urls = resolveOutboundMediaUrls(payload);
+  if (!text && urls.length === 0) {
+    return params.emptyResult;
+  }
+  if (urls.length > 0) {
+    let lastResult = await params.sendMedia({ ...params.ctx, text, mediaUrl: urls[0] });
+    for (let i = 1; i < urls.length; i++) {
+      lastResult = await params.sendMedia({ ...params.ctx, text: "", mediaUrl: urls[i] });
+    }
+    return lastResult;
+  }
+  const chunks =
+    params.textChunkLimit && params.chunker ? params.chunker(text, params.textChunkLimit) : [text];
+  let lastResult;
+  for (const chunk of chunks) {
+    lastResult = await params.sendText({ ...params.ctx, text: chunk });
+  }
+  return lastResult;
+}
+
+async function sendPayloadMediaSequence(params) {
+  let lastResult;
+  for (let i = 0; i < params.mediaUrls.length; i += 1) {
+    const mediaUrl = params.mediaUrls[i];
+    if (!mediaUrl) {
+      continue;
+    }
+    lastResult = await params.send({
+      text: i === 0 ? params.text : "",
+      mediaUrl,
+      index: i,
+      isFirst: i === 0,
+    });
+  }
+  return lastResult;
+}
+
+async function sendPayloadMediaSequenceOrFallback(params) {
+  if (params.mediaUrls.length === 0) {
+    return params.sendNoMedia ? await params.sendNoMedia() : params.fallbackResult;
+  }
+  return (await sendPayloadMediaSequence(params)) || params.fallbackResult;
+}
+
+async function sendPayloadMediaSequenceAndFinalize(params) {
+  if (params.mediaUrls.length > 0) {
+    await sendPayloadMediaSequence(params);
+  }
+  return await params.finalize();
+}
+
+function isSingleUseReplyToMode(mode) {
+  return mode === "first" || mode === "batched";
+}
+
+function createReplyToFanout(params) {
+  const replyToId = (params && params.replyToId) || undefined;
+  if (!replyToId) {
+    return () => undefined;
+  }
+  const singleUse =
+    params.replyToIdSource !== "explicit" &&
+    params.replyToMode !== undefined &&
+    isSingleUseReplyToMode(params.replyToMode);
+  if (!singleUse) {
+    return () => replyToId;
+  }
+  let current = replyToId;
+  return () => {
+    const value = current;
+    current = undefined;
+    return value;
+  };
+}
+
+async function sendTextMediaPayload(params) {
+  const text = (params.ctx.payload && params.ctx.payload.text) || "";
+  const urls = resolvePayloadMediaUrls(params.ctx.payload);
+  if (!text && urls.length === 0) {
+    return { channel: params.channel, messageId: "" };
+  }
+  const nextReplyToId = createReplyToFanout(params.ctx);
+  if (urls.length > 0) {
+    const audioAsVoice = params.ctx.payload.audioAsVoice ?? params.ctx.audioAsVoice;
+    const lastResult = await sendPayloadMediaSequence({
+      text,
+      mediaUrls: urls,
+      send: async ({ text, mediaUrl }) =>
+        await params.adapter.sendMedia({
+          ...params.ctx,
+          text,
+          mediaUrl,
+          ...(audioAsVoice === undefined ? {} : { audioAsVoice }),
+          replyToId: nextReplyToId(),
+        }),
+    });
+    return lastResult || { channel: params.channel, messageId: "" };
+  }
+  const limit = params.adapter.textChunkLimit;
+  const chunks =
+    limit && params.adapter.chunker
+      ? params.adapter.chunker(text, limit, { formatting: params.ctx.formatting })
+      : [text];
+  let lastResult;
+  for (const chunk of chunks) {
+    lastResult = await params.adapter.sendText({
+      ...params.ctx,
+      text: chunk,
+      replyToId: nextReplyToId(),
+    });
+  }
+  return lastResult;
+}
+
+function isNumericTargetId(raw) {
+  const trimmed = String(raw || "").trim();
+  return Boolean(trimmed) && /^\d{3,}$/.test(trimmed);
+}
+
+function formatTextWithAttachmentLinks(text, mediaUrls) {
+  const trimmedText = (text || "").trim();
+  const urls = Array.isArray(mediaUrls) ? mediaUrls : [];
+  if (!trimmedText && urls.length === 0) {
+    return "";
+  }
+  const mediaBlock = urls.length ? urls.map((url) => `Attachment: ${url}`).join("\n") : "";
+  if (!trimmedText) {
+    return mediaBlock;
+  }
+  if (!mediaBlock) {
+    return trimmedText;
+  }
+  return `${trimmedText}\n\n${mediaBlock}`;
+}
+
+async function sendMediaWithLeadingCaption(params) {
+  if (!params.mediaUrls || params.mediaUrls.length === 0) {
+    return false;
+  }
+  for (const [index, mediaUrl] of params.mediaUrls.entries()) {
+    const isFirst = index === 0;
+    const caption = isFirst ? params.caption : undefined;
+    try {
+      await params.send({ mediaUrl, caption });
+    } catch (error) {
+      if (!params.onError) {
+        throw error;
+      }
+      await params.onError({ error, mediaUrl, caption, index, isFirst });
+    }
+  }
+  return true;
+}
+
+async function deliverTextOrMediaReply(params) {
+  const { mediaUrls } = resolveSendableOutboundReplyParts(params.payload, { text: params.text });
+  const sentMedia = await sendMediaWithLeadingCaption({
+    mediaUrls,
+    caption: params.text,
+    send: params.sendMedia,
+    onError: params.onMediaError,
+  });
+  if (sentMedia) {
+    return "media";
+  }
+  if (!params.text) {
+    return "empty";
+  }
+  const chunks = params.chunkText ? params.chunkText(params.text) : [params.text];
+  let sentText = false;
+  for (const chunk of chunks) {
+    if (!chunk) {
+      continue;
+    }
+    await params.sendText(chunk);
+    sentText = true;
+  }
+  return sentText ? "text" : "empty";
+}
+
+async function deliverFormattedTextWithAttachments(params) {
+  const text = formatTextWithAttachmentLinks(
+    params.payload && params.payload.text,
+    resolveOutboundMediaUrls(params.payload),
+  );
+  if (!text) {
+    return false;
+  }
+  await params.send({ text, replyToId: params.payload && params.payload.replyToId });
+  return true;
 }
 
 function passthrough(value) {
@@ -18050,14 +20012,268 @@ function passthrough(value) {
 }
 
 const textRuntime = {
+  hasNonEmptyString,
+  localeLowercasePreservingWhitespace,
+  lowercasePreservingWhitespace,
   normalizeLowercaseStringOrEmpty,
+  normalizeNullableString,
   normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+  normalizeStringifiedOptionalString,
+  readStringValue,
+};
+
+const errorRuntime = {
+  collectErrorGraphCandidates,
+  extractErrorCode,
+  formatErrorMessage,
+  formatUncaughtError,
+  readErrorName,
+};
+
+const tempPathRuntime = {
+  buildRandomTempFilePath,
+  createTempDownloadTarget,
+  resolvePreferredOpenClawTmpDir,
+  sanitizeTempFileName,
+  withTempDownloadPath,
+};
+
+const secretInputRuntime = {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInput,
+  normalizeSecretInputString,
+  parseEnvTemplateSecretRef,
+  parseLegacySecretRefEnvMarker,
+  resolveSecretInputString,
+};
+
+const routingRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_MAIN_KEY,
+  buildAgentMainSessionKey,
+  buildAgentSessionKey,
+  buildGroupHistoryKey,
+  buildOutboundBaseSessionKey,
+  deriveLastRoutePolicy,
+  formatSetExplicitDefaultInstruction,
+  formatSetExplicitDefaultToConfiguredInstruction,
+  getSubagentDepth,
+  isAcpSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+  listBoundAccountIds,
+  normalizeAccountId,
+  normalizeAgentId,
+  normalizeMainKey,
+  normalizeMessageChannel,
+  normalizeOptionalAccountId,
+  normalizeOutboundThreadId,
+  parseAgentSessionKey,
+  parseThreadSessionSuffix,
+  resolveAccountEntry,
+  resolveAgentIdFromSessionKey,
+  resolveAgentRoute,
+  resolveDefaultAgentBoundAccountId,
+  resolveGatewayMessageChannel,
+  resolveInboundLastRouteSessionKey,
+  resolveThreadSessionKeys,
+  sanitizeAgentId,
+};
+
+const accountHelpersRuntime = {
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  describeWebhookAccountSnapshot,
+  mergeAccountConfig,
+  resolveMergedAccountConfig,
+};
+
+const accountCoreRuntime = {
+  ...accountHelpersRuntime,
+  DEFAULT_ACCOUNT_ID,
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  listCombinedAccountIds,
+  listConfiguredAccountIds,
+  mergeAccountConfig,
+  normalizeAccountId,
+  normalizeChatType,
+  normalizeE164,
+  normalizeOptionalAccountId,
+  pathExists,
+  resolveAccountEntry,
+  resolveAccountWithDefaultFallback,
+  resolveListedDefaultAccountId,
+  resolveMergedAccountConfig,
+  resolveNormalizedAccountEntry,
+  resolveUserPath,
+};
+
+const accountResolutionRuntime = {
+  resolveMergedAccountConfig,
+};
+
+const toolPayloadRuntime = {
+  extractToolPayload,
+  parseStandalonePlainTextToolCallBlocks,
+  stripPlainTextToolCallBlocks,
+};
+
+const booleanParamRuntime = {
+  readBooleanParam,
+};
+
+const replyChunkingRuntime = {
+  SILENT_REPLY_TOKEN,
+  chunkMarkdownTextWithMode,
+  chunkText,
+  chunkTextWithMode,
+  isSilentReplyPayloadText,
+  isSilentReplyText,
+  resolveChunkMode,
+  resolveTextChunkLimit,
+};
+
+const replyPayloadRuntime = {
+  buildMediaPayload,
+  countOutboundMedia,
+  createNormalizedOutboundDeliverer,
+  deliverFormattedTextWithAttachments,
+  deliverTextOrMediaReply,
+  formatTextWithAttachmentLinks,
+  hasOutboundMedia,
+  hasOutboundReplyContent,
+  hasOutboundText,
+  isNumericTargetId,
+  isReasoningReplyPayload,
+  normalizeOutboundReplyPayload,
+  resolveOutboundMediaUrls,
+  resolvePayloadMediaUrls,
+  resolveSendableOutboundReplyParts,
+  resolveTextChunksWithFallback,
+  sendMediaWithLeadingCaption,
+  sendPayloadMediaSequence,
+  sendPayloadMediaSequenceAndFinalize,
+  sendPayloadMediaSequenceOrFallback,
+  sendPayloadWithChunkedTextAndMedia,
+  sendTextMediaPayload,
 };
 
 const genericSdk = new Proxy(
   {
+    DEFAULT_ACCOUNT_ID,
+    DEFAULT_MAIN_KEY,
+    SILENT_REPLY_TOKEN,
+    buildRandomTempFilePath,
+    buildAgentMainSessionKey,
+    buildAgentSessionKey,
+    buildGroupHistoryKey,
+    buildMediaPayload,
+    buildOutboundBaseSessionKey,
+    coerceSecretRef,
+    collectErrorGraphCandidates,
+    countOutboundMedia,
+    createAccountActionGate,
+    createAccountListHelpers,
+    createTempDownloadTarget,
+    createNormalizedOutboundDeliverer,
+    chunkMarkdownTextWithMode,
+    chunkText,
+    chunkTextWithMode,
+    describeAccountSnapshot,
+    describeWebhookAccountSnapshot,
+    deliverFormattedTextWithAttachments,
+    deliverTextOrMediaReply,
+    deriveLastRoutePolicy,
+    extractErrorCode,
+    extractToolPayload,
+    formatTextWithAttachmentLinks,
+    formatSetExplicitDefaultInstruction,
+    formatSetExplicitDefaultToConfiguredInstruction,
+    formatErrorMessage,
+    formatUncaughtError,
+    getSubagentDepth,
+    hasNonEmptyString,
+    hasConfiguredSecretInput,
+    hasOutboundMedia,
+    hasOutboundReplyContent,
+    hasOutboundText,
+    isAcpSessionKey,
+    isCronSessionKey,
+    isNumericTargetId,
+    isReasoningReplyPayload,
+    isSilentReplyPayloadText,
+    isSilentReplyText,
+    isSecretRef,
+    isSubagentSessionKey,
+    listBoundAccountIds,
+    listCombinedAccountIds,
+    listConfiguredAccountIds,
+    localeLowercasePreservingWhitespace,
+    lowercasePreservingWhitespace,
+    mergeAccountConfig,
+    normalizeAccountId,
+    normalizeAgentId,
+    normalizeChatType,
+    normalizeE164,
     normalizeLowercaseStringOrEmpty,
+    normalizeMainKey,
+    normalizeMessageChannel,
+    normalizeNullableString,
+    normalizeOptionalAccountId,
     normalizeOptionalLowercaseString,
+    normalizeOptionalString,
+    normalizeOutboundThreadId,
+    normalizeResolvedSecretInputString,
+    normalizeSecretInput,
+    normalizeSecretInputString,
+    normalizeStringifiedOptionalString,
+    normalizeOutboundReplyPayload,
+    parseAgentSessionKey,
+    parseEnvTemplateSecretRef,
+    parseLegacySecretRefEnvMarker,
+    parseStandalonePlainTextToolCallBlocks,
+    parseThreadSessionSuffix,
+    pathExists,
+    readBooleanParam,
+    readErrorName,
+    readStringValue,
+    resolveAccountEntry,
+    resolveAccountWithDefaultFallback,
+    resolveListedDefaultAccountId,
+    resolveMergedAccountConfig,
+    resolveNormalizedAccountEntry,
+    resolveAgentIdFromSessionKey,
+    resolveChunkMode,
+    resolveAgentRoute,
+    resolveDefaultAgentBoundAccountId,
+    resolveGatewayMessageChannel,
+    resolveInboundLastRouteSessionKey,
+    resolveOutboundMediaUrls,
+    resolvePayloadMediaUrls,
+    resolvePreferredOpenClawTmpDir,
+    resolveSendableOutboundReplyParts,
+    resolveSecretInputString,
+    resolveTextChunkLimit,
+    resolveTextChunksWithFallback,
+    resolveThreadSessionKeys,
+    resolveUserPath,
+    sanitizeTempFileName,
+    sanitizeAgentId,
+    sendMediaWithLeadingCaption,
+    sendPayloadMediaSequence,
+    sendPayloadMediaSequenceAndFinalize,
+    sendPayloadMediaSequenceOrFallback,
+    sendPayloadWithChunkedTextAndMedia,
+    sendTextMediaPayload,
+    stripPlainTextToolCallBlocks,
+    withTempDownloadPath,
   },
   {
     get(target, prop) {
@@ -18079,6 +20295,74 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-runtime"
   ) {
     return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/error-runtime" ||
+    request === "@openclaw/plugin-sdk/error-runtime"
+  ) {
+    return errorRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/temp-path" ||
+    request === "@openclaw/plugin-sdk/temp-path"
+  ) {
+    return tempPathRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-input" ||
+    request === "@openclaw/plugin-sdk/secret-input"
+  ) {
+    return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/routing" ||
+    request === "@openclaw/plugin-sdk/routing"
+  ) {
+    return routingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-helpers" ||
+    request === "@openclaw/plugin-sdk/account-helpers"
+  ) {
+    return accountHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-core" ||
+    request === "@openclaw/plugin-sdk/account-core" ||
+    request === "openclaw/plugin-sdk/account-resolution" ||
+    request === "@openclaw/plugin-sdk/account-resolution"
+  ) {
+    return accountCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-resolution-runtime" ||
+    request === "@openclaw/plugin-sdk/account-resolution-runtime"
+  ) {
+    return accountResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/tool-payload" ||
+    request === "@openclaw/plugin-sdk/tool-payload"
+  ) {
+    return toolPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/boolean-param" ||
+    request === "@openclaw/plugin-sdk/boolean-param"
+  ) {
+    return booleanParamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-chunking" ||
+    request === "@openclaw/plugin-sdk/reply-chunking"
+  ) {
+    return replyChunkingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-payload" ||
+    request === "@openclaw/plugin-sdk/reply-payload"
+  ) {
+    return replyPayloadRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||
@@ -18163,14 +20447,26 @@ function unwrapRuntimeExport(moduleValue) {
   return value;
 }
 
-function toolNamesFromDefinition(definition) {
+function toolNamesFromDefinition(definition, opts) {
   if (typeof definition === "string") {
     return [definition];
   }
-  if (!definition || typeof definition !== "object") {
-    return [];
-  }
   const names = [];
+  if (opts && typeof opts === "object") {
+    if (typeof opts.name === "string") {
+      names.push(opts.name);
+    }
+    if (Array.isArray(opts.names)) {
+      for (const name of opts.names) {
+        if (typeof name === "string") {
+          names.push(name);
+        }
+      }
+    }
+  }
+  if (!definition || typeof definition !== "object") {
+    return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+  }
   if (typeof definition.name === "string") {
     names.push(definition.name);
   }
@@ -18182,6 +20478,25 @@ function toolNamesFromDefinition(definition) {
     }
   }
   return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+}
+
+function listToolsFromFactoryResult(result) {
+  if (!result) {
+    return [];
+  }
+  return Array.isArray(result) ? result : [result];
+}
+
+function findToolDefinitionByName(list, toolName) {
+  for (const definition of list) {
+    if (toolNamesFromDefinition(definition).includes(toolName)) {
+      return definition;
+    }
+  }
+  if (list.length === 1 && list[0] && typeof list[0] === "object") {
+    return list[0];
+  }
+  return null;
 }
 
 async function activatePlugin(plugin) {
@@ -18201,27 +20516,34 @@ async function activatePlugin(plugin) {
     return null;
   }
   const tools = [];
-  const registerTool = (definition) => {
-    const names = toolNamesFromDefinition(definition);
+  const registerTool = (definition, opts) => {
+    const names = toolNamesFromDefinition(definition, opts);
     if (!names.length) {
       return;
     }
+    const isFactory = typeof definition === "function";
+    const metadata = isFactory && opts && typeof opts === "object" ? opts : definition;
     tools.push({
       pluginId: plugin.id || plugin.pluginId,
       pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
       source: "openclaw-plugin",
       names,
+      factory: isFactory ? definition : undefined,
+      factoryTool: isFactory,
       runtimeEntrySource: entryPath,
       description:
-        definition && typeof definition === "object" && typeof definition.description === "string"
-          ? definition.description
+        metadata && typeof metadata === "object" && typeof metadata.description === "string"
+          ? metadata.description
           : undefined,
       parameters:
-        definition && typeof definition === "object" && definition.parameters
-          ? definition.parameters
+        metadata && typeof metadata === "object" && metadata.parameters
+          ? metadata.parameters
           : undefined,
       execute:
-        definition && typeof definition === "object" && typeof definition.execute === "function"
+        !isFactory &&
+        definition &&
+        typeof definition === "object" &&
+        typeof definition.execute === "function"
           ? definition.execute
           : undefined,
     });
@@ -18252,7 +20574,16 @@ async function activatePlugin(plugin) {
       throw new Error("OpenClaw plugin runtime execution failed: plugin did not activate");
     }
     const toolName = String(context.toolName || "").trim();
-    const tool = result.tools.find((entry) => entry.names.includes(toolName));
+    const toolEntry = result.tools.find((entry) => entry.names.includes(toolName));
+    const tool =
+      toolEntry && typeof toolEntry.factory === "function"
+        ? findToolDefinitionByName(
+            listToolsFromFactoryResult(
+              await Promise.resolve(toolEntry.factory(context.toolContext || {})),
+            ),
+            toolName,
+          )
+        : toolEntry;
     if (!tool || typeof tool.execute !== "function") {
       throw new Error(`OpenClaw plugin runtime tool is not executable: ${toolName}`);
     }
@@ -18348,6 +20679,7 @@ def _execute_native_plugin_runtime_tool(
     tool: str,
     tool_call_id: str,
     args: dict[str, Any],
+    tool_context: Mapping[str, object] | None = None,
 ) -> object:
     if shutil.which("node") is None:
         raise RuntimeError("Node.js is required to execute OpenClaw plugin runtimes.")
@@ -18364,6 +20696,7 @@ def _execute_native_plugin_runtime_tool(
                     "toolName": tool,
                     "toolCallId": tool_call_id,
                     "args": args,
+                    "toolContext": dict(tool_context or {}),
                 },
                 default=str,
             ),
@@ -18393,13 +20726,18 @@ def _native_plugin_runtime_executor_factory(
     plugin: dict[str, object],
     tool: str,
 ) -> GatewayPluginExecutor:
-    async def execute(tool_call_id: str, args: dict[str, Any]) -> object:
+    async def execute(
+        tool_call_id: str,
+        args: dict[str, Any],
+        tool_context: Mapping[str, object] | None = None,
+    ) -> object:
         return await asyncio.to_thread(
             _execute_native_plugin_runtime_tool,
             plugin=plugin,
             tool=tool,
             tool_call_id=tool_call_id,
             args=args,
+            tool_context=tool_context,
         )
 
     return execute
