@@ -5585,6 +5585,24 @@ def _msteams_search_messages(result: object) -> list[dict[str, object]]:
     return messages
 
 
+def _msteams_user_profile(result: object) -> dict[str, object]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    user: dict[str, object] = {}
+    for key in (
+        "id",
+        "displayName",
+        "mail",
+        "jobTitle",
+        "userPrincipalName",
+        "officeLocation",
+    ):
+        value = result.get(key)
+        if isinstance(value, str):
+            user[key] = value
+    return user
+
+
 def _msteams_pin_page(result: object) -> tuple[list[dict[str, object]], str | None]:
     if not isinstance(result, dict):
         raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
@@ -14884,6 +14902,29 @@ class OpsMeshService:
             )
             return await asyncio.to_thread(
                 self._dispatch_msteams_search_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "member-info":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action member-info."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_member_info_message_action,
                 route,
                 request,
                 graph_secret_token,
@@ -25791,6 +25832,40 @@ class OpsMeshService:
             "channel": "msteams",
             "action": "search",
             "messages": _msteams_search_messages(result),
+        }
+
+    def _dispatch_msteams_member_info_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        user_id = _message_action_param_string(
+            request.params,
+            "userId",
+            required=True,
+        )
+        if user_id is None:
+            raise RuntimeError("member-info requires a userId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            (
+                "https://graph.microsoft.com/v1.0/users/"
+                f"{quote(user_id, safe='')}?"
+                "$select=id,displayName,mail,jobTitle,userPrincipalName,officeLocation"
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "member-info",
+            "user": _msteams_user_profile(result),
         }
 
     def _dispatch_msteams_react_message_action(
