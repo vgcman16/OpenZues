@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.9% overall, with a reasonable
-  band of ~50-67%.
+- Repo-wide OpenClaw parity is estimated at ~67.0% overall, with a reasonable
+  band of ~50-68%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -6239,10 +6239,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   app passwords and tokens from output. Repo-wide parity is now estimated at
   ~66.9%. Verified with focused CLI pytest, adjacent Teams/setup CLI proof,
   `ruff check`, and `mypy`; source/test checkpointed in `3695ca29`.
+- Closed the Microsoft Teams read message action seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.read.test.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="msteams"`,
+  `action="read"`, resolves `messageId` plus explicit or tool-context Teams
+  targets, uses route-backed Graph auth with stored delegated-token preference
+  when available, fetches Graph chat or team/channel message endpoints, and
+  projects OpenClaw-shaped `{ok, channel, action, message}` results with
+  `id`, `text`, `from`, and `createdAt`. Repo-wide parity is now estimated at
+  ~67.0%. Verified with focused runtime pytest, adjacent Teams action/provider
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `4d3635c3`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams delegated OAuth
-  local callback/manual prompt ergonomics or another source-backed
-  channel/provider route action adapter.
+  send/poll/replay metadata gap, starting with the remaining Microsoft Teams
+  Graph action adapters: pin, unpin, list-pins, search, and member-info.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
