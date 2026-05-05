@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~77.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~77.5% overall, with a reasonable
   band of ~75-80%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -61,7 +61,8 @@ Current percentage rollup:
   command-auth, channel-setup, allowlist-config-edit, group-access,
   provider-selection-runtime, windows-spawn, command-status, command-auth
   native, webhook, fetch/SSRF, provider model/catalog, provider
-  entry/enable/auth-result, and provider-auth-runtime helper slices.
+  entry/enable/auth-result, provider-auth-runtime, and provider-auth API-key
+  helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7309,13 +7310,28 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with focused provider-auth-runtime pytest, adjacent provider-auth/
   runtime proof, adjacent imported-plugin/runtime proof, `ruff check`, and
   `mypy`; source/test checkpointed in `cfaae804`.
+- Closed the imported OpenClaw plugin SDK provider-auth API-key seam from
+  `src/plugin-sdk/provider-auth-api-key.ts`,
+  `src/plugins/provider-auth-input.ts`,
+  `src/plugins/provider-auth-mode.ts`,
+  `src/plugins/provider-auth-ref.ts`,
+  `src/plugins/provider-auth-helpers.ts`, and
+  `src/plugins/provider-api-key-auth.ts`: native runtime entries can now
+  import `openclaw/plugin-sdk/provider-auth-api-key`, normalize API-key input,
+  validate and preview keys, resolve secret-input modes, build plaintext/ref
+  API-key credentials, apply auth-profile config patches with mixed-mode order
+  handling, expose API-key auth methods, and resolve the same helpers through
+  scoped and generic SDK aliases during `tools.invoke`. Repo-wide parity is
+  now estimated at ~77.5%. Verified with focused provider-auth API-key pytest,
+  adjacent provider-auth proof, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `af3d97ea`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
-  provider-auth-runtime path, starting with provider-auth API-key/login helper
-  surfaces.
+  provider-auth-runtime/provider-auth-api-key path, starting with
+  provider-auth login helper surfaces.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
