@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.5% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5991,6 +5991,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   key. Repo-wide parity is now estimated at ~64.4%. Verified with focused
   runtime pytest, adjacent Teams send/action/provider proof, `ruff check`,
   and `mypy`; checkpointed in `5462df49`.
+- Closed the Microsoft Teams inbound message text normalization seam from
+  OpenClaw `extensions/msteams/src/monitor-handler/message-handler.ts` and
+  `extensions/msteams/src/inbound.ts`: message activities now strip Teams
+  mention tags before session delivery, and text-less message activities can
+  derive bounded text from `text/html` attachments while preserving link URLs
+  and decoding entities. Repo-wide parity is now estimated at ~64.5%.
+  Verified with focused runtime pytest, adjacent Teams send/action/provider
+  proof, `ruff check`, and `mypy`; checkpointed in `65daf165`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams full Bot
   Framework HTTP inbound wiring, feedback/SSO/member lifecycle breadth, or

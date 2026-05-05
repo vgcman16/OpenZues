@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.4% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.5% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10616,6 +10616,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`10 passed, 304 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `5462df49`.
+
+- Microsoft Teams inbound message text normalization now mirrors OpenClaw's
+  `extensions/msteams/src/monitor-handler/message-handler.ts` and
+  `extensions/msteams/src/inbound.ts` path for message activities: plain
+  message text strips Teams `<at>...</at>` mention tags before session
+  routing, and text-less activities can derive agent text from `text/html`
+  attachments while preserving link URLs and decoding entities. This closes
+  `OZ-PROV-001AK`; repo-wide parity is now estimated at ~64.5%. Remaining
+  Microsoft Teams breadth is full Bot Framework HTTP inbound wiring, SSO
+  invoke/token exchange persistence, feedback reflection, richer inbound media
+  staging, and welcome/member lifecycle handling.
+- Verified the Microsoft Teams inbound message normalization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_message_text_without_mentions tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_html_attachment_text_fallback -q`
+  (`2 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`12 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `65daf165`.
 
 ## References
 
