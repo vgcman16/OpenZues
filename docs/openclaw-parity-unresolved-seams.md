@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.4% overall, with a reasonable
   band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5643,6 +5643,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~61.3%. Verified with focused
   update-status package-manager pytest, adjacent update/package doctor proof,
   `ruff check`, and `mypy`; checkpointed in `f1ac67da`.
+- Closed the Feishu/Lark native outbound route seam from OpenClaw
+  `extensions/feishu/src/send-target.ts`, `extensions/feishu/src/send.ts`,
+  `extensions/feishu/src/send-result.ts`, and
+  `extensions/feishu/src/outbound.ts`: native `kind="feishu"` routes now send
+  direct text through Feishu message-create semantics with normalized
+  chat/user/open-id targets, `msg_type="post"` markdown content under
+  `zh_cn.content`, bearer auth, and provider message/chat metadata persisted
+  through direct-send results. Repo-wide parity is now estimated at ~61.4%.
+  Verified with focused Feishu service/CLI pytest, adjacent provider route
+  proof, `ruff check`, and `mypy`; checkpointed in `d1515da1`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

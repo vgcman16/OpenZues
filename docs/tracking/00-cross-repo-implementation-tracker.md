@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,14 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The update status package-manager dependency posture slice is checkpointed in
-`f1ac67da`.
+The Feishu/Lark native outbound route slice is checkpointed in `d1515da1`.
 Any follow-up changes should target the next queue head only:
 
+- `src/openzues/schemas.py`
+- `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/gateway_channels.py`
 - `src/openzues/cli.py`
+- `tests/test_ops_mesh.py`
 - `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
@@ -52,9 +55,33 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack agent-request thread metadata checkpointed in `e3671d6f` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark native outbound route checkpointed in `d1515da1` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001N` Feishu/Lark native outbound route
+  - Source: `openclaw-main/extensions/feishu/src/send-target.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`,
+    `openclaw-main/extensions/feishu/src/send-result.ts`,
+    `openclaw-main/extensions/feishu/src/outbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Contract: route-backed `kind="feishu"` sends dispatch through native
+    Feishu/Lark message-create semantics, normalize chat/user/open-id targets,
+    send `msg_type="post"` with markdown content under `zh_cn.content`, attach
+    bearer auth, and persist provider `messageId`/chat metadata through the
+    shared direct-send result envelope.
+  - Evidence required: focused Feishu native route test, CLI route-create test,
+    adjacent provider route tests, ruff, mypy
+  - Status: checkpointed in `d1515da1`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Feishu service proof (`2 passed`),
+    focused CLI proof (`1 passed`), adjacent provider send proof (`6 passed,
+    275 deselected`), adjacent route-create proof (`5 passed, 489
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PKG-001E` update status package-manager dependency posture
   - Source: `openclaw-main/src/infra/detect-package-manager.ts`,

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -419,6 +419,11 @@ may lag behind this tracker.
   delivery, including `accountId` and Slack `threadId` propagation into the
   fakeable chat runtime path.
   - Status: checkpointed in `e3671d6f`
+
+- [x] Feishu/Lark provider-native direct text sends with OpenClaw-shaped
+  message-create payloads, target normalization, bearer auth, and provider
+  message/chat metadata persistence.
+  - Status: checkpointed in `d1515da1`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1345,8 +1350,24 @@ may lag behind this tracker.
     `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
     WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
     thread result fallback checkpointed in `e47324f4`; Slack agent-request
-    thread metadata checkpointed in `e3671d6f`
+    thread metadata checkpointed in `e3671d6f`; Feishu/Lark native outbound
+    route checkpointed in `d1515da1`
   - Weight: 3
+
+- [x] Feishu/Lark native outbound route.
+  - Source: `openclaw-main/extensions/feishu/src/send-target.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`,
+    `openclaw-main/extensions/feishu/src/send-result.ts`, and
+    `openclaw-main/extensions/feishu/src/outbound.ts`
+  - Target: `src/openzues/schemas.py`, `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, and `src/openzues/cli.py`
+  - Test: `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Status: checkpointed in `d1515da1`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Feishu service proof (`2 passed`),
+    focused CLI proof (`1 passed`), adjacent provider send proof (`6 passed,
+    275 deselected`), adjacent route-create proof (`5 passed, 489
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] Slack agent-request thread metadata.
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

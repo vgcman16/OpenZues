@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.3% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.4% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -73,6 +73,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native Telegram GIF media parity now routes URL/media-kind GIFs to
   Bot API `sendAnimation` when `forceDocument` is not set, preserving
   caption, reply, silent, thread, and animation `mediaIds` result metadata.
+- Provider-native Feishu/Lark direct text parity now accepts native Feishu
+  routes, resolves chat/user/open-id targets, sends OpenClaw-shaped `post`
+  markdown payloads through the Feishu message-create endpoint, and preserves
+  provider message/chat metadata.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -9949,6 +9953,27 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns_on_invalid_package_dist_inventory"` (`5 passed, 488
   deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `f1ac67da`.
+
+- Feishu/Lark is now a route-backed native outbound provider in OpenZues:
+  `kind="feishu"` routes are admitted through schema/CLI/channel metadata,
+  direct sends resolve OpenClaw-style `chat:`/`group:`/`channel:`/`user:`/`dm:`
+  / `open_id:` targets, call the Feishu message-create endpoint with
+  `receive_id_type`, `receive_id`, `msg_type="post"`, and JSON markdown
+  content under `zh_cn.content`, and persist provider `messageId` plus
+  chat/channel metadata through the shared direct-send envelope. This closes
+  `OZ-PROV-001N`; repo-wide parity is now estimated at ~61.4%.
+- Verified the Feishu/Lark native outbound route slice with `python -m pytest
+  tests\test_ops_mesh.py::test_notification_route_create_accepts_feishu_native_route_kind
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route
+  -q` (`2 passed`), `python -m pytest
+  tests\test_cli.py::test_routes_create_command_accepts_feishu_native_route -q`
+  (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "feishu_native_route or send_direct_channel_message_uses_zalo_native_route or
+  send_direct_channel_message_uses_line_native_route or
+  send_direct_channel_message_uses_slack_native_route or
+  send_direct_channel_message_uses_telegram_native_route"` (`6 passed, 275
+  deselected`), adjacent route-create CLI proof (`5 passed, 489 deselected`),
+  `ruff check`, and `mypy`. Checkpointed in `d1515da1`.
 
 ## References
 
