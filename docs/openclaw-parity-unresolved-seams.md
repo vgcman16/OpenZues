@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~76.6% overall, with a reasonable
-  band of ~50-70%.
+- Repo-wide OpenClaw parity is estimated at ~77.8% overall, with a reasonable
+  band of ~75-80%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -58,8 +58,12 @@ Current percentage rollup:
   active-registry executor projection, runtime activation doctor posture, and
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
-  command-auth, channel-setup, allowlist-config-edit, group-access, and
-  provider-selection-runtime helper slices.
+  command-auth, channel-setup, allowlist-config-edit, group-access,
+  provider-selection-runtime, windows-spawn, command-status, command-auth
+  native, webhook, fetch/SSRF, provider model/catalog, provider
+  entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
+  provider-auth-login, provider-auth facade, and provider web-search contract
+  helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7204,13 +7208,164 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~76.6%. Verified with focused
   provider-selection-runtime pytest, adjacent plugin invoke proof, `ruff check`,
   and `mypy`; source/test checkpointed in `395d23fc`.
+- Closed the imported OpenClaw plugin SDK windows-spawn seam from
+  `src/plugin-sdk/windows-spawn.ts`: native runtime entries can now import
+  PATH/PATHEXT executable resolution, direct/non-Windows spawning, JS/CJS/MJS
+  Node entrypoint wrapping, CMD/BAT shim entrypoint inspection, package.json
+  `bin` fallback resolution, fail-closed unresolved wrapper policy, opt-in
+  shell fallback, and materialized argv construction through `tools.invoke`.
+  Repo-wide parity is now estimated at ~76.7%. Verified with focused
+  windows-spawn pytest, adjacent plugin invoke proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `1c172bde`.
+- Closed the imported OpenClaw plugin SDK command-status seam from
+  `src/plugin-sdk/command-status.ts` and
+  `src/auto-reply/command-status-builders.ts`: native runtime entries can now
+  import help text builders, slash-command list builders, config/debug flag
+  filtering, skill-command projection, category grouping, paginated command
+  lists, scoped/unscoped SDK aliases, and deprecated `command-auth`
+  compatibility exports through `tools.invoke`. The native Node bridge now
+  decodes runtime stdout/stderr as UTF-8 on Windows for OpenClaw command text
+  round-trips. Repo-wide parity is now estimated at ~76.8%. Verified with
+  focused command-status pytest, adjacent command-auth compatibility proof,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `6c22af79`.
+- Closed the imported OpenClaw plugin SDK command-auth native seam from
+  `src/plugin-sdk/command-auth.ts`, `src/plugin-sdk/command-auth-native.ts`,
+  `src/plugin-sdk/command-gating.ts`, `src/plugin-sdk/command-surface.ts`,
+  `src/plugin-sdk/native-command-registry.ts`,
+  `src/channels/native-command-session-targets.ts`, and adjacent command
+  registry/model override helpers: native runtime entries can now import
+  mode-aware command authorization, control-command gates, dual text-command
+  gates, native session target resolution, command body alias normalization,
+  text-command routing, native command specs, command text serialization,
+  Telegram command pagination keyboards, stored model override lookup,
+  scoped/unscoped SDK aliases, and generic SDK re-exports through
+  `tools.invoke`. Repo-wide parity is now estimated at ~76.9%. Verified with
+  focused command-auth native pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `1bbd7ed9`.
+- Closed the imported OpenClaw plugin SDK webhook helper seam from
+  `src/plugin-sdk/webhook-path.ts`,
+  `src/plugin-sdk/webhook-memory-guards.ts`,
+  `src/plugin-sdk/webhook-request-guards.ts`, and
+  `src/plugin-sdk/webhook-targets.ts`: native runtime entries can now import
+  path normalization/resolution, fixed-window rate limits, bounded counters,
+  anomaly tracking, JSON content-type checks, request guard rejection
+  responses, in-flight request limits, target registration/lifecycle cleanup,
+  request-path target resolution, request pipeline dispatch/release behavior,
+  sync/async single-target matching, auth rejection responses, non-POST
+  rejection, scoped/unscoped SDK aliases, and generic SDK re-exports through
+  `tools.invoke`. Repo-wide parity is now estimated at ~77.0%. Verified with
+  focused webhook helper pytest, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `98a00cc5`.
+- Closed the imported OpenClaw plugin SDK fetch/SSRF helper seam from
+  `src/plugin-sdk/fetch-auth.ts`, `src/plugin-sdk/request-url.ts`,
+  `src/plugin-sdk/ssrf-policy.ts`, `src/plugin-sdk/ssrf-runtime.ts`,
+  `src/infra/net/ssrf.ts`, and adjacent guarded-fetch helpers: native runtime
+  entries can now import bearer-scope fetch retry fallback, request URL
+  extraction, private-network opt-in policies, legacy private-network alias
+  migration, SSRF policy merging, HTTP private-network target checks,
+  hostname suffix allowlists, hostname allowlist policy expansion,
+  private/internal host detection, pinned-host policy checks, guarded-fetch
+  stubs, scoped/unscoped SDK aliases, and generic SDK re-exports through
+  `tools.invoke`. Repo-wide parity is now estimated at ~77.1%. Verified with
+  focused fetch/SSRF helper pytest, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `f4a23a25`.
+- Closed the imported OpenClaw plugin SDK provider model/catalog helper seam
+  from `src/plugin-sdk/provider-model-shared.ts`,
+  `src/plugin-sdk/provider-model-id-normalize.ts`,
+  `src/plugin-sdk/provider-catalog-shared.ts`, and adjacent provider replay
+  plus catalog tests: native runtime entries can now import preview model ID
+  normalization, provider-hint detection, Claude thinking profiles,
+  replay-family hook policies, Google Gemini replay sanitation/reasoning mode,
+  canonical replay hook exports, configured model catalog entries, manifest
+  catalog-to-provider config conversion, native streaming usage compatibility,
+  scoped/unscoped SDK aliases, and generic SDK re-exports through
+  `tools.invoke`. Repo-wide parity is now estimated at ~77.2%. Verified with
+  focused provider model/catalog helper pytest, adjacent imported-plugin/runtime
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `903343d0`.
+- Closed the imported OpenClaw plugin SDK provider entry/enable/auth-result
+  helper seam from `src/plugin-sdk/provider-entry.ts`,
+  `src/plugin-sdk/provider-enable-config.ts`,
+  `src/plugin-sdk/provider-web-fetch-contract.ts`,
+  `src/plugin-sdk/provider-web-search-contract.ts`,
+  `src/plugin-sdk/provider-auth-result.ts`,
+  `src/plugins/provider-api-key-auth.ts`,
+  `src/plugins/provider-catalog.ts`, and
+  `src/agents/auth-profiles/identity.ts`: native runtime entries can now
+  define single-provider plugin entries, register provider auth methods with
+  upstream wizard/env-var defaults, build API-key provider catalogs with
+  explicit base-URL overrides, expose static catalogs, enable provider plugins
+  without channel normalization, preserve web-fetch/web-search enable-contract
+  aliases, and return OAuth provider auth profiles/config patches through
+  `tools.invoke`. Repo-wide parity is now estimated at ~77.3%. Verified with
+  focused provider entry/enable/auth-result helper pytest, adjacent
+  imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `0887e67a`.
+- Closed the imported OpenClaw plugin SDK provider-auth-runtime seam from
+  `src/plugin-sdk/provider-auth-runtime.ts`: native runtime entries can now
+  import `openclaw/plugin-sdk/provider-auth-runtime`, generate OAuth state
+  tokens, parse OAuth callback URLs with OpenClaw's exact missing/invalid
+  input diagnostics, expose the local callback wait helper, and resolve the
+  runtime auth/API-key helper function exports through scoped and generic SDK
+  aliases during `tools.invoke`. Repo-wide parity is now estimated at ~77.4%.
+  Verified with focused provider-auth-runtime pytest, adjacent provider-auth/
+  runtime proof, adjacent imported-plugin/runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `cfaae804`.
+- Closed the imported OpenClaw plugin SDK provider-auth API-key seam from
+  `src/plugin-sdk/provider-auth-api-key.ts`,
+  `src/plugins/provider-auth-input.ts`,
+  `src/plugins/provider-auth-mode.ts`,
+  `src/plugins/provider-auth-ref.ts`,
+  `src/plugins/provider-auth-helpers.ts`, and
+  `src/plugins/provider-api-key-auth.ts`: native runtime entries can now
+  import `openclaw/plugin-sdk/provider-auth-api-key`, normalize API-key input,
+  validate and preview keys, resolve secret-input modes, build plaintext/ref
+  API-key credentials, apply auth-profile config patches with mixed-mode order
+  handling, expose API-key auth methods, and resolve the same helpers through
+  scoped and generic SDK aliases during `tools.invoke`. Repo-wide parity is
+  now estimated at ~77.5%. Verified with focused provider-auth API-key pytest,
+  adjacent provider-auth proof, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `af3d97ea`.
+- Closed the imported OpenClaw plugin SDK provider-auth-login seam from
+  `src/plugin-sdk/provider-auth-login.ts` and
+  `src/plugin-sdk/provider-auth-login.runtime.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/provider-auth-login`, resolve
+  `loginOpenAICodexOAuth`, `loginChutes`, and
+  `githubCopilotLoginCommand` through scoped and generic SDK aliases, and get
+  a precise unavailable boundary for the interactive OpenClaw login runtime
+  instead of silent passthrough behavior. Repo-wide parity is now estimated at
+  ~77.6%. Verified with focused provider-auth-login pytest, adjacent
+  provider-auth proof, adjacent imported-plugin/runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `9186faf7`.
+- Closed the imported OpenClaw plugin SDK provider-auth facade seam from
+  `src/plugin-sdk/provider-auth.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/provider-auth`, resolve Copilot IDE headers, derive
+  GitHub Copilot API base URLs from proxy hints, exchange/cache Copilot API
+  tokens through fakeable adapters, detect configured provider API keys from
+  env candidates, and reach the same facade helpers through scoped and generic
+  SDK aliases. Repo-wide parity is now estimated at ~77.7%. Verified with
+  focused provider-auth facade pytest, adjacent provider-auth proof, adjacent
+  imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `35ca435d`.
+- Closed the imported OpenClaw plugin SDK provider web-search contract seam
+  from `src/plugin-sdk/provider-web-search-contract-fields.ts`,
+  `src/plugin-sdk/provider-web-search-config-contract.ts`, and
+  `src/plugin-sdk/provider-web-search-contract.ts`: native runtime entries can
+  import scoped/top-level/keyless credential field builders, configured
+  web-search credential read/write helpers, scoped search-config merge helpers,
+  selection config application, scoped SDK aliases, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~77.8%. Verified with focused
+  web-search provider contract pytest, adjacent provider-helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `3dadf0fb`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
-  channel-actions/status-helpers/channel-status path,
-  starting with the next source-backed SDK subpath or deeper route-resolution
-  binding behavior.
+  channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
+  provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
+  facade/provider-web-search-contract path, starting with the next
+  source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

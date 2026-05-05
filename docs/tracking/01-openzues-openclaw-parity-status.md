@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~76.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~77.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -422,6 +422,92 @@ may lag behind this tracker.
   provider selection, auto-select ordering, raw config merging, configured
   capability resolution, failure codes, and generic SDK re-exports.
   - Status: checkpointed in `395d23fc`
+
+- [x] Imported plugin SDK windows-spawn shim for PATH/PATHEXT executable
+  resolution, Node entrypoint wrapping, CMD/BAT shim inspection, package.json
+  `bin` fallback, fail-closed wrapper policy, opt-in shell fallback,
+  materialized argv construction, and generic SDK re-exports.
+  - Status: checkpointed in `1c172bde`
+
+- [x] Imported plugin SDK command-status shim for help text, slash-command
+  lists, config/debug flag filtering, skill-command projection, category
+  grouping, paginated command lists, scoped/unscoped SDK aliases, deprecated
+  `command-auth` compatibility exports, generic SDK re-exports, and
+  UTF-8-safe native Node bridge output.
+  - Status: checkpointed in `6c22af79`
+
+- [x] Imported plugin SDK command-auth native shim for mode-aware command
+  authorization, control-command gates, dual text-command gates, native session
+  target resolution, command body alias normalization, text-command routing,
+  native command specs, command text serialization, Telegram command
+  pagination keyboards, stored model override lookup, scoped/unscoped SDK
+  aliases, and generic SDK re-exports.
+  - Status: checkpointed in `1bbd7ed9`
+
+- [x] Imported plugin SDK webhook helper shim for path normalization/resolution,
+  fixed-window rate limits, bounded counters, anomaly tracking, JSON
+  content-type checks, request guard rejection responses, in-flight request
+  limits, target registration/lifecycle cleanup, request-path target
+  resolution, request pipeline dispatch/release behavior, sync/async
+  single-target matching, auth rejection responses, non-POST rejection,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `98a00cc5`
+
+- [x] Imported plugin SDK fetch/SSRF helper shim for bearer-scope fetch retry
+  fallback, request URL extraction, private-network opt-in policies, legacy
+  private-network alias migration, SSRF policy merging, HTTP private-network
+  target checks, hostname suffix allowlists, hostname allowlist policy
+  expansion, private/internal host detection, pinned-host policy checks,
+  guarded-fetch stubs, scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `f4a23a25`
+
+- [x] Imported plugin SDK provider model/catalog helper shim for preview model
+  ID normalization, provider-hint detection, Claude thinking profiles,
+  replay-family hook policies, Google Gemini replay sanitation/reasoning mode,
+  canonical replay hook exports, configured model catalog entries, manifest
+  catalog-to-provider config conversion, native streaming usage compatibility,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `903343d0`
+
+- [x] Imported plugin SDK provider entry/enable/auth-result helper shim for
+  single-provider entry registration, auth-method wizard/env-var defaults,
+  API-key provider catalogs with explicit base-URL overrides, static catalogs,
+  provider-plugin enable config without channel normalization, web-fetch/
+  web-search enable-contract aliases, OAuth auth profiles/config patches,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `0887e67a`
+
+- [x] Imported plugin SDK provider-auth-runtime helper shim for OAuth state
+  generation, OAuth callback URL parsing with upstream diagnostics, runtime
+  auth/API-key helper export availability, scoped/unscoped SDK aliases, and
+  generic SDK re-exports.
+  - Status: checkpointed in `cfaae804`
+
+- [x] Imported plugin SDK provider-auth API-key helper shim for API-key input
+  normalization, validation, preview formatting, secret-input mode resolution,
+  plaintext/ref API-key credential construction, auth-profile config patching
+  with mixed-mode order handling, API-key auth method export availability,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `af3d97ea`
+
+- [x] Imported plugin SDK provider-auth-login helper shim for
+  `loginOpenAICodexOAuth`, `loginChutes`, and
+  `githubCopilotLoginCommand` export availability, scoped/unscoped SDK
+  aliases, generic SDK re-exports, and a precise native unavailable boundary
+  for interactive OpenClaw login runtime calls.
+  - Status: checkpointed in `9186faf7`
+
+- [x] Imported plugin SDK provider-auth facade helper shim for Copilot IDE
+  headers, Copilot API-base derivation, fakeable Copilot token cache/fetch
+  exchange, provider env API-key detection, scoped/unscoped SDK aliases, and
+  generic SDK re-exports.
+  - Status: checkpointed in `35ca435d`
+
+- [x] Imported plugin SDK provider web-search contract helper shim for
+  scoped/top-level/keyless credential fields, configured web-search credential
+  read/write helpers, scoped config merge, selection config application,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `3dadf0fb`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

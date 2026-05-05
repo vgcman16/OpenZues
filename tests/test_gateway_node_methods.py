@@ -9427,6 +9427,7 @@ module.exports = {
             }
           })
         );
+        const paginated = buildCommandsMessagePaginated({ commands: { config: false } });
         return {
           helpContains: buildHelpMessage({ commands: { config: false } }).includes(
             "/commands for full list"
@@ -9439,7 +9440,17 @@ module.exports = {
               "/models - List model providers/models."
             )
           ],
-          paginated: buildCommandsMessagePaginated({ commands: { config: false } }),
+          paginated: {
+            currentPage: paginated.currentPage,
+            totalPagesType: typeof paginated.totalPages,
+            hasNext: paginated.hasNext,
+            hasPrev: paginated.hasPrev,
+            textChecks: [
+              paginated.text.includes("Slash commands"),
+              paginated.text.includes("/commands - List all slash commands."),
+              paginated.text.includes("/models - List model providers/models.")
+            ]
+          },
           groupOwner,
           pairedGroup,
           dmNonCommand,
@@ -9533,12 +9544,11 @@ module.exports = {
         "helpContains": True,
         "commandsContains": [True, True],
         "paginated": {
-            "text": (
-                "More: /tools for available capabilities\n"
-                "/models - List model providers/models."
-            ),
             "currentPage": 1,
-            "totalPages": 1,
+            "totalPagesType": "number",
+            "hasNext": False,
+            "hasPrev": False,
+            "textChecks": [True, True, True],
         },
         "groupOwner": {
             "shouldComputeAuth": True,
@@ -10494,6 +10504,2640 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_auth_native_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-auth-native.cjs"
+    runtime_entry.write_text(
+        """
+const commandAuth = require("openclaw/plugin-sdk/command-auth");
+const commandNative = require("openclaw/plugin-sdk/command-auth-native");
+const commandGating = require("openclaw/plugin-sdk/command-gating");
+const commandSurface = require("openclaw/plugin-sdk/command-surface");
+const nativeRegistry = require("openclaw/plugin-sdk/native-command-registry");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_auth_native",
+      description: "Use OpenClaw command auth native SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const modelCommand = {
+          key: "model",
+          nativeName: "model",
+          description: "model",
+          textAliases: ["/model"],
+          argsParsing: "positional",
+          args: [
+            { name: "model", description: "model", type: "string", captureRemaining: true }
+          ]
+        };
+        const nativeSpecs = nativeRegistry.listNativeCommandSpecsForConfig(
+          { commands: { config: false, debug: false } },
+          {
+            skillCommands: [
+              { name: "demo_skill", skillName: "demo-skill", description: "Demo skill" }
+            ]
+          }
+        );
+        return {
+          modePolicy: [
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: false }],
+              modeWhenAccessGroupsOff: "allow"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: true }],
+              modeWhenAccessGroupsOff: "deny"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: false }],
+              modeWhenAccessGroupsOff: "configured"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [],
+              modeWhenAccessGroupsOff: "configured"
+            })
+          ],
+          gates: [
+            commandAuth.resolveControlCommandGate({
+              useAccessGroups: true,
+              authorizers: [{ configured: true, allowed: false }],
+              allowTextCommands: true,
+              hasControlCommand: true
+            }),
+            commandGating.resolveDualTextControlCommandGate({
+              useAccessGroups: true,
+              primaryConfigured: false,
+              primaryAllowed: false,
+              secondaryConfigured: true,
+              secondaryAllowed: true,
+              hasControlCommand: true
+            })
+          ],
+          targets: [
+            commandNative.resolveNativeCommandSessionTargets({
+              agentId: "main",
+              sessionPrefix: "discord",
+              userId: "UserA",
+              targetSessionKey: "target",
+              lowercaseSessionKey: true
+            }),
+            commandNative.resolveNativeCommandSessionTargets({
+              agentId: "main",
+              sessionPrefix: "discord",
+              userId: "UserA",
+              targetSessionKey: "target",
+              boundSessionKey: "Bound-Key",
+              lowercaseSessionKey: true
+            })
+          ],
+          normalized: [
+            commandSurface.normalizeCommandBody("/help@openclaw: now", {
+              botUsername: "openclaw"
+            }),
+            commandAuth.normalizeCommandBody("/thinking high"),
+            commandAuth.normalizeCommandBody("/dock_telegram")
+          ],
+          shouldHandle: [
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "discord",
+              commandSource: "text",
+              nativeCommandSurfaces: ["discord"]
+            }),
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "whatsapp",
+              commandSource: "text",
+              nativeCommandSurfaces: ["discord"]
+            }),
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "discord",
+              commandSource: "native",
+              nativeCommandSurfaces: ["discord"]
+            })
+          ],
+          nativeSpecNames: nativeSpecs.map((spec) => spec.name),
+          commandText: commandNative.buildCommandTextFromArgs(modelCommand, {
+            values: { model: "gpt-5.4" }
+          }),
+          keyboard: commandAuth.buildCommandsPaginationKeyboard(2, 3, "agent-a"),
+          stored: [
+            commandAuth.resolveStoredModelOverride({
+              sessionEntry: { providerOverride: "openai", modelOverride: "gpt-5" },
+              defaultProvider: "anthropic"
+            }),
+            commandAuth.resolveStoredModelOverride({
+              sessionStore: {
+                parent: { providerOverride: "google", modelOverride: "gemini" }
+              },
+              sessionKey: "child",
+              parentSessionKey: "parent",
+              defaultProvider: "openai"
+            })
+          ],
+          exportTypes: [
+            typeof commandAuth.resolveControlCommandGate,
+            typeof commandAuth.resolveDualTextControlCommandGate,
+            typeof commandAuth.resolveNativeCommandSessionTargets,
+            typeof commandAuth.shouldHandleTextCommands,
+            typeof commandAuth.buildCommandTextFromArgs,
+            typeof commandAuth.listNativeCommandSpecsForConfig,
+            typeof commandAuth.buildCommandsPaginationKeyboard,
+            typeof commandAuth.resolveStoredModelOverride,
+            typeof genericSdk.resolveControlCommandGate
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-auth-native-plugin",
+                    "name": "Runtime Command Auth Native Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-auth-native-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_auth_native"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_auth_native"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "modePolicy": [True, False, False, True],
+        "gates": [
+            {"commandAuthorized": False, "shouldBlock": True},
+            {"commandAuthorized": True, "shouldBlock": False},
+        ],
+        "targets": [
+            {"sessionKey": "agent:main:discord:usera", "commandTargetSessionKey": "target"},
+            {"sessionKey": "bound-key", "commandTargetSessionKey": "Bound-Key"},
+        ],
+        "normalized": ["/help now", "/think high", "/dock_telegram"],
+        "shouldHandle": [False, True, True],
+        "nativeSpecNames": [
+            "new",
+            "reset",
+            "compact",
+            "stop",
+            "think",
+            "model",
+            "fast",
+            "verbose",
+            "trace",
+            "help",
+            "commands",
+            "tools",
+            "status",
+            "tasks",
+            "whoami",
+            "context",
+            "models",
+            "approve",
+            "skill",
+            "demo_skill",
+        ],
+        "commandText": "/model gpt-5.4",
+        "keyboard": [
+            [
+                {"text": "\u25c0 Prev", "callback_data": "commands_page_1:agent-a"},
+                {"text": "2/3", "callback_data": "commands_page_noop:agent-a"},
+                {"text": "Next \u25b6", "callback_data": "commands_page_3:agent-a"},
+            ]
+        ],
+        "stored": [
+            {"provider": "openai", "model": "gpt-5", "source": "session"},
+            {"provider": "google", "model": "gemini", "source": "parent"},
+        ],
+        "exportTypes": ["function"] * 9,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_webhook_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-webhook-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const webhookPath = require("openclaw/plugin-sdk/webhook-path");
+const scopedWebhookPath = require("@openclaw/plugin-sdk/webhook-path");
+const memoryGuards = require("openclaw/plugin-sdk/webhook-memory-guards");
+const requestGuards = require("openclaw/plugin-sdk/webhook-request-guards");
+const webhookTargets = require("openclaw/plugin-sdk/webhook-targets");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createReq(method, url, headers) {
+  return {
+    method,
+    url,
+    headers: headers || {},
+    socket: { remoteAddress: "127.0.0.1" }
+  };
+}
+
+function createRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: undefined,
+    setHeader(name, value) {
+      this.headers[String(name).toLowerCase()] = value;
+    },
+    getHeader(name) {
+      return this.headers[String(name).toLowerCase()];
+    },
+    end(value) {
+      this.body = value;
+    }
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.webhook_helpers",
+      description: "Use OpenClaw webhook SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const limiter = memoryGuards.createFixedWindowRateLimiter({
+          windowMs: 10,
+          maxRequests: 1,
+          maxTrackedKeys: 5,
+          pruneIntervalMs: 10
+        });
+        const counter = memoryGuards.createBoundedCounter({
+          maxTrackedKeys: 2,
+          ttlMs: 10,
+          pruneIntervalMs: 10
+        });
+        const logs = [];
+        const anomaly = memoryGuards.createWebhookAnomalyTracker({
+          trackedStatusCodes: [401],
+          logEvery: 2
+        });
+        const inFlight = requestGuards.createWebhookInFlightLimiter({
+          maxInFlightPerKey: 1,
+          maxTrackedKeys: 5
+        });
+
+        const firstLifecycleRes = createRes();
+        const firstLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: firstLifecycleRes,
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        const secondLifecycleRes = createRes();
+        const secondLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: secondLifecycleRes,
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        if (firstLifecycle.ok) {
+          firstLifecycle.release();
+        }
+        const thirdLifecycle = requestGuards.beginWebhookRequestPipelineOrReject({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: createRes(),
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: inFlight,
+          inFlightKey: "ip"
+        });
+        if (thirdLifecycle.ok) {
+          thirdLifecycle.release();
+        }
+
+        const methodRes = createRes();
+        const methodOk = requestGuards.applyBasicWebhookRequestGuards({
+          req: createReq("GET", "/hook"),
+          res: methodRes,
+          allowMethods: ["POST"]
+        });
+        const mediaTypeRes = createRes();
+        const mediaTypeOk = requestGuards.applyBasicWebhookRequestGuards({
+          req: createReq("POST", "/hook", { "content-type": "text/plain" }),
+          res: mediaTypeRes,
+          requireJsonContentType: true
+        });
+
+        const targetMap = new Map();
+        const lifecycle = [];
+        const registeredA = webhookTargets.registerWebhookTarget(
+          targetMap,
+          { path: "hook/", id: "A" },
+          {
+            onFirstPathTarget: ({ path, target }) => {
+              lifecycle.push(`first:${path}:${target.id}`);
+              return () => lifecycle.push(`teardown:${path}`);
+            },
+            onLastPathTargetRemoved: ({ path }) => lifecycle.push(`last:${path}`)
+          }
+        );
+        const registeredB = webhookTargets.registerWebhookTarget(targetMap, {
+          path: "/hook",
+          id: "B"
+        });
+        const resolved = webhookTargets.resolveWebhookTargets(
+          createReq("POST", "/hook/?query=1"),
+          targetMap
+        );
+        registeredB.unregister();
+        const sizeAfterB = (targetMap.get("/hook") || []).length;
+        registeredA.unregister();
+        const hasAfterA = targetMap.has("/hook");
+
+        const pipelineCalls = [];
+        const pipelineHandled = await webhookTargets.withResolvedWebhookRequestPipeline({
+          req: createReq("POST", "/hook", { "content-type": "application/json" }),
+          res: createRes(),
+          targetsByPath: new Map([["/hook", [{ id: "P" }]]]),
+          allowMethods: ["POST"],
+          requireJsonContentType: true,
+          inFlightLimiter: requestGuards.createWebhookInFlightLimiter(),
+          handle: ({ path, targets }) => pipelineCalls.push(`${path}:${targets[0].id}`)
+        });
+        const pipelineMissing = await webhookTargets.withResolvedWebhookRequestPipeline({
+          req: createReq("POST", "/missing"),
+          res: createRes(),
+          targetsByPath: new Map([["/hook", [{ id: "P" }]]]),
+          handle: () => pipelineCalls.push("missing")
+        });
+
+        const authRes = createRes();
+        const authTarget = webhookTargets.resolveWebhookTargetWithAuthOrRejectSync({
+          targets: [{ id: "A" }, { id: "B" }],
+          res: authRes,
+          isMatch: (target) => target.id === "B"
+        });
+        const rejectAuthRes = createRes();
+        const rejectAuthTarget = webhookTargets.resolveWebhookTargetWithAuthOrRejectSync({
+          targets: [{ id: "A" }],
+          res: rejectAuthRes,
+          isMatch: () => false
+        });
+        const rejectMethodRes = createRes();
+
+        return {
+          paths: [
+            webhookPath.normalizeWebhookPath(" hook/ "),
+            webhookPath.normalizeWebhookPath(" / "),
+            webhookPath.resolveWebhookPath({ webhookUrl: "https://example.test/a/b?x=1" }),
+            webhookPath.resolveWebhookPath({ webhookPath: " explicit/ignored " }),
+            webhookPath.resolveWebhookPath({ webhookUrl: "not a url", defaultPath: "/fallback" }),
+            scopedWebhookPath.normalizeWebhookPath("scoped")
+          ],
+          rate: [
+            limiter.isRateLimited("k", 100),
+            limiter.isRateLimited("k", 101),
+            limiter.isRateLimited("k", 111),
+            limiter.size()
+          ],
+          counter: [
+            counter.increment("old", 100),
+            counter.increment("old", 101),
+            counter.increment("fresh", 112),
+            counter.size()
+          ],
+          anomaly: [
+            anomaly.record({
+              key: "k",
+              statusCode: 415,
+              message: (count) => `ignored:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            anomaly.record({
+              key: "k",
+              statusCode: 401,
+              message: (count) => `hit:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            anomaly.record({
+              key: "k",
+              statusCode: 401,
+              message: (count) => `hit:${count}`,
+              log: (message) => logs.push(message)
+            }),
+            logs,
+            anomaly.size()
+          ],
+          contentTypes: [
+            requestGuards.isJsonContentType("application/json"),
+            requestGuards.isJsonContentType("application/cloudevents+json; charset=utf-8"),
+            requestGuards.isJsonContentType("text/plain"),
+            requestGuards.WEBHOOK_BODY_READ_DEFAULTS.preAuth.maxBytes,
+            requestGuards.WEBHOOK_IN_FLIGHT_DEFAULTS.maxInFlightPerKey
+          ],
+          guardRejections: [
+            methodOk,
+            methodRes.statusCode,
+            methodRes.getHeader("allow"),
+            methodRes.body,
+            mediaTypeOk,
+            mediaTypeRes.statusCode,
+            mediaTypeRes.body
+          ],
+          inFlight: [
+            firstLifecycle.ok,
+            secondLifecycle.ok,
+            secondLifecycleRes.statusCode,
+            thirdLifecycle.ok,
+            inFlight.size()
+          ],
+          targets: {
+            registered: registeredA.target,
+            resolved,
+            sizeAfterB,
+            hasAfterA,
+            lifecycle,
+            single: webhookTargets.resolveSingleWebhookTarget(["a", "b"], (value) => value === "b"),
+            ambiguous: webhookTargets.resolveSingleWebhookTarget(["a", "b"], () => true),
+            asyncSingle: await webhookTargets.resolveSingleWebhookTargetAsync(
+              ["a", "b"],
+              async (value) => value === "a"
+            ),
+            authTarget,
+            rejectAuthTarget,
+            rejectAuthStatus: rejectAuthRes.statusCode,
+            rejectAuthBody: rejectAuthRes.body,
+            rejectedMethod: webhookTargets.rejectNonPostWebhookRequest(
+              createReq("GET", "/hook"),
+              rejectMethodRes
+            ),
+            rejectedMethodStatus: rejectMethodRes.statusCode,
+            rejectedMethodAllow: rejectMethodRes.getHeader("allow"),
+            rejectedMethodBody: rejectMethodRes.body
+          },
+          pipeline: [pipelineHandled, pipelineMissing, pipelineCalls],
+          exportTypes: [
+            typeof webhookPath.normalizeWebhookPath,
+            typeof memoryGuards.createFixedWindowRateLimiter,
+            typeof requestGuards.createWebhookInFlightLimiter,
+            typeof webhookTargets.registerWebhookTarget,
+            typeof genericSdk.normalizeWebhookPath,
+            typeof genericSdk.createWebhookAnomalyTracker
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-webhook-helpers-plugin",
+                    "name": "Runtime Webhook Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-webhook-helpers-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.webhook_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.webhook_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "paths": ["/hook", "/", "/a/b", "/explicit/ignored", None, "/scoped"],
+        "rate": [False, True, False, 1],
+        "counter": [1, 2, 1, 1],
+        "anomaly": [0, 1, 2, ["hit:1", "hit:2"], 1],
+        "contentTypes": [True, True, False, 65536, 8],
+        "guardRejections": [
+            False,
+            405,
+            "POST",
+            "Method Not Allowed",
+            False,
+            415,
+            "Unsupported Media Type",
+        ],
+        "inFlight": [True, False, 429, True, 0],
+        "targets": {
+            "registered": {"path": "/hook", "id": "A"},
+            "resolved": {
+                "path": "/hook",
+                "targets": [{"path": "/hook", "id": "A"}, {"path": "/hook", "id": "B"}],
+            },
+            "sizeAfterB": 1,
+            "hasAfterA": False,
+            "lifecycle": ["first:/hook:A", "teardown:/hook", "last:/hook"],
+            "single": {"kind": "single", "target": "b"},
+            "ambiguous": {"kind": "ambiguous"},
+            "asyncSingle": {"kind": "single", "target": "a"},
+            "authTarget": {"id": "B"},
+            "rejectAuthTarget": None,
+            "rejectAuthStatus": 401,
+            "rejectAuthBody": "unauthorized",
+            "rejectedMethod": True,
+            "rejectedMethodStatus": 405,
+            "rejectedMethodAllow": "POST",
+            "rejectedMethodBody": "Method Not Allowed",
+        },
+        "pipeline": [True, False, ["/hook:P"]],
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_fetch_ssrf_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-fetch-ssrf-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const fetchAuth = require("openclaw/plugin-sdk/fetch-auth");
+const requestUrl = require("openclaw/plugin-sdk/request-url");
+const ssrfPolicy = require("openclaw/plugin-sdk/ssrf-policy");
+const ssrfRuntime = require("openclaw/plugin-sdk/ssrf-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.fetch_ssrf_helpers",
+      description: "Use OpenClaw fetch/SSRF SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const fetchCalls = [];
+        const tokenCalls = [];
+        const response = await fetchAuth.fetchWithBearerAuthScopeFallback({
+          url: "https://graph.microsoft.com/v1.0/me",
+          scopes: ["scope-a", "scope-b"],
+          fetchFn: async (url, init) => {
+            const headers = new Headers(init && init.headers);
+            fetchCalls.push({
+              url,
+              authorization: headers.get("authorization")
+            });
+            if (fetchCalls.length === 1) {
+              return new Response("unauthorized", { status: 401 });
+            }
+            return new Response("ok", { status: 200 });
+          },
+          tokenProvider: {
+            getAccessToken: async (scope) => {
+              tokenCalls.push(scope);
+              return `token-${tokenCalls.length}`;
+            }
+          }
+        });
+
+        let httpsError = "";
+        try {
+          await fetchAuth.fetchWithBearerAuthScopeFallback({
+            url: "http://example.com/file",
+            scopes: [],
+            requireHttps: true,
+            fetchFn: async () => new Response("never", { status: 200 })
+          });
+        } catch (error) {
+          httpsError = error.message;
+        }
+
+        const noAttachCalls = [];
+        const noAttachResponse = await fetchAuth.fetchWithBearerAuthScopeFallback({
+          url: "https://example.com/file",
+          scopes: ["scope-a"],
+          fetchFn: async (url, init) => {
+            noAttachCalls.push({
+              url,
+              authorization: new Headers(init && init.headers).get("authorization")
+            });
+            return new Response("unauthorized", { status: 401 });
+          },
+          tokenProvider: {
+            getAccessToken: async () => "unused"
+          },
+          shouldAttachAuth: () => false
+        });
+
+        const migratedChanges = [];
+        const migrated = ssrfPolicy.migrateLegacyFlatAllowPrivateNetworkAlias({
+          entry: {
+            allowPrivateNetwork: true,
+            network: { dangerouslyAllowPrivateNetwork: false }
+          },
+          pathPrefix: "channels.matrix",
+          changes: migratedChanges
+        });
+
+        const privateAllowed = await ssrfPolicy.assertHttpUrlTargetsPrivateNetwork(
+          "http://matrix-synapse:8008",
+          {
+            dangerouslyAllowPrivateNetwork: true,
+            lookupFn: async () => [{ address: "10.0.0.5", family: 4 }]
+          }
+        ).then(() => "ok");
+
+        let privateRejected = "";
+        try {
+          await ssrfPolicy.assertHttpUrlTargetsPrivateNetwork(
+            "http://matrix.example.org:8008",
+            {
+              dangerouslyAllowPrivateNetwork: true,
+              lookupFn: async () => [{ address: "93.184.216.34", family: 4 }],
+              errorMessage: "Matrix homeserver must target private hosts"
+            }
+          );
+        } catch (error) {
+          privateRejected = error.message;
+        }
+
+        return {
+          fetch: {
+            status: response.status,
+            fetchCalls,
+            tokenCalls,
+            httpsError,
+            noAttachStatus: noAttachResponse.status,
+            noAttachCalls
+          },
+          urls: [
+            requestUrl.resolveRequestUrl("https://example.com/a"),
+            requestUrl.resolveRequestUrl(new URL("https://example.com/b")),
+            requestUrl.resolveRequestUrl({ url: "https://example.com/c" }),
+            requestUrl.resolveRequestUrl({ href: "https://example.com/ignored" })
+          ],
+          policies: [
+            ssrfPolicy.isPrivateNetworkOptInEnabled(true),
+            ssrfPolicy.isPrivateNetworkOptInEnabled({
+              network: { dangerouslyAllowPrivateNetwork: true }
+            }),
+            ssrfPolicy.isPrivateNetworkOptInEnabled({
+              network: { dangerouslyAllowPrivateNetwork: false }
+            }),
+            ssrfPolicy.ssrfPolicyFromDangerouslyAllowPrivateNetwork(true),
+            ssrfPolicy.ssrfPolicyFromAllowPrivateNetwork(false),
+            ssrfPolicy.ssrfPolicyFromPrivateNetworkOptIn({
+              allowPrivateNetwork: true
+            }),
+            ssrfPolicy.mergeSsrFPolicies(
+              {
+                allowPrivateNetwork: true,
+                allowedHostnames: ["api.example.com"],
+                hostnameAllowlist: ["downloads.example.com"]
+              },
+              {
+                dangerouslyAllowPrivateNetwork: true,
+                allowRfc2544BenchmarkRange: true,
+                allowIpv6UniqueLocalRange: true,
+                allowedHostnames: ["api.example.com", "cdn.example.com"],
+                hostnameAllowlist: ["downloads.example.com", "assets.example.com"]
+              }
+            ),
+            ssrfRuntime.ssrfPolicyFromHttpBaseUrlAllowedHostname(
+              "https://api.example.com/base"
+            )
+          ],
+          legacy: {
+            hasFlat: ssrfPolicy.hasLegacyFlatAllowPrivateNetworkAlias({
+              allowPrivateNetwork: true
+            }),
+            migrated,
+            changes: migratedChanges
+          },
+          suffix: [
+            ssrfPolicy.normalizeHostnameSuffixAllowlist([
+              "*.TrafficManager.NET",
+              ".trafficmanager.net.",
+              " * ",
+              "x"
+            ]),
+            ssrfPolicy.isHttpsUrlAllowedByHostnameSuffixAllowlist(
+              "https://a.example.com/x",
+              ["example.com"]
+            ),
+            ssrfPolicy.isHttpsUrlAllowedByHostnameSuffixAllowlist(
+              "http://a.example.com/x",
+              ["example.com"]
+            ),
+            ssrfPolicy.buildHostnameAllowlistPolicyFromSuffixAllowlist([
+              "SharePoint.com"
+            ])
+          ],
+          privateNetwork: [
+            ssrfRuntime.isPrivateIpAddress("10.0.0.1"),
+            ssrfRuntime.isBlockedHostnameOrIp("localhost"),
+            ssrfRuntime.isBlockedHostnameOrIp("api.example.com"),
+            privateAllowed,
+            privateRejected
+          ],
+          exportTypes: [
+            typeof fetchAuth.fetchWithBearerAuthScopeFallback,
+            typeof requestUrl.resolveRequestUrl,
+            typeof ssrfPolicy.mergeSsrFPolicies,
+            typeof ssrfRuntime.isPrivateIpAddress,
+            typeof genericSdk.fetchWithBearerAuthScopeFallback,
+            typeof genericSdk.buildHostnameAllowlistPolicyFromSuffixAllowlist
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-fetch-ssrf-helpers-plugin",
+                    "name": "Runtime Fetch SSRF Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-fetch-ssrf-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.fetch_ssrf_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.fetch_ssrf_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "fetch": {
+            "status": 200,
+            "fetchCalls": [
+                {"url": "https://graph.microsoft.com/v1.0/me", "authorization": None},
+                {
+                    "url": "https://graph.microsoft.com/v1.0/me",
+                    "authorization": "Bearer token-1",
+                },
+            ],
+            "tokenCalls": ["scope-a"],
+            "httpsError": "URL must use HTTPS: http://example.com/file",
+            "noAttachStatus": 401,
+            "noAttachCalls": [
+                {"url": "https://example.com/file", "authorization": None}
+            ],
+        },
+        "urls": [
+            "https://example.com/a",
+            "https://example.com/b",
+            "https://example.com/c",
+            "",
+        ],
+        "policies": [
+            True,
+            True,
+            False,
+            {"allowPrivateNetwork": True},
+            None,
+            {"allowPrivateNetwork": True},
+            {
+                "allowPrivateNetwork": True,
+                "dangerouslyAllowPrivateNetwork": True,
+                "allowRfc2544BenchmarkRange": True,
+                "allowIpv6UniqueLocalRange": True,
+                "allowedHostnames": ["api.example.com", "cdn.example.com"],
+                "hostnameAllowlist": ["downloads.example.com", "assets.example.com"],
+            },
+            {"allowedHostnames": ["api.example.com"]},
+        ],
+        "legacy": {
+            "hasFlat": True,
+            "migrated": {
+                "entry": {"network": {"dangerouslyAllowPrivateNetwork": False}},
+                "changed": True,
+            },
+            "changes": [
+                "Moved channels.matrix.allowPrivateNetwork -> "
+                "channels.matrix.network.dangerouslyAllowPrivateNetwork (false)."
+            ],
+        },
+        "suffix": [
+            ["*"],
+            True,
+            False,
+            {"hostnameAllowlist": ["sharepoint.com", "*.sharepoint.com"]},
+        ],
+        "privateNetwork": [
+            True,
+            True,
+            False,
+            "ok",
+            "Matrix homeserver must target private hosts",
+        ],
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_model_catalog_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-model-catalog.cjs"
+    runtime_entry.write_text(
+        """
+const providerModel = require("openclaw/plugin-sdk/provider-model-shared");
+const providerIds = require("openclaw/plugin-sdk/provider-model-id-normalize");
+const providerCatalog = require("openclaw/plugin-sdk/provider-catalog-shared");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_model_catalog",
+      description: "Use OpenClaw provider model/catalog SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const openaiHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "openai-compatible",
+          sanitizeToolCallIds: false
+        });
+        const anthropicHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "anthropic-by-model"
+        });
+        const nativeAnthropicHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "native-anthropic-by-model"
+        });
+        const googleHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "google-gemini"
+        });
+        const passthroughGeminiHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "passthrough-gemini"
+        });
+        const hybridHooks = providerModel.buildProviderReplayFamilyHooks({
+          family: "hybrid-anthropic-openai",
+          anthropicModelDropThinkingBlocks: true
+        });
+
+        const manifestConfig = providerCatalog.buildManifestModelProviderConfig({
+          providerId: "example",
+          catalog: {
+            baseUrl: "https://api.example.test/v1",
+            api: "openai-completions",
+            headers: { "x-provider": "example" },
+            models: [
+              {
+                id: "example-model",
+                name: "Example Model",
+                input: ["text", "image"],
+                reasoning: true,
+                contextWindow: 128000,
+                contextTokens: 64000,
+                maxTokens: 8192,
+                cost: {
+                  input: 1,
+                  output: 2,
+                  cacheRead: 0.25,
+                  cacheWrite: 0.5,
+                  tieredPricing: [
+                    {
+                      input: 0.5,
+                      output: 1,
+                      cacheRead: 0.1,
+                      cacheWrite: 0.2,
+                      range: [0, 1000000]
+                    }
+                  ]
+                },
+                compat: { supportsUsageInStreaming: true }
+              }
+            ]
+          }
+        });
+
+        let missingContextError = "";
+        try {
+          providerCatalog.buildManifestModelProviderConfig({
+            providerId: "example",
+            catalog: {
+              baseUrl: "https://api.example.test/v1",
+              models: [{ id: "missing-context", maxTokens: 8192 }]
+            }
+          });
+        } catch (error) {
+          missingContextError = error.message;
+        }
+
+        return {
+          ids: [
+            providerIds.normalizeGooglePreviewModelId("gemini-3-pro"),
+            providerIds.normalizeGooglePreviewModelId("gemini-3.1-flash-preview"),
+            providerIds.normalizeAntigravityPreviewModelId("gemini-3.1-pro"),
+            providerIds.normalizeNativeXaiModelId("grok-4-fast-reasoning"),
+            providerModel.getModelProviderHint("x-ai/grok-4"),
+            providerModel.isProxyReasoningUnsupportedModelHint("x-ai/grok-4")
+          ],
+          thinking: {
+            opus: providerModel.resolveClaudeThinkingProfile("claude-opus-4.7-20260219"),
+            adaptive: providerModel.resolveClaudeThinkingProfile("claude-sonnet-4-6"),
+            base: providerModel.resolveClaudeThinkingProfile("claude-haiku-4")
+          },
+          replay: {
+            openai: openaiHooks.buildReplayPolicy({
+              provider: "xai",
+              modelApi: "openai-completions",
+              modelId: "google/gemma-4-26b-a4b-it"
+            }),
+            anthropic: anthropicHooks.buildReplayPolicy({
+              provider: "amazon-bedrock",
+              modelApi: "bedrock-converse-stream",
+              modelId: "claude-sonnet-4-6"
+            }),
+            nativeAnthropic: nativeAnthropicHooks.buildReplayPolicy({
+              provider: "anthropic",
+              modelApi: "anthropic-messages",
+              modelId: "claude-sonnet-4-6"
+            }),
+            google: {
+              policy: googleHooks.buildReplayPolicy({
+                provider: "google",
+                modelApi: "google-generative-ai",
+                modelId: "gemini-3.1-pro-preview"
+              }),
+              reasoningMode: googleHooks.resolveReasoningOutputMode({}),
+              sanitized: googleHooks.sanitizeReplayHistory({
+                messages: [{ role: "assistant", content: [{ type: "text", text: "hello" }] }]
+              })
+            },
+            passthroughGemini: passthroughGeminiHooks.buildReplayPolicy({
+              provider: "openrouter",
+              modelApi: "openai-completions",
+              modelId: "gemini-2.5-pro"
+            }),
+            hybrid: hybridHooks.buildReplayPolicy({
+              provider: "minimax",
+              modelApi: "anthropic-messages",
+              modelId: "claude-sonnet-4-6"
+            }),
+            canonical: providerModel.OPENAI_COMPATIBLE_REPLAY_HOOKS.buildReplayPolicy({
+              provider: "xai",
+              modelApi: "openai-completions",
+              modelId: "grok-4"
+            })
+          },
+          catalog: {
+            nativeCompat: [
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-qwen",
+                baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+              }),
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-kimi",
+                baseUrl: "https://api.moonshot.ai/v1"
+              }),
+              providerCatalog.supportsNativeStreamingUsageCompat({
+                providerId: "custom-proxy",
+                baseUrl: "https://proxy.example.com/v1"
+              })
+            ],
+            applied: providerCatalog.applyProviderNativeStreamingUsageCompat({
+              providerId: "custom-qwen",
+              providerConfig: {
+                api: "openai-completions",
+                baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                models: [
+                  { id: "qwen-plus", compat: {} },
+                  { id: "qwen-max", compat: { supportsUsageInStreaming: false } }
+                ]
+              }
+            }),
+            configured: providerCatalog.readConfiguredProviderCatalogEntries({
+              providerId: "kilocode",
+              config: {
+                models: {
+                  providers: {
+                    kilocode: {
+                      models: [
+                        {
+                          id: "google/gemini-3-pro-preview",
+                          name: "Gemini 3 Pro Preview",
+                          input: ["text", "image", "video", "audio", "bad"],
+                          reasoning: true,
+                          contextWindow: 1048576
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }),
+            manifestConfig,
+            missingContextError
+          },
+          exportTypes: [
+            typeof providerModel.buildProviderReplayFamilyHooks,
+            typeof providerModel.resolveClaudeThinkingProfile,
+            typeof providerIds.normalizeGooglePreviewModelId,
+            typeof providerCatalog.buildManifestModelProviderConfig,
+            typeof providerCatalog.applyProviderNativeStreamingUsageCompat,
+            typeof genericSdk.buildProviderReplayFamilyHooks
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-model-catalog-plugin",
+                    "name": "Runtime Provider Model Catalog Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-model-catalog.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_model_catalog"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_model_catalog"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ids": [
+            "gemini-3-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.1-pro-low",
+            "grok-4-fast",
+            "x-ai",
+            True,
+        ],
+        "thinking": {
+            "opus": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                    {"id": "xhigh"},
+                    {"id": "adaptive"},
+                    {"id": "max"},
+                ],
+                "defaultLevel": "off",
+            },
+            "adaptive": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                    {"id": "adaptive"},
+                ],
+                "defaultLevel": "adaptive",
+            },
+            "base": {
+                "levels": [
+                    {"id": "off"},
+                    {"id": "minimal"},
+                    {"id": "low"},
+                    {"id": "medium"},
+                    {"id": "high"},
+                ]
+            },
+        },
+        "replay": {
+            "openai": {
+                "applyAssistantFirstOrderingFix": True,
+                "validateGeminiTurns": True,
+                "validateAnthropicTurns": True,
+                "dropReasoningFromHistory": True,
+            },
+            "anthropic": {
+                "validateAnthropicTurns": True,
+                "repairToolUseResultPairing": True,
+            },
+            "nativeAnthropic": {
+                "sanitizeMode": "full",
+                "preserveNativeAnthropicToolUseIds": True,
+                "preserveSignatures": True,
+                "repairToolUseResultPairing": True,
+                "validateAnthropicTurns": True,
+                "allowSyntheticToolResults": True,
+            },
+            "google": {
+                "policy": {
+                    "validateGeminiTurns": True,
+                    "allowSyntheticToolResults": True,
+                },
+                "reasoningMode": "tagged",
+                "sanitized": [
+                    {"role": "user", "content": "(session bootstrap)"},
+                    {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+                ],
+            },
+            "passthroughGemini": {
+                "applyAssistantFirstOrderingFix": False,
+                "validateGeminiTurns": False,
+                "validateAnthropicTurns": False,
+                "sanitizeThoughtSignatures": {
+                    "allowBase64Only": True,
+                    "includeCamelCase": True,
+                },
+            },
+            "hybrid": {
+                "validateAnthropicTurns": True,
+                "repairToolUseResultPairing": True,
+            },
+            "canonical": {
+                "sanitizeToolCallIds": True,
+                "applyAssistantFirstOrderingFix": True,
+                "validateGeminiTurns": True,
+            },
+        },
+        "catalog": {
+            "nativeCompat": [True, True, False],
+            "applied": {
+                "api": "openai-completions",
+                "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "models": [
+                    {"id": "qwen-plus", "compat": {"supportsUsageInStreaming": True}},
+                    {"id": "qwen-max", "compat": {"supportsUsageInStreaming": False}},
+                ],
+            },
+            "configured": [
+                {
+                    "provider": "kilocode",
+                    "id": "google/gemini-3-pro-preview",
+                    "name": "Gemini 3 Pro Preview",
+                    "contextWindow": 1048576,
+                    "reasoning": True,
+                    "input": ["text", "image", "video", "audio"],
+                }
+            ],
+            "manifestConfig": {
+                "baseUrl": "https://api.example.test/v1",
+                "api": "openai-completions",
+                "headers": {"x-provider": "example"},
+                "models": [
+                    {
+                        "id": "example-model",
+                        "name": "Example Model",
+                        "reasoning": True,
+                        "input": ["text", "image"],
+                        "cost": {
+                            "input": 1,
+                            "output": 2,
+                            "cacheRead": 0.25,
+                            "cacheWrite": 0.5,
+                            "tieredPricing": [
+                                {
+                                    "input": 0.5,
+                                    "output": 1,
+                                    "cacheRead": 0.1,
+                                    "cacheWrite": 0.2,
+                                    "range": [0, 1000000],
+                                }
+                            ],
+                        },
+                        "contextWindow": 128000,
+                        "contextTokens": 64000,
+                        "maxTokens": 8192,
+                        "compat": {"supportsUsageInStreaming": True},
+                    }
+                ],
+            },
+            "missingContextError": "Manifest modelCatalog row missing-context is "
+            "missing contextWindow",
+        },
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_entry_enable_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-entry-enable-auth.cjs"
+    runtime_entry.write_text(
+        """
+const providerEntry = require("openclaw/plugin-sdk/provider-entry");
+const providerEnable = require("openclaw/plugin-sdk/provider-enable-config");
+const webFetchContract = require("openclaw/plugin-sdk/provider-web-fetch-contract");
+const webSearchContract = require("openclaw/plugin-sdk/provider-web-search-contract");
+const authResult = require("openclaw/plugin-sdk/provider-auth-result");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createModel(id, name) {
+  return {
+    id,
+    name,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 8192
+  };
+}
+
+function capture(entry, config) {
+  const captured = { providers: [], webSearchProviders: [] };
+  entry.register({
+    registerProvider: (provider) => captured.providers.push(provider),
+    registerWebSearchProvider: (provider) => captured.webSearchProviders.push(provider)
+  });
+  const provider = captured.providers[0];
+  const ctx = {
+    config: config || {},
+    env: {},
+    resolveProviderApiKey: () => ({ apiKey: "test-key" }),
+    resolveProviderAuth: () => ({ apiKey: "test-key", mode: "api_key", source: "env" })
+  };
+  return Promise.resolve(provider.catalog.run(ctx)).then((catalog) =>
+    Promise.resolve(provider.staticCatalog && provider.staticCatalog.run(ctx)).then(
+      (staticCatalog) => ({ captured, provider, catalog, staticCatalog })
+    )
+  );
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_entry_enable_auth",
+      description: "Use OpenClaw provider entry/enable/auth SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const defaultEntry = providerEntry.defineSingleProviderPluginEntry({
+          id: "demo",
+          name: "Demo Provider",
+          description: "Demo provider plugin",
+          provider: {
+            label: "Demo",
+            docsPath: "/providers/demo",
+            auth: [
+              {
+                methodId: "api-key",
+                label: "Demo API key",
+                hint: "Shared key",
+                optionKey: "demoApiKey",
+                flagName: "--demo-api-key",
+                envVar: "DEMO_API_KEY",
+                promptMessage: "Enter Demo API key",
+                defaultModel: "demo/default"
+              }
+            ],
+            catalog: {
+              buildProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://api.demo.test/v1",
+                models: [createModel("default", "Default")]
+              }),
+              buildStaticProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://api.demo.test/v1",
+                models: [createModel("default", "Default")]
+              })
+            }
+          }
+        });
+        const defaultCaptured = await capture(defaultEntry);
+
+        const overrideEntry = providerEntry.defineSingleProviderPluginEntry({
+          id: "gateway-plugin",
+          name: "Gateway Provider",
+          description: "Gateway provider plugin",
+          provider: {
+            id: "gateway",
+            label: "Gateway",
+            aliases: ["gw"],
+            docsPath: "/providers/gateway",
+            envVars: ["GATEWAY_KEY", "SECONDARY_KEY"],
+            auth: [
+              {
+                methodId: "api-key",
+                label: "Gateway key",
+                hint: "Primary key",
+                optionKey: "gatewayKey",
+                flagName: "--gateway-key",
+                envVar: "GATEWAY_KEY",
+                promptMessage: "Enter Gateway key",
+                wizard: {
+                  groupId: "shared-gateway",
+                  groupLabel: "Shared Gateway"
+                }
+              }
+            ],
+            catalog: {
+              buildProvider: () => ({
+                api: "openai-completions",
+                baseUrl: "https://gateway.test/v1",
+                models: [createModel("router", "Router")]
+              }),
+              allowExplicitBaseUrl: true
+            },
+            capabilities: {
+              transcriptToolCallIdMode: "strict9"
+            }
+          },
+          register(api) {
+            api.registerWebSearchProvider({ id: "gateway-search", label: "Gateway Search" });
+          }
+        });
+        const overrideCaptured = await capture(overrideEntry, {
+          models: {
+            providers: {
+              gateway: {
+                baseUrl: "https://override.test/v1",
+                models: [createModel("router", "Router")]
+              }
+            }
+          }
+        });
+
+        return {
+          defaultEntry: {
+            id: defaultEntry.id,
+            provider: {
+              id: defaultCaptured.provider.id,
+              label: defaultCaptured.provider.label,
+              docsPath: defaultCaptured.provider.docsPath,
+              envVars: defaultCaptured.provider.envVars,
+              auth: defaultCaptured.provider.auth,
+              catalog: defaultCaptured.catalog,
+              staticCatalog: defaultCaptured.staticCatalog
+            }
+          },
+          overrideEntry: {
+            provider: {
+              id: overrideCaptured.provider.id,
+              label: overrideCaptured.provider.label,
+              aliases: overrideCaptured.provider.aliases,
+              envVars: overrideCaptured.provider.envVars,
+              auth: overrideCaptured.provider.auth,
+              capabilities: overrideCaptured.provider.capabilities,
+              catalog: overrideCaptured.catalog
+            },
+            webSearchCount: overrideCaptured.captured.webSearchProviders.length
+          },
+          enable: [
+            providerEnable.enablePluginInConfig(
+              {
+                plugins: { allow: ["openai"] },
+                channels: { brave: { enabled: false } }
+              },
+              "brave"
+            ),
+            webFetchContract.enablePluginInConfig(
+              { plugins: { deny: ["firecrawl"] } },
+              "firecrawl"
+            ),
+            webSearchContract.enablePluginInConfig({ plugins: { enabled: false } }, "brave")
+          ],
+          oauth: authResult.buildOauthProviderAuthResult({
+            providerId: "demo",
+            defaultModel: "demo/default",
+            access: "access-token",
+            refresh: "refresh-token",
+            expires: 12345,
+            email: "dev@example.com",
+            displayName: "Dev User",
+            profilePrefix: "profiles",
+            credentialExtra: { tenant: "tenant-1" },
+            notes: ["signed in"]
+          }),
+          exportTypes: [
+            typeof providerEntry.defineSingleProviderPluginEntry,
+            typeof providerEnable.enablePluginInConfig,
+            typeof webFetchContract.enablePluginInConfig,
+            typeof webSearchContract.enablePluginInConfig,
+            typeof authResult.buildOauthProviderAuthResult,
+            typeof genericSdk.defineSingleProviderPluginEntry
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-entry-enable-auth-plugin",
+                    "name": "Runtime Provider Entry Enable Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-entry-enable-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_entry_enable_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_entry_enable_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "defaultEntry": {
+            "id": "demo",
+            "provider": {
+                "id": "demo",
+                "label": "Demo",
+                "docsPath": "/providers/demo",
+                "envVars": ["DEMO_API_KEY"],
+                "auth": [
+                    {
+                        "id": "api-key",
+                        "label": "Demo API key",
+                        "hint": "Shared key",
+                        "kind": "api_key",
+                        "wizard": {
+                            "choiceId": "demo-api-key",
+                            "choiceLabel": "Demo API key",
+                            "groupId": "demo",
+                            "groupLabel": "Demo",
+                            "groupHint": "Shared key",
+                            "methodId": "api-key",
+                        },
+                    }
+                ],
+                "catalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "apiKey": "test-key",
+                        "baseUrl": "https://api.demo.test/v1",
+                        "models": [
+                            {
+                                "id": "default",
+                                "name": "Default",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+                "staticCatalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "baseUrl": "https://api.demo.test/v1",
+                        "models": [
+                            {
+                                "id": "default",
+                                "name": "Default",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+            },
+        },
+        "overrideEntry": {
+            "provider": {
+                "id": "gateway",
+                "label": "Gateway",
+                "aliases": ["gw"],
+                "envVars": ["GATEWAY_KEY", "SECONDARY_KEY"],
+                "auth": [
+                    {
+                        "id": "api-key",
+                        "label": "Gateway key",
+                        "hint": "Primary key",
+                        "kind": "api_key",
+                        "wizard": {
+                            "choiceId": "gateway-api-key",
+                            "choiceLabel": "Gateway key",
+                            "groupId": "shared-gateway",
+                            "groupLabel": "Shared Gateway",
+                            "groupHint": "Primary key",
+                            "methodId": "api-key",
+                        },
+                    }
+                ],
+                "capabilities": {"transcriptToolCallIdMode": "strict9"},
+                "catalog": {
+                    "provider": {
+                        "api": "openai-completions",
+                        "apiKey": "test-key",
+                        "baseUrl": "https://override.test/v1",
+                        "models": [
+                            {
+                                "id": "router",
+                                "name": "Router",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "cost": {
+                                    "input": 0,
+                                    "output": 0,
+                                    "cacheRead": 0,
+                                    "cacheWrite": 0,
+                                },
+                                "contextWindow": 128000,
+                                "maxTokens": 8192,
+                            }
+                        ],
+                    }
+                },
+            },
+            "webSearchCount": 1,
+        },
+        "enable": [
+            {
+                "enabled": True,
+                "config": {
+                    "plugins": {
+                        "allow": ["openai", "brave"],
+                        "entries": {"brave": {"enabled": True}},
+                    },
+                    "channels": {"brave": {"enabled": False}},
+                },
+            },
+            {
+                "enabled": False,
+                "reason": "blocked by denylist",
+                "config": {"plugins": {"deny": ["firecrawl"]}},
+            },
+            {
+                "enabled": False,
+                "reason": "plugins disabled",
+                "config": {"plugins": {"enabled": False}},
+            },
+        ],
+        "oauth": {
+            "profiles": [
+                {
+                    "profileId": "profiles:dev@example.com",
+                    "credential": {
+                        "type": "oauth",
+                        "provider": "demo",
+                        "access": "access-token",
+                        "refresh": "refresh-token",
+                        "expires": 12345,
+                        "email": "dev@example.com",
+                        "displayName": "Dev User",
+                        "tenant": "tenant-1",
+                    },
+                }
+            ],
+            "configPatch": {"agents": {"defaults": {"models": {"demo/default": {}}}}},
+            "defaultModel": "demo/default",
+            "notes": ["signed in"],
+        },
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_runtime_oauth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const providerAuthRuntime = require("openclaw/plugin-sdk/provider-auth-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_runtime",
+      description: "Use OpenClaw provider auth runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const state = providerAuthRuntime.generateOAuthState();
+        return {
+          state: {
+            length: state.length,
+            hex: /^[0-9a-f]+$/.test(state)
+          },
+          valid: providerAuthRuntime.parseOAuthCallbackInput(
+            "http://localhost/callback?code=abc&state=xyz"
+          ),
+          empty: providerAuthRuntime.parseOAuthCallbackInput("  "),
+          missingCode: providerAuthRuntime.parseOAuthCallbackInput(
+            "http://localhost/callback?state=xyz"
+          ),
+          missingState: providerAuthRuntime.parseOAuthCallbackInput(
+            "http://localhost/callback?code=abc"
+          ),
+          missingStateCustom: providerAuthRuntime.parseOAuthCallbackInput(
+            "http://localhost/callback?code=abc",
+            { missingState: "Need state" }
+          ),
+          invalid: providerAuthRuntime.parseOAuthCallbackInput("not-a-url"),
+          invalidCustom: providerAuthRuntime.parseOAuthCallbackInput(
+            "not-a-url",
+            { invalidInput: "Bad URL" }
+          ),
+          exportTypes: [
+            typeof providerAuthRuntime.generateOAuthState,
+            typeof providerAuthRuntime.parseOAuthCallbackInput,
+            typeof providerAuthRuntime.waitForLocalOAuthCallback,
+            typeof providerAuthRuntime.resolveApiKeyForProvider,
+            typeof providerAuthRuntime.getRuntimeAuthForModel,
+            typeof genericSdk.parseOAuthCallbackInput
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-runtime-plugin",
+                    "name": "Runtime Provider Auth Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "state": {"length": 64, "hex": True},
+        "valid": {"code": "abc", "state": "xyz"},
+        "empty": {"error": "No input provided"},
+        "missingCode": {"error": "Missing 'code' parameter in URL"},
+        "missingState": {"error": "Missing 'state' parameter in URL"},
+        "missingStateCustom": {"error": "Need state"},
+        "invalid": {"error": "Paste the full redirect URL, not just the code."},
+        "invalidCustom": {"error": "Bad URL"},
+        "exportTypes": ["function"] * 6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-api-key.cjs"
+    runtime_entry.write_text(
+        """
+const apiKeyAuth = require("openclaw/plugin-sdk/provider-auth-api-key");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_api_key",
+      description: "Use OpenClaw provider auth API-key SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        let selectedPrompt;
+        const selectedMode = await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+          prompter: {
+            select: async (prompt) => {
+              selectedPrompt = {
+                message: prompt.message,
+                initialValue: prompt.initialValue,
+                labels: prompt.options.map((entry) => entry.label)
+              };
+              return "ref";
+            }
+          },
+          copy: {
+            modeMessage: "Mode?",
+            plaintextLabel: "Plain",
+            refLabel: "Ref"
+          }
+        });
+        const authMethod = apiKeyAuth.createProviderApiKeyAuthMethod({
+          providerId: "demo",
+          methodId: "api-key",
+          label: "Demo key",
+          hint: "Primary key",
+          optionKey: "demoKey",
+          flagName: "--demo-key",
+          envVar: "DEMO_API_KEY",
+          promptMessage: "Enter key",
+          wizard: { choiceId: "demo-api-key", methodId: "api-key" }
+        });
+        return {
+          normalize: [
+            apiKeyAuth.normalizeApiKeyInput("export DEMO_API_KEY=' sk-test '"),
+            apiKeyAuth.normalizeApiKeyInput("DEMO_API_KEY=abc;"),
+            apiKeyAuth.normalizeApiKeyInput("`quoted`")
+          ],
+          validate: [
+            apiKeyAuth.validateApiKeyInput("  "),
+            apiKeyAuth.validateApiKeyInput(" ok ") || null
+          ],
+          preview: [
+            apiKeyAuth.formatApiKeyPreview(""),
+            apiKeyAuth.formatApiKeyPreview("abcdef"),
+            apiKeyAuth.formatApiKeyPreview("abcdefghijkl", { head: 3, tail: 2 })
+          ],
+          modes: {
+            explicit: await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+              explicitMode: "ref",
+              prompter: {}
+            }),
+            defaulted: await apiKeyAuth.resolveSecretInputModeForEnvSelection({
+              prompter: {}
+            }),
+            selected: selectedMode,
+            selectedPrompt
+          },
+          credentials: [
+            apiKeyAuth.buildApiKeyCredential("demo", " secret ", { scope: "test" }),
+            apiKeyAuth.buildApiKeyCredential("demo", "${DEMO_API_KEY}"),
+            apiKeyAuth.buildApiKeyCredential(
+              "demo",
+              "${AWS_SECRET_ACCESS_KEY}",
+              undefined,
+              { secretInputMode: "plaintext" }
+            )
+          ],
+          config: apiKeyAuth.applyAuthProfileConfig(
+            { auth: { profiles: { oauth: { provider: "demo", mode: "oauth" } } } },
+            {
+              profileId: "demo:default",
+              provider: "demo",
+              mode: "api_key",
+              email: "dev@example.com",
+              displayName: "Dev User"
+            }
+          ),
+          method: {
+            id: authMethod.id,
+            label: authMethod.label,
+            hint: authMethod.hint,
+            kind: authMethod.kind,
+            wizard: authMethod.wizard
+          },
+          exportTypes: [
+            typeof apiKeyAuth.normalizeApiKeyInput,
+            typeof apiKeyAuth.validateApiKeyInput,
+            typeof apiKeyAuth.formatApiKeyPreview,
+            typeof apiKeyAuth.normalizeSecretInputModeInput,
+            typeof apiKeyAuth.resolveSecretInputModeForEnvSelection,
+            typeof apiKeyAuth.buildApiKeyCredential,
+            typeof apiKeyAuth.applyAuthProfileConfig,
+            typeof apiKeyAuth.createProviderApiKeyAuthMethod,
+            typeof genericSdk.normalizeApiKeyInput
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-api-key-plugin",
+                    "name": "Runtime Provider Auth API Key Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-api-key.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_api_key"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_api_key"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalize": ["sk-test", "abc", "quoted"],
+        "validate": ["Required", None],
+        "preview": ["\u2026", "ab\u2026ef", "abc\u2026kl"],
+        "modes": {
+            "explicit": "ref",
+            "defaulted": "plaintext",
+            "selected": "ref",
+            "selectedPrompt": {
+                "message": "Mode?",
+                "initialValue": "plaintext",
+                "labels": ["Plain", "Ref"],
+            },
+        },
+        "credentials": [
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "key": "secret",
+                "metadata": {"scope": "test"},
+            },
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "keyRef": {"source": "env", "provider": "default", "id": "DEMO_API_KEY"},
+            },
+            {
+                "type": "api_key",
+                "provider": "demo",
+                "key": "${AWS_SECRET_ACCESS_KEY}",
+            },
+        ],
+        "config": {
+            "auth": {
+                "profiles": {
+                    "oauth": {"provider": "demo", "mode": "oauth"},
+                    "demo:default": {
+                        "provider": "demo",
+                        "mode": "api_key",
+                        "email": "dev@example.com",
+                        "displayName": "Dev User",
+                    },
+                },
+                "order": {"demo": ["demo:default", "oauth"]},
+            }
+        },
+        "method": {
+            "id": "api-key",
+            "label": "Demo key",
+            "hint": "Primary key",
+            "kind": "api_key",
+            "wizard": {"choiceId": "demo-api-key", "methodId": "api-key"},
+        },
+        "exportTypes": ["function"] * 9,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_login_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-login.cjs"
+    runtime_entry.write_text(
+        """
+const authLogin = require("openclaw/plugin-sdk/provider-auth-login");
+const genericSdk = require("openclaw/plugin-sdk");
+
+async function capture(name, fn) {
+  try {
+    await fn({ providerId: "demo" });
+    return { name, ok: true };
+  } catch (error) {
+    return { name, ok: false, message: error && error.message };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_login",
+      description: "Use OpenClaw provider auth login SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          exportTypes: [
+            typeof authLogin.loginOpenAICodexOAuth,
+            typeof authLogin.loginChutes,
+            typeof authLogin.githubCopilotLoginCommand,
+            typeof genericSdk.loginOpenAICodexOAuth
+          ],
+          unavailable: [
+            await capture("openai", authLogin.loginOpenAICodexOAuth),
+            await capture("chutes", authLogin.loginChutes),
+            await capture("github", authLogin.githubCopilotLoginCommand)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-login-plugin",
+                    "name": "Runtime Provider Auth Login Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-login.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_login"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_login"})
+
+    unavailable_message = (
+        "Provider auth login helpers require an interactive OpenClaw login runtime."
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 4,
+        "unavailable": [
+            {"name": "openai", "ok": False, "message": unavailable_message},
+            {"name": "chutes", "ok": False, "message": unavailable_message},
+            {"name": "github", "ok": False, "message": unavailable_message},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-auth-facade.cjs"
+    runtime_entry.write_text(
+        """
+const providerAuth = require("openclaw/plugin-sdk/provider-auth");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_auth_facade",
+      description: "Use OpenClaw provider-auth SDK facade shims",
+      parameters: { type: "object" },
+      async execute() {
+        const oldOpenAiKey = process.env.OPENAI_API_KEY;
+        process.env.OPENAI_API_KEY = "sk-openzues-provider-auth-test";
+        const saved = [];
+        const fetchedCall = {};
+        try {
+          const cached = await providerAuth.resolveCopilotApiToken({
+            githubToken: "unused",
+            cachePath: "cache.json",
+            loadJsonFileImpl: () => ({
+              token: "cached-token;proxy-ep=proxy.cached.example.com;",
+              expiresAt: Date.now() + 10 * 60 * 1000,
+              updatedAt: 1
+            }),
+            saveJsonFileImpl: () => {
+              throw new Error("cache hit should not write");
+            },
+            fetchImpl: async () => {
+              throw new Error("cache hit should not fetch");
+            }
+          });
+          const fetched = await providerAuth.resolveCopilotApiToken({
+            githubToken: "github-token",
+            cachePath: "fetch.json",
+            loadJsonFileImpl: () => undefined,
+            saveJsonFileImpl: (path, value) => saved.push({ path, value }),
+            fetchImpl: async (url, options) => {
+              fetchedCall.url = url;
+              fetchedCall.options = options;
+              return {
+                ok: true,
+                json: async () => ({
+                  token: "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+                  expires_at: 12345678901
+                })
+              };
+            }
+          });
+          return {
+            exportTypes: [
+              typeof providerAuth.buildCopilotIdeHeaders,
+              typeof providerAuth.deriveCopilotApiBaseUrlFromToken,
+              typeof providerAuth.resolveCopilotApiToken,
+              typeof providerAuth.isProviderApiKeyConfigured,
+              typeof providerAuth.formatApiKeyPreview,
+              typeof providerAuth.buildOauthProviderAuthResult,
+              typeof genericSdk.resolveCopilotApiToken
+            ],
+            headers: providerAuth.buildCopilotIdeHeaders({ includeApiVersion: true }),
+            bases: [
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=https://proxy.individual.githubcopilot.com;"
+              ),
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=proxy.example.com:8443;"
+              ),
+              providerAuth.deriveCopilotApiBaseUrlFromToken(
+                "copilot-token;proxy-ep=javascript:alert(1);"
+              )
+            ],
+            configured: {
+              openai: providerAuth.isProviderApiKeyConfigured({ provider: "openai" }),
+              missing: providerAuth.isProviderApiKeyConfigured({ provider: "missing-provider" })
+            },
+            cached: {
+              token: cached.token,
+              source: cached.source,
+              baseUrl: cached.baseUrl
+            },
+            fetched: {
+              ...fetched,
+              saved: saved.map((entry) => ({
+                path: entry.path,
+                value: {
+                  token: entry.value.token,
+                  expiresAt: entry.value.expiresAt,
+                  updatedAtType: typeof entry.value.updatedAt
+                }
+              })),
+              call: {
+                url: fetchedCall.url,
+                method: fetchedCall.options && fetchedCall.options.method,
+                authorization:
+                  fetchedCall.options &&
+                  fetchedCall.options.headers &&
+                  fetchedCall.options.headers.Authorization,
+                apiVersion:
+                  fetchedCall.options &&
+                  fetchedCall.options.headers &&
+                  fetchedCall.options.headers["X-Github-Api-Version"]
+              }
+            }
+          };
+        } finally {
+          if (oldOpenAiKey === undefined) {
+            delete process.env.OPENAI_API_KEY;
+          } else {
+            process.env.OPENAI_API_KEY = oldOpenAiKey;
+          }
+        }
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-auth-facade-plugin",
+                    "name": "Runtime Provider Auth Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-facade.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_auth_facade"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_auth_facade"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 7,
+        "headers": {
+            "Editor-Version": "vscode/1.96.2",
+            "Editor-Plugin-Version": "copilot-chat/0.35.0",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+            "X-Github-Api-Version": "2025-04-01",
+        },
+        "bases": [
+            "https://api.individual.githubcopilot.com",
+            "https://api.example.com",
+            None,
+        ],
+        "configured": {"openai": True, "missing": False},
+        "cached": {
+            "token": "cached-token;proxy-ep=proxy.cached.example.com;",
+            "source": "cache:cache.json",
+            "baseUrl": "https://api.cached.example.com",
+        },
+        "fetched": {
+            "token": "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+            "expiresAt": 12345678901000,
+            "source": "fetched:https://api.github.com/copilot_internal/v2/token",
+            "baseUrl": "https://api.individual.githubcopilot.com",
+            "saved": [
+                {
+                    "path": "fetch.json",
+                    "value": {
+                        "token": (
+                            "fresh-token;proxy-ep="
+                            "https://proxy.individual.githubcopilot.com;"
+                        ),
+                        "expiresAt": 12345678901000,
+                        "updatedAtType": "number",
+                    },
+                }
+            ],
+            "call": {
+                "url": "https://api.github.com/copilot_internal/v2/token",
+                "method": "GET",
+                "authorization": "Bearer github-token",
+                "apiVersion": "2025-04-01",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-web-search-contract.cjs"
+    runtime_entry.write_text(
+        """
+const fields = require("openclaw/plugin-sdk/provider-web-search-contract-fields");
+const config = require("openclaw/plugin-sdk/provider-web-search-config-contract");
+const contract = require("openclaw/plugin-sdk/provider-web-search-contract");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_web_search_contract",
+      description: "Use OpenClaw web-search provider contract SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const scoped = fields.createBaseWebSearchProviderContractFields({
+          credentialPath: "plugins.entries.google.config.webSearch.apiKey",
+          searchCredential: { type: "scoped", scopeId: "gemini" },
+          configuredCredential: { pluginId: "google" }
+        });
+        const scopedSearchConfig = {};
+        scoped.setCredentialValue(scopedSearchConfig, "AIza-next");
+        const scopedConfig = {};
+        scoped.setConfiguredCredentialValue(scopedConfig, "AIza-configured");
+
+        const topLevel = contract.createWebSearchProviderContractFields({
+          credentialPath: "plugins.entries.brave.config.webSearch.apiKey",
+          searchCredential: { type: "top-level" },
+          configuredCredential: { pluginId: "brave", field: "token" }
+        });
+        const topLevelSearchConfig = {};
+        topLevel.setCredentialValue(topLevelSearchConfig, "BSA-next");
+        const topLevelConfig = {};
+        topLevel.setConfiguredCredentialValue(topLevelConfig, "BSA-configured");
+
+        const keyless = contract.createWebSearchProviderContractFields({
+          credentialPath: "",
+          searchCredential: { type: "none" },
+          selectionPluginId: "ollama"
+        });
+        const keylessSearchConfig = { apiKey: "ignored" };
+        keyless.setCredentialValue(keylessSearchConfig, "still ignored");
+
+        const merged = config.mergeScopedSearchConfig(
+          { gemini: { region: "us" }, apiKey: "old" },
+          "gemini",
+          { apiKey: "AIza-merged", mode: "fast" },
+          { mirrorApiKeyToTopLevel: true }
+        );
+
+        return {
+          exportTypes: [
+            typeof fields.createBaseWebSearchProviderContractFields,
+            typeof config.getScopedCredentialValue,
+            typeof config.mergeScopedSearchConfig,
+            typeof contract.createWebSearchProviderContractFields,
+            typeof genericSdk.createWebSearchProviderContractFields
+          ],
+          scoped: {
+            inactiveSecretPaths: scoped.inactiveSecretPaths,
+            existingCredential: scoped.getCredentialValue({ gemini: { apiKey: "AIza-scoped" } }),
+            searchConfig: scopedSearchConfig,
+            configuredValue: scoped.getConfiguredCredentialValue(scopedConfig),
+            configuredConfig: scopedConfig
+          },
+          topLevel: {
+            existingCredential: topLevel.getCredentialValue({ apiKey: "BSA-top-level" }),
+            searchConfig: topLevelSearchConfig,
+            configuredValue: topLevel.getConfiguredCredentialValue(topLevelConfig),
+            configuredConfig: topLevelConfig,
+            hasSelection: typeof topLevel.applySelectionConfig
+          },
+          keyless: {
+            inactiveSecretPaths: keyless.inactiveSecretPaths,
+            credential: keyless.getCredentialValue({ apiKey: "ignored" }),
+            searchConfig: keylessSearchConfig,
+            selectedConfig: keyless.applySelectionConfig({})
+          },
+          configHelpers: {
+            topLevel: config.getTopLevelCredentialValue({ apiKey: "top" }),
+            scoped: config.getScopedCredentialValue({ gemini: { apiKey: "scoped" } }, "gemini"),
+            missingScoped: config.getScopedCredentialValue({ gemini: "bad" }, "gemini"),
+            merged,
+            resolvedPluginConfig: config.resolveProviderWebSearchPluginConfig(
+              { plugins: { entries: { brave: { config: { webSearch: { token: "BSA" } } } } } },
+              "brave"
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-web-search-contract-plugin",
+                    "name": "Runtime Provider Web Search Contract Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-web-search-contract.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_web_search_contract"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_web_search_contract"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 5,
+        "scoped": {
+            "inactiveSecretPaths": ["plugins.entries.google.config.webSearch.apiKey"],
+            "existingCredential": "AIza-scoped",
+            "searchConfig": {"gemini": {"apiKey": "AIza-next"}},
+            "configuredValue": "AIza-configured",
+            "configuredConfig": {
+                "plugins": {
+                    "entries": {
+                        "google": {
+                            "enabled": True,
+                            "config": {"webSearch": {"apiKey": "AIza-configured"}},
+                        }
+                    }
+                }
+            },
+        },
+        "topLevel": {
+            "existingCredential": "BSA-top-level",
+            "searchConfig": {"apiKey": "BSA-next"},
+            "configuredValue": "BSA-configured",
+            "configuredConfig": {
+                "plugins": {
+                    "entries": {
+                        "brave": {
+                            "enabled": True,
+                            "config": {"webSearch": {"token": "BSA-configured"}},
+                        }
+                    }
+                }
+            },
+            "hasSelection": "undefined",
+        },
+        "keyless": {
+            "inactiveSecretPaths": [],
+            "searchConfig": {"apiKey": "ignored"},
+            "selectedConfig": {
+                "plugins": {"entries": {"ollama": {"enabled": True}}}
+            },
+        },
+        "configHelpers": {
+            "topLevel": "top",
+            "scoped": "scoped",
+            "merged": {
+                "gemini": {"region": "us", "apiKey": "AIza-merged", "mode": "fast"},
+                "apiKey": "AIza-merged",
+            },
+            "resolvedPluginConfig": {"token": "BSA"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -10665,6 +13309,421 @@ module.exports = {
         "missingSelection": {
             "configuredProviderId": "missing",
             "missingConfiguredProvider": True,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_status_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-status.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage
+} = require("openclaw/plugin-sdk/command-status");
+const scopedStatus = require("@openclaw/plugin-sdk/command-status");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_status",
+      description: "Use OpenClaw command status SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = { commands: { config: false, debug: false } };
+        const skillCommands = [
+          { name: "demo_skill", skillName: "demo-skill", description: "Demo skill" }
+        ];
+        const help = buildHelpMessage(cfg);
+        const commands = buildCommandsMessage(cfg, skillCommands);
+        const paginated = buildCommandsMessagePaginated(cfg, skillCommands, {
+          surface: "telegram",
+          forcePaginatedList: true,
+          page: 1
+        });
+        const scopedHelp = scopedStatus.buildHelpMessage({ commands: { config: true } });
+        return {
+          helpChecks: [
+            help.includes("/commands for full list"),
+            help.includes("/tasks"),
+            help.includes("/fast status|on|off"),
+            help.includes("/trace on|off|raw"),
+            help.includes("/skill <name> [input]"),
+            !help.includes("/config"),
+            !help.includes("/debug")
+          ],
+          commandsChecks: [
+            commands.includes("Slash commands"),
+            commands.includes("Status"),
+            commands.includes("/commands - List all slash commands."),
+            commands.includes("/skill - Run a skill by name."),
+            commands.includes("/think (/thinking, /t) - Set thinking level."),
+            commands.includes("/compact - Compact the session context."),
+            commands.includes("/models - List model providers/models."),
+            commands.includes("/demo_skill - Demo skill"),
+            commands.includes("More: /tools for available capabilities"),
+            !commands.includes("/config"),
+            !commands.includes("/debug")
+          ],
+          paginated: {
+            currentPage: paginated.currentPage,
+            totalPagesType: typeof paginated.totalPages,
+            hasNextType: typeof paginated.hasNext,
+            hasPrev: paginated.hasPrev,
+            textChecks: [
+              paginated.text.includes("Commands (1/"),
+              paginated.text.includes("Session"),
+              paginated.text.includes("/stop - Stop the current run.")
+            ]
+          },
+          scopedHelpIncludesConfig: scopedHelp.includes("/config"),
+          exportTypes: [
+            typeof buildCommandsMessage,
+            typeof buildCommandsMessagePaginated,
+            typeof buildHelpMessage,
+            typeof genericSdk.buildCommandsMessage
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-status-plugin",
+                    "name": "Runtime Command Status Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-status-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_status"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_status"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "helpChecks": [True, True, True, True, True, True, True],
+        "commandsChecks": [
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+        ],
+        "paginated": {
+            "currentPage": 1,
+            "totalPagesType": "number",
+            "hasNextType": "boolean",
+            "hasPrev": False,
+            "textChecks": [True, True, True],
+        },
+        "scopedHelpIncludesConfig": True,
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_windows_spawn_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-windows-spawn.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const {
+  applyWindowsSpawnProgramPolicy,
+  materializeWindowsSpawnProgram,
+  resolveWindowsExecutablePath,
+  resolveWindowsSpawnProgram,
+  resolveWindowsSpawnProgramCandidate
+} = require("openclaw/plugin-sdk/windows-spawn");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function summarizeProgram(program) {
+  return {
+    command: path.basename(program.command),
+    leadingArgv: (program.leadingArgv || []).map((entry) => path.basename(entry)),
+    resolution: program.resolution,
+    shell: program.shell ?? null,
+    windowsHide: program.windowsHide ?? null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.windows_spawn",
+      description: "Use OpenClaw Windows spawn SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const dir = args.tmpDir;
+        fs.mkdirSync(dir, { recursive: true });
+        const jsPath = path.join(dir, "tool.js");
+        const exePath = path.join(dir, "tool.exe");
+        const shimPath = path.join(dir, "wrapper.cmd");
+        const unresolvedPath = path.join(dir, "plain.cmd");
+        const packageDir = path.join(dir, "node_modules", "pkg");
+        const packageBinDir = path.join(packageDir, "bin");
+        const packageEntry = path.join(packageBinDir, "cli.cjs");
+        const packageShim = path.join(dir, "pkg.cmd");
+        fs.writeFileSync(jsPath, "console.log('tool')\\n", "utf8");
+        fs.writeFileSync(exePath, "", "utf8");
+        fs.writeFileSync(shimPath, "@ECHO off\\r\\n\\\"%~dp0\\\\tool.js\\\" %*\\r\\n", "utf8");
+        fs.writeFileSync(unresolvedPath, "@ECHO off\\r\\necho wrapper\\r\\n", "utf8");
+        fs.mkdirSync(packageBinDir, { recursive: true });
+        fs.writeFileSync(packageEntry, "console.log('pkg')\\n", "utf8");
+        fs.writeFileSync(
+          path.join(packageDir, "package.json"),
+          JSON.stringify({ bin: { pkg: "bin/cli.cjs" } }),
+          "utf8"
+        );
+        fs.writeFileSync(packageShim, "@ECHO off\\r\\necho pkg\\r\\n", "utf8");
+
+        const env = { PATH: dir, PATHEXT: ".EXE;.CMD;.BAT;.JS" };
+        let closedError = "";
+        try {
+          resolveWindowsSpawnProgram({
+            command: unresolvedPath,
+            platform: "win32",
+            env,
+            execPath: "C:\\\\node\\\\node.exe"
+          });
+        } catch (error) {
+          closedError = error.message;
+        }
+        const shellFallback = resolveWindowsSpawnProgram({
+          command: unresolvedPath,
+          platform: "win32",
+          env,
+          execPath: "C:\\\\node\\\\node.exe",
+          allowShellFallback: true
+        });
+        const invocation = materializeWindowsSpawnProgram(shellFallback, [
+          "--cwd",
+          "C:\\\\safe & calc.exe"
+        ]);
+
+        return {
+          direct: summarizeProgram(
+            resolveWindowsSpawnProgram({
+              command: "plain",
+              platform: "linux",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          resolvedExecutable: path.basename(
+            resolveWindowsExecutablePath("tool", {
+              PATH: dir,
+              PATHEXT: ".EXE;.CMD"
+            })
+          ),
+          jsCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: jsPath,
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          shimCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: shimPath,
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          packageCandidate: summarizeProgram(
+            resolveWindowsSpawnProgramCandidate({
+              command: packageShim,
+              packageName: "pkg",
+              platform: "win32",
+              env,
+              execPath: "C:\\\\node\\\\node.exe"
+            })
+          ),
+          closedErrorContains: closedError.includes("without shell execution"),
+          shellFallback: summarizeProgram(shellFallback),
+          invocation: {
+            command: path.basename(invocation.command),
+            argv: invocation.argv,
+            resolution: invocation.resolution,
+            shell: invocation.shell ?? null,
+            windowsHide: invocation.windowsHide ?? null
+          },
+          policyDirect: applyWindowsSpawnProgramPolicy({
+            candidate: {
+              command: "cmd",
+              leadingArgv: ["arg"],
+              resolution: "direct",
+              windowsHide: true
+            }
+          }),
+          exportTypes: [
+            typeof resolveWindowsSpawnProgram,
+            typeof resolveWindowsSpawnProgramCandidate,
+            typeof materializeWindowsSpawnProgram,
+            typeof genericSdk.resolveWindowsSpawnProgram
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-windows-spawn-plugin",
+                    "name": "Runtime Windows Spawn Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-windows-spawn-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.windows_spawn"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.windows_spawn", "args": {"tmpDir": str(tmp_path / "spawn")}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "direct": {
+            "command": "plain",
+            "leadingArgv": [],
+            "resolution": "direct",
+            "shell": None,
+            "windowsHide": None,
+        },
+        "resolvedExecutable": "tool.EXE",
+        "jsCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["tool.js"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "shimCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["tool.js"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "packageCandidate": {
+            "command": "node.exe",
+            "leadingArgv": ["cli.cjs"],
+            "resolution": "node-entrypoint",
+            "shell": None,
+            "windowsHide": True,
+        },
+        "closedErrorContains": True,
+        "shellFallback": {
+            "command": "plain.cmd",
+            "leadingArgv": [],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "invocation": {
+            "command": "plain.cmd",
+            "argv": ["--cwd", "C:\\safe & calc.exe"],
+            "resolution": "shell-fallback",
+            "shell": True,
+            "windowsHide": None,
+        },
+        "policyDirect": {
+            "command": "cmd",
+            "leadingArgv": ["arg"],
+            "resolution": "direct",
+            "windowsHide": True,
         },
         "exportTypes": ["function", "function", "function", "function"],
     }

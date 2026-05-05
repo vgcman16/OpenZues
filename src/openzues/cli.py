@@ -18277,10 +18277,11 @@ function normalizeCommandBody(raw, options) {
   const mentionMatch = normalizedBotUsername
     ? normalized.match(/^\/([^\s@]+)@([^\s]+)(.*)$/)
     : null;
-  return mentionMatch &&
+  const commandBody = mentionMatch &&
     normalizeLowercaseStringOrEmpty(mentionMatch[2]) === normalizedBotUsername
     ? `/${mentionMatch[1]}${mentionMatch[3] || ""}`
     : normalized;
+  return canonicalizeCommandStatusBody(commandBody);
 }
 
 function normalizeAbortTriggerText(text) {
@@ -18645,6 +18646,2529 @@ function pruneMapToMaxSize(map, maxSize) {
     }
     map.delete(oldest.value);
   }
+}
+
+function normalizeWebhookPath(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return "/";
+  }
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  if (withSlash.length > 1 && withSlash.endsWith("/")) {
+    return withSlash.slice(0, -1);
+  }
+  return withSlash;
+}
+
+function resolveWebhookPath(params) {
+  const trimmedPath =
+    params && typeof params.webhookPath === "string" ? params.webhookPath.trim() : "";
+  if (trimmedPath) {
+    return normalizeWebhookPath(trimmedPath);
+  }
+  const webhookUrl =
+    params && typeof params.webhookUrl === "string" ? params.webhookUrl.trim() : "";
+  if (webhookUrl) {
+    try {
+      const parsed = new URL(webhookUrl);
+      return normalizeWebhookPath(parsed.pathname || "/");
+    } catch (_error) {
+      return null;
+    }
+  }
+  if (params && Object.prototype.hasOwnProperty.call(params, "defaultPath")) {
+    return params.defaultPath == null ? null : params.defaultPath;
+  }
+  return null;
+}
+
+const WEBHOOK_RATE_LIMIT_DEFAULTS = Object.freeze({
+  windowMs: 60000,
+  maxRequests: 120,
+  maxTrackedKeys: 4096,
+});
+
+const WEBHOOK_ANOMALY_COUNTER_DEFAULTS = Object.freeze({
+  maxTrackedKeys: 4096,
+  ttlMs: 6 * 60 * 60000,
+  logEvery: 25,
+});
+
+const WEBHOOK_ANOMALY_STATUS_CODES = Object.freeze([400, 401, 408, 413, 415, 429]);
+
+function createFixedWindowRateLimiter(options) {
+  const windowMs = Math.max(1, Math.floor(options && options.windowMs));
+  const maxRequests = Math.max(1, Math.floor(options && options.maxRequests));
+  const maxTrackedKeys = Math.max(1, Math.floor(options && options.maxTrackedKeys));
+  const pruneIntervalMs = Math.max(
+    1,
+    Math.floor((options && options.pruneIntervalMs) || windowMs),
+  );
+  const state = new Map();
+  let lastPruneMs = 0;
+
+  const touch = (key, value) => {
+    state.delete(key);
+    state.set(key, value);
+  };
+  const prune = (nowMs) => {
+    for (const [key, entry] of state) {
+      if (nowMs - entry.windowStartMs >= windowMs) {
+        state.delete(key);
+      }
+    }
+  };
+
+  return {
+    isRateLimited(key, nowMs = Date.now()) {
+      if (!key) {
+        return false;
+      }
+      if (nowMs - lastPruneMs >= pruneIntervalMs) {
+        prune(nowMs);
+        lastPruneMs = nowMs;
+      }
+      const existing = state.get(key);
+      if (!existing || nowMs - existing.windowStartMs >= windowMs) {
+        touch(key, { count: 1, windowStartMs: nowMs });
+        pruneMapToMaxSize(state, maxTrackedKeys);
+        return false;
+      }
+      const nextCount = existing.count + 1;
+      touch(key, { count: nextCount, windowStartMs: existing.windowStartMs });
+      pruneMapToMaxSize(state, maxTrackedKeys);
+      return nextCount > maxRequests;
+    },
+    size() {
+      return state.size;
+    },
+    clear() {
+      state.clear();
+      lastPruneMs = 0;
+    },
+  };
+}
+
+function createBoundedCounter(options) {
+  const maxTrackedKeys = Math.max(1, Math.floor(options && options.maxTrackedKeys));
+  const ttlMs = Math.max(0, Math.floor((options && options.ttlMs) || 0));
+  const pruneIntervalMs = Math.max(
+    1,
+    Math.floor((options && options.pruneIntervalMs) || (ttlMs > 0 ? ttlMs : 60000)),
+  );
+  const counters = new Map();
+  let lastPruneMs = 0;
+
+  const touch = (key, value) => {
+    counters.delete(key);
+    counters.set(key, value);
+  };
+  const isExpired = (entry, nowMs) => ttlMs > 0 && nowMs - entry.updatedAtMs >= ttlMs;
+  const prune = (nowMs) => {
+    if (ttlMs <= 0) {
+      return;
+    }
+    for (const [key, entry] of counters) {
+      if (isExpired(entry, nowMs)) {
+        counters.delete(key);
+      }
+    }
+  };
+
+  return {
+    increment(key, nowMs = Date.now()) {
+      if (!key) {
+        return 0;
+      }
+      if (nowMs - lastPruneMs >= pruneIntervalMs) {
+        prune(nowMs);
+        lastPruneMs = nowMs;
+      }
+      const existing = counters.get(key);
+      const baseCount = existing && !isExpired(existing, nowMs) ? existing.count : 0;
+      const nextCount = baseCount + 1;
+      touch(key, { count: nextCount, updatedAtMs: nowMs });
+      pruneMapToMaxSize(counters, maxTrackedKeys);
+      return nextCount;
+    },
+    size() {
+      return counters.size;
+    },
+    clear() {
+      counters.clear();
+      lastPruneMs = 0;
+    },
+  };
+}
+
+function createWebhookAnomalyTracker(options = {}) {
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.floor(options.maxTrackedKeys || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.maxTrackedKeys),
+  );
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.ttlMs));
+  const logEvery = Math.max(
+    1,
+    Math.floor(options.logEvery || WEBHOOK_ANOMALY_COUNTER_DEFAULTS.logEvery),
+  );
+  const trackedStatusCodes = new Set(options.trackedStatusCodes || WEBHOOK_ANOMALY_STATUS_CODES);
+  const counter = createBoundedCounter({ maxTrackedKeys, ttlMs });
+  return {
+    record({ key, statusCode, message, log, nowMs }) {
+      if (!trackedStatusCodes.has(statusCode)) {
+        return 0;
+      }
+      const next = counter.increment(key, nowMs);
+      if (log && (next === 1 || next % logEvery === 0)) {
+        log(message(next));
+      }
+      return next;
+    },
+    size() {
+      return counter.size();
+    },
+    clear() {
+      counter.clear();
+    },
+  };
+}
+
+const WEBHOOK_BODY_READ_DEFAULTS = Object.freeze({
+  preAuth: Object.freeze({ maxBytes: 64 * 1024, timeoutMs: 5000 }),
+  postAuth: Object.freeze({ maxBytes: 1024 * 1024, timeoutMs: 30000 }),
+});
+
+const WEBHOOK_IN_FLIGHT_DEFAULTS = Object.freeze({
+  maxInFlightPerKey: 8,
+  maxTrackedKeys: 4096,
+});
+
+function createWebhookInFlightLimiter(options = {}) {
+  const maxInFlightPerKey = Math.max(
+    1,
+    Math.floor(options.maxInFlightPerKey || WEBHOOK_IN_FLIGHT_DEFAULTS.maxInFlightPerKey),
+  );
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.floor(options.maxTrackedKeys || WEBHOOK_IN_FLIGHT_DEFAULTS.maxTrackedKeys),
+  );
+  const active = new Map();
+  return {
+    tryAcquire(key) {
+      if (!key) {
+        return true;
+      }
+      const current = active.get(key) || 0;
+      if (current >= maxInFlightPerKey) {
+        return false;
+      }
+      active.set(key, current + 1);
+      pruneMapToMaxSize(active, maxTrackedKeys);
+      return true;
+    },
+    release(key) {
+      if (!key) {
+        return;
+      }
+      const current = active.get(key);
+      if (current === undefined) {
+        return;
+      }
+      if (current <= 1) {
+        active.delete(key);
+        return;
+      }
+      active.set(key, current - 1);
+    },
+    size() {
+      return active.size;
+    },
+    clear() {
+      active.clear();
+    },
+  };
+}
+
+function isJsonContentType(value) {
+  const first = Array.isArray(value) ? value[0] : value;
+  if (!first) {
+    return false;
+  }
+  const mediaType = normalizeOptionalLowercaseString(String(first).split(";", 1)[0]);
+  return mediaType === "application/json" || Boolean(mediaType && mediaType.endsWith("+json"));
+}
+
+function requestBodyErrorToText(code) {
+  if (code === "PAYLOAD_TOO_LARGE") {
+    return "Payload Too Large";
+  }
+  if (code === "REQUEST_BODY_TIMEOUT") {
+    return "Request Body Timeout";
+  }
+  if (code === "CONNECTION_CLOSED") {
+    return "Connection Closed";
+  }
+  return "Bad Request";
+}
+
+function createRequestBodyLimitError(code) {
+  const error = new Error(requestBodyErrorToText(code));
+  error.code = code;
+  return error;
+}
+
+function isRequestBodyLimitError(error) {
+  return (
+    error &&
+    typeof error === "object" &&
+    ["PAYLOAD_TOO_LARGE", "REQUEST_BODY_TIMEOUT", "CONNECTION_CLOSED"].includes(error.code)
+  );
+}
+
+function readRequestBodyWithLimit(req, limits = {}) {
+  const maxBytes = Math.max(
+    1,
+    Math.floor(limits.maxBytes || WEBHOOK_BODY_READ_DEFAULTS.postAuth.maxBytes),
+  );
+  const timeoutMs = Math.max(
+    0,
+    Math.floor(limits.timeoutMs || WEBHOOK_BODY_READ_DEFAULTS.postAuth.timeoutMs),
+  );
+  const contentLengthHeader =
+    req && req.headers ? req.headers["content-length"] || req.headers["Content-Length"] : undefined;
+  const contentLength = Number.parseInt(String(contentLengthHeader || ""), 10);
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    return Promise.reject(createRequestBodyLimitError("PAYLOAD_TOO_LARGE"));
+  }
+  if (!req || typeof req.on !== "function") {
+    return Promise.resolve("");
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let settled = false;
+    let timer = null;
+    const finish = (callback, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      callback(value);
+    };
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (typeof req.destroy === "function") {
+          req.destroy();
+        }
+        finish(reject, createRequestBodyLimitError("REQUEST_BODY_TIMEOUT"));
+      }, timeoutMs);
+    }
+    req.on("data", (chunk) => {
+      if (settled) {
+        return;
+      }
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+      total += buffer.length;
+      if (total > maxBytes) {
+        if (typeof req.destroy === "function") {
+          req.destroy();
+        }
+        finish(reject, createRequestBodyLimitError("PAYLOAD_TOO_LARGE"));
+        return;
+      }
+      chunks.push(buffer);
+    });
+    req.on("end", () => finish(resolve, Buffer.concat(chunks).toString("utf8")));
+    req.on("close", () => finish(reject, createRequestBodyLimitError("CONNECTION_CLOSED")));
+    req.on("error", (error) => finish(reject, error));
+  });
+}
+
+async function readJsonBodyWithLimit(req, options = {}) {
+  try {
+    const raw = await readRequestBodyWithLimit(req, options);
+    if (!raw.trim()) {
+      return options.emptyObjectOnEmpty ? { ok: true, value: {} } : { ok: true, value: null };
+    }
+    return { ok: true, value: JSON.parse(raw) };
+  } catch (error) {
+    if (isRequestBodyLimitError(error)) {
+      return { ok: false, code: error.code };
+    }
+    return { ok: false, code: "INVALID_BODY" };
+  }
+}
+
+function resolveWebhookBodyReadLimits(params = {}) {
+  const defaults =
+    params.profile === "pre-auth"
+      ? WEBHOOK_BODY_READ_DEFAULTS.preAuth
+      : WEBHOOK_BODY_READ_DEFAULTS.postAuth;
+  const maxBytes =
+    typeof params.maxBytes === "number" && Number.isFinite(params.maxBytes) && params.maxBytes > 0
+      ? Math.floor(params.maxBytes)
+      : defaults.maxBytes;
+  const timeoutMs =
+    typeof params.timeoutMs === "number" &&
+    Number.isFinite(params.timeoutMs) &&
+    params.timeoutMs > 0
+      ? Math.floor(params.timeoutMs)
+      : defaults.timeoutMs;
+  return { maxBytes, timeoutMs };
+}
+
+function respondWebhookBodyReadError({ res, code, invalidMessage }) {
+  if (code === "PAYLOAD_TOO_LARGE") {
+    res.statusCode = 413;
+    res.end(requestBodyErrorToText("PAYLOAD_TOO_LARGE"));
+    return { ok: false };
+  }
+  if (code === "REQUEST_BODY_TIMEOUT") {
+    res.statusCode = 408;
+    res.end(requestBodyErrorToText("REQUEST_BODY_TIMEOUT"));
+    return { ok: false };
+  }
+  if (code === "CONNECTION_CLOSED") {
+    res.statusCode = 400;
+    res.end(requestBodyErrorToText("CONNECTION_CLOSED"));
+    return { ok: false };
+  }
+  res.statusCode = 400;
+  res.end(invalidMessage || "Bad Request");
+  return { ok: false };
+}
+
+function applyBasicWebhookRequestGuards(params) {
+  const allowMethods =
+    params.allowMethods && params.allowMethods.length ? params.allowMethods : null;
+  if (allowMethods && !allowMethods.includes(params.req.method || "")) {
+    params.res.statusCode = 405;
+    params.res.setHeader("Allow", allowMethods.join(", "));
+    params.res.end("Method Not Allowed");
+    return false;
+  }
+  if (
+    params.rateLimiter &&
+    params.rateLimitKey &&
+    params.rateLimiter.isRateLimited(params.rateLimitKey, params.nowMs || Date.now())
+  ) {
+    params.res.statusCode = 429;
+    params.res.end("Too Many Requests");
+    return false;
+  }
+  if (
+    params.requireJsonContentType &&
+    params.req.method === "POST" &&
+    !isJsonContentType(params.req.headers && params.req.headers["content-type"])
+  ) {
+    params.res.statusCode = 415;
+    params.res.end("Unsupported Media Type");
+    return false;
+  }
+  return true;
+}
+
+function beginWebhookRequestPipelineOrReject(params) {
+  if (
+    !applyBasicWebhookRequestGuards({
+      req: params.req,
+      res: params.res,
+      allowMethods: params.allowMethods,
+      rateLimiter: params.rateLimiter,
+      rateLimitKey: params.rateLimitKey,
+      nowMs: params.nowMs,
+      requireJsonContentType: params.requireJsonContentType,
+    })
+  ) {
+    return { ok: false };
+  }
+  const inFlightKey = params.inFlightKey || "";
+  const inFlightLimiter = params.inFlightLimiter;
+  if (inFlightLimiter && inFlightKey && !inFlightLimiter.tryAcquire(inFlightKey)) {
+    params.res.statusCode = params.inFlightLimitStatusCode || 429;
+    params.res.end(params.inFlightLimitMessage || "Too Many Requests");
+    return { ok: false };
+  }
+  let released = false;
+  return {
+    ok: true,
+    release() {
+      if (released) {
+        return;
+      }
+      released = true;
+      if (inFlightLimiter && inFlightKey) {
+        inFlightLimiter.release(inFlightKey);
+      }
+    },
+  };
+}
+
+async function readWebhookBodyOrReject(params) {
+  const limits = resolveWebhookBodyReadLimits(params);
+  try {
+    const raw = await readRequestBodyWithLimit(params.req, limits);
+    return { ok: true, value: raw };
+  } catch (error) {
+    return respondWebhookBodyReadError({
+      res: params.res,
+      code: isRequestBodyLimitError(error) ? error.code : "INVALID_BODY",
+      invalidMessage: params.invalidBodyMessage || (error && error.message) || "Bad Request",
+    });
+  }
+}
+
+async function readJsonWebhookBodyOrReject(params) {
+  const limits = resolveWebhookBodyReadLimits(params);
+  const body = await readJsonBodyWithLimit(params.req, {
+    maxBytes: limits.maxBytes,
+    timeoutMs: limits.timeoutMs,
+    emptyObjectOnEmpty: params.emptyObjectOnEmpty,
+  });
+  if (body.ok) {
+    return { ok: true, value: body.value };
+  }
+  return respondWebhookBodyReadError({
+    res: params.res,
+    code: body.code,
+    invalidMessage: params.invalidJsonMessage,
+  });
+}
+
+const pathTeardownByTargetMap = new WeakMap();
+const registeredPluginHttpRoutes = [];
+
+function getPathTeardownMap(targetsByPath) {
+  const existing = pathTeardownByTargetMap.get(targetsByPath);
+  if (existing) {
+    return existing;
+  }
+  const created = new Map();
+  pathTeardownByTargetMap.set(targetsByPath, created);
+  return created;
+}
+
+function registerPluginHttpRoute(route) {
+  const normalizedRoute = {
+    ...route,
+    path: normalizeWebhookPath(route && route.path ? route.path : "/"),
+  };
+  registeredPluginHttpRoutes.push(normalizedRoute);
+  let active = true;
+  return () => {
+    if (!active) {
+      return;
+    }
+    active = false;
+    const index = registeredPluginHttpRoutes.indexOf(normalizedRoute);
+    if (index >= 0) {
+      registeredPluginHttpRoutes.splice(index, 1);
+    }
+  };
+}
+
+function registerWebhookTarget(targetsByPath, target, opts = {}) {
+  const key = normalizeWebhookPath(target.path);
+  const normalizedTarget = { ...target, path: key };
+  const existing = targetsByPath.get(key) || [];
+  if (existing.length === 0 && typeof opts.onFirstPathTarget === "function") {
+    const onFirstPathResult = opts.onFirstPathTarget({
+      path: key,
+      target: normalizedTarget,
+    });
+    if (typeof onFirstPathResult === "function") {
+      getPathTeardownMap(targetsByPath).set(key, onFirstPathResult);
+    }
+  }
+  targetsByPath.set(key, [...existing, normalizedTarget]);
+  let isActive = true;
+  const unregister = () => {
+    if (!isActive) {
+      return;
+    }
+    isActive = false;
+    const updated = (targetsByPath.get(key) || []).filter((entry) => entry !== normalizedTarget);
+    if (updated.length > 0) {
+      targetsByPath.set(key, updated);
+      return;
+    }
+    targetsByPath.delete(key);
+    const teardownMap = getPathTeardownMap(targetsByPath);
+    const teardown = teardownMap.get(key);
+    if (teardown) {
+      teardownMap.delete(key);
+      teardown();
+    }
+    if (typeof opts.onLastPathTargetRemoved === "function") {
+      opts.onLastPathTargetRemoved({ path: key });
+    }
+  };
+  return { target: normalizedTarget, unregister };
+}
+
+function registerWebhookTargetWithPluginRoute(params) {
+  return registerWebhookTarget(params.targetsByPath, params.target, {
+    onFirstPathTarget: ({ path }) =>
+      registerPluginHttpRoute({
+        ...(params.route || {}),
+        path,
+        replaceExisting:
+          params.route && Object.prototype.hasOwnProperty.call(params.route, "replaceExisting")
+            ? params.route.replaceExisting
+            : true,
+      }),
+    onLastPathTargetRemoved: params.onLastPathTargetRemoved,
+  });
+}
+
+function resolveWebhookTargets(req, targetsByPath) {
+  const url = new URL((req && req.url) || "/", "http://localhost");
+  const path = normalizeWebhookPath(url.pathname);
+  const targets = targetsByPath.get(path);
+  if (!targets || targets.length === 0) {
+    return null;
+  }
+  return { path, targets };
+}
+
+async function withResolvedWebhookRequestPipeline(params) {
+  const resolved = resolveWebhookTargets(params.req, params.targetsByPath);
+  if (!resolved) {
+    return false;
+  }
+  const inFlightKey =
+    typeof params.inFlightKey === "function"
+      ? params.inFlightKey({
+          req: params.req,
+          path: resolved.path,
+          targets: resolved.targets,
+        })
+      : params.inFlightKey ||
+        `${resolved.path}:${(params.req.socket && params.req.socket.remoteAddress) || "unknown"}`;
+  const requestLifecycle = beginWebhookRequestPipelineOrReject({
+    req: params.req,
+    res: params.res,
+    allowMethods: params.allowMethods,
+    rateLimiter: params.rateLimiter,
+    rateLimitKey: params.rateLimitKey,
+    nowMs: params.nowMs,
+    requireJsonContentType: params.requireJsonContentType,
+    inFlightLimiter: params.inFlightLimiter,
+    inFlightKey,
+    inFlightLimitStatusCode: params.inFlightLimitStatusCode,
+    inFlightLimitMessage: params.inFlightLimitMessage,
+  });
+  if (!requestLifecycle.ok) {
+    return true;
+  }
+  try {
+    await params.handle(resolved);
+    return true;
+  } finally {
+    requestLifecycle.release();
+  }
+}
+
+function updateMatchedWebhookTarget(matched, target) {
+  if (matched) {
+    return { ok: false, result: { kind: "ambiguous" } };
+  }
+  return { ok: true, matched: target };
+}
+
+function finalizeMatchedWebhookTarget(matched) {
+  if (!matched) {
+    return { kind: "none" };
+  }
+  return { kind: "single", target: matched };
+}
+
+function resolveSingleWebhookTarget(targets, isMatch) {
+  let matched = undefined;
+  for (const target of targets || []) {
+    if (!isMatch(target)) {
+      continue;
+    }
+    const updated = updateMatchedWebhookTarget(matched, target);
+    if (!updated.ok) {
+      return updated.result;
+    }
+    matched = updated.matched;
+  }
+  return finalizeMatchedWebhookTarget(matched);
+}
+
+async function resolveSingleWebhookTargetAsync(targets, isMatch) {
+  let matched = undefined;
+  for (const target of targets || []) {
+    if (!(await isMatch(target))) {
+      continue;
+    }
+    const updated = updateMatchedWebhookTarget(matched, target);
+    if (!updated.ok) {
+      return updated.result;
+    }
+    matched = updated.matched;
+  }
+  return finalizeMatchedWebhookTarget(matched);
+}
+
+function resolveWebhookTargetMatchOrReject(params, match) {
+  if (match.kind === "single") {
+    return match.target;
+  }
+  if (match.kind === "ambiguous") {
+    params.res.statusCode = params.ambiguousStatusCode || 401;
+    params.res.end(params.ambiguousMessage || "ambiguous webhook target");
+    return null;
+  }
+  params.res.statusCode = params.unauthorizedStatusCode || 401;
+  params.res.end(params.unauthorizedMessage || "unauthorized");
+  return null;
+}
+
+async function resolveWebhookTargetWithAuthOrReject(params) {
+  const match = await resolveSingleWebhookTargetAsync(params.targets, async (target) =>
+    params.isMatch(target),
+  );
+  return resolveWebhookTargetMatchOrReject(params, match);
+}
+
+function resolveWebhookTargetWithAuthOrRejectSync(params) {
+  const match = resolveSingleWebhookTarget(params.targets, params.isMatch);
+  return resolveWebhookTargetMatchOrReject(params, match);
+}
+
+function rejectNonPostWebhookRequest(req, res) {
+  if (req.method === "POST") {
+    return false;
+  }
+  res.statusCode = 405;
+  res.setHeader("Allow", "POST");
+  res.end("Method Not Allowed");
+  return true;
+}
+
+function resolveRequestUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (input && typeof input === "object" && typeof input.url === "string") {
+    return input.url;
+  }
+  return "";
+}
+
+function isAuthFailureStatus(status) {
+  return status === 401 || status === 403;
+}
+
+async function fetchWithBearerAuthScopeFallback(params) {
+  const fetchFn = params.fetchFn || fetch;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(params.url);
+  } catch (_error) {
+    throw new Error(`Invalid URL: ${params.url}`);
+  }
+  if (params.requireHttps === true && parsedUrl.protocol !== "https:") {
+    throw new Error(`URL must use HTTPS: ${params.url}`);
+  }
+
+  const fetchOnce = (headers) =>
+    fetchFn(params.url, {
+      ...(params.requestInit || {}),
+      ...(headers ? { headers } : {}),
+    });
+
+  const firstAttempt = await fetchOnce();
+  if (firstAttempt.ok) {
+    return firstAttempt;
+  }
+  if (!params.tokenProvider) {
+    return firstAttempt;
+  }
+  const shouldRetry = params.shouldRetry || ((response) => isAuthFailureStatus(response.status));
+  if (!shouldRetry(firstAttempt)) {
+    return firstAttempt;
+  }
+  if (params.shouldAttachAuth && !params.shouldAttachAuth(params.url)) {
+    return firstAttempt;
+  }
+  for (const scope of params.scopes || []) {
+    try {
+      const token = await params.tokenProvider.getAccessToken(scope);
+      const authHeaders = new Headers(params.requestInit && params.requestInit.headers);
+      authHeaders.set("Authorization", `Bearer ${token}`);
+      const authAttempt = await fetchOnce(authHeaders);
+      if (authAttempt.ok) {
+        return authAttempt;
+      }
+      if (!shouldRetry(authAttempt)) {
+        continue;
+      }
+    } catch (_error) {
+      // Continue trying remaining scopes, matching OpenClaw's forgiving fallback.
+    }
+  }
+  return firstAttempt;
+}
+
+function asNullableRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function isPrivateNetworkOptInEnabled(input) {
+  if (input === true) {
+    return true;
+  }
+  const record = asNullableRecord(input);
+  if (!record) {
+    return false;
+  }
+  const network = asNullableRecord(record.network);
+  return (
+    record.allowPrivateNetwork === true ||
+    record.dangerouslyAllowPrivateNetwork === true ||
+    (network && network.allowPrivateNetwork === true) ||
+    (network && network.dangerouslyAllowPrivateNetwork === true)
+  );
+}
+
+function ssrfPolicyFromPrivateNetworkOptIn(input) {
+  return isPrivateNetworkOptInEnabled(input) ? { allowPrivateNetwork: true } : undefined;
+}
+
+function ssrfPolicyFromDangerouslyAllowPrivateNetwork(dangerouslyAllowPrivateNetwork) {
+  return ssrfPolicyFromPrivateNetworkOptIn(dangerouslyAllowPrivateNetwork);
+}
+
+function ssrfPolicyFromAllowPrivateNetwork(allowPrivateNetwork) {
+  return ssrfPolicyFromDangerouslyAllowPrivateNetwork(allowPrivateNetwork);
+}
+
+function mergeSsrFPolicies(...policies) {
+  const merged = {};
+  for (const policy of policies) {
+    if (!policy) {
+      continue;
+    }
+    if (policy.allowPrivateNetwork) {
+      merged.allowPrivateNetwork = true;
+    }
+    if (policy.dangerouslyAllowPrivateNetwork) {
+      merged.dangerouslyAllowPrivateNetwork = true;
+    }
+    if (policy.allowRfc2544BenchmarkRange) {
+      merged.allowRfc2544BenchmarkRange = true;
+    }
+    if (policy.allowIpv6UniqueLocalRange) {
+      merged.allowIpv6UniqueLocalRange = true;
+    }
+    if (Array.isArray(policy.allowedHostnames) && policy.allowedHostnames.length) {
+      merged.allowedHostnames = Array.from(
+        new Set([...(merged.allowedHostnames || []), ...policy.allowedHostnames]),
+      );
+    }
+    if (Array.isArray(policy.hostnameAllowlist) && policy.hostnameAllowlist.length) {
+      merged.hostnameAllowlist = Array.from(
+        new Set([...(merged.hostnameAllowlist || []), ...policy.hostnameAllowlist]),
+      );
+    }
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function hasLegacyFlatAllowPrivateNetworkAlias(value) {
+  const entry = asNullableRecord(value);
+  return Boolean(entry && Object.prototype.hasOwnProperty.call(entry, "allowPrivateNetwork"));
+}
+
+function migrateLegacyFlatAllowPrivateNetworkAlias(params) {
+  if (!hasLegacyFlatAllowPrivateNetworkAlias(params.entry)) {
+    return { entry: params.entry, changed: false };
+  }
+  const legacyAllowPrivateNetwork = params.entry.allowPrivateNetwork;
+  const currentNetworkRecord = asNullableRecord(params.entry.network);
+  const currentNetwork = currentNetworkRecord ? { ...currentNetworkRecord } : {};
+  const currentDangerousAllowPrivateNetwork = currentNetwork.dangerouslyAllowPrivateNetwork;
+  let resolvedDangerousAllowPrivateNetwork = currentDangerousAllowPrivateNetwork;
+  if (typeof currentDangerousAllowPrivateNetwork === "boolean") {
+    resolvedDangerousAllowPrivateNetwork = currentDangerousAllowPrivateNetwork;
+  } else if (typeof legacyAllowPrivateNetwork === "boolean") {
+    resolvedDangerousAllowPrivateNetwork = legacyAllowPrivateNetwork;
+  } else if (currentDangerousAllowPrivateNetwork === undefined) {
+    resolvedDangerousAllowPrivateNetwork = legacyAllowPrivateNetwork;
+  }
+
+  delete currentNetwork.dangerouslyAllowPrivateNetwork;
+  if (resolvedDangerousAllowPrivateNetwork !== undefined) {
+    currentNetwork.dangerouslyAllowPrivateNetwork = resolvedDangerousAllowPrivateNetwork;
+  }
+  const nextEntry = { ...params.entry };
+  delete nextEntry.allowPrivateNetwork;
+  if (Object.keys(currentNetwork).length > 0) {
+    nextEntry.network = currentNetwork;
+  } else {
+    delete nextEntry.network;
+  }
+  params.changes.push(
+    `Moved ${params.pathPrefix}.allowPrivateNetwork -> ` +
+      `${params.pathPrefix}.network.dangerouslyAllowPrivateNetwork ` +
+      `(${String(resolvedDangerousAllowPrivateNetwork)}).`,
+  );
+  return { entry: nextEntry, changed: true };
+}
+
+function normalizeHostname(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/, "")
+    .replace(/\]$/, "")
+    .replace(/\.+$/, "");
+}
+
+function normalizeHostnameSet(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return new Set();
+  }
+  return new Set(values.map((value) => normalizeHostname(value)).filter(Boolean));
+}
+
+function normalizeHostnameAllowlist(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeHostname(value))
+        .filter((value) => value !== "*" && value !== "*." && value.length > 0),
+    ),
+  );
+}
+
+function isPrivateNetworkAllowedByPolicy(policy) {
+  return policy && (policy.dangerouslyAllowPrivateNetwork === true || policy.allowPrivateNetwork);
+}
+
+function isHostnameAllowedByPattern(hostname, pattern) {
+  if (pattern.startsWith("*.")) {
+    const suffix = pattern.slice(2);
+    return Boolean(suffix && hostname !== suffix && hostname.endsWith(`.${suffix}`));
+  }
+  return hostname === pattern;
+}
+
+function matchesHostnameAllowlist(hostname, allowlist) {
+  if (!allowlist.length) {
+    return true;
+  }
+  return allowlist.some((pattern) => isHostnameAllowedByPattern(hostname, pattern));
+}
+
+function isPrivateIpAddress(address, policy = {}) {
+  const normalized = normalizeHostname(address);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") {
+    return true;
+  }
+  if (
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe80:")
+  ) {
+    return policy.allowIpv6UniqueLocalRange === true ? false : true;
+  }
+  const parts = normalized.split(".");
+  if (parts.length !== 4 || !parts.every((part) => /^\d+$/.test(part))) {
+    return false;
+  }
+  const nums = parts.map((part) => Number(part));
+  if (nums.some((part) => part < 0 || part > 255)) {
+    return true;
+  }
+  const [a, b] = nums;
+  if (a === 10 || a === 127 || a === 0) {
+    return true;
+  }
+  if (a === 169 && b === 254) {
+    return true;
+  }
+  if (a === 172 && b >= 16 && b <= 31) {
+    return true;
+  }
+  if (a === 192 && b === 168) {
+    return true;
+  }
+  if (a === 100 && b >= 64 && b <= 127) {
+    return true;
+  }
+  if (a === 198 && (b === 18 || b === 19)) {
+    return policy.allowRfc2544BenchmarkRange === true ? false : true;
+  }
+  return false;
+}
+
+function isBlockedHostnameOrIp(hostname, policy) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    return false;
+  }
+  const blockedHostnames = new Set([
+    "localhost",
+    "localhost.localdomain",
+    "metadata.google.internal",
+  ]);
+  return (
+    blockedHostnames.has(normalized) ||
+    normalized.endsWith(".localhost") ||
+    normalized.endsWith(".local") ||
+    normalized.endsWith(".internal") ||
+    isPrivateIpAddress(normalized, policy)
+  );
+}
+
+function normalizeLookupResults(results) {
+  if (!results) {
+    return [];
+  }
+  return Array.isArray(results) ? results : [results];
+}
+
+async function resolvePinnedHostnameWithPolicy(hostname, params = {}) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) {
+    throw new Error("Invalid hostname");
+  }
+  const policy = params.policy;
+  const hostnameAllowlist = normalizeHostnameAllowlist(policy && policy.hostnameAllowlist);
+  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) {
+    throw new Error(`Blocked hostname (not in allowlist): ${hostname}`);
+  }
+  const skipPrivateNetworkChecks =
+    isPrivateNetworkAllowedByPolicy(policy) ||
+    normalizeHostnameSet(policy && policy.allowedHostnames).has(normalized);
+  if (!skipPrivateNetworkChecks && isBlockedHostnameOrIp(normalized, policy)) {
+    throw new Error("Blocked hostname or private/internal/special-use IP address");
+  }
+  let results;
+  if (typeof params.lookupFn === "function") {
+    results = await params.lookupFn(normalized, { all: true });
+  } else {
+    results = [{ address: normalized, family: normalized.includes(":") ? 6 : 4 }];
+  }
+  const records = normalizeLookupResults(results);
+  if (records.length === 0) {
+    throw new Error(`Unable to resolve hostname: ${hostname}`);
+  }
+  if (!skipPrivateNetworkChecks) {
+    for (const entry of records) {
+      if (isBlockedHostnameOrIp(entry.address, policy)) {
+        throw new Error("Blocked: resolves to private/internal/special-use IP address");
+      }
+    }
+  }
+  const addresses = Array.from(new Set(records.map((entry) => entry.address).filter(Boolean)));
+  return {
+    hostname: normalized,
+    addresses,
+    lookup: passthrough,
+  };
+}
+
+async function resolvePinnedHostname(hostname, lookupFn) {
+  return resolvePinnedHostnameWithPolicy(hostname, { lookupFn });
+}
+
+async function assertHttpUrlTargetsPrivateNetwork(url, params = {}) {
+  const parsed = new URL(url);
+  if (parsed.protocol !== "http:") {
+    return;
+  }
+  const errorMessage =
+    params.errorMessage || "HTTP URL must target a trusted private/internal host";
+  const hostname = parsed.hostname;
+  if (!hostname) {
+    throw new Error(errorMessage);
+  }
+  if (isBlockedHostnameOrIp(hostname)) {
+    return;
+  }
+  const allowPrivateNetwork =
+    typeof params.dangerouslyAllowPrivateNetwork === "boolean"
+      ? params.dangerouslyAllowPrivateNetwork
+      : params.allowPrivateNetwork;
+  if (allowPrivateNetwork !== true) {
+    throw new Error(errorMessage);
+  }
+  const pinned = await resolvePinnedHostnameWithPolicy(hostname, {
+    lookupFn: params.lookupFn,
+    policy: { allowPrivateNetwork: true },
+  });
+  if (!pinned.addresses.every((address) => isPrivateIpAddress(address))) {
+    throw new Error(errorMessage);
+  }
+}
+
+function normalizeHostnameSuffix(value) {
+  const trimmed = normalizeHostname(value);
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed === "*" || trimmed === "*.") {
+    return "*";
+  }
+  const withoutWildcard = trimmed.replace(/^\*\.?/, "");
+  const withoutLeadingDot = withoutWildcard.replace(/^\.+/, "");
+  return withoutLeadingDot.replace(/\.+$/, "");
+}
+
+function normalizeHostnameSuffixAllowlist(input, defaults) {
+  const source = input && input.length > 0 ? input : defaults;
+  if (!source || source.length === 0) {
+    return [];
+  }
+  const normalized = source.map(normalizeHostnameSuffix).filter(Boolean);
+  if (normalized.includes("*")) {
+    return ["*"];
+  }
+  return Array.from(new Set(normalized));
+}
+
+function isHostnameAllowedBySuffixAllowlist(hostname, allowlist) {
+  if (allowlist.includes("*")) {
+    return true;
+  }
+  const normalized = normalizeHostname(hostname);
+  return allowlist.some((entry) => normalized === entry || normalized.endsWith(`.${entry}`));
+}
+
+function isHttpsUrlAllowedByHostnameSuffixAllowlist(url, allowlist) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "https:" &&
+      isHostnameAllowedBySuffixAllowlist(parsed.hostname, allowlist)
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function buildHostnameAllowlistPolicyFromSuffixAllowlist(allowHosts) {
+  const normalizedAllowHosts = normalizeHostnameSuffixAllowlist(allowHosts);
+  if (normalizedAllowHosts.length === 0 || normalizedAllowHosts.includes("*")) {
+    return undefined;
+  }
+  const patterns = new Set();
+  for (const normalized of normalizedAllowHosts) {
+    patterns.add(normalized);
+    patterns.add(`*.${normalized}`);
+  }
+  return patterns.size > 0 ? { hostnameAllowlist: Array.from(patterns) } : undefined;
+}
+
+function ssrfPolicyFromHttpBaseUrlAllowedHostname(baseUrl) {
+  const trimmed = String(baseUrl || "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    return { allowedHostnames: [parsed.hostname] };
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function isPrivateOrLoopbackHost(hostname) {
+  return isBlockedHostnameOrIp(hostname);
+}
+
+async function closeDispatcher(dispatcher) {
+  if (!dispatcher) {
+    return;
+  }
+  try {
+    if (typeof dispatcher.close === "function") {
+      await dispatcher.close();
+      return;
+    }
+    if (typeof dispatcher.destroy === "function") {
+      dispatcher.destroy();
+    }
+  } catch (_error) {
+    // Ignore cleanup failures.
+  }
+}
+
+async function fetchWithSsrFGuard(params) {
+  const fetchImpl = params.fetchImpl || fetch;
+  let parsed;
+  try {
+    parsed = new URL(params.url);
+  } catch (_error) {
+    throw new Error("Invalid URL: must be http or https");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Invalid URL: must be http or https");
+  }
+  if (params.requireHttps === true && parsed.protocol !== "https:") {
+    throw new Error("URL must use https");
+  }
+  await resolvePinnedHostnameWithPolicy(parsed.hostname, {
+    lookupFn: params.lookupFn,
+    policy: params.policy,
+  });
+  const response = await fetchImpl(params.url, params.init || {});
+  return {
+    response,
+    finalUrl: params.url,
+    release: async () => undefined,
+  };
+}
+
+const ANTIGRAVITY_BARE_PRO_IDS = new Set(["gemini-3-pro", "gemini-3.1-pro", "gemini-3-1-pro"]);
+
+function normalizeGooglePreviewModelId(id) {
+  if (id === "gemini-3-pro") {
+    return "gemini-3-pro-preview";
+  }
+  if (id === "gemini-3-flash") {
+    return "gemini-3-flash-preview";
+  }
+  if (id === "gemini-3.1-pro") {
+    return "gemini-3.1-pro-preview";
+  }
+  if (id === "gemini-3.1-flash-lite") {
+    return "gemini-3.1-flash-lite-preview";
+  }
+  if (id === "gemini-3.1-flash" || id === "gemini-3.1-flash-preview") {
+    return "gemini-3-flash-preview";
+  }
+  return id;
+}
+
+function normalizeAntigravityPreviewModelId(id) {
+  return ANTIGRAVITY_BARE_PRO_IDS.has(id) ? `${id}-low` : id;
+}
+
+function normalizeNativeXaiModelId(id) {
+  if (id === "grok-4-fast-reasoning") {
+    return "grok-4-fast";
+  }
+  if (id === "grok-4-1-fast-reasoning") {
+    return "grok-4-1-fast";
+  }
+  if (id === "grok-4.20-experimental-beta-0304-reasoning") {
+    return "grok-4.20-beta-latest-reasoning";
+  }
+  if (id === "grok-4.20-experimental-beta-0304-non-reasoning") {
+    return "grok-4.20-beta-latest-non-reasoning";
+  }
+  if (id === "grok-4.20-reasoning") {
+    return "grok-4.20-beta-latest-reasoning";
+  }
+  if (id === "grok-4.20-non-reasoning") {
+    return "grok-4.20-beta-latest-non-reasoning";
+  }
+  return id;
+}
+
+function getModelProviderHint(modelId) {
+  const trimmed = normalizeOptionalLowercaseString(modelId);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0) {
+    return null;
+  }
+  return trimmed.slice(0, slashIndex) || null;
+}
+
+function isProxyReasoningUnsupportedModelHint(modelId) {
+  return getModelProviderHint(modelId) === "x-ai";
+}
+
+const BASE_CLAUDE_THINKING_LEVELS = [
+  { id: "off" },
+  { id: "minimal" },
+  { id: "low" },
+  { id: "medium" },
+  { id: "high" },
+];
+
+function matchesClaudeModelPrefix(modelId, prefixes) {
+  const lower = normalizeOptionalLowercaseString(modelId);
+  return Boolean(lower && prefixes.some((prefix) => lower.startsWith(prefix)));
+}
+
+function isClaudeOpus47ModelId(modelId) {
+  return matchesClaudeModelPrefix(modelId, ["claude-opus-4-7", "claude-opus-4.7"]);
+}
+
+function isClaudeAdaptiveThinkingDefaultModelId(modelId) {
+  return matchesClaudeModelPrefix(modelId, [
+    "claude-opus-4-6",
+    "claude-opus-4.6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4.6",
+  ]);
+}
+
+function resolveClaudeThinkingProfile(modelId) {
+  if (isClaudeOpus47ModelId(modelId)) {
+    return {
+      levels: [
+        ...BASE_CLAUDE_THINKING_LEVELS,
+        { id: "xhigh" },
+        { id: "adaptive" },
+        { id: "max" },
+      ],
+      defaultLevel: "off",
+    };
+  }
+  if (isClaudeAdaptiveThinkingDefaultModelId(modelId)) {
+    return {
+      levels: [...BASE_CLAUDE_THINKING_LEVELS, { id: "adaptive" }],
+      defaultLevel: "adaptive",
+    };
+  }
+  return { levels: BASE_CLAUDE_THINKING_LEVELS };
+}
+
+function buildOpenAICompatibleReplayPolicy(options = {}, ctx = {}) {
+  const policy = {
+    applyAssistantFirstOrderingFix: true,
+    validateGeminiTurns: true,
+  };
+  if (options.sanitizeToolCallIds !== false) {
+    policy.sanitizeToolCallIds = true;
+  }
+  const modelId = normalizeOptionalLowercaseString(ctx.modelId);
+  if (modelId && (modelId.includes("gemma") || modelId.includes("gemini"))) {
+    policy.dropReasoningFromHistory = true;
+  }
+  if (modelId && (modelId.includes("gemma") || modelId.includes("kimi"))) {
+    policy.validateAnthropicTurns = true;
+  }
+  return policy;
+}
+
+function buildAnthropicReplayPolicyForModel(_modelId) {
+  return {
+    validateAnthropicTurns: true,
+    repairToolUseResultPairing: true,
+  };
+}
+
+function buildNativeAnthropicReplayPolicyForModel(modelId) {
+  return {
+    sanitizeMode: "full",
+    preserveNativeAnthropicToolUseIds: true,
+    preserveSignatures: true,
+    ...buildAnthropicReplayPolicyForModel(modelId),
+    allowSyntheticToolResults: true,
+  };
+}
+
+function buildGoogleGeminiReplayPolicy() {
+  return {
+    validateGeminiTurns: true,
+    allowSyntheticToolResults: true,
+  };
+}
+
+function sanitizeGoogleGeminiReplayHistory(ctx) {
+  const messages = Array.isArray(ctx && ctx.messages) ? ctx.messages : [];
+  if (messages[0] && messages[0].role === "assistant") {
+    return [{ role: "user", content: "(session bootstrap)" }, ...messages];
+  }
+  return messages;
+}
+
+function resolveTaggedReasoningOutputMode() {
+  return "tagged";
+}
+
+function buildPassthroughGeminiSanitizingReplayPolicy(_modelId) {
+  return {
+    applyAssistantFirstOrderingFix: false,
+    validateGeminiTurns: false,
+    validateAnthropicTurns: false,
+    sanitizeThoughtSignatures: {
+      allowBase64Only: true,
+      includeCamelCase: true,
+    },
+  };
+}
+
+function buildHybridAnthropicOrOpenAIReplayPolicy(ctx, _options = {}) {
+  if (String((ctx && ctx.modelApi) || "").includes("anthropic")) {
+    return buildAnthropicReplayPolicyForModel(ctx && ctx.modelId);
+  }
+  return buildOpenAICompatibleReplayPolicy({}, ctx);
+}
+
+function buildProviderReplayFamilyHooks(options) {
+  switch (options.family) {
+    case "openai-compatible": {
+      const policyOptions = { sanitizeToolCallIds: options.sanitizeToolCallIds };
+      return {
+        buildReplayPolicy: (ctx) => buildOpenAICompatibleReplayPolicy(policyOptions, ctx),
+      };
+    }
+    case "anthropic-by-model":
+      return {
+        buildReplayPolicy: (ctx) => buildAnthropicReplayPolicyForModel(ctx && ctx.modelId),
+      };
+    case "native-anthropic-by-model":
+      return {
+        buildReplayPolicy: (ctx) => buildNativeAnthropicReplayPolicyForModel(ctx && ctx.modelId),
+      };
+    case "google-gemini":
+      return {
+        buildReplayPolicy: () => buildGoogleGeminiReplayPolicy(),
+        sanitizeReplayHistory: (ctx) => sanitizeGoogleGeminiReplayHistory(ctx),
+        resolveReasoningOutputMode: () => resolveTaggedReasoningOutputMode(),
+      };
+    case "passthrough-gemini":
+      return {
+        buildReplayPolicy: (ctx) =>
+          buildPassthroughGeminiSanitizingReplayPolicy(ctx && ctx.modelId),
+      };
+    case "hybrid-anthropic-openai":
+      return {
+        buildReplayPolicy: (ctx) => buildHybridAnthropicOrOpenAIReplayPolicy(ctx, options),
+      };
+    default:
+      throw new Error("Unsupported provider replay family");
+  }
+}
+
+const OPENAI_COMPATIBLE_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "openai-compatible",
+});
+const ANTHROPIC_BY_MODEL_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "anthropic-by-model",
+});
+const NATIVE_ANTHROPIC_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "native-anthropic-by-model",
+});
+const PASSTHROUGH_GEMINI_REPLAY_HOOKS = buildProviderReplayFamilyHooks({
+  family: "passthrough-gemini",
+});
+
+function cloneManifestCatalogTieredCost(tier) {
+  const range = Array.isArray(tier.range) ? tier.range : [];
+  return {
+    input: tier.input,
+    output: tier.output,
+    cacheRead: tier.cacheRead,
+    cacheWrite: tier.cacheWrite,
+    range: range.length === 1 ? [range[0]] : [range[0], range[1]],
+  };
+}
+
+function cloneManifestCatalogCost(cost = {}) {
+  return {
+    input: cost.input || 0,
+    output: cost.output || 0,
+    cacheRead: cost.cacheRead || 0,
+    cacheWrite: cost.cacheWrite || 0,
+    ...(Array.isArray(cost.tieredPricing)
+      ? { tieredPricing: cost.tieredPricing.map(cloneManifestCatalogTieredCost) }
+      : {}),
+  };
+}
+
+function buildManifestCatalogModelInput(model) {
+  if (Array.isArray(model.input) && model.input.includes("document")) {
+    throw new Error(
+      `Manifest modelCatalog row ${model.id} uses unsupported runtime input document`,
+    );
+  }
+  return Array.isArray(model.input)
+    ? model.input.filter((item) => item === "text" || item === "image")
+    : ["text"];
+}
+
+function buildManifestCatalogModel(model) {
+  if (model.contextWindow === undefined) {
+    throw new Error(`Manifest modelCatalog row ${model.id} is missing contextWindow`);
+  }
+  if (model.maxTokens === undefined) {
+    throw new Error(`Manifest modelCatalog row ${model.id} is missing maxTokens`);
+  }
+  return {
+    id: model.id,
+    name: model.name || model.id,
+    ...(model.api ? { api: model.api } : {}),
+    ...(model.baseUrl ? { baseUrl: model.baseUrl } : {}),
+    reasoning: model.reasoning || false,
+    input: buildManifestCatalogModelInput(model),
+    cost: cloneManifestCatalogCost(model.cost || {}),
+    contextWindow: model.contextWindow,
+    ...(model.contextTokens !== undefined ? { contextTokens: model.contextTokens } : {}),
+    maxTokens: model.maxTokens,
+    ...(model.headers ? { headers: { ...model.headers } } : {}),
+    ...(model.compat ? { compat: { ...model.compat } } : {}),
+  };
+}
+
+function buildManifestModelProviderConfig(params) {
+  const catalog = params.catalog || {};
+  if (!catalog.baseUrl) {
+    throw new Error(`Missing modelCatalog.providers.${params.providerId}.baseUrl`);
+  }
+  const rawModels = Array.isArray(catalog.models) ? catalog.models : [];
+  const models = rawModels
+    .filter((model) => model && typeof model === "object" && String(model.id || "").trim())
+    .map(buildManifestCatalogModel);
+  if (rawModels.length !== models.length) {
+    throw new Error(`Invalid modelCatalog.providers.${params.providerId}.models`);
+  }
+  return {
+    baseUrl: catalog.baseUrl,
+    ...(catalog.api ? { api: catalog.api } : {}),
+    ...(catalog.headers ? { headers: { ...catalog.headers } } : {}),
+    models,
+  };
+}
+
+function normalizeConfiguredCatalogModelInput(input) {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+  const normalized = input.filter((item) =>
+    ["text", "image", "audio", "video", "document"].includes(item),
+  );
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function findNormalizedProviderKey(providers, providerId) {
+  const normalized = normalizeOptionalLowercaseString(providerId);
+  return Object.keys(providers || {}).find(
+    (key) => normalizeOptionalLowercaseString(key) === normalized,
+  );
+}
+
+function readConfiguredProviderCatalogEntries(params) {
+  const provider = params.publishedProviderId || params.providerId;
+  const providers = params.config && params.config.models && params.config.models.providers;
+  const providerKey = providers ? findNormalizedProviderKey(providers, params.providerId) : null;
+  const providerConfig = providerKey ? providers[providerKey] : null;
+  const models =
+    providerConfig && Array.isArray(providerConfig.models) ? providerConfig.models : [];
+  const entries = [];
+  for (const model of models) {
+    if (!model || typeof model !== "object") {
+      continue;
+    }
+    const id = typeof model.id === "string" ? model.id.trim() : "";
+    if (!id) {
+      continue;
+    }
+    const name = (typeof model.name === "string" ? model.name : id).trim() || id;
+    const contextWindow =
+      typeof model.contextWindow === "number" && model.contextWindow > 0
+        ? model.contextWindow
+        : undefined;
+    const reasoning = typeof model.reasoning === "boolean" ? model.reasoning : undefined;
+    const input = normalizeConfiguredCatalogModelInput(model.input);
+    entries.push({
+      provider,
+      id,
+      name,
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(reasoning !== undefined ? { reasoning } : {}),
+      ...(input ? { input } : {}),
+    });
+  }
+  return entries;
+}
+
+function supportsNativeStreamingUsageCompat(params) {
+  const baseUrl = normalizeOptionalLowercaseString(params.baseUrl);
+  return Boolean(
+    baseUrl &&
+      (baseUrl.includes("dashscope.aliyuncs.com/compatible-mode") ||
+        baseUrl.includes("api.moonshot.ai")),
+  );
+}
+
+function applyProviderNativeStreamingUsageCompat(params) {
+  const providerConfig = params.providerConfig || {};
+  if (
+    !supportsNativeStreamingUsageCompat({
+      providerId: params.providerId,
+      baseUrl: providerConfig.baseUrl,
+    }) ||
+    !Array.isArray(providerConfig.models)
+  ) {
+    return providerConfig;
+  }
+  let changed = false;
+  const models = providerConfig.models.map((model) => {
+    if (model.compat && model.compat.supportsUsageInStreaming !== undefined) {
+      return model;
+    }
+    changed = true;
+    return {
+      ...model,
+      compat: {
+        ...(model.compat || {}),
+        supportsUsageInStreaming: true,
+      },
+    };
+  });
+  return changed ? { ...providerConfig, models } : providerConfig;
+}
+
+function definePluginEntry(options) {
+  const schema = options.configSchema || {};
+  return {
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    ...(options.kind ? { kind: options.kind } : {}),
+    get configSchema() {
+      return typeof schema === "function" ? schema() : schema;
+    },
+    register: options.register || (() => {}),
+  };
+}
+
+function resolveProviderWizardSetup(params) {
+  const auth = params.auth || {};
+  if (auth.wizard === false) {
+    return undefined;
+  }
+  const wizard = auth.wizard || {};
+  const methodId = String(auth.methodId || "").trim();
+  return {
+    choiceId: wizard.choiceId || `${params.providerId}-${methodId}`,
+    choiceLabel: wizard.choiceLabel || auth.label,
+    ...(wizard.choiceHint ? { choiceHint: wizard.choiceHint } : {}),
+    groupId: wizard.groupId || params.providerId,
+    groupLabel: wizard.groupLabel || params.providerLabel,
+    ...((wizard.groupHint || auth.hint) ? { groupHint: wizard.groupHint || auth.hint } : {}),
+    methodId,
+    ...(wizard.onboardingScopes ? { onboardingScopes: wizard.onboardingScopes } : {}),
+    ...(wizard.modelAllowlist ? { modelAllowlist: wizard.modelAllowlist } : {}),
+  };
+}
+
+function resolveProviderEnvVars(params) {
+  const explicit = Array.isArray(params.envVars) ? params.envVars : [];
+  const auth = Array.isArray(params.auth) ? params.auth : [];
+  const combined = [
+    ...explicit,
+    ...auth.map((entry) => entry && entry.envVar).filter(Boolean),
+  ]
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  return combined.length > 0 ? Array.from(new Set(combined)) : undefined;
+}
+
+function createProviderApiKeyAuthMethod(params) {
+  return {
+    id: params.methodId,
+    label: params.label,
+    ...(params.hint ? { hint: params.hint } : {}),
+    kind: "api_key",
+    ...(params.wizard ? { wizard: params.wizard } : {}),
+    run: async () => {
+      throw new Error("Provider API key auth prompts are not available in native shim tests.");
+    },
+    runNonInteractive: async () => null,
+  };
+}
+
+function resolveProviderApiKeyFromContext(ctx, providerId) {
+  if (ctx && typeof ctx.resolveProviderApiKey === "function") {
+    const resolved = ctx.resolveProviderApiKey(providerId) || {};
+    return normalizeOptionalString(resolved.apiKey);
+  }
+  if (ctx && typeof ctx.resolveProviderAuth === "function") {
+    const resolved = ctx.resolveProviderAuth(providerId) || {};
+    return normalizeOptionalString(resolved.apiKey);
+  }
+  return undefined;
+}
+
+async function buildSingleProviderApiKeyCatalog(params) {
+  const providerId = normalizeOptionalLowercaseString(params.providerId) || "";
+  const apiKey = resolveProviderApiKeyFromContext(params.ctx, providerId);
+  if (!apiKey) {
+    return null;
+  }
+  const providers =
+    params.ctx &&
+    params.ctx.config &&
+    params.ctx.config.models &&
+    params.ctx.config.models.providers;
+  const providerKey =
+    params.allowExplicitBaseUrl && providers
+      ? findNormalizedProviderKey(providers, providerId)
+      : undefined;
+  const providerConfig = providerKey ? providers[providerKey] : undefined;
+  const explicitBaseUrl = normalizeOptionalString(providerConfig && providerConfig.baseUrl);
+  return {
+    provider: {
+      ...(await params.buildProvider()),
+      ...(explicitBaseUrl ? { baseUrl: explicitBaseUrl } : {}),
+      apiKey,
+    },
+  };
+}
+
+function defineSingleProviderPluginEntry(options) {
+  return definePluginEntry({
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    ...(options.kind ? { kind: options.kind } : {}),
+    ...(options.configSchema ? { configSchema: options.configSchema } : {}),
+    register(api) {
+      const provider = options.provider;
+      if (provider) {
+        const providerId = provider.id || options.id;
+        const envVars = resolveProviderEnvVars({
+          envVars: provider.envVars,
+          auth: provider.auth,
+        });
+        const auth = (Array.isArray(provider.auth) ? provider.auth : []).map((entry) => {
+          const authParams = { ...entry };
+          delete authParams.wizard;
+          const wizard = resolveProviderWizardSetup({
+            providerId,
+            providerLabel: provider.label,
+            auth: entry,
+          });
+          return createProviderApiKeyAuthMethod({
+            ...authParams,
+            providerId,
+            expectedProviders: entry.expectedProviders || [providerId],
+            ...(wizard ? { wizard } : {}),
+          });
+        });
+        const providerCatalog = provider.catalog || {};
+        const usesCustomCatalog = typeof providerCatalog.run === "function";
+        const catalog = usesCustomCatalog
+          ? {
+              order: providerCatalog.order || "simple",
+              run: providerCatalog.run,
+            }
+          : {
+              order: "simple",
+              run: (ctx) =>
+                buildSingleProviderApiKeyCatalog({
+                  ctx,
+                  providerId,
+                  buildProvider: providerCatalog.buildProvider,
+                  ...(providerCatalog.allowExplicitBaseUrl
+                    ? { allowExplicitBaseUrl: true }
+                    : {}),
+                }),
+            };
+        const staticCatalog = usesCustomCatalog
+          ? providerCatalog.staticRun
+            ? {
+                order: providerCatalog.order || "simple",
+                run: providerCatalog.staticRun,
+              }
+            : undefined
+          : typeof providerCatalog.buildStaticProvider === "function"
+            ? {
+                order: "simple",
+                run: async () => ({ provider: await providerCatalog.buildStaticProvider() }),
+              }
+            : undefined;
+        const omittedProviderKeys = new Set([
+          "id",
+          "label",
+          "docsPath",
+          "aliases",
+          "envVars",
+          "auth",
+          "catalog",
+          "staticCatalog",
+        ]);
+        api.registerProvider({
+          id: providerId,
+          label: provider.label,
+          docsPath: provider.docsPath,
+          ...(provider.aliases ? { aliases: provider.aliases } : {}),
+          ...(envVars ? { envVars } : {}),
+          auth,
+          catalog,
+          ...(staticCatalog ? { staticCatalog } : {}),
+          ...Object.fromEntries(
+            Object.entries(provider).filter(([key]) => !omittedProviderKeys.has(key)),
+          ),
+        });
+      }
+      if (typeof options.register === "function") {
+        options.register(api);
+      }
+    },
+  });
+}
+
+function ensurePluginAllowlisted(cfg, pluginId) {
+  const allow = cfg && cfg.plugins && cfg.plugins.allow;
+  if (!Array.isArray(allow) || allow.includes(pluginId)) {
+    return cfg;
+  }
+  return {
+    ...cfg,
+    plugins: {
+      ...(cfg.plugins || {}),
+      allow: [...allow, pluginId],
+    },
+  };
+}
+
+function enableProviderPluginInConfig(cfg, pluginId) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return { config: cfg, enabled: false, reason: "plugins disabled" };
+  }
+  if (cfg && cfg.plugins && Array.isArray(cfg.plugins.deny)) {
+    if (cfg.plugins.deny.includes(pluginId)) {
+      return { config: cfg, enabled: false, reason: "blocked by denylist" };
+    }
+  }
+  const plugins = (cfg && cfg.plugins) || {};
+  let next = {
+    ...cfg,
+    plugins: {
+      ...plugins,
+      entries: {
+        ...(plugins.entries || {}),
+        [pluginId]: {
+          ...((plugins.entries && plugins.entries[pluginId]) || {}),
+          enabled: true,
+        },
+      },
+    },
+  };
+  next = ensurePluginAllowlisted(next, pluginId);
+  return { config: next, enabled: true };
+}
+
+function getTopLevelCredentialValue(searchConfig) {
+  return searchConfig ? searchConfig.apiKey : undefined;
+}
+
+function setTopLevelCredentialValue(searchConfigTarget, value) {
+  searchConfigTarget.apiKey = value;
+}
+
+function getScopedCredentialValue(searchConfig, key) {
+  const scoped = searchConfig ? searchConfig[key] : undefined;
+  if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) {
+    return undefined;
+  }
+  return scoped.apiKey;
+}
+
+function setScopedCredentialValue(searchConfigTarget, key, value) {
+  const scoped = searchConfigTarget[key];
+  if (!scoped || typeof scoped !== "object" || Array.isArray(scoped)) {
+    searchConfigTarget[key] = { apiKey: value };
+    return;
+  }
+  scoped.apiKey = value;
+}
+
+function mergeScopedSearchConfig(searchConfig, key, pluginConfig, options = {}) {
+  if (!pluginConfig) {
+    return searchConfig;
+  }
+  const currentScoped =
+    searchConfig &&
+    searchConfig[key] &&
+    typeof searchConfig[key] === "object" &&
+    !Array.isArray(searchConfig[key])
+      ? searchConfig[key]
+      : {};
+  const next = {
+    ...(searchConfig || {}),
+    [key]: {
+      ...currentScoped,
+      ...pluginConfig,
+    },
+  };
+  if (options.mirrorApiKeyToTopLevel && pluginConfig.apiKey !== undefined) {
+    next.apiKey = pluginConfig.apiKey;
+  }
+  return next;
+}
+
+function resolveProviderWebSearchPluginConfig(config, pluginId) {
+  const pluginConfig =
+    config &&
+    config.plugins &&
+    config.plugins.entries &&
+    config.plugins.entries[pluginId] &&
+    config.plugins.entries[pluginId].config;
+  if (!pluginConfig || typeof pluginConfig !== "object" || Array.isArray(pluginConfig)) {
+    return undefined;
+  }
+  const webSearch = pluginConfig.webSearch;
+  if (!webSearch || typeof webSearch !== "object" || Array.isArray(webSearch)) {
+    return undefined;
+  }
+  return webSearch;
+}
+
+function ensureWebSearchObject(target, key) {
+  const current = target[key];
+  if (current && typeof current === "object" && !Array.isArray(current)) {
+    return current;
+  }
+  const next = {};
+  target[key] = next;
+  return next;
+}
+
+function setProviderWebSearchPluginConfigValue(configTarget, pluginId, key, value) {
+  const plugins = ensureWebSearchObject(configTarget, "plugins");
+  const entries = ensureWebSearchObject(plugins, "entries");
+  const entry = ensureWebSearchObject(entries, pluginId);
+  if (entry.enabled === undefined) {
+    entry.enabled = true;
+  }
+  const config = ensureWebSearchObject(entry, "config");
+  const webSearch = ensureWebSearchObject(config, "webSearch");
+  webSearch[key] = value;
+}
+
+function createSearchCredentialFields(credential) {
+  switch (credential.type) {
+    case "scoped":
+      return {
+        getCredentialValue: (searchConfig) =>
+          getScopedCredentialValue(searchConfig, credential.scopeId),
+        setCredentialValue: (searchConfigTarget, value) =>
+          setScopedCredentialValue(searchConfigTarget, credential.scopeId, value),
+      };
+    case "top-level":
+      return {
+        getCredentialValue: getTopLevelCredentialValue,
+        setCredentialValue: setTopLevelCredentialValue,
+      };
+    case "none":
+      return {
+        getCredentialValue: () => undefined,
+        setCredentialValue: () => {},
+      };
+    default:
+      throw new Error("Unsupported web search credential type");
+  }
+}
+
+function createConfiguredCredentialFields(configuredCredential) {
+  if (!configuredCredential) {
+    return {};
+  }
+  const field = configuredCredential.field || "apiKey";
+  return {
+    getConfiguredCredentialValue: (config) =>
+      (resolveProviderWebSearchPluginConfig(config, configuredCredential.pluginId) || {})[field],
+    setConfiguredCredentialValue: (configTarget, value) => {
+      setProviderWebSearchPluginConfigValue(
+        configTarget,
+        configuredCredential.pluginId,
+        field,
+        value,
+      );
+    },
+  };
+}
+
+function createBaseWebSearchProviderContractFields(options) {
+  return {
+    inactiveSecretPaths:
+      options.inactiveSecretPaths || (options.credentialPath ? [options.credentialPath] : []),
+    ...createSearchCredentialFields(options.searchCredential),
+    ...createConfiguredCredentialFields(options.configuredCredential),
+  };
+}
+
+function createWebSearchProviderContractFields(options) {
+  const selectionPluginId = options.selectionPluginId;
+  return {
+    ...createBaseWebSearchProviderContractFields(options),
+    ...(selectionPluginId
+      ? {
+          applySelectionConfig: (config) =>
+            enableProviderPluginInConfig(config, selectionPluginId).config,
+        }
+      : {}),
+  };
+}
+
+function buildAuthProfileId(params) {
+  const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
+  const profileName = normalizeOptionalString(params.profileName) || "default";
+  return `${profilePrefix}:${profileName}`;
+}
+
+function buildOauthProviderAuthResult(params) {
+  const email = normalizeOptionalString(params.email);
+  const displayName = normalizeOptionalString(params.displayName);
+  const profileId = buildAuthProfileId({
+    providerId: params.providerId,
+    profilePrefix: params.profilePrefix,
+    profileName: params.profileName || email,
+  });
+  const credential = {
+    type: "oauth",
+    provider: params.providerId,
+    access: params.access,
+    ...(params.refresh ? { refresh: params.refresh } : {}),
+    ...(Number.isFinite(params.expires) ? { expires: params.expires } : {}),
+    ...(email ? { email } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(params.credentialExtra || {}),
+  };
+  return {
+    profiles: [{ profileId, credential }],
+    configPatch:
+      params.configPatch ||
+      {
+        agents: {
+          defaults: {
+            models: {
+              [params.defaultModel]: {},
+            },
+          },
+        },
+      },
+    defaultModel: params.defaultModel,
+    notes: params.notes,
+  };
+}
+
+function generateOAuthState() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function parseOAuthCallbackInput(input, messages = {}) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) {
+    return { error: "No input provided" };
+  }
+  try {
+    const url = new URL(trimmed);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code) {
+      return { error: "Missing 'code' parameter in URL" };
+    }
+    if (!state) {
+      return { error: messages.missingState || "Missing 'state' parameter in URL" };
+    }
+    return { code, state };
+  } catch {
+    return {
+      error: messages.invalidInput || "Paste the full redirect URL, not just the code.",
+    };
+  }
+}
+
+async function waitForLocalOAuthCallback() {
+  throw new Error("OAuth callback server helpers are unavailable in the native test shim.");
+}
+
+async function resolveApiKeyForProvider() {
+  return null;
+}
+
+async function getRuntimeAuthForModel() {
+  return null;
+}
+
+function normalizeApiKeyInput(raw) {
+  const trimmed = normalizeStringifiedOptionalString(raw) || "";
+  if (!trimmed) {
+    return "";
+  }
+  const assignmentMatch = trimmed.match(
+    /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.+)$/,
+  );
+  const valuePart = assignmentMatch ? assignmentMatch[1].trim() : trimmed;
+  const unquoted =
+    valuePart.length >= 2 &&
+    ((valuePart.startsWith('"') && valuePart.endsWith('"')) ||
+      (valuePart.startsWith("'") && valuePart.endsWith("'")) ||
+      (valuePart.startsWith("`") && valuePart.endsWith("`")))
+      ? valuePart.slice(1, -1)
+      : valuePart;
+  const withoutSemicolon = unquoted.endsWith(";") ? unquoted.slice(0, -1) : unquoted;
+  return withoutSemicolon.trim();
+}
+
+function validateApiKeyInput(value) {
+  return normalizeApiKeyInput(value).length > 0 ? undefined : "Required";
+}
+
+function formatApiKeyPreview(raw, opts = {}) {
+  const trimmed = String(raw || "").trim();
+  const ellipsis = "\u2026";
+  if (!trimmed) {
+    return ellipsis;
+  }
+  const head = opts.head === undefined ? 4 : opts.head;
+  const tail = opts.tail === undefined ? 4 : opts.tail;
+  if (trimmed.length <= head + tail) {
+    const shortHead = Math.min(2, trimmed.length);
+    const shortTail = Math.min(2, trimmed.length - shortHead);
+    if (shortTail <= 0) {
+      return `${trimmed.slice(0, shortHead)}${ellipsis}`;
+    }
+    return `${trimmed.slice(0, shortHead)}${ellipsis}${trimmed.slice(-shortTail)}`;
+  }
+  return `${trimmed.slice(0, head)}${ellipsis}${trimmed.slice(-tail)}`;
+}
+
+function normalizeTokenProviderInput(tokenProvider) {
+  return normalizeOptionalLowercaseString(tokenProvider);
+}
+
+function normalizeSecretInputModeInput(secretInputMode) {
+  const normalized = normalizeOptionalLowercaseString(secretInputMode);
+  if (normalized === "plaintext" || normalized === "ref") {
+    return normalized;
+  }
+  return undefined;
+}
+
+async function resolveSecretInputModeForEnvSelection(params) {
+  if (params.explicitMode) {
+    return params.explicitMode;
+  }
+  if (!params.prompter || typeof params.prompter.select !== "function") {
+    return "plaintext";
+  }
+  const copy = params.copy || {};
+  const selected = await params.prompter.select({
+    message: copy.modeMessage || "How do you want to provide this API key?",
+    initialValue: "plaintext",
+    options: [
+      {
+        value: "plaintext",
+        label: copy.plaintextLabel || "Paste API key now",
+        hint: copy.plaintextHint || "Stores the key directly in OpenClaw config",
+      },
+      {
+        value: "ref",
+        label: copy.refLabel || "Use external secret provider",
+        hint:
+          copy.refHint ||
+          "Stores a reference to env or configured external secret providers",
+      },
+    ],
+  });
+  return selected === "ref" ? "ref" : "plaintext";
+}
+
+function resolveProviderIdForAuth(provider) {
+  return normalizeOptionalLowercaseString(provider) || String(provider || "");
+}
+
+function resolveProviderDefaultEnvSecretRef(provider) {
+  const normalized = String(provider || "provider")
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return {
+    source: "env",
+    provider: DEFAULT_SECRET_PROVIDER_ALIAS,
+    id: `${normalized || "PROVIDER"}_API_KEY`,
+  };
+}
+
+function resolveApiKeySecretInput(provider, input, options = {}) {
+  if (options.secretInputMode === "plaintext") {
+    return normalizeSecretInput(input);
+  }
+  const coercedRef = coerceSecretRef(input);
+  if (coercedRef) {
+    return coercedRef;
+  }
+  const normalized = normalizeSecretInputString(input);
+  const inlineEnvRef = parseEnvTemplateSecretRef(normalized);
+  if (inlineEnvRef) {
+    return inlineEnvRef;
+  }
+  if (options.secretInputMode === "ref") {
+    return resolveProviderDefaultEnvSecretRef(provider);
+  }
+  return normalized;
+}
+
+function buildApiKeyCredential(provider, input, metadata, options = {}) {
+  const secretInput = resolveApiKeySecretInput(provider, input, options);
+  if (typeof secretInput === "string") {
+    return {
+      type: "api_key",
+      provider,
+      key: secretInput,
+      ...(metadata ? { metadata } : {}),
+    };
+  }
+  return {
+    type: "api_key",
+    provider,
+    keyRef: secretInput,
+    ...(metadata ? { metadata } : {}),
+  };
+}
+
+function upsertApiKeyProfile(params) {
+  return params.profileId || buildAuthProfileId({ providerId: params.provider });
+}
+
+function upsertAuthProfile() {
+  return undefined;
+}
+
+function applyAuthProfileConfig(cfg, params) {
+  const auth = (cfg && cfg.auth) || {};
+  const normalizedProvider = resolveProviderIdForAuth(params.provider);
+  const profiles = {
+    ...(auth.profiles || {}),
+    [params.profileId]: {
+      provider: params.provider,
+      mode: params.mode,
+      ...(params.email ? { email: params.email } : {}),
+      ...(params.displayName ? { displayName: params.displayName } : {}),
+    },
+  };
+  const configuredProviderProfiles = Object.entries(auth.profiles || {})
+    .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === normalizedProvider)
+    .map(([profileId, profile]) => ({ profileId, mode: profile.mode }));
+  const matchingProviderOrderEntries = Object.entries(auth.order || {}).filter(
+    ([providerId]) => resolveProviderIdForAuth(providerId) === normalizedProvider,
+  );
+  const existingProviderOrder =
+    matchingProviderOrderEntries.length > 0
+      ? Array.from(new Set(matchingProviderOrderEntries.flatMap(([, order]) => order)))
+      : undefined;
+  const preferProfileFirst = params.preferProfileFirst !== false;
+  const reorderedProviderOrder =
+    existingProviderOrder && preferProfileFirst
+      ? [
+          params.profileId,
+          ...existingProviderOrder.filter((profileId) => profileId !== params.profileId),
+        ]
+      : existingProviderOrder;
+  const hasMixedConfiguredModes = configuredProviderProfiles.some(
+    ({ profileId, mode }) => profileId !== params.profileId && mode !== params.mode,
+  );
+  const derivedProviderOrder =
+    existingProviderOrder === undefined && preferProfileFirst && hasMixedConfiguredModes
+      ? [
+          params.profileId,
+          ...configuredProviderProfiles
+            .map(({ profileId }) => profileId)
+            .filter((profileId) => profileId !== params.profileId),
+        ]
+      : undefined;
+  const baseOrder =
+    matchingProviderOrderEntries.length > 0
+      ? Object.fromEntries(
+          Object.entries(auth.order || {}).filter(
+            ([providerId]) => resolveProviderIdForAuth(providerId) !== normalizedProvider,
+          ),
+        )
+      : auth.order;
+  const order =
+    existingProviderOrder !== undefined
+      ? {
+          ...baseOrder,
+          [normalizedProvider]: reorderedProviderOrder.includes(params.profileId)
+            ? reorderedProviderOrder
+            : [...reorderedProviderOrder, params.profileId],
+        }
+      : derivedProviderOrder
+        ? { ...baseOrder, [normalizedProvider]: derivedProviderOrder }
+        : baseOrder;
+  return {
+    ...(cfg || {}),
+    auth: {
+      ...auth,
+      profiles,
+      ...(order ? { order } : {}),
+    },
+  };
+}
+
+async function ensureApiKeyFromOptionEnvOrPrompt(params) {
+  const tokenProvider = normalizeTokenProviderInput(params.tokenProvider);
+  const expectedProviders = (Array.isArray(params.expectedProviders)
+    ? params.expectedProviders
+    : []
+  )
+    .map((provider) => normalizeTokenProviderInput(provider))
+    .filter(Boolean);
+  if (params.token && tokenProvider && expectedProviders.includes(tokenProvider)) {
+    const apiKey = params.normalize
+      ? params.normalize(params.token)
+      : normalizeApiKeyInput(params.token);
+    await params.setCredential(apiKey, params.secretInputMode);
+    return apiKey;
+  }
+  throw new Error("API key prompt helpers are unavailable in the native test shim.");
+}
+
+async function ensureApiKeyFromEnvOrPrompt() {
+  throw new Error("API key prompt helpers are unavailable in the native test shim.");
+}
+
+async function promptSecretRefForSetup() {
+  throw new Error("SecretRef setup prompts are unavailable in the native test shim.");
+}
+
+async function providerAuthLoginUnavailable() {
+  throw new Error("Provider auth login helpers require an interactive OpenClaw login runtime.");
+}
+
+const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
+const COPILOT_EDITOR_VERSION = "vscode/1.96.2";
+const COPILOT_USER_AGENT = "GitHubCopilotChat/0.26.7";
+const COPILOT_EDITOR_PLUGIN_VERSION = "copilot-chat/0.35.0";
+const COPILOT_GITHUB_API_VERSION = "2025-04-01";
+const DEFAULT_COPILOT_API_BASE_URL = "https://api.individual.githubcopilot.com";
+
+function buildCopilotIdeHeaders(params = {}) {
+  return {
+    "Editor-Version": COPILOT_EDITOR_VERSION,
+    "Editor-Plugin-Version": COPILOT_EDITOR_PLUGIN_VERSION,
+    "User-Agent": COPILOT_USER_AGENT,
+    ...(params.includeApiVersion
+      ? { "X-Github-Api-Version": COPILOT_GITHUB_API_VERSION }
+      : {}),
+  };
+}
+
+function resolveCopilotProxyHost(proxyEp) {
+  const trimmed = normalizeOptionalString(proxyEp);
+  if (!trimmed) {
+    return null;
+  }
+  const urlText = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(urlText);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return normalizeOptionalLowercaseString(url.hostname) || null;
+  } catch {
+    return null;
+  }
+}
+
+function deriveCopilotApiBaseUrlFromToken(token) {
+  const trimmed = normalizeOptionalString(token);
+  if (!trimmed) {
+    return null;
+  }
+  const match = trimmed.match(/(?:^|;)\s*proxy-ep=([^;\s]+)/i);
+  const proxyEp = match && match[1] ? match[1].trim() : "";
+  if (!proxyEp) {
+    return null;
+  }
+  const proxyHost = resolveCopilotProxyHost(proxyEp);
+  if (!proxyHost) {
+    return null;
+  }
+  const host = proxyHost.replace(/^proxy\./i, "api.");
+  const baseUrl = `https://${host}`;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" ? baseUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCopilotTokenResponse(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error("Unexpected response from GitHub Copilot token endpoint");
+  }
+  const token = normalizeOptionalString(value.token);
+  if (!token) {
+    throw new Error("Copilot token response missing token");
+  }
+  const expiresAt = value.expires_at;
+  let expiresAtMs;
+  if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) {
+    expiresAtMs = expiresAt < 100000000000 ? expiresAt * 1000 : expiresAt;
+  } else if (typeof expiresAt === "string" && expiresAt.trim()) {
+    const parsed = Number.parseInt(expiresAt, 10);
+    if (!Number.isFinite(parsed)) {
+      throw new Error("Copilot token response has invalid expires_at");
+    }
+    expiresAtMs = parsed < 100000000000 ? parsed * 1000 : parsed;
+  } else {
+    throw new Error("Copilot token response missing expires_at");
+  }
+  return { token, expiresAt: expiresAtMs };
+}
+
+async function resolveCopilotApiToken(params) {
+  const cachePath =
+    normalizeOptionalString(params && params.cachePath) ||
+    path.join(os.homedir(), ".openclaw", "credentials", "github-copilot.token.json");
+  const loadJsonFileFn =
+    params && typeof params.loadJsonFileImpl === "function"
+      ? params.loadJsonFileImpl
+      : (targetPath) => {
+          if (!fs.existsSync(targetPath)) {
+            return undefined;
+          }
+          return JSON.parse(fs.readFileSync(targetPath, "utf8"));
+        };
+  const saveJsonFileFn =
+    params && typeof params.saveJsonFileImpl === "function"
+      ? params.saveJsonFileImpl
+      : (targetPath, value) => {
+          fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+          fs.writeFileSync(targetPath, JSON.stringify(value, null, 2));
+        };
+  const cached = loadJsonFileFn(cachePath);
+  if (
+    cached &&
+    typeof cached.token === "string" &&
+    typeof cached.expiresAt === "number" &&
+    cached.expiresAt - Date.now() > 5 * 60 * 1000
+  ) {
+    return {
+      token: cached.token,
+      expiresAt: cached.expiresAt,
+      source: `cache:${cachePath}`,
+      baseUrl: deriveCopilotApiBaseUrlFromToken(cached.token) || DEFAULT_COPILOT_API_BASE_URL,
+    };
+  }
+  const fetchImpl =
+    params && typeof params.fetchImpl === "function" ? params.fetchImpl : globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw new Error("Copilot token exchange requires fetch");
+  }
+  const res = await fetchImpl(COPILOT_TOKEN_URL, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${params.githubToken}`,
+      ...buildCopilotIdeHeaders({ includeApiVersion: true }),
+    },
+  });
+  if (!res || !res.ok) {
+    throw new Error(`Copilot token exchange failed: HTTP ${res && res.status}`);
+  }
+  const json = parseCopilotTokenResponse(await res.json());
+  const payload = {
+    token: json.token,
+    expiresAt: json.expiresAt,
+    updatedAt: Date.now(),
+  };
+  saveJsonFileFn(cachePath, payload);
+  return {
+    token: payload.token,
+    expiresAt: payload.expiresAt,
+    source: `fetched:${COPILOT_TOKEN_URL}`,
+    baseUrl: deriveCopilotApiBaseUrlFromToken(payload.token) || DEFAULT_COPILOT_API_BASE_URL,
+  };
+}
+
+const PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+  anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  openai: ["OPENAI_API_KEY"],
+  voyage: ["VOYAGE_API_KEY"],
+  cerebras: ["CEREBRAS_API_KEY"],
+  "anthropic-openai": ["ANTHROPIC_API_KEY"],
+  "qwen-dashscope": ["DASHSCOPE_API_KEY"],
+  minimax: ["MINIMAX_API_KEY"],
+  "minimax-cn": ["MINIMAX_API_KEY"],
+};
+
+function resolveEnvApiKey(provider, env = process.env, options = {}) {
+  const normalized = normalizeOptionalLowercaseString(provider);
+  if (!normalized) {
+    return null;
+  }
+  const candidateMap = options.candidateMap || PROVIDER_AUTH_ENV_VAR_CANDIDATES;
+  const candidates = Object.prototype.hasOwnProperty.call(candidateMap, normalized)
+    ? candidateMap[normalized]
+    : undefined;
+  if (!Array.isArray(candidates)) {
+    return null;
+  }
+  for (const envVar of candidates) {
+    const value = normalizeSecretInputString(env && env[envVar]);
+    if (value) {
+      return { apiKey: value, source: `env: ${envVar}` };
+    }
+  }
+  return null;
+}
+
+function listUsableProviderAuthProfileIds(params = {}) {
+  const cfg = params.cfg || params.config || {};
+  const provider = resolveProviderIdForAuth(params.provider);
+  const auth = cfg.auth || {};
+  const profiles = auth.profiles || {};
+  const order = auth.order || {};
+  const configuredOrder =
+    order[provider] ||
+    Object.entries(order).find(([key]) => resolveProviderIdForAuth(key) === provider)?.[1];
+  const profileIds = Array.isArray(configuredOrder)
+    ? configuredOrder
+    : Object.entries(profiles)
+        .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === provider)
+        .map(([profileId]) => profileId);
+  const usable = profileIds.filter((profileId) => {
+    const profile = profiles[profileId];
+    return !profile || resolveProviderIdForAuth(profile.provider) === provider;
+  });
+  return { agentDir: normalizeOptionalString(params.agentDir) || "", profileIds: usable };
+}
+
+function isProviderAuthProfileConfigured(params = {}) {
+  return listUsableProviderAuthProfileIds(params).profileIds.length > 0;
+}
+
+async function resolveProviderAuthProfileApiKey() {
+  return undefined;
+}
+
+function isProviderApiKeyConfigured(params = {}) {
+  if (resolveEnvApiKey(params.provider, process.env)) {
+    return true;
+  }
+  if (isProviderAuthProfileConfigured(params)) {
+    return true;
+  }
+  return false;
 }
 
 function resolveGlobalSingleton(key, create) {
@@ -23583,6 +26107,231 @@ function resolveConfiguredCapabilityProvider(params) {
   };
 }
 
+function isFilePath(candidate) {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolveWindowsExecutablePath(command, env) {
+  if (command.includes("/") || command.includes("\\") || path.isAbsolute(command)) {
+    return command;
+  }
+  const pathValue = env.PATH || env.Path || process.env.PATH || process.env.Path || "";
+  const pathEntries = pathValue
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const hasExtension = path.extname(command).length > 0;
+  const pathExtRaw =
+    env.PATHEXT || env.Pathext || process.env.PATHEXT || process.env.Pathext ||
+    ".EXE;.CMD;.BAT;.COM";
+  const pathExt = hasExtension
+    ? [""]
+    : pathExtRaw
+        .split(";")
+        .map((ext) => ext.trim())
+        .filter(Boolean)
+        .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
+  for (const dir of pathEntries) {
+    for (const ext of pathExt) {
+      const normalizedExt = normalizeLowercaseStringOrEmpty(ext);
+      const uppercaseExt = ext.toUpperCase();
+      for (const candidateExt of [ext, normalizedExt, uppercaseExt]) {
+        const candidate = path.join(dir, `${command}${candidateExt}`);
+        if (isFilePath(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return command;
+}
+
+function resolveEntrypointFromCmdShim(wrapperPath) {
+  if (!isFilePath(wrapperPath)) {
+    return null;
+  }
+  try {
+    const content = fs.readFileSync(wrapperPath, "utf8");
+    const candidates = [];
+    for (const match of content.matchAll(/"([^"\r\n]*)"/g)) {
+      const token = match[1] || "";
+      const relMatch = token.match(/%~?dp0%?\s*[\\/]*(.*)$/i);
+      const relative = relMatch && relMatch[1] ? relMatch[1].trim() : "";
+      if (!relative) {
+        continue;
+      }
+      const normalizedRelative = relative.replace(/[\\/]+/g, path.sep).replace(/^[\\/]+/, "");
+      const candidate = path.resolve(path.dirname(wrapperPath), normalizedRelative);
+      if (isFilePath(candidate)) {
+        candidates.push(candidate);
+      }
+    }
+    const nonNode = candidates.find((candidate) => {
+      const base = normalizeLowercaseStringOrEmpty(path.basename(candidate));
+      return base !== "node.exe" && base !== "node";
+    });
+    return nonNode || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBinEntry(packageName, binField) {
+  if (typeof binField === "string") {
+    return normalizeOptionalString(binField) || null;
+  }
+  if (!binField || typeof binField !== "object") {
+    return null;
+  }
+  if (packageName) {
+    const preferred = binField[packageName];
+    const normalizedPreferred =
+      typeof preferred === "string" ? normalizeOptionalString(preferred) : undefined;
+    if (normalizedPreferred) {
+      return normalizedPreferred;
+    }
+  }
+  for (const value of Object.values(binField)) {
+    const normalizedValue = typeof value === "string" ? normalizeOptionalString(value) : undefined;
+    if (normalizedValue) {
+      return normalizedValue;
+    }
+  }
+  return null;
+}
+
+function resolveEntrypointFromPackageJson(wrapperPath, packageName) {
+  if (!packageName) {
+    return null;
+  }
+  const wrapperDir = path.dirname(wrapperPath);
+  const packageDirs = [
+    path.resolve(wrapperDir, "..", packageName),
+    path.resolve(wrapperDir, "node_modules", packageName),
+  ];
+  for (const packageDir of packageDirs) {
+    const packageJsonPath = path.join(packageDir, "package.json");
+    if (!isFilePath(packageJsonPath)) {
+      continue;
+    }
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+      const entryRel = resolveBinEntry(packageName, packageJson.bin);
+      if (!entryRel) {
+        continue;
+      }
+      const entryPath = path.resolve(packageDir, entryRel);
+      if (isFilePath(entryPath)) {
+        return entryPath;
+      }
+    } catch {
+      // Ignore malformed package metadata.
+    }
+  }
+  return null;
+}
+
+function resolveWindowsSpawnProgramCandidate(params) {
+  const platform = params.platform || process.platform;
+  const env = params.env || process.env;
+  const execPath = params.execPath || process.execPath;
+  if (platform !== "win32") {
+    return {
+      command: params.command,
+      leadingArgv: [],
+      resolution: "direct",
+    };
+  }
+  const resolvedCommand = resolveWindowsExecutablePath(params.command, env);
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(resolvedCommand));
+  if (ext === ".js" || ext === ".cjs" || ext === ".mjs") {
+    return {
+      command: execPath,
+      leadingArgv: [resolvedCommand],
+      resolution: "node-entrypoint",
+      windowsHide: true,
+    };
+  }
+  if (ext === ".cmd" || ext === ".bat") {
+    const entrypoint =
+      resolveEntrypointFromCmdShim(resolvedCommand) ||
+      resolveEntrypointFromPackageJson(resolvedCommand, params.packageName);
+    if (entrypoint) {
+      const entryExt = normalizeLowercaseStringOrEmpty(path.extname(entrypoint));
+      if (entryExt === ".exe") {
+        return {
+          command: entrypoint,
+          leadingArgv: [],
+          resolution: "exe-entrypoint",
+          windowsHide: true,
+        };
+      }
+      return {
+        command: execPath,
+        leadingArgv: [entrypoint],
+        resolution: "node-entrypoint",
+        windowsHide: true,
+      };
+    }
+    return {
+      command: resolvedCommand,
+      leadingArgv: [],
+      resolution: "unresolved-wrapper",
+    };
+  }
+  return {
+    command: resolvedCommand,
+    leadingArgv: [],
+    resolution: "direct",
+  };
+}
+
+function applyWindowsSpawnProgramPolicy(params) {
+  if (params.candidate.resolution !== "unresolved-wrapper") {
+    return {
+      command: params.candidate.command,
+      leadingArgv: params.candidate.leadingArgv,
+      resolution: params.candidate.resolution,
+      windowsHide: params.candidate.windowsHide,
+    };
+  }
+  if (params.allowShellFallback === true) {
+    return {
+      command: params.candidate.command,
+      leadingArgv: [],
+      resolution: "shell-fallback",
+      shell: true,
+    };
+  }
+  const wrapperName = path.basename(params.candidate.command);
+  throw new Error(
+    `${wrapperName} wrapper resolved, but no executable/Node entrypoint could be resolved ` +
+      "without shell execution.",
+  );
+}
+
+function resolveWindowsSpawnProgram(params) {
+  const candidate = resolveWindowsSpawnProgramCandidate(params);
+  return applyWindowsSpawnProgramPolicy({
+    candidate,
+    allowShellFallback: params.allowShellFallback,
+  });
+}
+
+function materializeWindowsSpawnProgram(program, argv) {
+  return {
+    command: program.command,
+    argv: [...program.leadingArgv, ...argv],
+    resolution: program.resolution,
+    shell: program.shell,
+    windowsHide: program.windowsHide,
+  };
+}
+
 function resolveGroupAllowFromSources(params) {
   const explicitGroupAllowFrom =
     Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
@@ -23784,7 +26533,18 @@ function resolveDmGroupAccessWithLists(params) {
 
 function resolveCommandAuthorizedFromAuthorizers(params) {
   if (!params.useAccessGroups) {
-    return true;
+    const mode = params.modeWhenAccessGroupsOff || "allow";
+    if (mode === "allow") {
+      return true;
+    }
+    if (mode === "deny") {
+      return false;
+    }
+    const anyConfigured = params.authorizers.some((entry) => entry.configured);
+    if (!anyConfigured) {
+      return true;
+    }
+    return params.authorizers.some((entry) => entry.configured && entry.allowed);
   }
   return params.authorizers.some((entry) => entry.configured && entry.allowed);
 }
@@ -23793,6 +26553,7 @@ function resolveControlCommandGate(params) {
   const commandAuthorized = resolveCommandAuthorizedFromAuthorizers({
     useAccessGroups: params.useAccessGroups,
     authorizers: params.authorizers,
+    modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff,
   });
   return {
     commandAuthorized,
@@ -25108,20 +27869,641 @@ async function resolveSenderCommandAuthorizationWithRuntime(params) {
   });
 }
 
-function buildHelpMessage(_cfg) {
-  return "OpenClaw commands\n\nUse /commands for full list.";
+const COMMAND_STATUS_CATEGORY_LABELS = {
+  session: "Session",
+  options: "Options",
+  status: "Status",
+  management: "Management",
+  media: "Media",
+  tools: "Tools",
+  docks: "Docks",
+};
+
+const COMMAND_STATUS_CATEGORY_ORDER = [
+  "session",
+  "options",
+  "status",
+  "management",
+  "media",
+  "tools",
+  "docks",
+];
+
+const COMMAND_STATUS_COMMANDS_PER_PAGE = 8;
+
+function isCommandStatusFlagEnabled(cfg, key) {
+  const commands = cfg && cfg.commands;
+  return Boolean(
+    commands &&
+      typeof commands === "object" &&
+      Object.prototype.hasOwnProperty.call(commands, key) &&
+      commands[key] === true,
+  );
 }
 
-function buildCommandsMessage(_cfg) {
-  return "More: /tools for available capabilities\n/models - List model providers/models.";
-}
-
-function buildCommandsMessagePaginated(cfg) {
+function defineCommandStatusEntry(params) {
+  const aliases = Array.isArray(params.textAliases)
+    ? params.textAliases
+    : params.textAlias
+      ? [params.textAlias]
+      : [];
+  const normalizedAliases = aliases
+    .map((alias) => normalizeOptionalString(alias) || "")
+    .filter(Boolean);
   return {
-    text: buildCommandsMessage(cfg),
-    currentPage: 1,
-    totalPages: 1,
+    key: params.key,
+    nativeName: params.nativeName,
+    description: params.description,
+    acceptsArgs: params.acceptsArgs ?? Boolean(params.args && params.args.length),
+    args: params.args,
+    argsParsing: params.argsParsing,
+    textAliases: normalizedAliases,
+    scope:
+      params.scope ||
+      (params.nativeName ? (normalizedAliases.length ? "both" : "native") : "text"),
+    category: params.category || "tools",
   };
+}
+
+function listBuiltinCommandStatusEntries() {
+  return [
+    defineCommandStatusEntry({
+      key: "new",
+      nativeName: "new",
+      description: "Start a new session.",
+      textAlias: "/new",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "reset",
+      nativeName: "reset",
+      description: "Reset the current session.",
+      textAlias: "/reset",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "compact",
+      nativeName: "compact",
+      description: "Compact the session context.",
+      textAlias: "/compact",
+      acceptsArgs: true,
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "stop",
+      nativeName: "stop",
+      description: "Stop the current run.",
+      textAlias: "/stop",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "think",
+      nativeName: "think",
+      description: "Set thinking level.",
+      textAliases: ["/think", "/thinking", "/t"],
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "model",
+      nativeName: "model",
+      description: "Set the model for this session.",
+      textAlias: "/model",
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "fast",
+      nativeName: "fast",
+      description: "Toggle fast mode.",
+      textAlias: "/fast",
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "verbose",
+      nativeName: "verbose",
+      description: "Set response verbosity.",
+      textAlias: "/verbose",
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "trace",
+      nativeName: "trace",
+      description: "Control trace output.",
+      textAlias: "/trace",
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "help",
+      nativeName: "help",
+      description: "Show available commands.",
+      textAlias: "/help",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "commands",
+      nativeName: "commands",
+      description: "List all slash commands.",
+      textAlias: "/commands",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "tools",
+      nativeName: "tools",
+      description: "List available runtime tools.",
+      textAlias: "/tools",
+      acceptsArgs: true,
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "status",
+      nativeName: "status",
+      description: "Show current status.",
+      textAlias: "/status",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "tasks",
+      nativeName: "tasks",
+      description: "List background tasks for this session.",
+      textAlias: "/tasks",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "whoami",
+      nativeName: "whoami",
+      description: "Show your sender id.",
+      textAlias: "/whoami",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "context",
+      nativeName: "context",
+      description: "Explain how context is built and used.",
+      textAlias: "/context",
+      acceptsArgs: true,
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "models",
+      nativeName: "models",
+      description: "List model providers/models.",
+      textAlias: "/models",
+      acceptsArgs: true,
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "config",
+      nativeName: "config",
+      description: "Open or update configuration.",
+      textAlias: "/config",
+      acceptsArgs: true,
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "debug",
+      nativeName: "debug",
+      description: "Show debug information.",
+      textAlias: "/debug",
+      acceptsArgs: true,
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "approve",
+      nativeName: "approve",
+      description: "Approve or deny exec requests.",
+      textAlias: "/approve",
+      acceptsArgs: true,
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "allowlist",
+      description: "List/add/remove allowlist entries.",
+      textAlias: "/allowlist",
+      acceptsArgs: true,
+      scope: "text",
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "skill",
+      nativeName: "skill",
+      description: "Run a skill by name.",
+      textAlias: "/skill",
+      category: "tools",
+    }),
+  ];
+}
+
+function isCommandStatusEntryEnabled(cfg, command) {
+  if (!cfg) {
+    return true;
+  }
+  if (command.key === "config") {
+    return isCommandStatusFlagEnabled(cfg, "config");
+  }
+  if (command.key === "debug") {
+    return isCommandStatusFlagEnabled(cfg, "debug");
+  }
+  return true;
+}
+
+function listCommandStatusEntries(cfg, skillCommands) {
+  const commands = listBuiltinCommandStatusEntries().filter((command) =>
+    isCommandStatusEntryEnabled(cfg, command),
+  );
+  const skills = (Array.isArray(skillCommands) ? skillCommands : [])
+    .map((spec) => ({
+      name: normalizeOptionalString(spec && spec.name),
+      skillName: normalizeOptionalString(spec && spec.skillName),
+      description: normalizeOptionalString(spec && spec.description),
+    }))
+    .filter((spec) => spec.name && spec.description)
+    .map((spec) =>
+      defineCommandStatusEntry({
+        key: `skill:${spec.skillName || spec.name}`,
+        nativeName: spec.name,
+        description: spec.description,
+        textAlias: `/${spec.name}`,
+        acceptsArgs: true,
+        category: "tools",
+      }),
+    );
+  return [...commands, ...skills];
+}
+
+function buildCommandStatusTextAliasMap() {
+  const aliases = new Map();
+  for (const command of listCommandStatusEntries(undefined, undefined)) {
+    const canonical =
+      normalizeOptionalString(command.textAliases && command.textAliases[0]) ||
+      `/${command.key}`;
+    for (const alias of Array.isArray(command.textAliases) ? command.textAliases : []) {
+      const normalized = normalizeOptionalLowercaseString(alias);
+      if (!normalized || aliases.has(normalized)) {
+        continue;
+      }
+      aliases.set(normalized, {
+        canonical,
+        acceptsArgs: Boolean(command.acceptsArgs),
+      });
+    }
+  }
+  return aliases;
+}
+
+function canonicalizeCommandStatusBody(commandBody) {
+  const body = String(commandBody || "");
+  const lowered = normalizeLowercaseStringOrEmpty(body);
+  const aliases = buildCommandStatusTextAliasMap();
+  const exact = aliases.get(lowered);
+  if (exact) {
+    return exact.canonical;
+  }
+  const tokenMatch = body.match(/^\/([^\s]+)(?:\s+([\s\S]+))?$/);
+  if (!tokenMatch) {
+    return body;
+  }
+  const tokenKey = `/${normalizeLowercaseStringOrEmpty(tokenMatch[1])}`;
+  const tokenSpec = aliases.get(tokenKey);
+  if (!tokenSpec) {
+    return body;
+  }
+  const rest = tokenMatch[2];
+  if (rest && !tokenSpec.acceptsArgs) {
+    return body;
+  }
+  const normalizedRest = rest ? rest.trimStart() : "";
+  return normalizedRest ? `${tokenSpec.canonical} ${normalizedRest}` : tokenSpec.canonical;
+}
+
+function groupCommandStatusEntries(commands) {
+  const grouped = new Map();
+  for (const category of COMMAND_STATUS_CATEGORY_ORDER) {
+    grouped.set(category, []);
+  }
+  for (const command of commands) {
+    const category = command.category || "tools";
+    const list = grouped.get(category) || [];
+    list.push(command);
+    grouped.set(category, list);
+  }
+  return grouped;
+}
+
+function formatCommandStatusEntry(command) {
+  const primary = command.nativeName
+    ? `/${command.nativeName}`
+    : normalizeOptionalString(command.textAliases && command.textAliases[0]) || `/${command.key}`;
+  const seen = new Set();
+  const aliases = (Array.isArray(command.textAliases) ? command.textAliases : [])
+    .map((alias) => String(alias).trim())
+    .filter(Boolean)
+    .filter(
+      (alias) =>
+        normalizeLowercaseStringOrEmpty(alias) !== normalizeLowercaseStringOrEmpty(primary),
+    )
+    .filter((alias) => {
+      const key = normalizeLowercaseStringOrEmpty(alias);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  const aliasLabel = aliases.length ? ` (${aliases.join(", ")})` : "";
+  const scopeLabel = command.scope === "text" ? " [text]" : "";
+  return `${primary}${aliasLabel}${scopeLabel} - ${command.description}`;
+}
+
+function buildCommandStatusItems(cfg, skillCommands) {
+  const grouped = groupCommandStatusEntries(listCommandStatusEntries(cfg, skillCommands));
+  const items = [];
+  for (const category of COMMAND_STATUS_CATEGORY_ORDER) {
+    const categoryCommands = grouped.get(category) || [];
+    if (categoryCommands.length === 0) {
+      continue;
+    }
+    const label = COMMAND_STATUS_CATEGORY_LABELS[category] || category;
+    for (const command of categoryCommands) {
+      items.push({ label, text: formatCommandStatusEntry(command) });
+    }
+  }
+  return items;
+}
+
+function formatCommandStatusList(items) {
+  const lines = [];
+  let currentLabel = null;
+  for (const item of items) {
+    if (item.label !== currentLabel) {
+      if (lines.length > 0) {
+        lines.push("");
+      }
+      lines.push(item.label);
+      currentLabel = item.label;
+    }
+    lines.push(`  ${item.text}`);
+  }
+  return lines.join("\n");
+}
+
+function buildHelpMessage(cfg) {
+  const lines = ["\u2139\ufe0f Help", ""];
+  lines.push("Session");
+  lines.push("  /new  |  /reset  |  /compact [instructions]  |  /stop");
+  lines.push("");
+  const optionParts = [
+    "/think <level>",
+    "/model <id>",
+    "/fast status|on|off",
+    "/verbose on|off|full",
+    "/trace on|off|raw",
+  ];
+  if (isCommandStatusFlagEnabled(cfg, "config")) {
+    optionParts.push("/config");
+  }
+  if (isCommandStatusFlagEnabled(cfg, "debug")) {
+    optionParts.push("/debug");
+  }
+  lines.push("Options");
+  lines.push(`  ${optionParts.join("  |  ")}`);
+  lines.push("");
+  lines.push("Status");
+  lines.push("  /status  |  /tasks  |  /whoami  |  /context");
+  lines.push("");
+  lines.push("Skills");
+  lines.push("  /skill <name> [input]");
+  lines.push("");
+  lines.push("More: /commands for full list, /tools for available capabilities");
+  return lines.join("\n");
+}
+
+function buildCommandsMessage(cfg, skillCommands, options) {
+  return buildCommandsMessagePaginated(cfg, skillCommands, options).text;
+}
+
+function buildCommandsMessagePaginated(cfg, skillCommands, options = {}) {
+  const page = Math.max(1, Number(options.page || 1));
+  const surface = normalizeOptionalLowercaseString(options.surface);
+  const prefersPaginatedList =
+    options.forcePaginatedList === true || Boolean(surface && surface === "telegram");
+  const items = buildCommandStatusItems(cfg, skillCommands);
+  if (!prefersPaginatedList) {
+    const lines = ["\u2139\ufe0f Slash commands", ""];
+    lines.push(formatCommandStatusList(items));
+    lines.push("", "More: /tools for available capabilities");
+    return {
+      text: lines.join("\n").trim(),
+      totalPages: 1,
+      currentPage: 1,
+      hasNext: false,
+      hasPrev: false,
+    };
+  }
+  const totalPages = Math.max(1, Math.ceil(items.length / COMMAND_STATUS_COMMANDS_PER_PAGE));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * COMMAND_STATUS_COMMANDS_PER_PAGE;
+  const pageItems = items.slice(startIndex, startIndex + COMMAND_STATUS_COMMANDS_PER_PAGE);
+  const lines = [`\u2139\ufe0f Commands (${currentPage}/${totalPages})`, ""];
+  lines.push(formatCommandStatusList(pageItems));
+  return {
+    text: lines.join("\n").trim(),
+    totalPages,
+    currentPage,
+    hasNext: currentPage < totalPages,
+    hasPrev: currentPage > 1,
+  };
+}
+
+function buildCommandText(commandName, args) {
+  const name = normalizeOptionalString(commandName) || "";
+  const trimmedArgs = normalizeOptionalString(args);
+  return trimmedArgs ? `/${name} ${trimmedArgs}` : `/${name}`;
+}
+
+function serializeCommandArgs(command, args) {
+  if (!args) {
+    return undefined;
+  }
+  const raw = normalizeOptionalString(args.raw);
+  if (raw) {
+    return raw;
+  }
+  const values = args.values && typeof args.values === "object" ? args.values : undefined;
+  const definitions = Array.isArray(command && command.args) ? command.args : [];
+  if (!values || definitions.length === 0) {
+    return undefined;
+  }
+  const parts = [];
+  for (const definition of definitions) {
+    const value = values[definition.name];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const rendered = normalizeOptionalString(String(value));
+    if (!rendered) {
+      continue;
+    }
+    parts.push(rendered);
+    if (definition.captureRemaining) {
+      break;
+    }
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function buildCommandTextFromArgs(command, args) {
+  const commandName = (command && (command.nativeName || command.key)) || "";
+  return buildCommandText(commandName, serializeCommandArgs(command || {}, args));
+}
+
+function toNativeCommandSpec(command) {
+  const spec = {
+    name: command.nativeName || command.key,
+    description: command.description,
+    acceptsArgs: Boolean(command.acceptsArgs),
+  };
+  if (Array.isArray(command.args)) {
+    spec.args = command.args;
+  }
+  return spec;
+}
+
+function listNativeCommandSpecsForConfig(cfg, params = {}) {
+  return listCommandStatusEntries(cfg, params.skillCommands)
+    .filter((command) => command.scope !== "text" && command.nativeName)
+    .map((command) => toNativeCommandSpec(command));
+}
+
+function listNativeCommandSpecs(params = {}) {
+  return listNativeCommandSpecsForConfig(undefined, params);
+}
+
+function isNativeCommandSurface(surface, params = {}) {
+  const normalized = normalizeOptionalLowercaseString(surface);
+  if (!normalized) {
+    return false;
+  }
+  const configured = Array.isArray(params.nativeCommandSurfaces)
+    ? params.nativeCommandSurfaces
+    : Array.isArray(params.nativeSurfaces)
+      ? params.nativeSurfaces
+      : [];
+  return configured
+    .map((entry) => normalizeOptionalLowercaseString(entry))
+    .filter(Boolean)
+    .includes(normalized);
+}
+
+function shouldHandleTextCommands(params) {
+  if (params && params.commandSource === "native") {
+    return true;
+  }
+  if (!params || !params.cfg || !params.cfg.commands || params.cfg.commands.text !== false) {
+    return true;
+  }
+  return !isNativeCommandSurface(params.surface, params);
+}
+
+function resolveDualTextControlCommandGate(params) {
+  return resolveControlCommandGate({
+    useAccessGroups: params.useAccessGroups,
+    authorizers: [
+      { configured: params.primaryConfigured, allowed: params.primaryAllowed },
+      { configured: params.secondaryConfigured, allowed: params.secondaryAllowed },
+    ],
+    allowTextCommands: true,
+    hasControlCommand: params.hasControlCommand,
+    modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff,
+  });
+}
+
+function resolveNativeCommandSessionTargets(params) {
+  const rawSessionKey =
+    normalizeOptionalString(params.boundSessionKey) ||
+    `agent:${params.agentId}:${params.sessionPrefix}:${params.userId}`;
+  return {
+    sessionKey: params.lowercaseSessionKey
+      ? normalizeLowercaseStringOrEmpty(rawSessionKey)
+      : rawSessionKey,
+    commandTargetSessionKey:
+      normalizeOptionalString(params.boundSessionKey) || params.targetSessionKey,
+  };
+}
+
+function resolvePersistedOverrideModelRef(params) {
+  const model = normalizeOptionalString(params.overrideModel);
+  if (!model) {
+    return null;
+  }
+  const provider = normalizeOptionalString(params.overrideProvider) || params.defaultProvider;
+  return provider ? { provider, model } : { model };
+}
+
+function resolveSessionParentSessionKeyCandidate(sessionKey) {
+  const normalized = normalizeOptionalString(sessionKey);
+  if (!normalized || !normalized.includes(":")) {
+    return null;
+  }
+  const parts = normalized.split(":");
+  if (parts.length <= 1) {
+    return null;
+  }
+  parts.pop();
+  return parts.join(":") || null;
+}
+
+function resolveStoredModelOverride(params) {
+  const direct = resolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: params.sessionEntry && params.sessionEntry.providerOverride,
+    overrideModel: params.sessionEntry && params.sessionEntry.modelOverride,
+  });
+  if (direct) {
+    return { ...direct, source: "session" };
+  }
+  const parentSessionKey = normalizeOptionalString(params.parentSessionKey);
+  const parentKey =
+    parentSessionKey && parentSessionKey !== params.sessionKey
+      ? parentSessionKey
+      : resolveSessionParentSessionKeyCandidate(params.sessionKey);
+  if (!parentKey || !params.sessionStore || typeof params.sessionStore !== "object") {
+    return null;
+  }
+  const parentEntry = params.sessionStore[parentKey];
+  const parentOverride = resolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: parentEntry && parentEntry.providerOverride,
+    overrideModel: parentEntry && parentEntry.modelOverride,
+  });
+  return parentOverride ? { ...parentOverride, source: "parent" } : null;
+}
+
+function buildCommandsPaginationKeyboard(currentPage, totalPages, agentId) {
+  const page = Math.max(1, Number(currentPage || 1));
+  const total = Math.max(1, Number(totalPages || 1));
+  const suffix = agentId ? `:${agentId}` : "";
+  const buttons = [];
+  if (page > 1) {
+    buttons.push({
+      text: "\u25c0 Prev",
+      callback_data: `commands_page_${page - 1}${suffix}`,
+    });
+  }
+  buttons.push({
+    text: `${page}/${total}`,
+    callback_data: `commands_page_noop${suffix}`,
+  });
+  if (page < total) {
+    buttons.push({
+      text: "Next \u25b6",
+      callback_data: `commands_page_${page + 1}${suffix}`,
+    });
+  }
+  return [buttons];
 }
 
 async function dispatchInboundDirectDmWithRuntime(params) {
@@ -26420,6 +29802,296 @@ const collectionRuntime = {
   pruneMapToMaxSize,
 };
 
+const webhookPathRuntime = {
+  normalizeWebhookPath,
+  resolveWebhookPath,
+};
+
+const webhookMemoryGuardsRuntime = {
+  WEBHOOK_ANOMALY_COUNTER_DEFAULTS,
+  WEBHOOK_ANOMALY_STATUS_CODES,
+  WEBHOOK_RATE_LIMIT_DEFAULTS,
+  createBoundedCounter,
+  createFixedWindowRateLimiter,
+  createWebhookAnomalyTracker,
+};
+
+const webhookRequestGuardsRuntime = {
+  WEBHOOK_BODY_READ_DEFAULTS,
+  WEBHOOK_IN_FLIGHT_DEFAULTS,
+  applyBasicWebhookRequestGuards,
+  beginWebhookRequestPipelineOrReject,
+  createWebhookInFlightLimiter,
+  installRequestBodyLimitGuard: passthrough,
+  isJsonContentType,
+  isRequestBodyLimitError,
+  readJsonBodyWithLimit,
+  readJsonWebhookBodyOrReject,
+  readRequestBodyWithLimit,
+  readWebhookBodyOrReject,
+  requestBodyErrorToText,
+};
+
+const webhookTargetsRuntime = {
+  registerPluginHttpRoute,
+  registerWebhookTarget,
+  registerWebhookTargetWithPluginRoute,
+  rejectNonPostWebhookRequest,
+  resolveSingleWebhookTarget,
+  resolveSingleWebhookTargetAsync,
+  resolveWebhookTargetWithAuthOrReject,
+  resolveWebhookTargetWithAuthOrRejectSync,
+  resolveWebhookTargets,
+  withResolvedWebhookRequestPipeline,
+};
+
+const requestUrlRuntime = {
+  resolveRequestUrl,
+};
+
+const fetchAuthRuntime = {
+  fetchWithBearerAuthScopeFallback,
+};
+
+const ssrfPolicyRuntime = {
+  assertHttpUrlTargetsPrivateNetwork,
+  buildHostnameAllowlistPolicyFromSuffixAllowlist,
+  hasLegacyFlatAllowPrivateNetworkAlias,
+  isHttpsUrlAllowedByHostnameSuffixAllowlist,
+  isPrivateIpAddress,
+  isPrivateNetworkOptInEnabled,
+  mergeSsrFPolicies,
+  migrateLegacyFlatAllowPrivateNetworkAlias,
+  normalizeHostnameSuffixAllowlist,
+  ssrfPolicyFromAllowPrivateNetwork,
+  ssrfPolicyFromDangerouslyAllowPrivateNetwork,
+  ssrfPolicyFromPrivateNetworkOptIn,
+};
+
+const ssrfRuntime = {
+  ...ssrfPolicyRuntime,
+  closeDispatcher,
+  createPinnedDispatcher: passthrough,
+  fetchWithSsrFGuard,
+  formatErrorMessage,
+  isBlockedHostnameOrIp,
+  isPrivateOrLoopbackHost,
+  resolvePinnedHostname,
+  resolvePinnedHostnameWithPolicy,
+  ssrfPolicyFromHttpBaseUrlAllowedHostname,
+};
+
+const providerModelIdNormalizeRuntime = {
+  normalizeAntigravityPreviewModelId,
+  normalizeGooglePreviewModelId,
+  normalizeNativeXaiModelId,
+};
+
+const providerModelSharedRuntime = {
+  ANTHROPIC_BY_MODEL_REPLAY_HOOKS,
+  DEFAULT_CONTEXT_TOKENS: 128000,
+  NATIVE_ANTHROPIC_REPLAY_HOOKS,
+  OPENAI_COMPATIBLE_REPLAY_HOOKS,
+  PASSTHROUGH_GEMINI_REPLAY_HOOKS,
+  buildAnthropicReplayPolicyForModel,
+  buildGoogleGeminiReplayPolicy,
+  buildHybridAnthropicOrOpenAIReplayPolicy,
+  buildNativeAnthropicReplayPolicyForModel,
+  buildOpenAICompatibleReplayPolicy,
+  buildPassthroughGeminiSanitizingReplayPolicy,
+  buildProviderReplayFamilyHooks,
+  buildStrictAnthropicReplayPolicy: buildAnthropicReplayPolicyForModel,
+  cloneFirstTemplateModel: passthrough,
+  createMoonshotThinkingWrapper: passthrough,
+  getModelProviderHint,
+  hasNativeWebSearchTool: passthrough,
+  hasToolSchemaProfile: passthrough,
+  isClaudeAdaptiveThinkingDefaultModelId,
+  isClaudeOpus47ModelId,
+  isGpt5ModelId: passthrough,
+  isProxyReasoningUnsupportedModelHint,
+  matchesExactOrPrefix: passthrough,
+  normalizeAntigravityPreviewModelId,
+  normalizeGpt5PromptOverlayMode: passthrough,
+  normalizeGooglePreviewModelId,
+  normalizeModelCompat: passthrough,
+  normalizeNativeXaiModelId,
+  normalizeProviderId: normalizeOptionalLowercaseString,
+  renderGpt5PromptOverlay: passthrough,
+  resolveClaudeThinkingProfile,
+  resolveGpt5PromptOverlayMode: passthrough,
+  resolveGpt5SystemPromptContribution: passthrough,
+  resolveMoonshotThinkingType: passthrough,
+  resolveProviderEndpoint: passthrough,
+  resolveTaggedReasoningOutputMode,
+  resolveToolCallArgumentsEncoding: passthrough,
+  resolveUnsupportedToolSchemaKeywords: passthrough,
+  sanitizeGoogleGeminiReplayHistory,
+};
+
+const providerCatalogSharedRuntime = {
+  applyProviderNativeStreamingUsageCompat,
+  buildManifestModelProviderConfig,
+  buildPairedProviderApiKeyCatalog: passthrough,
+  buildSingleProviderApiKeyCatalog,
+  findCatalogTemplate: passthrough,
+  readConfiguredProviderCatalogEntries,
+  supportsNativeStreamingUsageCompat,
+};
+
+const providerEntryRuntime = {
+  buildSingleProviderApiKeyCatalog,
+  createProviderApiKeyAuthMethod,
+  definePluginEntry,
+  defineSingleProviderPluginEntry,
+};
+
+const providerEnableConfigRuntime = {
+  enablePluginInConfig: enableProviderPluginInConfig,
+  ensurePluginAllowlisted,
+};
+
+const providerWebFetchContractRuntime = {
+  enablePluginInConfig: enableProviderPluginInConfig,
+};
+
+const providerWebSearchConfigContractRuntime = {
+  createWebSearchProviderContractFields,
+  getScopedCredentialValue,
+  getTopLevelCredentialValue,
+  mergeScopedSearchConfig,
+  resolveProviderWebSearchPluginConfig,
+  setProviderWebSearchPluginConfigValue,
+  setScopedCredentialValue,
+  setTopLevelCredentialValue,
+};
+
+const providerWebSearchContractFieldsRuntime = {
+  createBaseWebSearchProviderContractFields,
+};
+
+const providerWebSearchContractRuntime = {
+  ...providerWebSearchConfigContractRuntime,
+  ...providerWebSearchContractFieldsRuntime,
+  createWebSearchProviderContractFields,
+  enablePluginInConfig: enableProviderPluginInConfig,
+};
+
+const providerAuthResultRuntime = {
+  buildAuthProfileId,
+  buildOauthProviderAuthResult,
+};
+
+const providerAuthRuntimeRuntime = {
+  generateOAuthState,
+  getRuntimeAuthForModel,
+  parseOAuthCallbackInput,
+  resolveApiKeyForProvider,
+  waitForLocalOAuthCallback,
+};
+
+const providerAuthApiKeyRuntime = {
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  createProviderApiKeyAuthMethod,
+  ensureApiKeyFromEnvOrPrompt,
+  ensureApiKeyFromOptionEnvOrPrompt,
+  formatApiKeyPreview,
+  normalizeApiKeyInput,
+  normalizeOptionalSecretInput: normalizeSecretInput,
+  normalizeSecretInput,
+  normalizeSecretInputModeInput,
+  promptSecretRefForSetup,
+  resolveSecretInputModeForEnvSelection,
+  upsertApiKeyProfile,
+  upsertAuthProfile,
+  validateApiKeyInput,
+};
+
+const providerAuthLoginRuntime = {
+  githubCopilotLoginCommand: providerAuthLoginUnavailable,
+  loginChutes: providerAuthLoginUnavailable,
+  loginOpenAICodexOAuth: providerAuthLoginUnavailable,
+};
+
+const providerAuthFacadeRuntime = {
+  CLAUDE_CLI_PROFILE_ID: "claude-cli",
+  CODEX_CLI_PROFILE_ID: "codex-cli",
+  COPILOT_EDITOR_PLUGIN_VERSION,
+  COPILOT_EDITOR_VERSION,
+  COPILOT_GITHUB_API_VERSION,
+  COPILOT_USER_AGENT,
+  CUSTOM_LOCAL_AUTH_MARKER: "__openclaw_custom_local_auth__",
+  DEFAULT_COPILOT_API_BASE_URL,
+  DEFAULT_OAUTH_REFRESH_MARGIN_MS: 5 * 60 * 1000,
+  MINIMAX_OAUTH_MARKER: "__openclaw_minimax_oauth__",
+  applyAuthProfileConfig,
+  buildApiKeyCredential,
+  buildCopilotIdeHeaders,
+  buildOauthProviderAuthResult,
+  buildTokenProfileId: (provider, tokenProvider) =>
+    `${resolveProviderIdForAuth(provider)}:${resolveProviderIdForAuth(tokenProvider || "token")}`,
+  coerceSecretRef,
+  createProviderApiKeyAuthMethod,
+  deriveCopilotApiBaseUrlFromToken,
+  ensureApiKeyFromEnvOrPrompt,
+  ensureApiKeyFromOptionEnvOrPrompt,
+  ensureAuthProfileStore: () => ({ profiles: {}, order: {} }),
+  ensureAuthProfileStoreForLocalUpdate: () => ({ profiles: {}, order: {} }),
+  formatApiKeyPreview,
+  generateHexPkceVerifierChallenge: passthrough,
+  generatePkceVerifierChallenge: passthrough,
+  hasConfiguredSecretInput,
+  hasUsableOAuthCredential: passthrough,
+  isKnownEnvApiKeyMarker: passthrough,
+  isNonSecretApiKeyMarker: passthrough,
+  isProviderApiKeyConfigured,
+  isProviderAuthProfileConfigured,
+  listKnownProviderAuthEnvVarNames: () =>
+    Array.from(new Set(Object.values(PROVIDER_AUTH_ENV_VAR_CANDIDATES).flat())),
+  listProfilesForProvider: (store, provider) => {
+    const normalized = resolveProviderIdForAuth(provider);
+    const profiles = (store && store.profiles) || {};
+    return Object.entries(profiles)
+      .filter(([, profile]) => resolveProviderIdForAuth(profile.provider) === normalized)
+      .map(([profileId]) => profileId);
+  },
+  listUsableProviderAuthProfileIds,
+  normalizeApiKeyConfig: passthrough,
+  normalizeApiKeyInput,
+  normalizeOptionalSecretInput: normalizeSecretInput,
+  normalizeSecretInput,
+  normalizeSecretInputModeInput,
+  omitEnvKeysCaseInsensitive: (env, keys) => {
+    const denied = new Set(Array.from(keys || []).map((key) => String(key).toUpperCase()));
+    return Object.fromEntries(
+      Object.entries(env || {}).filter(([key]) => !denied.has(String(key).toUpperCase())),
+    );
+  },
+  promptSecretRefForSetup,
+  readClaudeCliCredentialsCached: () => undefined,
+  removeProviderAuthProfilesWithLock: () => undefined,
+  resolveApiKeyForProfile: resolveProviderAuthProfileApiKey,
+  resolveDefaultSecretProviderAlias: () => DEFAULT_SECRET_PROVIDER_ALIAS,
+  resolveEnvApiKey,
+  resolveNonEnvSecretRefApiKeyMarker: passthrough,
+  resolveOAuthApiKeyMarker: passthrough,
+  resolveOpenClawAgentDir: () => path.join(os.homedir(), ".openclaw"),
+  resolveProviderAuthProfileApiKey,
+  resolveRequiredHomeDir: () => os.homedir(),
+  resolveSecretInputModeForEnvSelection,
+  resolveCopilotApiToken,
+  suggestOAuthProfileIdForLegacyDefault: passthrough,
+  toFormUrlEncoded: (value) => new URLSearchParams(value || {}).toString(),
+  updateAuthProfileStoreWithLock: () => undefined,
+  upsertApiKeyProfile,
+  upsertAuthProfile,
+  upsertAuthProfileWithLock: upsertAuthProfile,
+  validateAnthropicSetupToken: passthrough,
+  validateApiKeyInput,
+  writeOAuthCredentials: () => undefined,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -26547,6 +30219,14 @@ const providerSelectionRuntime = {
   selectConfiguredOrAutoProvider,
 };
 
+const windowsSpawnRuntime = {
+  applyWindowsSpawnProgramPolicy,
+  materializeWindowsSpawnProgram,
+  resolveWindowsExecutablePath,
+  resolveWindowsSpawnProgram,
+  resolveWindowsSpawnProgramCandidate,
+};
+
 const allowFromRuntime = {
   addAllowlistUserEntriesFromConfigEntry,
   buildAllowlistResolutionSummary,
@@ -26628,17 +30308,54 @@ const channelPairingRuntime = {
   resolveChannelAllowFromPath,
 };
 
+const commandStatusRuntime = {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+};
+
+const commandNativeRuntime = {
+  buildCommandText,
+  buildCommandTextFromArgs,
+  listNativeCommandSpecs,
+  listNativeCommandSpecsForConfig,
+  resolveCommandAuthorization: passthrough,
+  resolveNativeCommandSessionTargets,
+  resolveStoredModelOverride,
+};
+
+const commandGatingRuntime = {
+  resolveCommandAuthorizedFromAuthorizers,
+  resolveControlCommandGate,
+  resolveDualTextControlCommandGate,
+};
+
+const commandSurfaceRuntime = {
+  normalizeCommandBody,
+  shouldHandleTextCommands,
+};
+
+const nativeCommandRegistryRuntime = {
+  buildCommandText,
+  buildCommandTextFromArgs,
+  listNativeCommandSpecs,
+  listNativeCommandSpecsForConfig,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
   resolveInboundDirectDmAccessWithRuntime,
-  buildCommandsMessage,
-  buildCommandsMessagePaginated,
-  buildHelpMessage,
+  ...commandStatusRuntime,
+  ...commandNativeRuntime,
+  ...commandGatingRuntime,
+  ...commandSurfaceRuntime,
+  buildCommandsPaginationKeyboard,
+  listSkillCommandsForAgents: passthrough,
+  buildModelsProviderData: passthrough,
   hasControlCommand,
   hasInlineCommandTokens,
   isControlCommandMessage,
-  resolveCommandAuthorizedFromAuthorizers,
   resolveDirectDmAuthorizationOutcome,
   resolveSenderCommandAuthorization,
   resolveSenderCommandAuthorizationWithRuntime,
@@ -26930,14 +30647,41 @@ const genericSdk = new Proxy(
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
     ...providerSelectionRuntime,
+    ...windowsSpawnRuntime,
     ...allowFromRuntime,
     ...allowlistConfigEditRuntime,
     ...accessGroupsRuntime,
     ...directDmRuntime,
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
+    ...commandStatusRuntime,
+    ...commandNativeRuntime,
+    ...commandGatingRuntime,
+    ...commandSurfaceRuntime,
     ...commandAuthRuntime,
     ...channelSetupRuntime,
+    ...webhookPathRuntime,
+    ...webhookMemoryGuardsRuntime,
+    ...webhookRequestGuardsRuntime,
+    ...webhookTargetsRuntime,
+    ...requestUrlRuntime,
+    ...fetchAuthRuntime,
+    ...ssrfPolicyRuntime,
+    ...ssrfRuntime,
+    ...providerModelIdNormalizeRuntime,
+    ...providerModelSharedRuntime,
+    ...providerCatalogSharedRuntime,
+    ...providerEntryRuntime,
+    ...providerEnableConfigRuntime,
+    ...providerWebFetchContractRuntime,
+    ...providerWebSearchConfigContractRuntime,
+    ...providerWebSearchContractFieldsRuntime,
+    ...providerWebSearchContractRuntime,
+    ...providerAuthResultRuntime,
+    ...providerAuthRuntimeRuntime,
+    ...providerAuthApiKeyRuntime,
+    ...providerAuthLoginRuntime,
+    ...providerAuthFacadeRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -27303,6 +31047,138 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return collectionRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/webhook-path" ||
+    request === "@openclaw/plugin-sdk/webhook-path"
+  ) {
+    return webhookPathRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-memory-guards" ||
+    request === "@openclaw/plugin-sdk/webhook-memory-guards"
+  ) {
+    return webhookMemoryGuardsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-request-guards" ||
+    request === "@openclaw/plugin-sdk/webhook-request-guards"
+  ) {
+    return webhookRequestGuardsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-targets" ||
+    request === "@openclaw/plugin-sdk/webhook-targets"
+  ) {
+    return webhookTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/request-url" ||
+    request === "@openclaw/plugin-sdk/request-url"
+  ) {
+    return requestUrlRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/fetch-auth" ||
+    request === "@openclaw/plugin-sdk/fetch-auth"
+  ) {
+    return fetchAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-policy" ||
+    request === "@openclaw/plugin-sdk/ssrf-policy"
+  ) {
+    return ssrfPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/ssrf-runtime" ||
+    request === "@openclaw/plugin-sdk/ssrf-runtime"
+  ) {
+    return ssrfRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-model-id-normalize" ||
+    request === "@openclaw/plugin-sdk/provider-model-id-normalize"
+  ) {
+    return providerModelIdNormalizeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-model-shared" ||
+    request === "@openclaw/plugin-sdk/provider-model-shared"
+  ) {
+    return providerModelSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-catalog-shared" ||
+    request === "@openclaw/plugin-sdk/provider-catalog-shared"
+  ) {
+    return providerCatalogSharedRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-entry" ||
+    request === "@openclaw/plugin-sdk/provider-entry"
+  ) {
+    return providerEntryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-enable-config" ||
+    request === "@openclaw/plugin-sdk/provider-enable-config"
+  ) {
+    return providerEnableConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-fetch-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-fetch-contract"
+  ) {
+    return providerWebFetchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-config-contract"
+  ) {
+    return providerWebSearchConfigContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-contract-fields" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-contract-fields"
+  ) {
+    return providerWebSearchContractFieldsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search-contract" ||
+    request === "@openclaw/plugin-sdk/provider-web-search-contract"
+  ) {
+    return providerWebSearchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-result" ||
+    request === "@openclaw/plugin-sdk/provider-auth-result"
+  ) {
+    return providerAuthResultRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-auth-runtime"
+  ) {
+    return providerAuthRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-api-key" ||
+    request === "@openclaw/plugin-sdk/provider-auth-api-key"
+  ) {
+    return providerAuthApiKeyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-login" ||
+    request === "@openclaw/plugin-sdk/provider-auth-login"
+  ) {
+    return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth" ||
+    request === "@openclaw/plugin-sdk/provider-auth"
+  ) {
+    return providerAuthFacadeRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
@@ -27363,6 +31239,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerSelectionRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/windows-spawn" ||
+    request === "@openclaw/plugin-sdk/windows-spawn"
+  ) {
+    return windowsSpawnRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/allow-from" ||
     request === "@openclaw/plugin-sdk/allow-from"
   ) {
@@ -27415,6 +31297,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-auth"
   ) {
     return commandAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-auth-native" ||
+    request === "@openclaw/plugin-sdk/command-auth-native"
+  ) {
+    return commandNativeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-gating" ||
+    request === "@openclaw/plugin-sdk/command-gating"
+  ) {
+    return commandGatingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-surface" ||
+    request === "@openclaw/plugin-sdk/command-surface"
+  ) {
+    return commandSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/native-command-registry" ||
+    request === "@openclaw/plugin-sdk/native-command-registry"
+  ) {
+    return nativeCommandRegistryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-status" ||
+    request === "@openclaw/plugin-sdk/command-status"
+  ) {
+    return commandStatusRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-setup" ||
@@ -27860,6 +31772,8 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
             )
         if completed.returncode != 0:
@@ -27917,6 +31831,8 @@ def _execute_native_plugin_runtime_tool(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
         )
     if completed.returncode != 0:
