@@ -24951,6 +24951,120 @@ function createTextPairingAdapter(params) {
   };
 }
 
+function formatDocsLink(pathValue, label, opts = {}) {
+  const docsRoot = "https://docs.openclaw.ai";
+  const trimmed = typeof pathValue === "string" ? pathValue.trim() : "";
+  const url = trimmed
+    ? trimmed.startsWith("http")
+      ? trimmed
+      : `${docsRoot}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`
+    : docsRoot;
+  const resolvedLabel = label ?? url;
+  return opts.fallback && opts.force !== true ? opts.fallback : `${resolvedLabel} (${url})`;
+}
+
+function splitSetupEntries(raw) {
+  return String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function setSetupChannelEnabled(cfg, channel, enabled) {
+  const channels = cfg && cfg.channels ? cfg.channels : {};
+  const channelConfig = channels[channel] || {};
+  return {
+    ...(cfg || {}),
+    channels: {
+      ...channels,
+      [channel]: {
+        ...channelConfig,
+        enabled,
+      },
+    },
+  };
+}
+
+function createTopLevelChannelDmPolicy(params) {
+  const setPolicy = (cfg, dmPolicy) => {
+    const channels = cfg && cfg.channels ? cfg.channels : {};
+    const channelConfig = channels[params.channel] || {};
+    const allowFrom =
+      typeof params.getAllowFrom === "function" ? params.getAllowFrom(cfg) : undefined;
+    return {
+      ...(cfg || {}),
+      channels: {
+        ...channels,
+        [params.channel]: {
+          ...channelConfig,
+          enabled: true,
+          dmPolicy,
+          ...(allowFrom !== undefined ? { allowFrom } : {}),
+        },
+      },
+    };
+  };
+  return {
+    label: params.label,
+    channel: params.channel,
+    policyKey: params.policyKey,
+    allowFromKey: params.allowFromKey,
+    getCurrent: params.getCurrent,
+    setPolicy,
+    ...(params.promptAllowFrom ? { promptAllowFrom: params.promptAllowFrom } : {}),
+  };
+}
+
+function buildOptionalChannelSetupMessage(params) {
+  const installTarget = params.npmSpec ?? `the ${params.label} plugin`;
+  const message = [`${params.label} setup requires ${installTarget} to be installed.`];
+  if (params.docsPath) {
+    message.push(
+      `Docs: ${formatDocsLink(params.docsPath, params.docsPath.replace(/^\/+/u, ""))}`,
+    );
+  }
+  return message.join(" ");
+}
+
+function createOptionalChannelSetupAdapter(params) {
+  const message = buildOptionalChannelSetupMessage(params);
+  return {
+    resolveAccountId: ({ accountId } = {}) => accountId ?? DEFAULT_ACCOUNT_ID,
+    applyAccountConfig: () => {
+      throw new Error(message);
+    },
+    validateInput: () => message,
+  };
+}
+
+function createOptionalChannelSetupWizard(params) {
+  const message = buildOptionalChannelSetupMessage(params);
+  return {
+    channel: params.channel,
+    status: {
+      configuredLabel: `${params.label} plugin installed`,
+      unconfiguredLabel: `install ${params.label} plugin`,
+      configuredHint: message,
+      unconfiguredHint: message,
+      unconfiguredScore: 0,
+      resolveConfigured: () => false,
+      resolveStatusLines: () => [message],
+      resolveSelectionHint: () => message,
+    },
+    credentials: [],
+    finalize: async () => {
+      throw new Error(message);
+    },
+  };
+}
+
+function createOptionalChannelSetupSurface(params) {
+  return {
+    setupAdapter: createOptionalChannelSetupAdapter(params),
+    setupWizard: createOptionalChannelSetupWizard(params),
+  };
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -25999,6 +26113,17 @@ const commandAuthRuntime = {
   ...commandPrimitivesRuntime,
 };
 
+const channelSetupRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupSurface,
+  createOptionalChannelSetupWizard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  setSetupChannelEnabled,
+  splitSetupEntries,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -26275,6 +26400,7 @@ const genericSdk = new Proxy(
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
     ...commandAuthRuntime,
+    ...channelSetupRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26734,6 +26860,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-auth"
   ) {
     return commandAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-setup" ||
+    request === "@openclaw/plugin-sdk/channel-setup"
+  ) {
+    return channelSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

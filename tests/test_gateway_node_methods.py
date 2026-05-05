@@ -9591,6 +9591,236 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-setup.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupSurface,
+  createOptionalChannelSetupWizard,
+  createTopLevelChannelDmPolicy,
+  formatDocsLink,
+  setSetupChannelEnabled,
+  splitSetupEntries
+} = require("openclaw/plugin-sdk/channel-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_setup",
+      description: "Use OpenClaw channel setup SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const setup = createOptionalChannelSetupSurface({
+          channel: "example",
+          label: "Example",
+          npmSpec: "@openclaw/example",
+          docsPath: "/channels/example"
+        });
+        const adapter = createOptionalChannelSetupAdapter({
+          channel: "alt",
+          label: "Alt",
+          docsPath: "/channels/alt"
+        });
+        const wizard = createOptionalChannelSetupWizard({
+          channel: "wizard",
+          label: "Wizard",
+          npmSpec: "@openclaw/wizard",
+          docsPath: "/channels/wizard"
+        });
+        let finalizeError = "";
+        try {
+          await setup.setupWizard.finalize({
+            runtime: { log: () => {}, error: () => {}, exit: async () => {} }
+          });
+        } catch (error) {
+          finalizeError = error.message;
+        }
+        let adapterError = "";
+        try {
+          adapter.applyAccountConfig({ cfg: {}, accountId: "default", input: {} });
+        } catch (error) {
+          adapterError = error.message;
+        }
+        const dmPolicy = createTopLevelChannelDmPolicy({
+          label: "Example DM",
+          channel: "example",
+          policyKey: "dmPolicy",
+          allowFromKey: "allowFrom",
+          getCurrent: (cfg) => cfg.channels.example.dmPolicy,
+          getAllowFrom: (cfg) => cfg.channels.example.allowFrom
+        });
+        const patched = dmPolicy.setPolicy(
+          { channels: { example: { allowFrom: ["alice"] } } },
+          "allowlist"
+        );
+        return {
+          surface: {
+            accountId: setup.setupAdapter.resolveAccountId({ cfg: {} }),
+            validation: setup.setupAdapter.validateInput({
+              cfg: {},
+              accountId: "default",
+              input: {}
+            }),
+            wizardChannel: setup.setupWizard.channel,
+            wizardHint: setup.setupWizard.status.unconfiguredHint,
+            finalizeError
+          },
+          adapter: {
+            accountId: adapter.resolveAccountId({ cfg: {}, accountId: "work" }),
+            validation: adapter.validateInput({ cfg: {}, accountId: "work", input: {} }),
+            applyError: adapterError
+          },
+          wizard: {
+            channel: wizard.channel,
+            statusLines: wizard.status.resolveStatusLines({ cfg: {} }),
+            selectionHint: wizard.status.resolveSelectionHint({ cfg: {} }),
+            configured: wizard.status.resolveConfigured({ cfg: {} })
+          },
+          helpers: {
+            docsLink: formatDocsLink("/channels/example", "example docs"),
+            entries: splitSetupEntries("alice, bob; carol\\ndave"),
+            enabled: setSetupChannelEnabled(
+              { channels: { example: { token: "x" } } },
+              "example",
+              true
+            ),
+            dmPolicy: {
+              label: dmPolicy.label,
+              current: dmPolicy.getCurrent({ channels: { example: { dmPolicy: "pairing" } } }),
+              patched
+            },
+            defaultAccountId: DEFAULT_ACCOUNT_ID
+          },
+          exportTypes: [
+            typeof createOptionalChannelSetupSurface,
+            typeof createOptionalChannelSetupAdapter,
+            typeof createOptionalChannelSetupWizard,
+            typeof createTopLevelChannelDmPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-setup-plugin",
+                    "name": "Runtime Channel Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-setup-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_setup"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "surface": {
+            "accountId": "default",
+            "validation": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+            "wizardChannel": "example",
+            "wizardHint": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+            "finalizeError": (
+                "Example setup requires @openclaw/example to be installed. "
+                "Docs: channels/example (https://docs.openclaw.ai/channels/example)"
+            ),
+        },
+        "adapter": {
+            "accountId": "work",
+            "validation": (
+                "Alt setup requires the Alt plugin to be installed. "
+                "Docs: channels/alt (https://docs.openclaw.ai/channels/alt)"
+            ),
+            "applyError": (
+                "Alt setup requires the Alt plugin to be installed. "
+                "Docs: channels/alt (https://docs.openclaw.ai/channels/alt)"
+            ),
+        },
+        "wizard": {
+            "channel": "wizard",
+            "statusLines": [
+                "Wizard setup requires @openclaw/wizard to be installed. "
+                "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+            ],
+            "selectionHint": (
+                "Wizard setup requires @openclaw/wizard to be installed. "
+                "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+            ),
+            "configured": False,
+        },
+        "helpers": {
+            "docsLink": "example docs (https://docs.openclaw.ai/channels/example)",
+            "entries": ["alice", "bob", "carol", "dave"],
+            "enabled": {"channels": {"example": {"token": "x", "enabled": True}}},
+            "dmPolicy": {
+                "label": "Example DM",
+                "current": "pairing",
+                "patched": {
+                    "channels": {
+                        "example": {
+                            "allowFrom": ["alice"],
+                            "enabled": True,
+                            "dmPolicy": "allowlist",
+                        }
+                    }
+                },
+            },
+            "defaultAccountId": "default",
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
