@@ -25333,19 +25333,390 @@ async function resolveSenderCommandAuthorizationWithRuntime(params) {
   });
 }
 
-function buildHelpMessage(_cfg) {
-  return "OpenClaw commands\n\nUse /commands for full list.";
+const COMMAND_STATUS_CATEGORY_LABELS = {
+  session: "Session",
+  options: "Options",
+  status: "Status",
+  management: "Management",
+  media: "Media",
+  tools: "Tools",
+  docks: "Docks",
+};
+
+const COMMAND_STATUS_CATEGORY_ORDER = [
+  "session",
+  "options",
+  "status",
+  "management",
+  "media",
+  "tools",
+  "docks",
+];
+
+const COMMAND_STATUS_COMMANDS_PER_PAGE = 8;
+
+function isCommandStatusFlagEnabled(cfg, key) {
+  const commands = cfg && cfg.commands;
+  return Boolean(
+    commands &&
+      typeof commands === "object" &&
+      Object.prototype.hasOwnProperty.call(commands, key) &&
+      commands[key] === true,
+  );
 }
 
-function buildCommandsMessage(_cfg) {
-  return "More: /tools for available capabilities\n/models - List model providers/models.";
-}
-
-function buildCommandsMessagePaginated(cfg) {
+function defineCommandStatusEntry(params) {
+  const aliases = Array.isArray(params.textAliases)
+    ? params.textAliases
+    : params.textAlias
+      ? [params.textAlias]
+      : [];
+  const normalizedAliases = aliases
+    .map((alias) => normalizeOptionalString(alias) || "")
+    .filter(Boolean);
   return {
-    text: buildCommandsMessage(cfg),
-    currentPage: 1,
-    totalPages: 1,
+    key: params.key,
+    nativeName: params.nativeName,
+    description: params.description,
+    textAliases: normalizedAliases,
+    scope:
+      params.scope ||
+      (params.nativeName ? (normalizedAliases.length ? "both" : "native") : "text"),
+    category: params.category || "tools",
+  };
+}
+
+function listBuiltinCommandStatusEntries() {
+  return [
+    defineCommandStatusEntry({
+      key: "new",
+      nativeName: "new",
+      description: "Start a new session.",
+      textAlias: "/new",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "reset",
+      nativeName: "reset",
+      description: "Reset the current session.",
+      textAlias: "/reset",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "compact",
+      nativeName: "compact",
+      description: "Compact the session context.",
+      textAlias: "/compact",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "stop",
+      nativeName: "stop",
+      description: "Stop the current run.",
+      textAlias: "/stop",
+      category: "session",
+    }),
+    defineCommandStatusEntry({
+      key: "think",
+      nativeName: "think",
+      description: "Set thinking level.",
+      textAliases: ["/think", "/thinking", "/t"],
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "model",
+      nativeName: "model",
+      description: "Set the model for this session.",
+      textAlias: "/model",
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "fast",
+      nativeName: "fast",
+      description: "Toggle fast mode.",
+      textAlias: "/fast",
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "verbose",
+      nativeName: "verbose",
+      description: "Set response verbosity.",
+      textAlias: "/verbose",
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "trace",
+      nativeName: "trace",
+      description: "Control trace output.",
+      textAlias: "/trace",
+      category: "options",
+    }),
+    defineCommandStatusEntry({
+      key: "help",
+      nativeName: "help",
+      description: "Show available commands.",
+      textAlias: "/help",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "commands",
+      nativeName: "commands",
+      description: "List all slash commands.",
+      textAlias: "/commands",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "tools",
+      nativeName: "tools",
+      description: "List available runtime tools.",
+      textAlias: "/tools",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "status",
+      nativeName: "status",
+      description: "Show current status.",
+      textAlias: "/status",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "tasks",
+      nativeName: "tasks",
+      description: "List background tasks for this session.",
+      textAlias: "/tasks",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "whoami",
+      nativeName: "whoami",
+      description: "Show your sender id.",
+      textAlias: "/whoami",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "context",
+      nativeName: "context",
+      description: "Explain how context is built and used.",
+      textAlias: "/context",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "models",
+      nativeName: "models",
+      description: "List model providers/models.",
+      textAlias: "/models",
+      category: "status",
+    }),
+    defineCommandStatusEntry({
+      key: "config",
+      nativeName: "config",
+      description: "Open or update configuration.",
+      textAlias: "/config",
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "debug",
+      nativeName: "debug",
+      description: "Show debug information.",
+      textAlias: "/debug",
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "approve",
+      nativeName: "approve",
+      description: "Approve or deny exec requests.",
+      textAlias: "/approve",
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "allowlist",
+      description: "List/add/remove allowlist entries.",
+      textAlias: "/allowlist",
+      scope: "text",
+      category: "management",
+    }),
+    defineCommandStatusEntry({
+      key: "skill",
+      nativeName: "skill",
+      description: "Run a skill by name.",
+      textAlias: "/skill",
+      category: "tools",
+    }),
+  ];
+}
+
+function isCommandStatusEntryEnabled(cfg, command) {
+  if (!cfg) {
+    return true;
+  }
+  if (command.key === "config") {
+    return isCommandStatusFlagEnabled(cfg, "config");
+  }
+  if (command.key === "debug") {
+    return isCommandStatusFlagEnabled(cfg, "debug");
+  }
+  return true;
+}
+
+function listCommandStatusEntries(cfg, skillCommands) {
+  const commands = listBuiltinCommandStatusEntries().filter((command) =>
+    isCommandStatusEntryEnabled(cfg, command),
+  );
+  const skills = (Array.isArray(skillCommands) ? skillCommands : [])
+    .map((spec) => ({
+      name: normalizeOptionalString(spec && spec.name),
+      skillName: normalizeOptionalString(spec && spec.skillName),
+      description: normalizeOptionalString(spec && spec.description),
+    }))
+    .filter((spec) => spec.name && spec.description)
+    .map((spec) =>
+      defineCommandStatusEntry({
+        key: `skill:${spec.skillName || spec.name}`,
+        nativeName: spec.name,
+        description: spec.description,
+        textAlias: `/${spec.name}`,
+        category: "tools",
+      }),
+    );
+  return [...commands, ...skills];
+}
+
+function groupCommandStatusEntries(commands) {
+  const grouped = new Map();
+  for (const category of COMMAND_STATUS_CATEGORY_ORDER) {
+    grouped.set(category, []);
+  }
+  for (const command of commands) {
+    const category = command.category || "tools";
+    const list = grouped.get(category) || [];
+    list.push(command);
+    grouped.set(category, list);
+  }
+  return grouped;
+}
+
+function formatCommandStatusEntry(command) {
+  const primary = command.nativeName
+    ? `/${command.nativeName}`
+    : normalizeOptionalString(command.textAliases && command.textAliases[0]) || `/${command.key}`;
+  const seen = new Set();
+  const aliases = (Array.isArray(command.textAliases) ? command.textAliases : [])
+    .map((alias) => String(alias).trim())
+    .filter(Boolean)
+    .filter(
+      (alias) =>
+        normalizeLowercaseStringOrEmpty(alias) !== normalizeLowercaseStringOrEmpty(primary),
+    )
+    .filter((alias) => {
+      const key = normalizeLowercaseStringOrEmpty(alias);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  const aliasLabel = aliases.length ? ` (${aliases.join(", ")})` : "";
+  const scopeLabel = command.scope === "text" ? " [text]" : "";
+  return `${primary}${aliasLabel}${scopeLabel} - ${command.description}`;
+}
+
+function buildCommandStatusItems(cfg, skillCommands) {
+  const grouped = groupCommandStatusEntries(listCommandStatusEntries(cfg, skillCommands));
+  const items = [];
+  for (const category of COMMAND_STATUS_CATEGORY_ORDER) {
+    const categoryCommands = grouped.get(category) || [];
+    if (categoryCommands.length === 0) {
+      continue;
+    }
+    const label = COMMAND_STATUS_CATEGORY_LABELS[category] || category;
+    for (const command of categoryCommands) {
+      items.push({ label, text: formatCommandStatusEntry(command) });
+    }
+  }
+  return items;
+}
+
+function formatCommandStatusList(items) {
+  const lines = [];
+  let currentLabel = null;
+  for (const item of items) {
+    if (item.label !== currentLabel) {
+      if (lines.length > 0) {
+        lines.push("");
+      }
+      lines.push(item.label);
+      currentLabel = item.label;
+    }
+    lines.push(`  ${item.text}`);
+  }
+  return lines.join("\n");
+}
+
+function buildHelpMessage(cfg) {
+  const lines = ["\u2139\ufe0f Help", ""];
+  lines.push("Session");
+  lines.push("  /new  |  /reset  |  /compact [instructions]  |  /stop");
+  lines.push("");
+  const optionParts = [
+    "/think <level>",
+    "/model <id>",
+    "/fast status|on|off",
+    "/verbose on|off|full",
+    "/trace on|off|raw",
+  ];
+  if (isCommandStatusFlagEnabled(cfg, "config")) {
+    optionParts.push("/config");
+  }
+  if (isCommandStatusFlagEnabled(cfg, "debug")) {
+    optionParts.push("/debug");
+  }
+  lines.push("Options");
+  lines.push(`  ${optionParts.join("  |  ")}`);
+  lines.push("");
+  lines.push("Status");
+  lines.push("  /status  |  /tasks  |  /whoami  |  /context");
+  lines.push("");
+  lines.push("Skills");
+  lines.push("  /skill <name> [input]");
+  lines.push("");
+  lines.push("More: /commands for full list, /tools for available capabilities");
+  return lines.join("\n");
+}
+
+function buildCommandsMessage(cfg, skillCommands, options) {
+  return buildCommandsMessagePaginated(cfg, skillCommands, options).text;
+}
+
+function buildCommandsMessagePaginated(cfg, skillCommands, options = {}) {
+  const page = Math.max(1, Number(options.page || 1));
+  const surface = normalizeOptionalLowercaseString(options.surface);
+  const prefersPaginatedList =
+    options.forcePaginatedList === true || Boolean(surface && surface === "telegram");
+  const items = buildCommandStatusItems(cfg, skillCommands);
+  if (!prefersPaginatedList) {
+    const lines = ["\u2139\ufe0f Slash commands", ""];
+    lines.push(formatCommandStatusList(items));
+    lines.push("", "More: /tools for available capabilities");
+    return {
+      text: lines.join("\n").trim(),
+      totalPages: 1,
+      currentPage: 1,
+      hasNext: false,
+      hasPrev: false,
+    };
+  }
+  const totalPages = Math.max(1, Math.ceil(items.length / COMMAND_STATUS_COMMANDS_PER_PAGE));
+  const currentPage = Math.min(page, totalPages);
+  const startIndex = (currentPage - 1) * COMMAND_STATUS_COMMANDS_PER_PAGE;
+  const pageItems = items.slice(startIndex, startIndex + COMMAND_STATUS_COMMANDS_PER_PAGE);
+  const lines = [`\u2139\ufe0f Commands (${currentPage}/${totalPages})`, ""];
+  lines.push(formatCommandStatusList(pageItems));
+  return {
+    text: lines.join("\n").trim(),
+    totalPages,
+    currentPage,
+    hasNext: currentPage < totalPages,
+    hasPrev: currentPage > 1,
   };
 }
 
@@ -26861,13 +27232,17 @@ const channelPairingRuntime = {
   resolveChannelAllowFromPath,
 };
 
+const commandStatusRuntime = {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
   resolveInboundDirectDmAccessWithRuntime,
-  buildCommandsMessage,
-  buildCommandsMessagePaginated,
-  buildHelpMessage,
+  ...commandStatusRuntime,
   hasControlCommand,
   hasInlineCommandTokens,
   isControlCommandMessage,
@@ -27170,6 +27545,7 @@ const genericSdk = new Proxy(
     ...directDmRuntime,
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
+    ...commandStatusRuntime,
     ...commandAuthRuntime,
     ...channelSetupRuntime,
     appendMatchMetadata,
@@ -27657,6 +28033,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return commandAuthRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/command-status" ||
+    request === "@openclaw/plugin-sdk/command-status"
+  ) {
+    return commandStatusRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-setup" ||
     request === "@openclaw/plugin-sdk/channel-setup"
   ) {
@@ -28100,6 +28482,8 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
             )
         if completed.returncode != 0:
@@ -28157,6 +28541,8 @@ def _execute_native_plugin_runtime_tool(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
         )
     if completed.returncode != 0:

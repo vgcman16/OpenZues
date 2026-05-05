@@ -9427,6 +9427,7 @@ module.exports = {
             }
           })
         );
+        const paginated = buildCommandsMessagePaginated({ commands: { config: false } });
         return {
           helpContains: buildHelpMessage({ commands: { config: false } }).includes(
             "/commands for full list"
@@ -9439,7 +9440,17 @@ module.exports = {
               "/models - List model providers/models."
             )
           ],
-          paginated: buildCommandsMessagePaginated({ commands: { config: false } }),
+          paginated: {
+            currentPage: paginated.currentPage,
+            totalPagesType: typeof paginated.totalPages,
+            hasNext: paginated.hasNext,
+            hasPrev: paginated.hasPrev,
+            textChecks: [
+              paginated.text.includes("Slash commands"),
+              paginated.text.includes("/commands - List all slash commands."),
+              paginated.text.includes("/models - List model providers/models.")
+            ]
+          },
           groupOwner,
           pairedGroup,
           dmNonCommand,
@@ -9533,12 +9544,11 @@ module.exports = {
         "helpContains": True,
         "commandsContains": [True, True],
         "paginated": {
-            "text": (
-                "More: /tools for available capabilities\n"
-                "/models - List model providers/models."
-            ),
             "currentPage": 1,
-            "totalPages": 1,
+            "totalPagesType": "number",
+            "hasNext": False,
+            "hasPrev": False,
+            "textChecks": [True, True, True],
         },
         "groupOwner": {
             "shouldComputeAuth": True,
@@ -10666,6 +10676,163 @@ module.exports = {
             "configuredProviderId": "missing",
             "missingConfiguredProvider": True,
         },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_status_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-status.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildCommandsMessage,
+  buildCommandsMessagePaginated,
+  buildHelpMessage
+} = require("openclaw/plugin-sdk/command-status");
+const scopedStatus = require("@openclaw/plugin-sdk/command-status");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_status",
+      description: "Use OpenClaw command status SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = { commands: { config: false, debug: false } };
+        const skillCommands = [
+          { name: "demo_skill", skillName: "demo-skill", description: "Demo skill" }
+        ];
+        const help = buildHelpMessage(cfg);
+        const commands = buildCommandsMessage(cfg, skillCommands);
+        const paginated = buildCommandsMessagePaginated(cfg, skillCommands, {
+          surface: "telegram",
+          forcePaginatedList: true,
+          page: 1
+        });
+        const scopedHelp = scopedStatus.buildHelpMessage({ commands: { config: true } });
+        return {
+          helpChecks: [
+            help.includes("/commands for full list"),
+            help.includes("/tasks"),
+            help.includes("/fast status|on|off"),
+            help.includes("/trace on|off|raw"),
+            help.includes("/skill <name> [input]"),
+            !help.includes("/config"),
+            !help.includes("/debug")
+          ],
+          commandsChecks: [
+            commands.includes("Slash commands"),
+            commands.includes("Status"),
+            commands.includes("/commands - List all slash commands."),
+            commands.includes("/skill - Run a skill by name."),
+            commands.includes("/think (/thinking, /t) - Set thinking level."),
+            commands.includes("/compact - Compact the session context."),
+            commands.includes("/models - List model providers/models."),
+            commands.includes("/demo_skill - Demo skill"),
+            commands.includes("More: /tools for available capabilities"),
+            !commands.includes("/config"),
+            !commands.includes("/debug")
+          ],
+          paginated: {
+            currentPage: paginated.currentPage,
+            totalPagesType: typeof paginated.totalPages,
+            hasNextType: typeof paginated.hasNext,
+            hasPrev: paginated.hasPrev,
+            textChecks: [
+              paginated.text.includes("Commands (1/"),
+              paginated.text.includes("Session"),
+              paginated.text.includes("/stop - Stop the current run.")
+            ]
+          },
+          scopedHelpIncludesConfig: scopedHelp.includes("/config"),
+          exportTypes: [
+            typeof buildCommandsMessage,
+            typeof buildCommandsMessagePaginated,
+            typeof buildHelpMessage,
+            typeof genericSdk.buildCommandsMessage
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-status-plugin",
+                    "name": "Runtime Command Status Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-status-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_status"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_status"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "helpChecks": [True, True, True, True, True, True, True],
+        "commandsChecks": [
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+            True,
+        ],
+        "paginated": {
+            "currentPage": 1,
+            "totalPagesType": "number",
+            "hasNextType": "boolean",
+            "hasPrev": False,
+            "textChecks": [True, True, True],
+        },
+        "scopedHelpIncludesConfig": True,
         "exportTypes": ["function", "function", "function", "function"],
     }
 
