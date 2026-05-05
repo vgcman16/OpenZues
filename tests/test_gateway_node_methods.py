@@ -6952,6 +6952,304 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildMentionRegexes,
+  createChannelInboundDebouncer,
+  formatInboundEnvelope,
+  formatInboundFromLabel,
+  formatLocationText,
+  implicitMentionKindWhen,
+  matchesMentionPatterns,
+  matchesMentionWithExplicit,
+  mergeInboundPathRoots,
+  normalizeMentionText,
+  resolveEnvelopeFormatOptions,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+  shouldDebounceTextInbound,
+  toLocationContext
+} = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound",
+      description: "Use OpenClaw channel inbound SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            defaults: {
+              envelopeTimezone: "utc",
+              envelopeTimestamp: "off",
+              envelopeElapsed: "off",
+              userTimezone: "America/Chicago"
+            },
+            list: [
+              { id: "assistant", identity: { name: "Zeus Bot" } }
+            ]
+          },
+          messages: {
+            groupChat: { mentionPatterns: ["\\\\bZeus\\\\b"] },
+            inbound: { debounceMs: 5, byChannel: { matrix: 2 } }
+          }
+        };
+        const mentionRegexes = buildMentionRegexes(cfg, "assistant");
+        const mentionChecks = [
+          normalizeMentionText("ZE\\u200bus"),
+          matchesMentionPatterns("hello zeus", mentionRegexes),
+          matchesMentionPatterns("hello other", mentionRegexes),
+          matchesMentionWithExplicit({
+            text: "other",
+            mentionRegexes,
+            explicit: {
+              hasAnyMention: true,
+              canResolveExplicit: true,
+              isExplicitlyMentioned: true
+            }
+          }),
+          matchesMentionWithExplicit({
+            text: "",
+            transcript: "ping zeus",
+            mentionRegexes
+          })
+        ];
+        const nestedDecision = resolveInboundMentionDecision({
+          facts: {
+            canDetectMention: true,
+            wasMentioned: false,
+            hasAnyMention: false,
+            implicitMentionKinds: ["reply_to_bot", "native"]
+          },
+          policy: {
+            isGroup: true,
+            requireMention: true,
+            allowedImplicitMentionKinds: ["reply_to_bot"],
+            allowTextCommands: true,
+            hasControlCommand: false,
+            commandAuthorized: false
+          }
+        });
+        const legacyDecision = resolveMentionGating({
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false
+        });
+        const bypassDecision = resolveMentionGatingWithBypass({
+          isGroup: true,
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false,
+          hasAnyMention: false,
+          allowTextCommands: true,
+          hasControlCommand: true,
+          commandAuthorized: true
+        });
+        const envelopeOptions = resolveEnvelopeFormatOptions(cfg);
+        const envelopes = [
+          formatInboundFromLabel({
+            isGroup: true,
+            groupLabel: "Team",
+            groupId: "G1",
+            directLabel: "Alice"
+          }),
+          formatInboundFromLabel({
+            isGroup: false,
+            directLabel: "Alice",
+            directId: "Alice"
+          }),
+          formatInboundFromLabel({
+            isGroup: false,
+            directLabel: "Alice",
+            directId: "U2"
+          }),
+          formatInboundEnvelope({
+            channel: "slack",
+            from: "Team",
+            senderLabel: "Bob",
+            body: "hello",
+            chatType: "group",
+            envelope: { includeTimestamp: false, includeElapsed: false }
+          }),
+          formatInboundEnvelope({
+            channel: "slack",
+            from: "Alice",
+            body: "hello",
+            chatType: "direct",
+            fromMe: true,
+            envelope: { includeTimestamp: false, includeElapsed: false }
+          })
+        ];
+        const location = {
+          latitude: 12.3456789,
+          longitude: -98.7654321,
+          accuracy: 4.6,
+          name: "HQ",
+          caption: "front door"
+        };
+        const debounceFlushes = [];
+        const wrapped = createChannelInboundDebouncer({
+          cfg,
+          channel: "matrix",
+          debounceMsOverride: 0,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            debounceFlushes.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await wrapped.debouncer.enqueue({ key: "room", id: "a" });
+        await wait(0);
+        const locationText = formatLocationText(location);
+
+        return {
+          mentionChecks,
+          decisions: {
+            nested: [
+              nestedDecision.implicitMention,
+              nestedDecision.matchedImplicitMentionKinds.join(","),
+              nestedDecision.effectiveWasMentioned,
+              nestedDecision.shouldSkip,
+              nestedDecision.shouldBypassMention
+            ],
+            legacy: [
+              legacyDecision.effectiveWasMentioned,
+              legacyDecision.shouldSkip
+            ],
+            bypass: [
+              bypassDecision.effectiveWasMentioned,
+              bypassDecision.shouldSkip,
+              bypassDecision.shouldBypassMention
+            ],
+            implicit: implicitMentionKindWhen("native", true)
+          },
+          envelopeOptions,
+          envelopes,
+          locationTextChecks: [
+            locationText.startsWith("\\u{1F4CD}"),
+            locationText.includes("12.345679, -98.765432"),
+            locationText.includes("\\u00b15m")
+          ],
+          locationContext: toLocationContext(location),
+          roots: mergeInboundPathRoots(
+            ["C:\\\\tmp\\\\*", "/var/data", "/", "relative"],
+            ["/var/data", "/mnt/*/media"]
+          ),
+          debounceChecks: [
+            shouldDebounceTextInbound({ text: "hello", cfg }),
+            shouldDebounceTextInbound({ text: "", cfg }),
+            shouldDebounceTextInbound({ text: "hello", cfg, hasMedia: true }),
+            shouldDebounceTextInbound({ text: "hello", cfg, allowDebounce: false })
+          ],
+          channelDebouncer: [wrapped.debounceMs, debounceFlushes],
+          exportTypes: [
+            typeof buildMentionRegexes,
+            typeof createChannelInboundDebouncer,
+            typeof genericSdk.resolveInboundMentionDecision
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-plugin",
+                    "name": "Runtime Channel Inbound Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-inbound-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_inbound"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_inbound"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "mentionChecks": ["zeus", True, False, True, True],
+        "decisions": {
+            "nested": [True, "reply_to_bot", True, False, False],
+            "legacy": [False, True],
+            "bypass": [True, False, True],
+            "implicit": ["native"],
+        },
+        "envelopeOptions": {
+            "timezone": "utc",
+            "includeTimestamp": False,
+            "includeElapsed": False,
+            "userTimezone": "America/Chicago",
+        },
+        "envelopes": [
+            "Team id:G1",
+            "Alice",
+            "Alice id:U2",
+            "[slack Team] Bob: hello",
+            "[slack Alice] (self): hello",
+        ],
+        "locationTextChecks": [True, True, True],
+        "locationContext": {
+            "LocationLat": 12.3456789,
+            "LocationLon": -98.7654321,
+            "LocationAccuracy": 4.6,
+            "LocationName": "HQ",
+            "LocationSource": "place",
+            "LocationIsLive": False,
+            "LocationCaption": "front door",
+        },
+        "roots": ["C:/tmp/*", "/var/data", "/mnt/*/media"],
+        "debounceChecks": [True, False, False, False],
+        "channelDebouncer": [0, ["a"]],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:

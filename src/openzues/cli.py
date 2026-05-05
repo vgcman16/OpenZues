@@ -19567,6 +19567,378 @@ function createChannelReplyPipeline(params) {
   return pipeline;
 }
 
+function resolveMentionPatterns(cfg, agentId) {
+  if (!cfg) {
+    return [];
+  }
+  const agentConfig = resolveAgentConfigEntry(cfg, agentId);
+  const agentGroupChat = agentConfig && agentConfig.groupChat;
+  if (agentGroupChat && Object.prototype.hasOwnProperty.call(agentGroupChat, "mentionPatterns")) {
+    return Array.isArray(agentGroupChat.mentionPatterns) ? agentGroupChat.mentionPatterns : [];
+  }
+  const messages = cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  const groupChat = messages.groupChat && typeof messages.groupChat === "object"
+    ? messages.groupChat
+    : {};
+  if (Object.prototype.hasOwnProperty.call(groupChat, "mentionPatterns")) {
+    return Array.isArray(groupChat.mentionPatterns) ? groupChat.mentionPatterns : [];
+  }
+  const identity = agentConfig && agentConfig.identity;
+  const name = normalizeOptionalString(identity && identity.name);
+  if (!name) {
+    return [];
+  }
+  const escapedName = name.split(/\s+/).filter(Boolean).map(escapeRegExp).join("\\s+");
+  return [`\\b@?${escapedName}\\b`];
+}
+
+function buildMentionRegexes(cfg, agentId) {
+  return resolveMentionPatterns(cfg, agentId)
+    .map((pattern) => String(pattern || "").replace(/\u0008/g, "\\b"))
+    .filter(Boolean)
+    .map((pattern) => {
+      try {
+        return new RegExp(pattern, "i");
+      } catch (_error) {
+        return undefined;
+      }
+    })
+    .filter(Boolean);
+}
+
+function normalizeMentionText(text) {
+  return normalizeLowercaseStringOrEmpty(
+    String(text || "").replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u206f]/g, ""),
+  );
+}
+
+function matchesMentionPatterns(text, mentionRegexes) {
+  const cleaned = normalizeMentionText(text);
+  if (!cleaned || !Array.isArray(mentionRegexes)) {
+    return false;
+  }
+  return mentionRegexes.some((regex) => regex.test(cleaned));
+}
+
+function matchesMentionWithExplicit(params) {
+  const explicit = params && params.explicit;
+  const explicitMentioned = explicit && explicit.isExplicitlyMentioned === true;
+  const explicitAvailable = explicit && explicit.canResolveExplicit === true;
+  const hasAnyMention = explicit && explicit.hasAnyMention === true;
+  const textToCheck =
+    normalizeMentionText(params && params.text) ||
+    normalizeMentionText(params && params.transcript);
+  if (hasAnyMention && explicitAvailable) {
+    return explicitMentioned || matchesMentionPatterns(textToCheck, params.mentionRegexes || []);
+  }
+  if (!textToCheck) {
+    return explicitMentioned;
+  }
+  return explicitMentioned || matchesMentionPatterns(textToCheck, params.mentionRegexes || []);
+}
+
+function implicitMentionKindWhen(kind, enabled) {
+  return enabled ? [kind] : [];
+}
+
+function resolveMatchedImplicitMentionKinds(kinds, allowedKinds) {
+  const allowed = Array.isArray(allowedKinds) ? new Set(allowedKinds) : undefined;
+  const matched = [];
+  for (const kind of Array.isArray(kinds) ? kinds : []) {
+    if (allowed && !allowed.has(kind)) {
+      continue;
+    }
+    if (!matched.includes(kind)) {
+      matched.push(kind);
+    }
+  }
+  return matched;
+}
+
+function normalizeMentionDecisionParams(params) {
+  if (params && params.facts && params.policy) {
+    return params;
+  }
+  const input = params || {};
+  return {
+    facts: {
+      canDetectMention: input.canDetectMention,
+      wasMentioned: input.wasMentioned,
+      hasAnyMention: input.hasAnyMention,
+      implicitMentionKinds: input.implicitMentionKinds,
+    },
+    policy: {
+      isGroup: input.isGroup,
+      requireMention: input.requireMention,
+      allowedImplicitMentionKinds: input.allowedImplicitMentionKinds,
+      allowTextCommands: input.allowTextCommands,
+      hasControlCommand: input.hasControlCommand,
+      commandAuthorized: input.commandAuthorized,
+    },
+  };
+}
+
+function resolveInboundMentionDecision(params) {
+  const { facts, policy } = normalizeMentionDecisionParams(params);
+  const shouldBypassMention =
+    policy.isGroup === true &&
+    policy.requireMention === true &&
+    facts.wasMentioned !== true &&
+    (facts.hasAnyMention ?? false) !== true &&
+    policy.allowTextCommands === true &&
+    policy.commandAuthorized === true &&
+    policy.hasControlCommand === true;
+  const matchedImplicitMentionKinds = resolveMatchedImplicitMentionKinds(
+    facts.implicitMentionKinds,
+    policy.allowedImplicitMentionKinds,
+  );
+  const implicitMention = matchedImplicitMentionKinds.length > 0;
+  const effectiveWasMentioned =
+    facts.wasMentioned === true || implicitMention || shouldBypassMention;
+  const shouldSkip =
+    policy.requireMention === true &&
+    facts.canDetectMention === true &&
+    !effectiveWasMentioned;
+  return {
+    implicitMention,
+    matchedImplicitMentionKinds,
+    effectiveWasMentioned,
+    shouldBypassMention,
+    shouldSkip,
+  };
+}
+
+function resolveMentionGating(params) {
+  const result = resolveInboundMentionDecision({
+    facts: {
+      canDetectMention: params && params.canDetectMention,
+      wasMentioned: params && params.wasMentioned,
+      implicitMentionKinds: implicitMentionKindWhen(
+        "native",
+        params && params.implicitMention === true,
+      ),
+    },
+    policy: {
+      requireMention: params && params.requireMention,
+      allowTextCommands: false,
+      hasControlCommand: false,
+      commandAuthorized: false,
+    },
+  });
+  return {
+    effectiveWasMentioned: result.effectiveWasMentioned,
+    shouldSkip: result.shouldSkip,
+  };
+}
+
+function resolveMentionGatingWithBypass(params) {
+  const result = resolveInboundMentionDecision({
+    facts: {
+      canDetectMention: params && params.canDetectMention,
+      wasMentioned: params && params.wasMentioned,
+      hasAnyMention: params && params.hasAnyMention,
+      implicitMentionKinds: implicitMentionKindWhen(
+        "native",
+        params && params.implicitMention === true,
+      ),
+    },
+    policy: {
+      isGroup: params && params.isGroup,
+      requireMention: params && params.requireMention,
+      allowTextCommands: params && params.allowTextCommands,
+      hasControlCommand: params && params.hasControlCommand,
+      commandAuthorized: params && params.commandAuthorized,
+    },
+  });
+  return {
+    effectiveWasMentioned: result.effectiveWasMentioned,
+    shouldSkip: result.shouldSkip,
+    shouldBypassMention: result.shouldBypassMention,
+  };
+}
+
+function resolveEnvelopeFormatOptions(cfg) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults ? cfg.agents.defaults : {};
+  return {
+    timezone: defaults.envelopeTimezone,
+    includeTimestamp: defaults.envelopeTimestamp !== "off",
+    includeElapsed: defaults.envelopeElapsed !== "off",
+    userTimezone: defaults.userTimezone,
+  };
+}
+
+function sanitizeEnvelopeHeaderPart(value) {
+  return String(value || "")
+    .replace(/\r\n|\r|\n/g, " ")
+    .replaceAll("[", "(")
+    .replaceAll("]", ")")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatAgentEnvelope(params) {
+  const envelope = params.envelope || {};
+  const parts = [sanitizeEnvelopeHeaderPart(params.channel || "Channel")];
+  const from = sanitizeEnvelopeHeaderPart(params.from || "");
+  if (from) {
+    parts.push(from);
+  }
+  if (envelope.includeTimestamp !== false && params.timestamp) {
+    const date = params.timestamp instanceof Date ? params.timestamp : new Date(params.timestamp);
+    const formatted = envelope.timezone === "utc"
+      ? formatUtcTimestamp(date)
+      : formatZonedTimestamp(date);
+    if (formatted) {
+      parts.push(formatted);
+    }
+  }
+  return `[${parts.join(" ")}] ${params.body}`;
+}
+
+function formatInboundEnvelope(params) {
+  const chatType = normalizeChatType(params && params.chatType);
+  const isDirect = !chatType || chatType === "direct";
+  const senderLabel = sanitizeEnvelopeHeaderPart((params && params.senderLabel) || "");
+  const body =
+    isDirect && params && params.fromMe === true
+      ? `(self): ${params.body}`
+      : !isDirect && senderLabel
+        ? `${senderLabel}: ${params.body}`
+        : params && params.body;
+  return formatAgentEnvelope({
+    channel: params && params.channel,
+    from: params && params.from,
+    timestamp: params && params.timestamp,
+    envelope: params && params.envelope,
+    body,
+  });
+}
+
+function formatInboundFromLabel(params) {
+  if (params && params.isGroup) {
+    const label = normalizeOptionalString(params.groupLabel) || params.groupFallback || "Group";
+    const id = normalizeOptionalString(params.groupId);
+    return id ? `${label} id:${id}` : label;
+  }
+  const directLabel = String((params && params.directLabel) || "").trim();
+  const directId = normalizeOptionalString(params && params.directId);
+  return !directId || directId === directLabel ? directLabel : `${directLabel} id:${directId}`;
+}
+
+function resolveLocation(location) {
+  const source =
+    location.source ||
+    (location.isLive ? "live" : location.name || location.address ? "place" : "pin");
+  const isLive = location.isLive ?? source === "live";
+  return { ...location, source, isLive };
+}
+
+function formatLocationText(location) {
+  const resolved = resolveLocation(location || {});
+  const coords = [
+    Number(resolved.latitude).toFixed(6),
+    Number(resolved.longitude).toFixed(6),
+  ].join(", ");
+  const accuracy = Number.isFinite(resolved.accuracy)
+    ? ` \u00B1${Math.round(resolved.accuracy)}m`
+    : "";
+  return resolved.source === "live" || resolved.isLive
+    ? `\u{1F6F0} Live location: ${coords}${accuracy}`
+    : `\u{1F4CD} ${coords}${accuracy}`;
+}
+
+function toLocationContext(location) {
+  const resolved = resolveLocation(location || {});
+  return {
+    LocationLat: resolved.latitude,
+    LocationLon: resolved.longitude,
+    LocationAccuracy: resolved.accuracy,
+    LocationName: resolved.name,
+    LocationAddress: resolved.address,
+    LocationSource: resolved.source,
+    LocationIsLive: resolved.isLive,
+    LocationCaption: resolved.caption,
+  };
+}
+
+function normalizePosixAbsolutePath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || trimmed.includes("\0")) {
+    return undefined;
+  }
+  const normalized = path.posix.normalize(trimmed.replace(/\\/g, "/"));
+  const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
+  if (!isAbsolute || normalized === "/") {
+    return undefined;
+  }
+  const withoutTrailingSlash = normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+  return /^[A-Za-z]:$/.test(withoutTrailingSlash) ? undefined : withoutTrailingSlash;
+}
+
+function isValidInboundPathRootPattern(value) {
+  const normalized = normalizePosixAbsolutePath(value);
+  if (!normalized) {
+    return false;
+  }
+  return normalized.split("/").filter(Boolean).every(
+    (segment) => segment === "*" || !segment.includes("*"),
+  );
+}
+
+function normalizeInboundPathRoots(roots) {
+  const normalized = [];
+  const seen = new Set();
+  for (const root of Array.isArray(roots) ? roots : []) {
+    if (!isValidInboundPathRootPattern(root)) {
+      continue;
+    }
+    const candidate = normalizePosixAbsolutePath(root);
+    if (candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      normalized.push(candidate);
+    }
+  }
+  return normalized;
+}
+
+function mergeInboundPathRoots(...rootsLists) {
+  const merged = [];
+  const seen = new Set();
+  for (const roots of rootsLists) {
+    for (const root of normalizeInboundPathRoots(roots)) {
+      if (!seen.has(root)) {
+        seen.add(root);
+        merged.push(root);
+      }
+    }
+  }
+  return merged;
+}
+
+function shouldDebounceTextInbound(params) {
+  if (!params || params.allowDebounce === false || params.hasMedia) {
+    return false;
+  }
+  const text = normalizeOptionalString(params.text) || "";
+  if (!text) {
+    return false;
+  }
+  return !hasControlCommand(text, params.cfg || {}, params.commandOptions);
+}
+
+function createChannelInboundDebouncer(params) {
+  const debounceMs = resolveInboundDebounceMs({
+    cfg: params && params.cfg,
+    channel: params && params.channel,
+    overrideMs: params && params.debounceMsOverride,
+  });
+  const debouncer = createInboundDebouncer({
+    ...params,
+    debounceMs,
+  });
+  return { debounceMs, debouncer };
+}
+
 function enqueueKeyedTask(params) {
   if (params.hooks && typeof params.hooks.onEnqueue === "function") {
     params.hooks.onEnqueue();
@@ -23371,6 +23743,30 @@ const channelInboundDebounceRuntime = {
   resolveInboundDebounceMs,
 };
 
+const channelInboundRuntime = {
+  buildMentionRegexes,
+  createChannelInboundDebouncer,
+  createInboundDebouncer,
+  formatInboundEnvelope,
+  formatInboundFromLabel,
+  formatLocationText,
+  implicitMentionKindWhen,
+  isValidInboundPathRootPattern,
+  logInboundDrop,
+  matchesMentionPatterns,
+  matchesMentionWithExplicit,
+  mergeInboundPathRoots,
+  normalizeInboundPathRoots,
+  normalizeMentionText,
+  resolveEnvelopeFormatOptions,
+  resolveInboundDebounceMs,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+  shouldDebounceTextInbound,
+  toLocationContext,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -23656,6 +24052,7 @@ const genericSdk = new Proxy(
     buildRuntimeAccountStatusSnapshot,
     buildTokenChannelStatusSummary,
     buildWebhookChannelStatusSummary,
+    buildMentionRegexes,
     buildHistoryContext,
     buildHistoryContextFromEntries,
     buildHistoryContextFromMap,
@@ -23672,6 +24069,7 @@ const genericSdk = new Proxy(
     createCachedLazyValueGetter,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createChannelInboundDebouncer,
     createChannelReplyPipeline,
     createDedupeCache,
     createInboundDebouncer,
@@ -23709,6 +24107,9 @@ const genericSdk = new Proxy(
     extensionForMime,
     extractErrorCode,
     extractToolPayload,
+    formatInboundEnvelope,
+    formatInboundFromLabel,
+    formatLocationText,
     formatUtcTimestamp,
     formatZonedTimestamp,
     formatMatchMetadata,
@@ -23726,6 +24127,7 @@ const genericSdk = new Proxy(
     hasControlCommand,
     hasInlineCommandTokens,
     HISTORY_CONTEXT_MARKER,
+    implicitMentionKindWhen,
     KeyedAsyncQueue,
     hasOutboundMedia,
     hasOutboundReplyContent,
@@ -23740,6 +24142,7 @@ const genericSdk = new Proxy(
     isNumericTargetId,
     isRecord,
     isReasoningReplyPayload,
+    isValidInboundPathRootPattern,
     isSingleUseReplyToMode,
     isSilentReplyPayloadText,
     isSilentReplyText,
@@ -23754,8 +24157,11 @@ const genericSdk = new Proxy(
     logInboundDrop,
     logTypingFailure,
     lowercasePreservingWhitespace,
+    matchesMentionPatterns,
+    matchesMentionWithExplicit,
     mediaKindFromMime,
     mergeAccountConfig,
+    mergeInboundPathRoots,
     missingTargetError,
     missingTargetMessage,
     normalizeAtHashSlug,
@@ -23764,8 +24170,10 @@ const genericSdk = new Proxy(
     normalizeChatType,
     normalizeE164,
     normalizeHyphenSlug,
+    normalizeInboundPathRoots,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
+    normalizeMentionText,
     normalizeMimeType,
     normalizeMessageChannel,
     normalizeNullableString,
@@ -23796,7 +24204,10 @@ const genericSdk = new Proxy(
     readResponseWithLimit,
     readReactionParams,
     resolveInboundDebounceMs,
+    resolveInboundMentionDecision,
     resolveMarkdownTableMode,
+    resolveMentionGating,
+    resolveMentionGatingWithBypass,
     resolveRetryConfig,
     runTasksWithConcurrency,
     recordPendingHistoryEntry,
@@ -23812,6 +24223,7 @@ const genericSdk = new Proxy(
     resolveAccountWithDefaultFallback,
     resolveConfiguredFromCredentialStatuses,
     resolveConfiguredFromRequiredCredentialStatuses,
+    resolveEnvelopeFormatOptions,
     resolveGlobalDedupeCache,
     resolveGlobalMap,
     resolveGlobalSingleton,
@@ -23854,10 +24266,12 @@ const genericSdk = new Proxy(
     shouldComputeCommandAuthorized,
     shouldAckReaction,
     shouldAckReactionForWhatsApp,
+    shouldDebounceTextInbound,
     stringEnum,
     stringifyToolPayload,
     stripPlainTextToolCallBlocks,
     textResult,
+    toLocationContext,
     ToolAuthorizationError,
     retryAsync,
     TELEGRAM_RETRY_DEFAULTS,
@@ -24000,6 +24414,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound-debounce"
   ) {
     return channelInboundDebounceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-inbound" ||
+    request === "@openclaw/plugin-sdk/channel-inbound"
+  ) {
+    return channelInboundRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
