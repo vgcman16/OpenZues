@@ -13011,6 +13011,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`75 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `98a00cc5`.
+- Imported OpenClaw plugin runtime entries now have source-backed fetch/SSRF
+  helper breadth from `src/plugin-sdk/fetch-auth.ts`,
+  `src/plugin-sdk/request-url.ts`, `src/plugin-sdk/ssrf-policy.ts`,
+  `src/plugin-sdk/ssrf-runtime.ts`, `src/infra/net/ssrf.ts`, and
+  adjacent guarded-fetch helpers: bearer-scope fetch retry fallback, request
+  URL extraction, private-network opt-in policies, legacy private-network
+  alias migration, SSRF policy merging, HTTP private-network target checks,
+  hostname suffix allowlists, hostname allowlist policy expansion,
+  private/internal host detection, pinned-host policy checks, guarded-fetch
+  stubs, scoped/unscoped SDK aliases, and generic SDK re-exports are now
+  available through `tools.invoke`. This closes `OZ-PLUGIN-001UH`;
+  repo-wide parity is now estimated at ~77.1%. The next plugin/runtime seam
+  remains broader SDK helper/runtime surface breadth.
+- Verified the fetch/SSRF helper shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_fetch_ssrf_helpers -q`
+  (`1 passed`), adjacent imported-plugin/runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw or plugin_executor"`
+  (`76 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `f4a23a25`.
 
 ## References
 
