@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import io
 import json
 import re
+import secrets
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -7750,6 +7753,26 @@ def test_notification_route_create_accepts_googlechat_native_route_kind() -> Non
     assert route.kind == "googlechat"
     assert route.conversation_target is not None
     assert route.conversation_target.channel == "googlechat"
+
+
+def test_notification_route_create_accepts_nextcloud_talk_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Nextcloud Talk Native Provider",
+        kind="nextcloud-talk",
+        target="https://nextcloud.example.com",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="nextcloud-talk",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="nextcloud-talk:room:abc123",
+        ),
+        secret_token="nextcloud-bot-secret",
+    )
+
+    assert route.kind == "nextcloud-talk"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "nextcloud-talk"
 
 
 @pytest.mark.asyncio
@@ -16883,6 +16906,111 @@ async def test_ops_mesh_service_send_direct_channel_message_resolves_googlechat_
             {"text": "DM parity."},
             "Authorization",
             "Bearer google-chat-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_nextcloud_talk_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-nextcloud-talk"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Nextcloud Talk Native Provider",
+        kind="nextcloud-talk",
+        target="https://nextcloud.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="nextcloud-bot-secret",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "nextcloud-talk",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "nextcloud-talk:room:abc123",
+        },
+    )
+    nextcloud_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_token_hex(length: int) -> str:
+        assert length == 16
+        return "fixedrandom"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert isinstance(payload, dict)
+        nextcloud_posts.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"ocs": {"data": {"id": 12345, "timestamp": 1706000000}}}
+
+    monkeypatch.setattr(secrets, "token_hex", fake_token_hex)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="nextcloud-talk",
+        to="nextcloud-talk:room:abc123",
+        message="Nextcloud **native** parity.",
+        media_urls=["https://example.com/chart.png"],
+        reply_to_id="reply-42",
+        account_id="default",
+        idempotency_key="idem-native-nextcloud-talk-send",
+    )
+
+    expected_signature = hmac.new(
+        b"nextcloud-bot-secret",
+        b"fixedrandomNextcloud **native** parity.\n\nAttachment: https://example.com/chart.png",
+        hashlib.sha256,
+    ).hexdigest()
+    assert result["messageId"] == "12345"
+    assert result["chatId"] == "abc123"
+    assert result["timestamp"] == 1706000000
+    assert nextcloud_posts == [
+        (
+            "POST",
+            "https://nextcloud.example.com/ocs/v2.php/apps/spreed/api/v1/bot/abc123/message",
+            {
+                "message": "Nextcloud **native** parity.\n\n"
+                "Attachment: https://example.com/chart.png",
+                "replyTo": "reply-42",
+            },
+            None,
+            None,
+            {
+                "OCS-APIRequest": "true",
+                "X-Nextcloud-Talk-Bot-Random": "fixedrandom",
+                "X-Nextcloud-Talk-Bot-Signature": expected_signature,
+            },
         )
     ]
 

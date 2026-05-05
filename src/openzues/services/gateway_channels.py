@@ -44,6 +44,11 @@ _CHANNEL_META = (
         "detailLabel": "Google Chat",
     },
     {
+        "id": "nextcloud-talk",
+        "label": "Nextcloud Talk",
+        "detailLabel": "Nextcloud Talk",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

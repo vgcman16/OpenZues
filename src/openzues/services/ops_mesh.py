@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
 import io
 import json
 import logging
@@ -252,12 +253,14 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "zalo",
     "feishu",
     "googlechat",
+    "nextcloud-talk",
     "line",
     "matrix",
 }
 NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "bluebubbles",
     "googlechat",
+    "nextcloud-talk",
     "line",
     "matrix",
     "discord",
@@ -3087,6 +3090,83 @@ def _googlechat_message_id(result: object) -> str | None:
     return str(candidate).strip() or None
 
 
+def _nextcloud_talk_room_token(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    for prefix in ("nextcloud-talk:", "nc-talk:", "nc:"):
+        if target.lower().startswith(prefix):
+            target = target[len(prefix) :].strip()
+            break
+    if target.lower().startswith("room:"):
+        target = target[len("room:") :].strip()
+    return target or None
+
+
+def _nextcloud_talk_endpoint(target: str | None, *, room_token: str) -> str:
+    base_url = str(target or "").strip()
+    if _normalized_http_webhook_url(base_url) is None:
+        raise RuntimeError("Nextcloud Talk route target must be an http(s) base URL.")
+    return (
+        f"{base_url.rstrip('/')}/ocs/v2.php/apps/spreed/api/v1/bot/"
+        f"{quote(room_token, safe='')}/message"
+    )
+
+
+def _nextcloud_talk_bot_secret(secret_token: str | None) -> str:
+    secret = str(secret_token or "").strip()
+    if not secret:
+        raise RuntimeError("Nextcloud Talk route is missing a bot secret.")
+    return secret
+
+
+def _nextcloud_talk_signature_headers(
+    *,
+    message: str,
+    secret_token: str | None,
+) -> dict[str, str]:
+    secret = _nextcloud_talk_bot_secret(secret_token)
+    random_value = secrets.token_hex(16)
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        f"{random_value}{message}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "OCS-APIRequest": "true",
+        "X-Nextcloud-Talk-Bot-Random": random_value,
+        "X-Nextcloud-Talk-Bot-Signature": signature,
+    }
+
+
+def _nextcloud_talk_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    ocs = result.get("ocs")
+    if not isinstance(ocs, dict):
+        return None
+    data = ocs.get("data")
+    if not isinstance(data, dict):
+        return None
+    candidate = data.get("id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _nextcloud_talk_timestamp(result: object) -> int | None:
+    if not isinstance(result, dict):
+        return None
+    ocs = result.get("ocs")
+    if not isinstance(ocs, dict):
+        return None
+    data = ocs.get("data")
+    if not isinstance(data, dict):
+        return None
+    timestamp = data.get("timestamp")
+    return timestamp if isinstance(timestamp, int) else None
+
+
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
 
@@ -5132,6 +5212,12 @@ def _conversation_target_peer_id_matches(
             and event_googlechat_target
             and route_googlechat_target.strip().lower()
             == event_googlechat_target.strip().lower()
+        )
+    if channel == "nextcloud-talk":
+        route_room = _nextcloud_talk_room_token(route_peer_id)
+        event_room = _nextcloud_talk_room_token(event_peer_id)
+        return bool(
+            route_room and event_room and route_room.strip().lower() == event_room.strip().lower()
         )
     if channel == "telegram":
         route_target = _parse_telegram_delivery_target(route_peer_id)
@@ -10011,6 +10097,8 @@ class OpsMeshService:
             return self._post_feishu_provider_event
         if route_kind == "googlechat":
             return self._post_googlechat_provider_event
+        if route_kind == "nextcloud-talk":
+            return self._post_nextcloud_talk_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -19697,6 +19785,72 @@ class OpsMeshService:
         reply_to_id = str(event.get("replyToId") or "").strip()
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
+        return native_result
+
+    def _post_nextcloud_talk_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Nextcloud Talk native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_token = _nextcloud_talk_room_token(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if room_token is None:
+            raise RuntimeError("Nextcloud Talk route is missing a room token.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts: list[str] = []
+        text = str(event.get("message") or "").strip()
+        if text:
+            message_parts.append(text)
+        message_parts.extend(f"Attachment: {media_url}" for media_url in media_urls)
+        message = "\n\n".join(message_parts).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for Nextcloud Talk sends.")
+        payload: dict[str, object] = {"message": message}
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["replyTo"] = reply_to_id
+        result = self._request_json_provider_url(
+            _nextcloud_talk_endpoint(
+                str(route.get("target") or ""),
+                room_token=room_token,
+            ),
+            method="POST",
+            payload=payload,
+            extra_headers=_nextcloud_talk_signature_headers(
+                message=message,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Nextcloud Talk API returned a non-JSON response.")
+        message_id = _nextcloud_talk_message_id(result) or "unknown"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": room_token,
+            "channelId": room_token,
+        }
+        timestamp = _nextcloud_talk_timestamp(result)
+        if timestamp is not None:
+            native_result["timestamp"] = timestamp
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
         return native_result
 
     def _post_line_provider_event(

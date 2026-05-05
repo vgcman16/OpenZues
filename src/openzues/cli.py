@@ -209,6 +209,12 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": False,
         "polls": False,
     },
+    "nextcloud-talk": {
+        "chatTypes": ["group", "channel"],
+        "reply": True,
+        "media": True,
+        "polls": False,
+    },
     "zalo": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7363,6 +7369,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "googlechat",
     "line",
     "matrix",
+    "nextcloud-talk",
     "slack",
     "telegram",
     "whatsapp",
@@ -29270,7 +29277,7 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, line, or matrix."
+            "googlechat, nextcloud-talk, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29331,12 +29338,13 @@ def routes_create_command(
         "zalo",
         "feishu",
         "googlechat",
+        "nextcloud-talk",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
-            "zalo, feishu, googlechat, line, matrix."
+            "zalo, feishu, googlechat, nextcloud-talk, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29351,6 +29359,7 @@ def routes_create_command(
                 "zalo",
                 "feishu",
                 "googlechat",
+                "nextcloud-talk",
                 "line",
                 "matrix",
             }
@@ -29368,6 +29377,7 @@ def routes_create_command(
                 "zalo",
                 "feishu",
                 "googlechat",
+                "nextcloud-talk",
                 "line",
                 "matrix",
             ],
