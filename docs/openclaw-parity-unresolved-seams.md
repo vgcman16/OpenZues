@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.6% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6101,11 +6101,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `https://api.botframework.com` audience tokens. Repo-wide parity is now
   estimated at ~65.5%. Verified with focused app/JWT pytests, adjacent app
   proof, `ruff check`, and `mypy`; source/test checkpointed in `b3f911d2`.
+- Closed the Microsoft Teams attachment-only inbound placeholder seam from
+  OpenClaw `extensions/msteams/src/attachments/html.ts` and
+  `extensions/msteams/src/monitor-handler/message-handler.ts`: attachment-only
+  Teams messages now route `<media:image>` / `<media:document>` placeholders
+  through the native session delivery path instead of being skipped as
+  textless, with image detection based on MIME type, filename extension, and
+  Teams file-download metadata. Repo-wide parity is now estimated at ~65.6%.
+  Verified with focused runtime pytest, adjacent Teams inbound proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `86f9fa74`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
   consumers, feedback reflection follow-up generation, welcome/member
-  lifecycle handling, richer inbound media staging, or another source-backed
-  channel/provider route/action adapter.
+  lifecycle handling, downloadable inbound media staging, or another
+  source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

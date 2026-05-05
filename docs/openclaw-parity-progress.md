@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.5% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.6% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10856,6 +10856,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_msteams_webhook_auth.py`, and `mypy src\openzues\app.py
   src\openzues\services\msteams_webhook_auth.py`. Checkpointed in
   `b3f911d2`.
+
+- Microsoft Teams attachment-only inbound messages now mirror OpenClaw's
+  `buildMSTeamsAttachmentPlaceholder` fallback from
+  `extensions/msteams/src/attachments/html.ts` and
+  `monitor-handler/message-handler.ts`: when a Teams message has no text or
+  HTML text fallback but carries attachments, OpenZues routes
+  `<media:image>` / `<media:document>` placeholders into the session-backed
+  inbound path instead of skipping the activity as textless. Image detection
+  follows OpenClaw's MIME, filename, and Teams file-download metadata checks.
+  This closes `OZ-PROV-001AV`; repo-wide parity is now estimated at ~65.6%.
+  Remaining Microsoft Teams HTTP breadth is downloadable media staging,
+  feedback reflection, and member lifecycle handling.
+- Verified the Microsoft Teams attachment placeholder slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback"`
+  (`5 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `86f9fa74`.
 
 ## References
 
