@@ -23944,6 +23944,336 @@ function resolveChannelGroupToolsPolicy(params) {
   return defaultConfig && defaultConfig.tools ? defaultConfig.tools : undefined;
 }
 
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function isSenderIdAllowed(allow, senderId, allowWhenEmpty) {
+  if (!allow.hasEntries) {
+    return allowWhenEmpty;
+  }
+  if (allow.hasWildcard) {
+    return true;
+  }
+  if (!senderId) {
+    return false;
+  }
+  return allow.entries.includes(senderId);
+}
+
+function formatAllowlistMatchMeta(match) {
+  return `matchKey=${(match && match.matchKey) || "none"} matchSource=${
+    (match && match.matchSource) || "none"
+  }`;
+}
+
+function compileAllowlist(entries) {
+  const set = new Set((Array.isArray(entries) ? entries : []).filter(Boolean));
+  return { set, wildcard: set.has("*") };
+}
+
+function compileSimpleAllowlist(entries) {
+  return compileAllowlist(
+    (Array.isArray(entries) ? entries : [])
+      .map((entry) => normalizeOptionalLowercaseString(String(entry)))
+      .filter(Boolean),
+  );
+}
+
+function resolveAllowlistCandidates(params) {
+  for (const candidate of params.candidates || []) {
+    if (!candidate.value) {
+      continue;
+    }
+    if (params.compiledAllowlist.set.has(candidate.value)) {
+      return {
+        allowed: true,
+        matchKey: candidate.value,
+        matchSource: candidate.source,
+      };
+    }
+  }
+  return { allowed: false };
+}
+
+function resolveCompiledAllowlistMatch(params) {
+  if (params.compiledAllowlist.set.size === 0) {
+    return { allowed: false };
+  }
+  if (params.compiledAllowlist.wildcard) {
+    return { allowed: true, matchKey: "*", matchSource: "wildcard" };
+  }
+  return resolveAllowlistCandidates(params);
+}
+
+function resolveAllowlistMatchByCandidates(params) {
+  return resolveCompiledAllowlistMatch({
+    compiledAllowlist: compileAllowlist(params.allowList),
+    candidates: params.candidates,
+  });
+}
+
+function resolveAllowlistMatchSimple(params) {
+  const allowFrom = compileSimpleAllowlist(params.allowFrom);
+  if (allowFrom.set.size === 0) {
+    return { allowed: false };
+  }
+  if (allowFrom.wildcard) {
+    return { allowed: true, matchKey: "*", matchSource: "wildcard" };
+  }
+  const senderId = normalizeLowercaseStringOrEmpty(params.senderId);
+  const senderName = normalizeOptionalLowercaseString(params.senderName);
+  return resolveAllowlistCandidates({
+    compiledAllowlist: allowFrom,
+    candidates: [
+      { value: senderId, source: "id" },
+      ...(params.allowNameMatching === true && senderName
+        ? [{ value: senderName, source: "name" }]
+        : []),
+    ],
+  });
+}
+
+function formatAllowFromLowercase(params) {
+  return (Array.isArray(params.allowFrom) ? params.allowFrom : [])
+    .map((entry) => String(entry).trim())
+    .filter(Boolean)
+    .map((entry) =>
+      params.stripPrefixRe ? entry.replace(params.stripPrefixRe, "") : entry,
+    )
+    .map((entry) => normalizeOptionalLowercaseString(entry))
+    .filter(Boolean);
+}
+
+function formatNormalizedAllowFromEntries(params) {
+  return (Array.isArray(params.allowFrom) ? params.allowFrom : [])
+    .map((entry) => String(entry).trim())
+    .filter(Boolean)
+    .map((entry) => params.normalizeEntry(entry))
+    .filter(Boolean);
+}
+
+function isNormalizedSenderAllowed(params) {
+  const normalizedAllow = formatAllowFromLowercase({
+    allowFrom: params.allowFrom,
+    stripPrefixRe: params.stripPrefixRe,
+  });
+  if (normalizedAllow.length === 0) {
+    return false;
+  }
+  if (normalizedAllow.includes("*")) {
+    return true;
+  }
+  const sender = normalizeOptionalLowercaseString(String(params.senderId));
+  return sender ? normalizedAllow.includes(sender) : false;
+}
+
+function isAllowedParsedChatSender(params) {
+  const allowFrom = normalizeStringEntries(params.allowFrom);
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  if (allowFrom.includes("*")) {
+    return true;
+  }
+  const senderNormalized = params.normalizeSender(params.sender);
+  const chatId = params.chatId ?? undefined;
+  const chatGuid = normalizeOptionalString(params.chatGuid);
+  const chatIdentifier = normalizeOptionalString(params.chatIdentifier);
+  for (const entry of allowFrom) {
+    if (!entry) {
+      continue;
+    }
+    const parsed = params.parseAllowTarget(entry);
+    if (parsed.kind === "chat_id" && chatId !== undefined) {
+      if (parsed.chatId === chatId) {
+        return true;
+      }
+    } else if (parsed.kind === "chat_guid" && chatGuid) {
+      if (parsed.chatGuid === chatGuid) {
+        return true;
+      }
+    } else if (parsed.kind === "chat_identifier" && chatIdentifier) {
+      if (parsed.chatIdentifier === chatIdentifier) {
+        return true;
+      }
+    } else if (parsed.kind === "handle" && senderNormalized) {
+      if (parsed.handle === senderNormalized) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function mapBasicAllowlistResolutionEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map((entry) => ({
+    input: entry.input,
+    resolved: entry.resolved,
+    ...(entry.id !== undefined ? { id: entry.id } : {}),
+    ...(entry.name !== undefined ? { name: entry.name } : {}),
+    ...(entry.note !== undefined ? { note: entry.note } : {}),
+  }));
+}
+
+async function mapAllowlistResolutionInputs(params) {
+  const results = [];
+  for (const input of params.inputs || []) {
+    results.push(await params.mapInput(input));
+  }
+  return results;
+}
+
+function dedupeAllowlistEntries(entries) {
+  const seen = new Set();
+  const deduped = [];
+  for (const entry of entries) {
+    const normalized = String(entry).trim();
+    if (!normalized) {
+      continue;
+    }
+    const key = normalizeLowercaseStringOrEmpty(normalized);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(normalized);
+  }
+  return deduped;
+}
+
+function mapAllowFromEntries(allowFrom) {
+  return (Array.isArray(allowFrom) ? allowFrom : []).map((entry) => String(entry));
+}
+
+function mergeAllowlist(params) {
+  return dedupeAllowlistEntries([
+    ...mapAllowFromEntries(params.existing),
+    ...(params.additions || []),
+  ]);
+}
+
+function buildAllowlistResolutionSummary(resolvedUsers, opts) {
+  const resolvedMap = new Map((resolvedUsers || []).map((entry) => [entry.input, entry]));
+  const resolvedOk = (entry) => Boolean(entry.resolved && entry.id);
+  const formatResolved =
+    (opts && opts.formatResolved) || ((entry) => `${entry.input}->${entry.id}`);
+  const formatUnresolved = (opts && opts.formatUnresolved) || ((entry) => entry.input);
+  const mapping = (resolvedUsers || []).filter(resolvedOk).map(formatResolved);
+  const additions = (resolvedUsers || [])
+    .filter(resolvedOk)
+    .map((entry) => entry.id)
+    .filter(Boolean);
+  const unresolved = (resolvedUsers || [])
+    .filter((entry) => !resolvedOk(entry))
+    .map(formatUnresolved);
+  return { resolvedMap, mapping, unresolved, additions };
+}
+
+function resolveAllowlistIdAdditions(params) {
+  const additions = [];
+  for (const entry of params.existing || []) {
+    const trimmed = normalizeOptionalString(entry) || "";
+    const resolved = params.resolvedMap.get(trimmed);
+    if (resolved && resolved.resolved && resolved.id) {
+      additions.push(resolved.id);
+    }
+  }
+  return additions;
+}
+
+function canonicalizeAllowlistWithResolvedIds(params) {
+  const canonicalized = [];
+  for (const entry of params.existing || []) {
+    const trimmed = normalizeOptionalString(entry) || "";
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed === "*") {
+      canonicalized.push(trimmed);
+      continue;
+    }
+    const resolved = params.resolvedMap.get(trimmed);
+    canonicalized.push(resolved && resolved.resolved && resolved.id ? resolved.id : trimmed);
+  }
+  return dedupeAllowlistEntries(canonicalized);
+}
+
+function patchAllowlistUsersInConfigEntries(params) {
+  const nextEntries = { ...(params.entries || {}) };
+  for (const [entryKey, entryConfig] of Object.entries(params.entries || {})) {
+    if (!entryConfig || typeof entryConfig !== "object") {
+      continue;
+    }
+    const users = entryConfig.users;
+    if (!Array.isArray(users) || users.length === 0) {
+      continue;
+    }
+    const resolvedUsers =
+      params.strategy === "canonicalize"
+        ? canonicalizeAllowlistWithResolvedIds({
+            existing: users,
+            resolvedMap: params.resolvedMap,
+          })
+        : mergeAllowlist({
+            existing: users,
+            additions: resolveAllowlistIdAdditions({
+              existing: users,
+              resolvedMap: params.resolvedMap,
+            }),
+          });
+    nextEntries[entryKey] = { ...entryConfig, users: resolvedUsers };
+  }
+  return nextEntries;
+}
+
+function addAllowlistUserEntriesFromConfigEntry(target, entry) {
+  if (!entry || typeof entry !== "object") {
+    return;
+  }
+  const users = entry.users;
+  if (!Array.isArray(users)) {
+    return;
+  }
+  for (const value of users) {
+    const trimmed = normalizeOptionalString(value) || "";
+    if (trimmed && trimmed !== "*") {
+      target.add(trimmed);
+    }
+  }
+}
+
+function summarizeStringEntries(params) {
+  const entries = params.entries || [];
+  if (entries.length === 0) {
+    return params.emptyText || "";
+  }
+  const limit = Math.max(1, Math.floor(params.limit || 6));
+  const sample = entries.slice(0, limit);
+  const suffix = entries.length > sample.length ? ` (+${entries.length - sample.length})` : "";
+  return `${sample.join(", ")}${suffix}`;
+}
+
+function summarizeMapping(label, mapping, unresolved, runtime) {
+  const lines = [];
+  if (mapping.length > 0) {
+    lines.push(`${label} resolved: ${summarizeStringEntries({ entries: mapping, limit: 6 })}`);
+  }
+  if (unresolved.length > 0) {
+    lines.push(
+      `${label} unresolved: ${summarizeStringEntries({ entries: unresolved, limit: 6 })}`,
+    );
+  }
+  if (lines.length > 0 && runtime && typeof runtime.log === "function") {
+    runtime.log(lines.join("\n"));
+  }
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -24904,6 +25234,31 @@ const channelPolicyRuntime = {
   resolveToolsBySender,
 };
 
+const allowFromRuntime = {
+  addAllowlistUserEntriesFromConfigEntry,
+  buildAllowlistResolutionSummary,
+  canonicalizeAllowlistWithResolvedIds,
+  compileAllowlist,
+  firstDefined,
+  formatAllowFromLowercase,
+  formatAllowlistMatchMeta,
+  formatNormalizedAllowFromEntries,
+  isAllowedParsedChatSender,
+  isNormalizedSenderAllowed,
+  isSenderIdAllowed,
+  mapAllowlistResolutionInputs,
+  mapBasicAllowlistResolutionEntries,
+  mergeAllowlist,
+  mergeDmAllowFromSources,
+  patchAllowlistUsersInConfigEntries,
+  resolveAllowlistCandidates,
+  resolveAllowlistMatchByCandidates,
+  resolveAllowlistMatchSimple,
+  resolveCompiledAllowlistMatch,
+  resolveGroupAllowFromSources,
+  summarizeMapping,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -25174,6 +25529,7 @@ const genericSdk = new Proxy(
     SILENT_REPLY_TOKEN,
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
+    ...allowFromRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -25585,6 +25941,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-policy"
   ) {
     return channelPolicyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/allow-from" ||
+    request === "@openclaw/plugin-sdk/allow-from"
+  ) {
+    return allowFromRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

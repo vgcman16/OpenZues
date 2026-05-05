@@ -7871,6 +7871,323 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_allow_from_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-allow-from.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  addAllowlistUserEntriesFromConfigEntry,
+  buildAllowlistResolutionSummary,
+  canonicalizeAllowlistWithResolvedIds,
+  compileAllowlist,
+  firstDefined,
+  formatAllowFromLowercase,
+  formatAllowlistMatchMeta,
+  formatNormalizedAllowFromEntries,
+  isAllowedParsedChatSender,
+  isNormalizedSenderAllowed,
+  isSenderIdAllowed,
+  mapAllowlistResolutionInputs,
+  mapBasicAllowlistResolutionEntries,
+  mergeAllowlist,
+  mergeDmAllowFromSources,
+  patchAllowlistUsersInConfigEntries,
+  resolveAllowlistMatchByCandidates,
+  resolveAllowlistMatchSimple,
+  resolveCompiledAllowlistMatch,
+  resolveGroupAllowFromSources,
+  summarizeMapping
+} = require("openclaw/plugin-sdk/allow-from");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function parseAllowTarget(entry) {
+  const trimmed = entry.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("chat_id:")) {
+    return { kind: "chat_id", chatId: Number.parseInt(trimmed.slice("chat_id:".length), 10) };
+  }
+  if (lower.startsWith("chat_guid:")) {
+    return { kind: "chat_guid", chatGuid: trimmed.slice("chat_guid:".length) };
+  }
+  if (lower.startsWith("chat_identifier:")) {
+    return {
+      kind: "chat_identifier",
+      chatIdentifier: trimmed.slice("chat_identifier:".length)
+    };
+  }
+  return { kind: "handle", handle: lower };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.allow_from",
+      description: "Use OpenClaw allow-from SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const compiled = compileAllowlist(["u1", "*"]);
+        const summary = buildAllowlistResolutionSummary(
+          [
+            { input: "Alice", resolved: true, id: "U1", name: "Alice A" },
+            { input: "Bob", resolved: false, note: "missing" }
+          ],
+          {
+            formatResolved: (entry) => `${entry.input}->${entry.id}`,
+            formatUnresolved: (entry) => `${entry.input}:missing`
+          }
+        );
+        const targetSet = new Set();
+        addAllowlistUserEntriesFromConfigEntry(targetSet, {
+          users: [" Owner ", "*", "", 42]
+        });
+        const logs = [];
+        summarizeMapping("users", summary.mapping, summary.unresolved, {
+          log: (message) => logs.push(message)
+        });
+        const visited = [];
+        const mapped = await mapAllowlistResolutionInputs({
+          inputs: ["one", "two", "three"],
+          mapInput: async (input) => {
+            visited.push(input);
+            return input.toUpperCase();
+          }
+        });
+        return {
+          lower: formatAllowFromLowercase({
+            allowFrom: [" Telegram:UserA ", "tg:UserB", "  "],
+            stripPrefixRe: /^(telegram|tg):/i
+          }),
+          normalized: formatNormalizedAllowFromEntries({
+            allowFrom: ["  @Alice ", "", " @Bob ", "@"],
+            normalizeEntry: (entry) => entry.replace(/^@/, "").toLowerCase()
+          }),
+          normalizedSender: [
+            isNormalizedSenderAllowed({ senderId: "attacker", allowFrom: ["*"] }),
+            isNormalizedSenderAllowed({
+              senderId: "12345",
+              allowFrom: ["ZALO:12345", "zl:777"],
+              stripPrefixRe: /^(zalo|zl):/i
+            }),
+            isNormalizedSenderAllowed({
+              senderId: "999",
+              allowFrom: ["zl:12345"],
+              stripPrefixRe: /^(zalo|zl):/i
+            })
+          ],
+          parsedChat: [
+            isAllowedParsedChatSender({
+              allowFrom: [],
+              sender: "+15551234567",
+              normalizeSender: (sender) => sender,
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["*"],
+              sender: "user@example.com",
+              normalizeSender: (sender) => sender.toLowerCase(),
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["User@Example.com"],
+              sender: "user@example.com",
+              normalizeSender: (sender) => sender.toLowerCase(),
+              parseAllowTarget
+            }),
+            isAllowedParsedChatSender({
+              allowFrom: ["chat_id:42"],
+              sender: "+15551234567",
+              chatId: 42,
+              normalizeSender: (sender) => sender,
+              parseAllowTarget
+            })
+          ],
+          compiled: [
+            compiled.wildcard,
+            Array.from(compiled.set).sort(),
+            resolveCompiledAllowlistMatch({
+              compiledAllowlist: compileAllowlist(["u1"]),
+              candidates: [{ value: "u1", source: "id" }]
+            }),
+            resolveAllowlistMatchByCandidates({
+              allowList: ["team"],
+              candidates: [{ value: "team", source: "tag" }]
+            }),
+            resolveAllowlistMatchSimple({
+              allowFrom: ["U1", "Alice"],
+              senderId: "u2",
+              senderName: "Alice",
+              allowNameMatching: true
+            }),
+            formatAllowlistMatchMeta({ matchKey: "u1", matchSource: "id" })
+          ],
+          mergeAndPatch: {
+            merged: mergeAllowlist({ existing: [" Alice ", "alice"], additions: ["U1", "u1"] }),
+            canonicalized: canonicalizeAllowlistWithResolvedIds({
+              existing: ["Alice", "Bob", "*", "alice"],
+              resolvedMap: summary.resolvedMap
+            }),
+            patched: patchAllowlistUsersInConfigEntries({
+              entries: {
+                team: { users: ["Alice", "Bob"] },
+                empty: {}
+              },
+              resolvedMap: summary.resolvedMap,
+              strategy: "canonicalize"
+            }),
+            targetSet: Array.from(targetSet).sort()
+          },
+          summary: {
+            mapping: summary.mapping,
+            unresolved: summary.unresolved,
+            additions: summary.additions,
+            resolvedId: summary.resolvedMap.get("Alice").id,
+            logs
+          },
+          basicEntries: mapBasicAllowlistResolutionEntries([
+            { input: "Alice", resolved: true, id: "U1", name: "Alice A", note: "ok" }
+          ]),
+          mapped: { visited, mapped },
+          sourceLists: {
+            first: firstDefined(undefined, "a", "b"),
+            senderAllowed: [
+              isSenderIdAllowed(
+                { entries: ["u1"], hasWildcard: false, hasEntries: true },
+                "u1",
+                false
+              ),
+              isSenderIdAllowed(
+                { entries: [], hasWildcard: false, hasEntries: false },
+                undefined,
+                true
+              )
+            ],
+            dm: mergeDmAllowFromSources({
+              allowFrom: ["u1"],
+              storeAllowFrom: ["stored"],
+              dmPolicy: "pairing"
+            }),
+            group: resolveGroupAllowFromSources({
+              allowFrom: ["u1"],
+              groupAllowFrom: [],
+              fallbackToAllowFrom: false
+            })
+          },
+          exportTypes: [
+            typeof mergeAllowlist,
+            typeof resolveAllowlistMatchSimple,
+            typeof summarizeMapping,
+            typeof genericSdk.mapAllowlistResolutionInputs
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-allow-from-plugin",
+                    "name": "Runtime Allow From Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-allow-from-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.allow_from"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.allow_from"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "lower": ["usera", "userb"],
+        "normalized": ["alice", "bob"],
+        "normalizedSender": [True, True, False],
+        "parsedChat": [False, True, True, True],
+        "compiled": [
+            True,
+            ["*", "u1"],
+            {"allowed": True, "matchKey": "u1", "matchSource": "id"},
+            {"allowed": True, "matchKey": "team", "matchSource": "tag"},
+            {"allowed": True, "matchKey": "alice", "matchSource": "name"},
+            "matchKey=u1 matchSource=id",
+        ],
+        "mergeAndPatch": {
+            "merged": ["Alice", "U1"],
+            "canonicalized": ["U1", "Bob", "*", "alice"],
+            "patched": {
+                "team": {"users": ["U1", "Bob"]},
+                "empty": {},
+            },
+            "targetSet": ["Owner"],
+        },
+        "summary": {
+            "mapping": ["Alice->U1"],
+            "unresolved": ["Bob:missing"],
+            "additions": ["U1"],
+            "resolvedId": "U1",
+            "logs": ["users resolved: Alice->U1\nusers unresolved: Bob:missing"],
+        },
+        "basicEntries": [
+            {
+                "input": "Alice",
+                "resolved": True,
+                "id": "U1",
+                "name": "Alice A",
+                "note": "ok",
+            }
+        ],
+        "mapped": {
+            "visited": ["one", "two", "three"],
+            "mapped": ["ONE", "TWO", "THREE"],
+        },
+        "sourceLists": {
+            "first": "a",
+            "senderAllowed": [True, True],
+            "dm": ["u1", "stored"],
+            "group": [],
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
