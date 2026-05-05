@@ -18108,6 +18108,25 @@ function pruneMapToMaxSize(map, maxSize) {
   }
 }
 
+function createAsyncLock() {
+  let lock = Promise.resolve();
+  return async function withLock(fn) {
+    const prev = lock;
+    let release;
+    lock = new Promise((resolve) => {
+      release = resolve;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      if (release) {
+        release();
+      }
+    }
+  };
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -20922,6 +20941,10 @@ const collectionRuntime = {
   pruneMapToMaxSize,
 };
 
+const asyncLockRuntime = {
+  createAsyncLock,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21157,6 +21180,7 @@ const genericSdk = new Proxy(
     createAccountListHelpers,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createAsyncLock,
     createAsyncComputedAccountStatusAdapter,
     createComputedAccountStatusAdapter,
     createDefaultChannelRuntimeState,
@@ -21361,6 +21385,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/collection-runtime"
   ) {
     return collectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/async-lock-runtime" ||
+    request === "@openclaw/plugin-sdk/async-lock-runtime"
+  ) {
+    return asyncLockRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||

@@ -7756,6 +7756,107 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_async_lock_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-async-lock-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { createAsyncLock } = require("openclaw/plugin-sdk/async-lock-runtime");
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.async_lock",
+      description: "Use OpenClaw async-lock-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const withLock = createAsyncLock();
+        const events = [];
+        const first = withLock(async () => {
+          events.push("first:start");
+          await sleep(20);
+          events.push("first:end");
+          throw new Error("boom");
+        });
+        const second = withLock(async () => {
+          events.push("second:start");
+          events.push("second:end");
+          return "ok";
+        });
+        let firstError = null;
+        try {
+          await first;
+        } catch (error) {
+          firstError = error && error.message;
+        }
+        return { firstError, second: await second, events };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-async-lock-plugin",
+                    "name": "Runtime Async Lock Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-async-lock-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.async_lock"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.async_lock"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "firstError": "boom",
+        "second": "ok",
+        "events": ["first:start", "first:end", "second:start", "second:end"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_collection_runtime_helpers(
     tmp_path,
 ) -> None:
