@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -200,6 +200,11 @@ may lag behind this tracker.
 - [x] Update status git branch channel label, preserving OpenClaw's
   `dev (<branch>)` channel source projection.
   - Status: checkpointed in `8673e35d`
+
+- [x] Companion remote macOS bin discovery, preserving OpenClaw's
+  `system.which`/`system.run command -v` probe, paired-node `bins`
+  persistence, and node-pair metadata exposure.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -747,6 +752,25 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused service/API presence tests (`1 passed`
     each), adjacent node pairing/event API proof (`3 passed` each),
     `ruff check`, and `mypy`.
+
+- [x] Companion remote macOS bin discovery.
+  - Source: `openclaw-main/src/infra/skills-remote.ts`,
+    `openclaw-main/src/infra/node-pairing.ts`,
+    `openclaw-main/src/gateway/server/ws-connection/message-handler.ts`
+  - Target: `src/openzues/services/gateway_remote_node_bins.py`,
+    `src/openzues/services/gateway_skill_bins.py`,
+    `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_service.py`, `src/openzues/database.py`,
+    `src/openzues/app.py`
+  - Test: `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_node_pairing_refresh.py`, `tests/test_gateway_nodes_api.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused remote-bin node method test
+    (`1 passed`), adjacent node method proof (`5 passed`), adjacent node API
+    proof (`4 passed`), pairing refresh proof (`5 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.6% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.7% overall, with a reasonable band of ~50-61%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9817,6 +9817,31 @@ These are complete within the bounded OpenZues-local parity contract verified in
   package_distribution"` (`4 passed`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
   `8673e35d`.
+
+- Remote macOS paired nodes now preserve OpenClaw's required-bin discovery
+  lifecycle: OpenZues collects Darwin skill bin requirements, probes connected
+  paired macOS nodes with `system.which` or a `system.run command -v`
+  fallback, parses array/object/stdout results, persists discovered `bins` on
+  paired-node metadata, and exposes non-empty bins through `node.pair.list`.
+  This closes `OZ-COMP-001B`; repo-wide parity is now estimated at ~60.7%.
+- Verified the remote macOS node bin discovery slice with `python -m pytest
+  tests\test_gateway_node_methods.py::test_remote_macos_node_refresh_persists_system_which_bins
+  -q` (`1 passed`), adjacent `python -m pytest
+  tests\test_gateway_node_methods.py -q -k
+  "remote_macos_node_refresh_persists_system_which_bins or
+  node_pair_approve_verify_and_rename_lifecycle or
+  node_presence_alive_persists_paired_node_last_seen_and_throttles or
+  node_pair_list_stages_silent_scope_upgrade_request_for_paired_command_expansion
+  or node_list_and_describe_include_persisted_approved_nodes"` (`5 passed,
+  806 deselected`), API adjacent `python -m pytest
+  tests\test_gateway_nodes_api.py -q -k "remote_macos_bins_through_app or
+  gateway_nodes_endpoints_pin_paired_commands_until_repair_request or
+  gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_command_expansion
+  or gateway_nodes_endpoints_stage_silent_upgrade_for_commandless_reconnect"`
+  (`4 passed, 424 deselected`), pairing refresh `python -m pytest
+  tests\test_gateway_node_pairing_refresh.py -q` (`5 passed`), `ruff check`
+  on touched source/tests, and `mypy` on touched source modules. Checkpoint
+  pending commit.
 
 ## References
 

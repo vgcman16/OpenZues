@@ -31,6 +31,7 @@ from openzues.services.gateway_node_registry import (
     GatewayNodeRegistry,
     KnownNode,
 )
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_talk_mode import GatewayTalkModeService
 from openzues.services.gateway_voicewake import GatewayVoiceWakeService
 from openzues.services.manager import RuntimeManager
@@ -155,6 +156,7 @@ class GatewayNodeService:
         pairing_service: GatewayNodePairingService | None = None,
         talk_mode_service: GatewayTalkModeService | None = None,
         voicewake_service: GatewayVoiceWakeService | None = None,
+        remote_node_bins_service: GatewayRemoteNodeBinsService | None = None,
         node_allow_commands: Iterable[str] = (),
         node_deny_commands: Iterable[str] = (),
     ) -> None:
@@ -162,10 +164,17 @@ class GatewayNodeService:
         self.pairing_service = pairing_service
         self._talk_mode_service = talk_mode_service
         self._voicewake_service = voicewake_service
+        self._remote_node_bins_service = remote_node_bins_service
         self.registry = GatewayNodeRegistry()
         self._managed_node_ids: set[str] = set()
         self._node_allow_commands = tuple(node_allow_commands)
         self._node_deny_commands = tuple(node_deny_commands)
+
+    def set_remote_node_bins_service(
+        self,
+        service: GatewayRemoteNodeBinsService | None,
+    ) -> None:
+        self._remote_node_bins_service = service
 
     def _normalize_declared_commands_for_metadata(
         self,
@@ -195,6 +204,26 @@ class GatewayNodeService:
             platform=node.platform,
             device_family=node.device_family,
         )
+
+    async def _refresh_remote_node_bins_if_available(
+        self,
+        *,
+        node_id: str,
+        platform: str | None,
+        device_family: str | None,
+        commands: Iterable[str],
+    ) -> None:
+        if self._remote_node_bins_service is None:
+            return
+        try:
+            await self._remote_node_bins_service.refresh_for_node(
+                node_id=node_id,
+                platform=platform,
+                device_family=device_family,
+                commands=tuple(commands),
+            )
+        except Exception:
+            return
 
     async def _sync(self) -> None:
         instances = await self.manager.list_views()
@@ -441,6 +470,15 @@ class GatewayNodeService:
                         existing_node,
                         paired_node=paired_node,
                     )
+                    await self._refresh_remote_node_bins_if_available(
+                        node_id=existing_node.node_id,
+                        platform=existing_node.platform or paired_node.platform,
+                        device_family=existing_node.device_family or paired_node.device_family,
+                        commands=self._normalized_known_node_commands(existing_node),
+                    )
+                    refreshed = await self.pairing_service.get_paired_node(paired_node.node_id)
+                    if refreshed is not None:
+                        paired_node = refreshed
                 paired_payload = _catalog_paired_node_payload(
                     paired_node,
                     commands=self._normalized_paired_node_commands(paired_node),
@@ -472,6 +510,15 @@ class GatewayNodeService:
                         node,
                         paired_node=paired_node,
                     )
+                    await self._refresh_remote_node_bins_if_available(
+                        node_id=node.node_id,
+                        platform=node.platform or paired_node.platform,
+                        device_family=node.device_family or paired_node.device_family,
+                        commands=self._normalized_known_node_commands(node),
+                    )
+                    refreshed = await self.pairing_service.get_paired_node(node_id)
+                    if refreshed is not None:
+                        paired_node = refreshed
                     payload = _merge_catalog_node_payload(
                         _catalog_paired_node_payload(
                             paired_node,

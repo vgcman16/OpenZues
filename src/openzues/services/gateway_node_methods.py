@@ -80,6 +80,7 @@ from openzues.services.gateway_plugin_runtime import (
     copy_plugin_json_value,
     is_plugin_json_value,
 )
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sandbox_spawn import (
     FORBIDDEN_SANDBOX_RUNTIME_UNAVAILABLE,
     sandbox_runtime_metadata,
@@ -1423,6 +1424,7 @@ class GatewayNodeMethodService:
         skill_config_service: GatewaySkillConfigService | None = None,
         skill_install_service: GatewaySkillInstallService | None = None,
         skill_status_service: GatewaySkillStatusService | None = None,
+        remote_node_bins_service: GatewayRemoteNodeBinsService | None = None,
         send_channel_message_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_channel_poll_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
         send_apns_push_service: Callable[..., Awaitable[dict[str, object]]] | None = None,
@@ -1550,6 +1552,7 @@ class GatewayNodeMethodService:
         self._skill_status_service = skill_status_service or GatewaySkillStatusService(
             skill_config_service=self._skill_config_service
         )
+        self._remote_node_bins_service = remote_node_bins_service
         self._send_channel_message_service = send_channel_message_service
         self._send_channel_poll_service = send_channel_poll_service
         self._send_apns_push_service = send_apns_push_service
@@ -1632,6 +1635,26 @@ class GatewayNodeMethodService:
             platform=node.platform,
             device_family=node.device_family,
         )
+
+    async def _refresh_remote_node_bins_if_available(
+        self,
+        *,
+        node_id: str,
+        platform: str | None,
+        device_family: str | None,
+        commands: Iterable[str],
+    ) -> None:
+        if self._remote_node_bins_service is None:
+            return
+        try:
+            await self._remote_node_bins_service.refresh_for_node(
+                node_id=node_id,
+                platform=platform,
+                device_family=device_family,
+                commands=tuple(commands),
+            )
+        except Exception:
+            return
 
     async def _wait_for_node_connection(
         self,
@@ -2757,6 +2780,19 @@ class GatewayNodeMethodService:
                             paired_node=paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=existing_node.node_id,
+                            platform=existing_node.platform or paired_node.platform,
+                            device_family=(
+                                existing_node.device_family or paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(existing_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            paired_node.node_id
+                        )
+                        if refreshed is not None:
+                            paired_node = refreshed
                     paired_payload = _known_paired_node_payload(
                         paired_node,
                         commands=self._normalized_paired_node_commands(paired_node),
@@ -10426,6 +10462,20 @@ class GatewayNodeMethodService:
                             paired_node=stored_paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=existing_node.node_id,
+                            platform=existing_node.platform or stored_paired_node.platform,
+                            device_family=(
+                                existing_node.device_family
+                                or stored_paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(existing_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            stored_paired_node.node_id
+                        )
+                        if refreshed is not None:
+                            stored_paired_node = refreshed
                     stored_payload = _stored_paired_node_payload(
                         stored_paired_node,
                         commands=self._normalized_paired_node_commands(stored_paired_node),
@@ -10658,6 +10708,20 @@ class GatewayNodeMethodService:
                             paired_node=merged_paired_node,
                             now_ms=now_ms,
                         )
+                        await self._refresh_remote_node_bins_if_available(
+                            node_id=described_node.node_id,
+                            platform=described_node.platform or merged_paired_node.platform,
+                            device_family=(
+                                described_node.device_family
+                                or merged_paired_node.device_family
+                            ),
+                            commands=self._normalized_known_node_commands(described_node),
+                        )
+                        refreshed = await self._pairing_service.get_paired_node(
+                            wanted_node_id
+                        )
+                        if refreshed is not None:
+                            merged_paired_node = refreshed
                         payload_node = _merge_known_node_payload(
                             _known_paired_node_payload(
                                 merged_paired_node,
@@ -20576,6 +20640,8 @@ def _known_paired_node_payload(
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 
@@ -20626,6 +20692,8 @@ def _merge_known_node_payload(
         merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
     if persisted.get("lastSeenReason") is not None:
         merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    if persisted.get("bins"):
+        merged["bins"] = persisted.get("bins")
     return merged
 
 
@@ -20707,6 +20775,8 @@ def _stored_paired_node_payload(
         payload["lastSeenAtMs"] = node.last_seen_at_ms
     if node.last_seen_reason is not None:
         payload["lastSeenReason"] = node.last_seen_reason
+    if node.bins:
+        payload["bins"] = list(node.bins)
     return payload
 
 
@@ -20823,6 +20893,8 @@ def _merge_paired_node_payload(
         merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
     if persisted.get("lastSeenReason") is not None:
         merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    if persisted.get("bins"):
+        merged["bins"] = persisted.get("bins")
     return merged
 
 

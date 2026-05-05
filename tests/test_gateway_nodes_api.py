@@ -136,6 +136,36 @@ class _BackgroundUnavailableNodeConnection:
         )
 
 
+class _SystemWhichBinsNodeConnection:
+    def __init__(
+        self,
+        registry: GatewayNodeRegistry,
+        conn_id: str,
+        bins: dict[str, str],
+    ) -> None:
+        self.registry = registry
+        self.conn_id = conn_id
+        self.bins = dict(bins)
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        if event != "node.invoke.request" or not isinstance(payload, dict):
+            return
+        request_id = str(payload.get("id") or "")
+        node_id = str(payload.get("nodeId") or "")
+        if not request_id or not node_id:
+            return
+        asyncio.get_running_loop().call_soon(
+            lambda: self.registry.handle_invoke_result(
+                request_id=request_id,
+                node_id=node_id,
+                ok=True,
+                payload={"bins": self.bins},
+                payload_json=json.dumps({"bins": self.bins}),
+                error=None,
+            )
+        )
+
+
 class _FakeManager:
     def __init__(self, instances: list[SimpleNamespace]) -> None:
         self._instances = instances
@@ -2170,6 +2200,86 @@ def test_gateway_nodes_endpoints_pin_paired_commands_until_repair_request(tmp_pa
         "connected_at_ms": 321,
         "approved_at_ms": nodes_payload["nodes"][0]["approved_at_ms"],
     }
+
+
+def test_gateway_node_pair_list_refreshes_remote_macos_bins_through_app(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codex_home = tmp_path / ".codex"
+    skill_path = codex_home / "skills" / "remote-macos-api-bin" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: remote-macos-api-bin
+description: Needs a remote macOS binary
+metadata:
+  openclaw:
+    os:
+      - darwin
+    requires:
+      bins:
+        - ffmpeg
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    app = create_app(app_settings)
+
+    with TestClient(app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "pair-node-remote-api-bins",
+                    "displayName": "Remote API Mac",
+                    "platform": "darwin",
+                    "commands": ["system.which", "system.run"],
+                },
+            },
+        )
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.approve",
+                "params": {"requestId": request_response.json()["request"]["requestId"]},
+            },
+        )
+        assert approve_response.status_code == 200
+
+        registry = client.app.state.gateway_node_service.registry
+        registry.register(
+            _SystemWhichBinsNodeConnection(
+                registry,
+                "conn-pair-node-remote-api-bins",
+                {"ffmpeg": "/opt/homebrew/bin/ffmpeg"},
+            ),
+            GatewayNodeConnect(
+                client_id="live-pair-node-remote-api-bins",
+                device_id="pair-node-remote-api-bins",
+                client_mode="node",
+                display_name="Remote API Mac",
+                platform="darwin",
+                commands=("system.which", "system.run"),
+            ),
+            connected_at_ms=321,
+        )
+
+        pair_list_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={"method": "node.pair.list", "params": {}},
+        )
+
+    assert pair_list_response.status_code == 200
+    assert pair_list_response.json()["paired"][0]["bins"] == ["ffmpeg"]
 
 
 def test_gateway_nodes_endpoints_stage_silent_scope_upgrade_request_for_paired_command_expansion(

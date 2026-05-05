@@ -66,6 +66,7 @@ from openzues.services.gateway_plugin_runtime import (
     GatewayPluginRuntimeService,
     GatewayPluginSessionExtensionSpec,
 )
+from openzues.services.gateway_remote_node_bins import GatewayRemoteNodeBinsService
 from openzues.services.gateway_sessions import GatewaySessionsService
 from openzues.services.gateway_skill_bins import GatewaySkillBinsService
 from openzues.services.gateway_skill_clawhub import GatewaySkillClawHubService
@@ -171,6 +172,37 @@ class BackgroundUnavailableNodeConnection(FakeNodeConnection):
                         "require foreground"
                     ),
                 },
+            )
+        )
+
+
+class SystemWhichBinsNodeConnection(FakeNodeConnection):
+    def __init__(
+        self,
+        registry: GatewayNodeRegistry,
+        conn_id: str,
+        bins: dict[str, str],
+    ) -> None:
+        super().__init__(conn_id)
+        self.registry = registry
+        self.bins = dict(bins)
+
+    def send_gateway_event(self, event: str, payload: object) -> None:
+        super().send_gateway_event(event, payload)
+        if event != "node.invoke.request" or not isinstance(payload, dict):
+            return
+        request_id = str(payload.get("id") or "")
+        node_id = str(payload.get("nodeId") or "")
+        if not request_id or not node_id:
+            return
+        asyncio.get_running_loop().call_soon(
+            lambda: self.registry.handle_invoke_result(
+                request_id=request_id,
+                node_id=node_id,
+                ok=True,
+                payload={"bins": self.bins},
+                payload_json=json.dumps({"bins": self.bins}),
+                error=None,
             )
         )
 
@@ -38670,6 +38702,99 @@ async def test_node_presence_alive_persists_paired_node_last_seen_and_throttles(
     assert paired["lastSeenAtMs"] == 12_000
     assert paired["lastSeenReason"] == "bg_app_refresh"
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_remote_macos_node_refresh_persists_system_which_bins(tmp_path) -> None:
+    codex_home = tmp_path / ".codex"
+    skill_path = codex_home / "skills" / "remote-macos-bin" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(
+        """---
+name: remote-macos-bin
+description: Needs a remote macOS binary
+metadata:
+  openclaw:
+    os:
+      - darwin
+    requires:
+      bins:
+        - ffmpeg
+        - missing-bin
+---
+Body
+""",
+        encoding="utf-8",
+    )
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    registry = GatewayNodeRegistry()
+    skill_bins_service = GatewaySkillBinsService(
+        codex_home=codex_home,
+        workspace_root=tmp_path,
+    )
+    remote_bins_service = GatewayRemoteNodeBinsService(
+        registry,
+        pairing_service=pairing_service,
+        skill_bins_service=skill_bins_service,
+        timeout_ms=1_000,
+    )
+    service = GatewayNodeMethodService(
+        registry,
+        pairing_service=pairing_service,
+        skill_bins_service=skill_bins_service,
+        remote_node_bins_service=remote_bins_service,
+    )
+    requester = GatewayNodeMethodRequester(caller_scopes=("operator.pairing", "operator.admin"))
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-remote-bins",
+            "displayName": "Remote Mac",
+            "platform": "darwin",
+            "commands": ["system.which", "system.run"],
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "node.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+    connection = SystemWhichBinsNodeConnection(
+        registry,
+        "conn-pair-node-remote-bins",
+        {"ffmpeg": "/opt/homebrew/bin/ffmpeg", "missing-bin": ""},
+    )
+    registry.register(
+        connection,
+        GatewayNodeConnect(
+            client_id="live-pair-node-remote-bins",
+            device_id="pair-node-remote-bins",
+            client_mode="node",
+            display_name="Remote Mac",
+            platform="darwin",
+            commands=("system.which", "system.run"),
+        ),
+        connected_at_ms=321,
+    )
+
+    pairing = await service.call("node.pair.list", {}, now_ms=3_000)
+    stored = await pairing_service.get_paired_node("pair-node-remote-bins")
+
+    assert stored is not None
+    assert stored.bins == ("ffmpeg",)
+    assert pairing["paired"][0]["bins"] == ["ffmpeg"]
+    assert connection.sent_events[0]["event"] == "node.invoke.request"
+    invoke_payload = connection.sent_events[0]["payload"]
+    assert isinstance(invoke_payload, dict)
+    assert invoke_payload["command"] == "system.which"
+    assert json.loads(str(invoke_payload["paramsJSON"])) == {
+        "bins": ["ffmpeg", "missing-bin"]
+    }
 
 
 @pytest.mark.asyncio

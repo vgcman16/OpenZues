@@ -4,8 +4,8 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.6% overall, with a reasonable
-  band of ~50-60%.
+- Repo-wide OpenClaw parity is estimated at ~60.7% overall, with a reasonable
+  band of ~50-61%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest companion node presence alive slice.
+  latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5576,8 +5576,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~60.6%. Verified with focused update-status branch pytest,
   adjacent update/package doctor proof, `ruff check`, and `mypy`; checkpointed
   in `8673e35d`.
-- Next repo-wide queue head: rotate to companion remote-bin discovery or the
-  next provider-specific send/poll/replay metadata gap.
+- Closed the companion remote macOS bin discovery seam from OpenClaw
+  `src/infra/skills-remote.ts`, `src/infra/node-pairing.ts`, and
+  `src/gateway/server/ws-connection/message-handler.ts`: connected paired
+  Darwin/macOS nodes now probe required skill binaries with `system.which` or
+  `system.run` fallback, parse object-map/array/stdout responses, persist
+  `bins` on paired-node metadata, and expose discovered bins through
+  `node.pair.list`. Repo-wide parity is now estimated at ~60.7%. Verified with
+  focused remote-bin pytest, adjacent node method/API/pairing-refresh proof,
+  `ruff check`, and `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: rotate to the next provider-specific
+  send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~60.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~60.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,16 +29,24 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The update-status git branch channel label slice is checkpointed in `8673e35d`.
+The companion remote macOS bin discovery slice is verified and awaiting
+checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/cli.py`
-- `tests/test_cli.py`
+- `src/openzues/services/gateway_remote_node_bins.py`
+- `src/openzues/services/gateway_skill_bins.py`
+- `src/openzues/services/gateway_node_pairing.py`
+- `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/services/gateway_node_service.py`
+- `src/openzues/database.py`
+- `src/openzues/app.py`
+- `tests/test_gateway_node_methods.py`
+- `tests/test_gateway_node_pairing_refresh.py`
+- `tests/test_gateway_nodes_api.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
 - `docs/tracking/01-openzues-openclaw-parity-status.md`
-- `docs/tracking/02-openclaw-source-domain-map.md`
 
 Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
@@ -51,10 +59,35 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PKG-001 | Packaging/distribution breadth | Update status git branch channel label checkpointed in `8673e35d` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
+| OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery verified; checkpoint pending | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send checkpointed in `9e1743fb` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-COMP-001B` companion remote macOS bin discovery
+  - Source: `openclaw-main/src/infra/skills-remote.ts`,
+    `openclaw-main/src/infra/node-pairing.ts`,
+    `openclaw-main/src/gateway/server/ws-connection/message-handler.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_remote_node_bins.py`,
+    `src/openzues/services/gateway_skill_bins.py`,
+    `src/openzues/services/gateway_node_pairing.py`,
+    `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_service.py`, `src/openzues/database.py`,
+    `src/openzues/app.py`, `tests/test_gateway_node_methods.py`,
+    `tests/test_gateway_node_pairing_refresh.py`, `tests/test_gateway_nodes_api.py`
+  - Contract: connected paired Darwin/macOS nodes collect required skill binary
+    names, invoke `system.which` when available or `system.run` with a
+    `command -v` fallback, parse array/object/stdout results, persist
+    discovered `bins`, and expose non-empty bins through paired-node metadata.
+  - Evidence required: focused remote-bin node method test, adjacent node
+    method/API/pairing refresh tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused remote-bin pytest (`1 passed`),
+    adjacent node method proof (`5 passed`), adjacent node API proof
+    (`4 passed`), pairing refresh proof (`5 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] `OZ-PKG-001D` update status git branch channel label
   - Source: `openclaw-main/src/infra/update-channels.ts`,
