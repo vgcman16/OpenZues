@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.8% overall, with a reasonable band of ~50-61%.
+- Estimated repo-wide parity: ~60.9% overall, with a reasonable band of ~50-61%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9861,6 +9861,21 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`6 passed, 486 deselected`), `ruff check src\openzues\cli.py
   tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
   `cbd59d1d`.
+
+- Telegram native route-backed media sends now preserve OpenClaw's raw media
+  caption contract: media sends receive the caller text as the first caption
+  without the OpenZues delivery-summary `Media:` inventory, later media sends
+  stay captionless, and forced document sends still set
+  `disable_content_type_detection` while preserving terminal message id,
+  chat/channel id, media URLs, and collected media IDs. This closes
+  `OZ-PROV-001J`; repo-wide parity is now estimated at ~60.9%.
+- Verified the Telegram raw media-caption slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_media_group or telegram_native_options"` (`2 passed, 277
+  deselected`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpoint pending.
 
 ## References
 

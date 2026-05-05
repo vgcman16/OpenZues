@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.9% overall, with a reasonable
   band of ~50-61%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5596,6 +5596,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   capability strings. Repo-wide parity is now estimated at ~60.8%. Verified
   with focused runtime-extension contract pytest, adjacent plugin manifest
   contract proof, `ruff check`, and `mypy`; checkpointed in `cbd59d1d`.
+- Closed the Telegram raw media-caption seam from OpenClaw
+  `extensions/telegram/src/outbound-adapter.ts`,
+  `src/plugin-sdk/reply-payload.ts`, and `extensions/telegram/src/send.ts`:
+  native route-backed Telegram media sends now pass the caller text as the
+  first media caption without appending the delivery-summary `Media:` URL
+  inventory, keep later media sends captionless, preserve forced-document
+  `disable_content_type_detection`, and retain terminal/provider media
+  metadata. Repo-wide parity is now estimated at ~60.9%. Verified with
+  focused Telegram media-group pytest, adjacent Telegram native-options proof,
+  `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

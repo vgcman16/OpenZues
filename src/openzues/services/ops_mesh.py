@@ -259,6 +259,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "matrix",
     "discord",
     "slack",
+    "telegram",
     "whatsapp",
     "zalo",
 }

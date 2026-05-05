@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -198,6 +198,10 @@ may lag behind this tracker.
 - [x] Telegram audio/voice media send routing, preserving OpenClaw's
   `sendAudio`/`sendVoice` Bot API split for native provider routes.
   - Status: checkpointed in `9e1743fb`
+
+- [x] Telegram raw media-caption metadata, preserving OpenClaw's first-media
+  raw caption without appended delivery-summary `Media:` URL inventory.
+  - Status: verified; checkpoint pending
 
 - [x] Update status channel projection, preserving OpenClaw's `update`,
   `channel`, and conservative `availability` JSON fields.
@@ -721,6 +725,19 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
     adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Telegram raw media-caption metadata.
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/src/plugin-sdk/reply-payload.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
+    -q` (`1 passed`), adjacent Telegram native-options/media proof (`2
+    passed, 277 deselected`), `ruff check`, and `mypy`.
 
 - [x] Update status channel projection.
   - Source: `openclaw-main/src/cli/update-cli/status.ts`,
