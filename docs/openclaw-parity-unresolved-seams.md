@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~76.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~76.8% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -59,7 +59,7 @@ Current percentage rollup:
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
-  provider-selection-runtime, and windows-spawn helper slices.
+  provider-selection-runtime, windows-spawn, and command-status helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7213,9 +7213,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~76.7%. Verified with focused
   windows-spawn pytest, adjacent plugin invoke proof, `ruff check`, and `mypy`;
   source/test checkpointed in `1c172bde`.
+- Closed the imported OpenClaw plugin SDK command-status seam from
+  `src/plugin-sdk/command-status.ts` and
+  `src/auto-reply/command-status-builders.ts`: native runtime entries can now
+  import help text builders, slash-command list builders, config/debug flag
+  filtering, skill-command projection, category grouping, paginated command
+  lists, scoped/unscoped SDK aliases, and deprecated `command-auth`
+  compatibility exports through `tools.invoke`. The native Node bridge now
+  decodes runtime stdout/stderr as UTF-8 on Windows for OpenClaw command text
+  round-trips. Repo-wide parity is now estimated at ~76.8%. Verified with
+  focused command-status pytest, adjacent command-auth compatibility proof,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `6c22af79`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution

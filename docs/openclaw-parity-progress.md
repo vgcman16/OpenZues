@@ -12949,6 +12949,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`72 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `1c172bde`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/command-status` helpers from
+  `src/plugin-sdk/command-status.ts` and
+  `src/auto-reply/command-status-builders.ts`: help text, slash-command
+  lists, config/debug flag filtering, skill-command projection, category
+  grouping, paginated Telegram-style command lists, scoped/unscoped SDK
+  aliases, and deprecated `command-auth` compatibility exports are now
+  available through `tools.invoke`. The native Node bridge also decodes runtime
+  stdout/stderr as UTF-8 on Windows so OpenClaw command text can round-trip
+  safely. This closes `OZ-PLUGIN-001UE`; repo-wide parity is now estimated at
+  ~76.8%. The next plugin/runtime seam remains broader SDK helper/runtime
+  surface breadth.
+- Verified the command-status shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_status_helpers -q`
+  (`1 passed`), focused adjacent command-auth compatibility proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_status_helpers tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_auth_helpers -q`
+  (`2 passed`), adjacent plugin invoke proof including command-status
+  (`73 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `6c22af79`.
 
 ## References
 

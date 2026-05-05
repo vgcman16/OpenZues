@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~76.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~76.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -428,6 +428,13 @@ may lag behind this tracker.
   `bin` fallback, fail-closed wrapper policy, opt-in shell fallback,
   materialized argv construction, and generic SDK re-exports.
   - Status: checkpointed in `1c172bde`
+
+- [x] Imported plugin SDK command-status shim for help text, slash-command
+  lists, config/debug flag filtering, skill-command projection, category
+  grouping, paginated command lists, scoped/unscoped SDK aliases, deprecated
+  `command-auth` compatibility exports, generic SDK re-exports, and
+  UTF-8-safe native Node bridge output.
+  - Status: checkpointed in `6c22af79`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
