@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.5% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5561,8 +5561,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~60.4%. Verified with focused Telegram
   audio/voice pytest, adjacent Telegram native-route proof, `ruff check`, and
   `mypy`; checkpointed in `9e1743fb`.
-- Next repo-wide queue head: rotate to companion remote-bin discovery or
-  update-status channel projection based on the strongest source-backed seam.
+- Closed the update-status channel projection seam from OpenClaw
+  `src/cli/update-cli/status.ts`, `src/infra/update-channels.ts`, and
+  `src/commands/status.update.ts`: native `openzues update status --json` now
+  adds `update`, `channel`, and conservative `availability` payloads while
+  preserving existing OpenZues/Hermes update fields. Repo-wide parity is now
+  estimated at ~60.5%. Verified with focused update-status pytest, adjacent
+  update/package doctor proof, `ruff check`, and `mypy`; checkpoint pending
+  commit.
+- Next repo-wide queue head: rotate to companion remote-bin discovery or the
+  next provider-specific send/poll/replay metadata gap.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

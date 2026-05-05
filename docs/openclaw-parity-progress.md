@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.4% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.5% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9783,6 +9783,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_poll_uses_telegram_native_route"` (`6 passed`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
   `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `9e1743fb`.
+
+- `openzues update status --json` now includes OpenClaw-shaped update channel
+  projection alongside the existing OpenZues/Hermes update view: git roots
+  default to `dev (default)`, package/unknown roots default to
+  `stable (default)`, and conservative availability metadata is present until
+  deeper git/registry checks land. This closes `OZ-PKG-001C`; repo-wide parity
+  is now estimated at ~60.5%, while packaging/update-channel breadth remains
+  open for persisted channel config and live availability checks.
+- Verified the update status channel projection slice with `python -m pytest
+  tests\test_cli.py::test_update_status_json_includes_openclaw_channel_projection
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "update_status_json_includes_openclaw_channel_projection or
+  doctor_and_update_status_json_include_hermes_sections or
+  package_distribution"` (`3 passed`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpoint pending
+  commit.
 
 ## References
 

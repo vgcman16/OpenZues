@@ -9344,6 +9344,77 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
         )
 
 
+_OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
+
+
+def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
+    if not isinstance(config_snapshot, Mapping):
+        return None
+    update = config_snapshot.get("update")
+    if not isinstance(update, Mapping):
+        return None
+    channel = str(update.get("channel") or "").strip().lower()
+    return channel if channel in _OPENCLAW_UPDATE_CHANNELS else None
+
+
+def _openclaw_update_install_kind(root: Path) -> str:
+    if _doctor_path_exists(root / ".git"):
+        return "git"
+    if _doctor_path_exists(root):
+        return "package"
+    return "unknown"
+
+
+def _openclaw_update_channel_payload(
+    *,
+    config_channel: str | None,
+    install_kind: str,
+) -> dict[str, object]:
+    if config_channel is not None:
+        channel = config_channel
+        source = "config"
+    elif install_kind == "git":
+        channel = "dev"
+        source = "default"
+    else:
+        channel = "stable"
+        source = "default"
+    return {
+        "value": channel,
+        "source": source,
+        "label": f"{channel} ({source})",
+        "config": config_channel,
+    }
+
+
+def _with_openclaw_update_status_projection(
+    payload: dict[str, object],
+    *,
+    config_snapshot: object,
+) -> dict[str, object]:
+    root = _openzues_package_root()
+    install_kind = _openclaw_update_install_kind(root)
+    config_channel = _openclaw_update_config_channel(config_snapshot)
+    next_payload = dict(payload)
+    next_payload["update"] = {
+        "root": str(root),
+        "installKind": install_kind,
+        "packageManager": "unknown",
+    }
+    next_payload["channel"] = _openclaw_update_channel_payload(
+        config_channel=config_channel,
+        install_kind=install_kind,
+    )
+    next_payload["availability"] = {
+        "available": False,
+        "hasGitUpdate": False,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": None,
+    }
+    return next_payload
+
+
 def _emit_continue_action(payload: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         _emit_payload(payload, json_output=True)
@@ -29272,7 +29343,17 @@ def update_status(
         view = await _try_live_update_view(services.settings)
         if view is None:
             view = await services.hermes_platform.get_update_view()
-        return view.model_dump(mode="json")
+        config_snapshot: object = {}
+        gateway_config = getattr(services, "gateway_config", None)
+        if gateway_config is not None:
+            try:
+                config_snapshot = gateway_config.build_snapshot()
+            except Exception:
+                config_snapshot = {}
+        return _with_openclaw_update_status_projection(
+            view.model_dump(mode="json"),
+            config_snapshot=config_snapshot,
+        )
 
     payload = _run(_run_with_services(_action))
     _emit_update_status(payload, json_output=json_output)

@@ -22183,6 +22183,70 @@ def test_doctor_and_update_status_json_include_hermes_sections(tmp_path, monkeyp
     assert update_payload["headline"]
 
 
+def test_update_status_json_includes_openclaw_channel_projection(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    (package_root / ".git").mkdir(parents=True)
+
+    class FakeUpdateView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "headline": "OpenZues runtime update status is steady.",
+                "pending_restart": False,
+            }
+
+    class FakeHermesPlatform:
+        async def get_update_view(self) -> FakeUpdateView:
+            return FakeUpdateView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_update_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["update", "status", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["headline"] == "OpenZues runtime update status is steady."
+    assert payload["channel"] == {
+        "value": "dev",
+        "source": "default",
+        "label": "dev (default)",
+        "config": None,
+    }
+    assert payload["update"] == {
+        "root": str(package_root),
+        "installKind": "git",
+        "packageManager": "unknown",
+    }
+    assert payload["availability"] == {
+        "available": False,
+        "hasGitUpdate": False,
+        "hasRegistryUpdate": False,
+        "latestVersion": None,
+        "gitBehind": None,
+    }
+
+
 def test_doctor_json_warns_when_sandbox_enabled_without_docker(monkeypatch) -> None:
     class FakeDoctorView:
         def model_dump(self, *, mode: str = "json") -> dict[str, object]:

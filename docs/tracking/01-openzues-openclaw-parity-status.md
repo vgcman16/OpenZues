@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -192,6 +192,10 @@ may lag behind this tracker.
 - [x] Telegram audio/voice media send routing, preserving OpenClaw's
   `sendAudio`/`sendVoice` Bot API split for native provider routes.
   - Status: checkpointed in `9e1743fb`
+
+- [x] Update status channel projection, preserving OpenClaw's `update`,
+  `channel`, and conservative `availability` JSON fields.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -687,6 +691,18 @@ may lag behind this tracker.
   - Weight: 1
   - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
     adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Update status channel projection.
+  - Source: `openclaw-main/src/cli/update-cli/status.ts`,
+    `openclaw-main/src/infra/update-channels.ts`,
+    `openclaw-main/src/commands/status.update.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused update-status test (`1 passed`),
+    adjacent update/package doctor proof (`3 passed`), `ruff check`, and
     `mypy`.
 
 - [x] Package distribution doctor diagnostics.
