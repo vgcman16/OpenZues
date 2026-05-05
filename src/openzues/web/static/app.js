@@ -7189,7 +7189,7 @@ notificationRouteFormEl.addEventListener("submit", async (event) => {
   try {
     const events = parseCsvList(form.get("events"));
     const routeKind = String(form.get("kind") || "webhook").toLowerCase();
-    const defaultEvents = ["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", "nextcloud-talk", "synology-chat", "mattermost", "signal", "irc", "line", "matrix"].includes(routeKind)
+    const defaultEvents = ["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", "nextcloud-talk", "synology-chat", "mattermost", "signal", "irc", "twitch", "line", "matrix"].includes(routeKind)
       ? ["gateway/send", "gateway/poll"]
       : ["ops/inbox/*", "mission/completed", "mission/failed", "task/*"];
     await submitJson("/api/notification-routes", {

@@ -69,6 +69,11 @@ _CHANNEL_META = (
         "detailLabel": "IRC",
     },
     {
+        "id": "twitch",
+        "label": "Twitch",
+        "detailLabel": "Twitch",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

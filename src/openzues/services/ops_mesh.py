@@ -260,6 +260,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "mattermost",
     "signal",
     "irc",
+    "twitch",
     "line",
     "matrix",
 }
@@ -274,6 +275,7 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "telegram",
     "whatsapp",
     "zalo",
+    "twitch",
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
@@ -314,6 +316,14 @@ class _IrcRouteConfig:
     username: str
     realname: str
     password: str | None
+
+
+@dataclass(frozen=True)
+class _TwitchRouteConfig:
+    username: str
+    client_id: str
+    token: str
+    default_channel: str | None
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -3381,6 +3391,101 @@ def _irc_route_config(target: str | None, secret_token: str | None) -> _IrcRoute
     )
 
 
+def _twitch_query_value(query: Mapping[str, str], *names: str) -> str | None:
+    lowered = {key.lower(): value for key, value in query.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _twitch_normalize_channel(raw_channel: str | None) -> str | None:
+    channel = str(raw_channel or "").strip()
+    if not channel:
+        return None
+    if channel.lower().startswith("twitch:"):
+        channel = channel[len("twitch:") :].strip()
+    lowered = channel.lower()
+    if lowered.startswith("channel:") or lowered.startswith("user:"):
+        channel = channel.split(":", 1)[1].strip()
+    if channel.startswith("#"):
+        channel = channel[1:].strip()
+    normalized = channel.lower()
+    if not normalized or not re.fullmatch(r"[a-z0-9_]{1,25}", normalized):
+        return None
+    return normalized
+
+
+def _twitch_route_config(target: str | None, secret_token: str | None) -> _TwitchRouteConfig:
+    parsed = urlparse(str(target or "").strip())
+    if parsed.scheme.lower() != "twitch":
+        raise RuntimeError("Twitch route target must be a twitch:// configuration URL.")
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    username = _twitch_query_value(query, "username", "user", "nick")
+    client_id = _twitch_query_value(query, "clientId", "client_id")
+    token = str(secret_token or "").strip() or (
+        _twitch_query_value(query, "token", "accessToken", "access_token") or ""
+    )
+    default_channel = _twitch_normalize_channel(
+        _twitch_query_value(query, "channel", "defaultChannel", "default_channel")
+    )
+    if not username:
+        raise RuntimeError("Twitch route is missing username.")
+    if not client_id:
+        raise RuntimeError("Twitch route is missing clientId.")
+    if not token:
+        raise RuntimeError("Twitch route is missing an OAuth token secret.")
+    return _TwitchRouteConfig(
+        username=_irc_wire_value(username.lower(), "Twitch username"),
+        client_id=_irc_wire_value(client_id, "Twitch clientId"),
+        token=_irc_wire_value(token, "Twitch token"),
+        default_channel=default_channel,
+    )
+
+
+def _strip_markdown_for_twitch(markdown: str) -> str:
+    text = str(markdown or "")
+    text = re.sub(r"!\[[^\]]*]\([^)]+\)", "", text)
+    text = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    text = re.sub(r"```[\s\S]*?```", lambda match: match.group(0).replace("```", ""), text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    text = text.replace("\r", "")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = text.replace("\n", " ")
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def _twitch_text_chunks(text: str, *, limit: int = 500) -> list[str]:
+    cleaned = _strip_markdown_for_twitch(text)
+    if not cleaned:
+        return []
+    if limit <= 0 or len(cleaned) <= limit:
+        return [cleaned]
+    chunks: list[str] = []
+    remaining = cleaned
+    while len(remaining) > limit:
+        window = remaining[:limit]
+        split_index = window.rfind(" ")
+        if split_index == -1:
+            chunks.append(window)
+            remaining = remaining[limit:]
+        else:
+            chunks.append(window[:split_index])
+            remaining = remaining[split_index + 1 :]
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
 
@@ -5451,6 +5556,10 @@ def _conversation_target_peer_id_matches(
         route_irc_target = str(_irc_normalize_target(route_peer_id) or "").strip().lower()
         event_irc_target = str(_irc_normalize_target(event_peer_id) or "").strip().lower()
         return bool(route_irc_target and route_irc_target == event_irc_target)
+    if channel == "twitch":
+        route_twitch_target = str(_twitch_normalize_channel(route_peer_id) or "").strip()
+        event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
+        return bool(route_twitch_target and route_twitch_target == event_twitch_target)
     return False
 
 
@@ -10331,6 +10440,8 @@ class OpsMeshService:
             return self._post_signal_provider_event
         if route_kind == "irc":
             return self._post_irc_provider_event
+        if route_kind == "twitch":
+            return self._post_twitch_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -18143,6 +18254,51 @@ class OpsMeshService:
         except OSError as exc:
             raise RuntimeError(f"IRC provider request failed: {exc}") from exc
 
+    def _send_twitch_chat_message(
+        self,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self, client_id
+        safe_username = _irc_wire_value(username.lower(), "Twitch username")
+        safe_channel = _twitch_normalize_channel(channel)
+        if safe_channel is None:
+            raise RuntimeError("Twitch route is missing a valid channel target.")
+        normalized_token = _irc_wire_value(token, "Twitch token")
+        pass_token = (
+            normalized_token
+            if normalized_token.lower().startswith("oauth:")
+            else f"oauth:{normalized_token}"
+        )
+        safe_message = _strip_markdown_for_twitch(message)
+        if not safe_message:
+            return "skipped"
+        message_id = f"twitch:{uuid.uuid4().hex}"
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        try:
+            with socket.create_connection(("irc.chat.twitch.tv", 6697), timeout=15.0) as raw_socket:
+                raw_socket.settimeout(15.0)
+                context = ssl.create_default_context()
+                with context.wrap_socket(
+                    raw_socket,
+                    server_hostname="irc.chat.twitch.tv",
+                ) as tls_socket:
+                    send_line(tls_socket, f"PASS {pass_token}")
+                    send_line(tls_socket, f"NICK {safe_username}")
+                    send_line(tls_socket, f"JOIN #{safe_channel}")
+                    send_line(tls_socket, f"PRIVMSG #{safe_channel} :{safe_message}")
+                    send_line(tls_socket, "QUIT :OpenZues delivery complete")
+        except OSError as exc:
+            raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
+        return message_id
+
     def _request_json_provider_url(
         self,
         target: str,
@@ -20393,6 +20549,70 @@ class OpsMeshService:
         }
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_twitch_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Twitch native provider route does not support polls.")
+        config = _twitch_route_config(str(route.get("target") or ""), secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        channel = _twitch_normalize_channel(
+            str(
+                event.get("to")
+                or (conversation_target or {}).get("peer_id")
+                or config.default_channel
+                or ""
+            )
+        )
+        if channel is None:
+            raise RuntimeError("Twitch route is missing a valid channel target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = " ".join(part for part in message_parts if part).strip()
+        chunks = _twitch_text_chunks(message)
+        if not chunks:
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": "skipped",
+                "chatId": channel,
+                "channelId": channel,
+            }
+        message_ids = [
+            self._send_twitch_chat_message(
+                username=config.username,
+                client_id=config.client_id,
+                token=config.token,
+                channel=channel,
+                message=chunk,
+            )
+            for chunk in chunks
+        ]
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_ids[-1],
+            "chatId": channel,
+            "channelId": channel,
+            "timestamp": _timestamp_ms(datetime.now(UTC)) or 0,
+        }
+        if len(message_ids) > 1:
+            native_result["messageIds"] = message_ids
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result

@@ -7854,6 +7854,26 @@ def test_notification_route_create_accepts_irc_native_route_kind() -> None:
     assert route.conversation_target.channel == "irc"
 
 
+def test_notification_route_create_accepts_twitch_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Twitch Native Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="twitch",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="#OpenZues",
+        ),
+        secret_token="oauth:twitch-token",
+    )
+
+    assert route.kind == "twitch"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "twitch"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -17438,6 +17458,93 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_rout
             "password": "irc-server-password",
             "target": "#ops-room",
             "message": "IRC **native** parity.\n\n[reply:abc123]",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-twitch"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Twitch Native Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="oauth:twitch-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "twitch",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "#OpenZues",
+        },
+    )
+    twitch_sends: list[dict[str, object]] = []
+
+    def fake_send_twitch_chat_message(
+        self: OpsMeshService,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self
+        twitch_sends.append(
+            {
+                "username": username,
+                "client_id": client_id,
+                "token": token,
+                "channel": channel,
+                "message": message,
+            }
+        )
+        return "twitch-msg-123"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_send_twitch_chat_message",
+        fake_send_twitch_chat_message,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="twitch",
+        to="twitch:#OpenZues",
+        message="Twitch **native** [parity](https://example.com).",
+        media_urls=["https://cdn.example.com/clip.png"],
+        account_id="default",
+        idempotency_key="idem-native-twitch-send",
+    )
+
+    assert result["messageId"] == "twitch-msg-123"
+    assert result["chatId"] == "openzues"
+    assert result["channelId"] == "openzues"
+    assert result["mediaUrls"] == ["https://cdn.example.com/clip.png"]
+    assert twitch_sends == [
+        {
+            "username": "openzues",
+            "client_id": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "message": "Twitch native parity. https://cdn.example.com/clip.png",
         }
     ]
 

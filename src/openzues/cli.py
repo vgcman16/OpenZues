@@ -168,6 +168,7 @@ _DEFAULT_SANDBOX_TOOL_DENY = [
     "signal",
     "slack",
     "telegram",
+    "twitch",
     "whatsapp",
     "xmtp",
 ]
@@ -236,6 +237,12 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "reply": True,
         "media": False,
         "polls": False,
+    },
+    "twitch": {
+        "chatTypes": ["channel"],
+        "media": False,
+        "polls": False,
+        "threads": False,
     },
     "zalo": {
         "chatTypes": ["direct", "group"],
@@ -4963,6 +4970,7 @@ _DOCTOR_CHANNEL_LABELS = {
     "signal": "Signal",
     "slack": "Slack",
     "telegram": "Telegram",
+    "twitch": "Twitch",
     "whatsapp": "WhatsApp",
     "zalo": "Zalo",
     "zulip": "Zulip",
@@ -7398,6 +7406,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "slack",
     "synology-chat",
     "telegram",
+    "twitch",
     "whatsapp",
     "zalo",
 }
@@ -29303,8 +29312,8 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, irc, line, "
-            "or matrix."
+            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, irc, "
+            "twitch, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29370,13 +29379,14 @@ def routes_create_command(
         "mattermost",
         "signal",
         "irc",
+        "twitch",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
             "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
-            "signal, irc, line, matrix."
+            "signal, irc, twitch, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29396,6 +29406,7 @@ def routes_create_command(
                 "mattermost",
                 "signal",
                 "irc",
+                "twitch",
                 "line",
                 "matrix",
             }
@@ -29418,6 +29429,7 @@ def routes_create_command(
                 "mattermost",
                 "signal",
                 "irc",
+                "twitch",
                 "line",
                 "matrix",
             ],

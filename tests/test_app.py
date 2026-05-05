@@ -4818,6 +4818,7 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "mattermost",
         "signal",
         "irc",
+        "twitch",
         "line",
         "matrix",
     ]
@@ -5165,9 +5166,47 @@ def test_gateway_channels_endpoint_classifies_irc_native_route(tmp_path) -> None
     assert payload["channelDefaultAccountId"]["irc"] == "default"
 
 
+def test_gateway_channels_endpoint_classifies_twitch_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Twitch Native Gateway",
+                "kind": "twitch",
+                "target": (
+                    "twitch://chat?username=openzues&clientId=twitch-client-id"
+                    "&channel=OpenZues"
+                ),
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "twitch",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "#OpenZues",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "twitch" in payload["channelOrder"]
+    assert payload["channelLabels"]["twitch"] == "Twitch"
+    assert payload["channelDetailLabels"]["twitch"] == "Twitch"
+    assert payload["channels"]["twitch"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["twitch"] == "default"
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
-    '"nextcloud-talk", "synology-chat", "mattermost", "signal", "irc", '
+    '"nextcloud-talk", "synology-chat", "mattermost", "signal", "irc", "twitch", '
     '"line", "matrix"].includes(routeKind)'
 )
 
@@ -5277,6 +5316,18 @@ def test_notification_route_operator_form_offers_irc_native_routes() -> None:
     )
 
     assert '<option value="irc">IRC native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_twitch_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="twitch">Twitch native route</option>' in template
     assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
