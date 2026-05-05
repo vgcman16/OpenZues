@@ -5453,6 +5453,30 @@ def _msteams_graph_message_endpoint_for_route(
     )
 
 
+def _msteams_graph_pinned_messages_endpoint_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    pinned_message_id: str | None = None,
+) -> tuple[str, str]:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    if "/" in conversation_id:
+        raise RuntimeError(
+            "Pin/unpin is not supported for channel messages on Graph v1.0. "
+            "Only chat conversations support pinned messages."
+        )
+    endpoint = (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/pinnedMessages"
+    )
+    if pinned_message_id is not None:
+        endpoint = f"{endpoint}/{quote(pinned_message_id, safe='')}"
+    return endpoint, conversation_id
+
+
 def _msteams_graph_conversation_target_for_route(
     *,
     route_config: _MSTeamsRouteConfig,
@@ -14705,6 +14729,29 @@ class OpsMeshService:
             )
             return await asyncio.to_thread(
                 self._dispatch_msteams_read_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "pin":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action pin."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_pin_message_action,
                 route,
                 request,
                 graph_secret_token,
@@ -25438,6 +25485,52 @@ class OpsMeshService:
             "action": "read",
             "message": _msteams_message_summary(result, fallback_message_id=message_id),
         }
+
+    def _dispatch_msteams_pin_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams pin requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        endpoint, conversation_id = _msteams_graph_pinned_messages_endpoint_for_route(
+            route_config=route_config,
+            target=target,
+        )
+        result = self._request_json_provider_url(
+            endpoint,
+            method="POST",
+            payload={
+                "message@odata.bind": (
+                    "https://graph.microsoft.com/v1.0/chats/"
+                    f"{quote(conversation_id, safe='')}/messages/{quote(message_id, safe='')}"
+                )
+            },
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+        response: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "pin",
+        }
+        pinned_message_id = str(result.get("id") or "").strip()
+        if pinned_message_id:
+            response["pinnedMessageId"] = pinned_message_id
+        return response
 
     def _dispatch_msteams_react_message_action(
         self,
