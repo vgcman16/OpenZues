@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~70.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~70.8% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6620,9 +6620,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~70.7%. Verified with focused runtime
   factory-context pytest, adjacent plugin invoke proof, `ruff check`, and
   `mypy`; source/test checkpointed in `ef254cbf`.
+- Closed the imported OpenClaw plugin SDK text-runtime helper seam from
+  `src/plugin-sdk/text-runtime.ts` and `src/shared/string-coerce.ts`:
+  native runtime entries can now import common string-coerce helpers including
+  `normalizeOptionalString`, `normalizeNullableString`,
+  `normalizeStringifiedOptionalString`, and `hasNonEmptyString` from
+  `openclaw/plugin-sdk/text-runtime` and execute them through `tools.invoke`.
+  Repo-wide parity is now estimated at ~70.8%. Verified with focused
+  text-runtime helper pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `91918c38`.
 - Next repo-wide queue head: rotate to the next provider-specific
   runtime/plugin gap, continuing broader plugin SDK helper/runtime surface
-  breadth beyond the verified runtime import/execution/factory-context path.
+  breadth beyond the verified runtime import/execution/factory-context and
+  text-runtime helper path.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
