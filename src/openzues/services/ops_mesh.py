@@ -5955,6 +5955,34 @@ def _feishu_media_is_image(filename: str, content_type: str | None) -> bool:
     }
 
 
+def _feishu_media_file_type_and_message_type(
+    filename: str,
+    content_type: str | None,
+) -> tuple[str, Literal["file", "audio", "media"]]:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    extension = Path(filename).suffix.lower()
+    if extension in {".opus", ".ogg"} or normalized_content_type in {
+        "audio/ogg",
+        "audio/opus",
+    }:
+        return "opus", "audio"
+    if extension in {".mp4", ".mov", ".avi"} or normalized_content_type in {
+        "video/mp4",
+        "video/quicktime",
+        "video/x-msvideo",
+    }:
+        return "mp4", "media"
+    if extension == ".pdf":
+        return "pdf", "file"
+    if extension in {".doc", ".docx"}:
+        return "doc", "file"
+    if extension in {".xls", ".xlsx"}:
+        return "xls", "file"
+    if extension in {".ppt", ".pptx"}:
+        return "ppt", "file"
+    return "stream", "file"
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -27476,7 +27504,32 @@ class OpsMeshService:
                 msg_type="image",
                 secret_token=bearer_token,
             )
-        raise RuntimeError("Feishu file media sending is not available yet.")
+        file_type, msg_type = _feishu_media_file_type_and_message_type(filename, content_type)
+        upload = self._request_feishu_multipart_provider_url(
+            _feishu_api_endpoint(str(route.get("target") or ""), "im/v1/files"),
+            fields={"file_type": file_type, "file_name": filename},
+            file_field="file",
+            filename=filename,
+            content=media_bytes,
+            content_type=content_type or "application/octet-stream",
+            secret_token=bearer_token,
+        )
+        if isinstance(upload, Mapping) and upload.get("code") not in (None, 0, "0"):
+            raise RuntimeError(
+                "Feishu file upload failed: "
+                f"{upload.get('msg') or upload.get('message') or upload.get('code')}"
+            )
+        data = upload.get("data") if isinstance(upload, Mapping) else None
+        file_key = data.get("file_key") if isinstance(data, Mapping) else None
+        if not isinstance(file_key, str) or not file_key.strip():
+            raise RuntimeError("Feishu file upload failed: no file_key returned")
+        return self._post_feishu_media_message_payload(
+            route,
+            event,
+            content=json.dumps({"file_key": file_key.strip()}, separators=(",", ":")),
+            msg_type=msg_type,
+            secret_token=bearer_token,
+        )
 
     def _dispatch_feishu_send_message_action(
         self,
