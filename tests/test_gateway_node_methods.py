@@ -7466,6 +7466,104 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_boolean_param_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-boolean-param.cjs"
+    runtime_entry.write_text(
+        """
+const { readBooleanParam } = require("openclaw/plugin-sdk/boolean-param");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.boolean_param",
+      description: "Use OpenClaw boolean-param SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const params = {
+          truthy: " TRUE ",
+          falsy: "false",
+          nativeTrue: true,
+          nativeFalse: false,
+          blank: " ",
+          nope: "yes"
+        };
+        return {
+          truthy: readBooleanParam(params, "truthy"),
+          falsy: readBooleanParam(params, "falsy"),
+          nativeTrue: readBooleanParam(params, "nativeTrue"),
+          nativeFalse: readBooleanParam(params, "nativeFalse"),
+          blank: readBooleanParam(params, "blank") ?? null,
+          nope: readBooleanParam(params, "nope") ?? null,
+          missing: readBooleanParam(params, "missing") ?? null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-boolean-param-plugin",
+                    "name": "Runtime Boolean Param Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-boolean-param-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.boolean_param"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.boolean_param"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "truthy": True,
+        "falsy": False,
+        "nativeTrue": True,
+        "nativeFalse": False,
+        "blank": None,
+        "nope": None,
+        "missing": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

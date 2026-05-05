@@ -19047,6 +19047,21 @@ function resolveAccountWithDefaultFallback(params) {
   return fallback;
 }
 
+function readBooleanParam(params, key) {
+  const raw = params && params[key];
+  if (typeof raw === "boolean") {
+    return raw;
+  }
+  const normalized = normalizeOptionalLowercaseString(raw);
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return undefined;
+}
+
 function isToolPayloadTextBlock(block) {
   return (
     Boolean(block) &&
@@ -20110,6 +20125,10 @@ const toolPayloadRuntime = {
   stripPlainTextToolCallBlocks,
 };
 
+const booleanParamRuntime = {
+  readBooleanParam,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -20222,6 +20241,7 @@ const genericSdk = new Proxy(
     parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
     pathExists,
+    readBooleanParam,
     readErrorName,
     readStringValue,
     resolveAccountEntry,
@@ -20325,6 +20345,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/tool-payload"
   ) {
     return toolPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/boolean-param" ||
+    request === "@openclaw/plugin-sdk/boolean-param"
+  ) {
+    return booleanParamRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
