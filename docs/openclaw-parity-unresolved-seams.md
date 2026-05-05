@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~71.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6694,10 +6694,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `tools.invoke`. Repo-wide parity is now estimated at ~71.5%. Verified with
   focused account-helper pytest, adjacent plugin invoke proof, `ruff check`,
   and `mypy`; source/test checkpointed in `6d2cf33b`.
+- Closed the imported OpenClaw plugin SDK account-core/account-resolution seam
+  from `src/plugin-sdk/account-core.ts`, `src/plugin-sdk/account-resolution.ts`,
+  `src/plugin-sdk/account-resolution-runtime.ts`, `src/channels/chat-type.ts`,
+  `src/plugin-sdk/account-configured-ids.ts`, and `src/utils.ts`: native
+  runtime entries can now import account-core reexports, configured id
+  listing, default-account credential fallback, chat-type normalization, E.164
+  normalization, home-relative path resolution, and path existence checks from
+  `openclaw/plugin-sdk/account-core` / `account-resolution` and execute them
+  through `tools.invoke`. Repo-wide parity is now estimated at ~71.6%.
+  Verified with focused account-core pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `47fa2f39`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
-  reply-payload/account-helper path,
+  reply-payload/account-helper/account-core path,
   starting with the next source-backed SDK subpath or deeper route-resolution
   binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -185,6 +185,12 @@ may lag behind this tracker.
   resolution, normalized account lookup, merged account config projection,
   account/webhook snapshots, and account action gates.
   - Status: checkpointed in `6d2cf33b`
+
+- [x] Imported plugin SDK account-core/account-resolution shim for
+  account-core reexports, configured id listing, default-account credential
+  fallback, chat-type normalization, E.164 normalization, home-relative path
+  resolution, and path existence checks.
+  - Status: checkpointed in `47fa2f39`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1158,10 +1164,26 @@ may lag behind this tracker.
     temp-path helper shim checkpointed in `d6a73b21`, and secret-input helper
     shim checkpointed in `76e3c638`, routing helper shim checkpointed in
     `2cf7fb27`, reply-chunking helper shim checkpointed in `b000f51c`,
-    reply-payload helper shim checkpointed in `5d628f16`, and account-helper
-    shim checkpointed in `6d2cf33b`, but broader plugin SDK helper/runtime
-    surface breadth remains.
+    reply-payload helper shim checkpointed in `5d628f16`, account-helper
+    shim checkpointed in `6d2cf33b`, and account-core/account-resolution shim
+    checkpointed in `47fa2f39`, but broader plugin SDK helper/runtime surface
+    breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK account-core/account-resolution shim.
+  - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
+    `openclaw-main/src/plugin-sdk/account-resolution.ts`,
+    `openclaw-main/src/plugin-sdk/account-resolution-runtime.ts`,
+    `openclaw-main/src/plugin-sdk/account-configured-ids.ts`,
+    `openclaw-main/src/channels/chat-type.ts`, and
+    `openclaw-main/src/utils.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `47fa2f39`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused account-core proof (`1 passed`),
+    adjacent plugin invoke proof (`21 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK account-helper shim.
   - Source: `openclaw-main/src/plugin-sdk/account-helpers.ts`,
