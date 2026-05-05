@@ -18706,6 +18706,50 @@ function createScopedExpiringIdCache(options) {
   };
 }
 
+async function runTasksWithConcurrency(params) {
+  const { tasks, limit, onTaskError } = params;
+  const errorMode = params.errorMode || "continue";
+  if (tasks.length === 0) {
+    return { results: [], firstError: undefined, hasError: false };
+  }
+
+  const resolvedLimit = Math.max(1, Math.min(limit, tasks.length));
+  const results = Array.from({ length: tasks.length });
+  let next = 0;
+  let firstError = undefined;
+  let hasError = false;
+
+  const workers = Array.from({ length: resolvedLimit }, async () => {
+    while (true) {
+      if (errorMode === "stop" && hasError) {
+        return;
+      }
+      const index = next;
+      next += 1;
+      if (index >= tasks.length) {
+        return;
+      }
+      try {
+        results[index] = await tasks[index]();
+      } catch (error) {
+        if (!hasError) {
+          firstError = error;
+          hasError = true;
+        }
+        if (typeof onTaskError === "function") {
+          onTaskError(error, index);
+        }
+        if (errorMode === "stop") {
+          return;
+        }
+      }
+    }
+  });
+
+  await Promise.allSettled(workers);
+  return { results, firstError, hasError };
+}
+
 function createDedupeCache(options) {
   const ttlMs = Math.max(0, options.ttlMs);
   const maxSize = Math.max(0, Math.floor(options.maxSize));
@@ -22131,6 +22175,10 @@ const globalSingletonRuntime = {
   resolveGlobalSingleton,
 };
 
+const concurrencyRuntime = {
+  runTasksWithConcurrency,
+};
+
 const keyedAsyncQueueRuntime = {
   KeyedAsyncQueue,
   enqueueKeyedTask,
@@ -22507,6 +22555,7 @@ const genericSdk = new Proxy(
     readResponseWithLimit,
     readReactionParams,
     resolveRetryConfig,
+    runTasksWithConcurrency,
     readStringValue,
     readStringArrayParam,
     readStringOrNumberParam,
@@ -22672,6 +22721,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/global-singleton"
   ) {
     return globalSingletonRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/concurrency-runtime" ||
+    request === "@openclaw/plugin-sdk/concurrency-runtime"
+  ) {
+    return concurrencyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||

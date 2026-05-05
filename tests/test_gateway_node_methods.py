@@ -6588,6 +6588,182 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_concurrency_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-concurrency-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { runTasksWithConcurrency } = require("openclaw/plugin-sdk/concurrency-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.concurrency",
+      description: "Use OpenClaw concurrency runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        let running = 0;
+        let peak = 0;
+        const orderedTasks = [0, 1, 2, 3].map((index) => async () => {
+          running += 1;
+          peak = Math.max(peak, running);
+          await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 1));
+          running -= 1;
+          return index + 1;
+        });
+        const ordered = await runTasksWithConcurrency({
+          tasks: orderedTasks,
+          limit: 2
+        });
+
+        const stopSeen = [];
+        const stopped = await runTasksWithConcurrency({
+          tasks: [
+            async () => {
+              stopSeen.push(0);
+              return 10;
+            },
+            async () => {
+              stopSeen.push(1);
+              throw new Error("boom");
+            },
+            async () => {
+              stopSeen.push(2);
+              return 30;
+            }
+          ],
+          limit: 1,
+          errorMode: "stop"
+        });
+
+        const firstErr = new Error("first");
+        const continuedErrors = [];
+        const continued = await runTasksWithConcurrency({
+          tasks: [
+            async () => {
+              throw firstErr;
+            },
+            async () => 20,
+            async () => {
+              throw new Error("second");
+            },
+            async () => 40
+          ],
+          limit: 1,
+          errorMode: "continue",
+          onTaskError(error, index) {
+            continuedErrors.push([error.message, index]);
+          }
+        });
+
+        const empty = await runTasksWithConcurrency({ tasks: [], limit: 3 });
+        const generic = await genericSdk.runTasksWithConcurrency({
+          tasks: [async () => 5],
+          limit: 0
+        });
+
+        return {
+          ordered: [
+            ordered.results,
+            ordered.hasError,
+            ordered.firstError === undefined,
+            peak
+          ],
+          stopped: [
+            stopSeen,
+            stopped.results[0],
+            stopped.results[2] === undefined,
+            stopped.hasError,
+            stopped.firstError.message
+          ],
+          continued: [
+            continued.results[1],
+            continued.results[3],
+            continued.results[0] === undefined,
+            continued.hasError,
+            continued.firstError.message,
+            continuedErrors
+          ],
+          empty: [
+            empty.results.length,
+            empty.hasError,
+            empty.firstError === undefined
+          ],
+          generic: generic.results
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-concurrency-plugin",
+                    "name": "Runtime Concurrency Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-concurrency-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.concurrency"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.concurrency"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ordered": [[1, 2, 3, 4], False, True, 2],
+        "stopped": [[0, 1], 10, True, True, "boom"],
+        "continued": [
+            20,
+            40,
+            True,
+            True,
+            "first",
+            [["first", 0], ["second", 2]],
+        ],
+        "empty": [0, False, True],
+        "generic": [5],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:
