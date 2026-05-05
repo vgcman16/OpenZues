@@ -7048,6 +7048,142 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_mime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-media-mime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  detectMime,
+  extensionForMime,
+  getFileExtension,
+  mediaKindFromMime,
+  normalizeMimeType
+} = require("openclaw/plugin-sdk/media-mime");
+const genericSdk = require("openclaw/plugin-sdk");
+const mediaRuntime = require("openclaw/plugin-sdk/media-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_mime",
+      description: "Use OpenClaw media-mime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const caf = Buffer.concat([Buffer.from("caff", "ascii"), Buffer.alloc(32)]);
+        const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
+        const pdf = Buffer.from("%PDF-1.7\\n", "ascii");
+        return {
+          normalized: [
+            normalizeMimeType("Audio/MP4; codecs=mp4a.40.2"),
+            normalizeMimeType("   ") ?? null
+          ],
+          extensions: [
+            getFileExtension("https://example.test/files/report.PDF?download=1"),
+            getFileExtension("C:/tmp/a2ui.bundle.js"),
+            getFileExtension("noext") ?? null
+          ],
+          mappedExtensions: [
+            extensionForMime("IMAGE/JPEG; charset=utf-8"),
+            extensionForMime("audio/mp4"),
+            extensionForMime("video/unknown") ?? null
+          ],
+          kinds: [
+            mediaKindFromMime("image/png"),
+            mediaKindFromMime("audio/ogg"),
+            mediaKindFromMime("video/mp4"),
+            mediaKindFromMime("text/html; charset=utf-8"),
+            mediaKindFromMime("model/gltf+json") ?? null
+          ],
+          detected: [
+            await detectMime({ headerMime: " Text/Plain; charset=utf-8" }),
+            await detectMime({
+              headerMime: "application/octet-stream",
+              filePath: "/tmp/report.pdf"
+            }),
+            await detectMime({ buffer: caf, headerMime: "application/octet-stream" }),
+            await detectMime({ buffer: zip, filePath: "/tmp/book.xlsx" }),
+            await detectMime({ buffer: pdf, filePath: "/tmp/file.bin" }),
+            await detectMime({ headerMime: "application/octet-stream" })
+          ],
+          generic: [
+            genericSdk.extensionForMime("text/css"),
+            mediaRuntime.extensionForMime("application/json")
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-media-mime-plugin",
+                    "name": "Runtime Media Mime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-media-mime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.media_mime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.media_mime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": ["audio/mp4", None],
+        "extensions": [".pdf", ".js", None],
+        "mappedExtensions": [".jpg", ".m4a", None],
+        "kinds": ["image", "audio", "video", "document", None],
+        "detected": [
+            "text/plain",
+            "application/pdf",
+            "audio/x-caf",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/pdf",
+            "application/octet-stream",
+        ],
+        "generic": [".css", ".json"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -18048,6 +18048,54 @@ const FILE_REF_EXTENSIONS_WITH_TLD = new Set([
   "be",
   "cc",
 ]);
+const EXT_BY_MIME = {
+  "image/heic": ".heic",
+  "image/heif": ".heif",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/wav": ".wav",
+  "audio/flac": ".flac",
+  "audio/aac": ".aac",
+  "audio/opus": ".opus",
+  "audio/x-m4a": ".m4a",
+  "audio/mp4": ".m4a",
+  "audio/x-caf": ".caf",
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "application/pdf": ".pdf",
+  "application/json": ".json",
+  "application/zip": ".zip",
+  "application/gzip": ".gz",
+  "application/x-tar": ".tar",
+  "application/x-7z-compressed": ".7z",
+  "application/vnd.rar": ".rar",
+  "application/msword": ".doc",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.ms-powerpoint": ".ppt",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+  "text/csv": ".csv",
+  "text/plain": ".txt",
+  "text/markdown": ".md",
+  "text/html": ".html",
+  "text/xml": ".xml",
+  "text/css": ".css",
+  "application/xml": ".xml",
+};
+const MIME_BY_EXT = Object.fromEntries(
+  Object.entries(EXT_BY_MIME).map(([mime, ext]) => [ext, mime]),
+);
+Object.assign(MIME_BY_EXT, {
+  ".jpeg": "image/jpeg",
+  ".js": "text/javascript",
+  ".htm": "text/html",
+  ".xml": "text/xml",
+});
 
 function normalizeLowercaseStringOrEmpty(value) {
   return normalizeOptionalLowercaseString(value) || "";
@@ -18215,6 +18263,176 @@ function isBtwRequestText(text, options) {
   }
   const normalized = normalizeCommandBody(text, options).trim();
   return BTW_COMMAND_RE.test(normalized);
+}
+
+function normalizeMimeType(mime) {
+  if (!mime) {
+    return undefined;
+  }
+  const cleaned = String(mime).split(";")[0].trim().toLowerCase();
+  return cleaned || undefined;
+}
+
+function getFileExtension(filePath) {
+  if (!filePath) {
+    return undefined;
+  }
+  const raw = String(filePath);
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const url = new URL(raw);
+      return path.extname(url.pathname).toLowerCase() || undefined;
+    }
+  } catch (_error) {
+    // Fall back to plain path parsing.
+  }
+  return path.extname(raw).toLowerCase() || undefined;
+}
+
+function extensionForMime(mime) {
+  const normalized = normalizeMimeType(mime);
+  return normalized ? EXT_BY_MIME[normalized] : undefined;
+}
+
+function mediaKindFromMime(mime) {
+  if (!mime) {
+    return undefined;
+  }
+  const raw = String(mime);
+  if (raw.startsWith("image/")) {
+    return "image";
+  }
+  if (raw.startsWith("audio/")) {
+    return "audio";
+  }
+  if (raw.startsWith("video/")) {
+    return "video";
+  }
+  if (raw === "application/pdf") {
+    return "document";
+  }
+  if (raw.startsWith("text/")) {
+    return "document";
+  }
+  if (raw.startsWith("application/")) {
+    return "document";
+  }
+  return undefined;
+}
+
+function isGenericMime(mime) {
+  if (!mime) {
+    return true;
+  }
+  const normalized = String(mime).toLowerCase();
+  return normalized === "application/octet-stream" || normalized === "application/zip";
+}
+
+function normalizeSniffBuffer(buffer) {
+  if (!buffer) {
+    return undefined;
+  }
+  if (Buffer.isBuffer(buffer)) {
+    return buffer;
+  }
+  if (ArrayBuffer.isView(buffer)) {
+    return Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  }
+  if (buffer instanceof ArrayBuffer) {
+    return Buffer.from(buffer);
+  }
+  return undefined;
+}
+
+function sniffZipContainer(buffer) {
+  const header = buffer.toString("utf8", 0, Math.min(buffer.length, 16384));
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ) ||
+    header.includes("/word/document.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ) ||
+    header.includes("/xl/workbook.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ) ||
+    header.includes("/ppt/presentation.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  }
+  return "application/zip";
+}
+
+function sniffMime(bufferLike) {
+  const buffer = normalizeSniffBuffer(bufferLike);
+  if (!buffer || buffer.length < 4) {
+    return undefined;
+  }
+  if (buffer.toString("ascii", 0, 4) === "caff") {
+    return "audio/x-caf";
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer.toString("ascii", 1, 4) === "PNG"
+  ) {
+    return "image/png";
+  }
+  if (buffer.toString("ascii", 0, 4) === "GIF8") {
+    return "image/gif";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (buffer.toString("ascii", 0, 4) === "%PDF") {
+    return "application/pdf";
+  }
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    return sniffZipContainer(buffer);
+  }
+  return undefined;
+}
+
+async function detectMime(opts) {
+  const params = opts || {};
+  const ext = getFileExtension(params.filePath);
+  const extMime = ext ? MIME_BY_EXT[ext] : undefined;
+  const headerMime = normalizeMimeType(params.headerMime);
+  const sniffed = sniffMime(params.buffer);
+
+  if (sniffed && (!isGenericMime(sniffed) || !extMime)) {
+    return sniffed;
+  }
+  if (extMime) {
+    return extMime;
+  }
+  if (headerMime && !isGenericMime(headerMime)) {
+    return headerMime;
+  }
+  if (sniffed) {
+    return sniffed;
+  }
+  if (headerMime) {
+    return headerMime;
+  }
+  return undefined;
 }
 
 function parseFiniteNumber(value) {
@@ -21625,6 +21843,14 @@ const commandPrimitivesRuntime = {
   isBtwRequestText,
 };
 
+const mediaMimeRuntime = {
+  detectMime,
+  extensionForMime,
+  getFileExtension,
+  mediaKindFromMime,
+  normalizeMimeType,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -21951,10 +22177,12 @@ const genericSdk = new Proxy(
     chunkTextWithMode,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
+    detectMime,
     deliverFormattedTextWithAttachments,
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
     enqueueKeyedTask,
+    extensionForMime,
     extractErrorCode,
     extractToolPayload,
     formatUtcTimestamp,
@@ -21968,6 +22196,7 @@ const genericSdk = new Proxy(
     generateSecureToken,
     generateSecureUuid,
     getSubagentDepth,
+    getFileExtension,
     hasNonEmptyString,
     hasConfiguredSecretInput,
     KeyedAsyncQueue,
@@ -21996,6 +22225,7 @@ const genericSdk = new Proxy(
     logInboundDrop,
     logTypingFailure,
     lowercasePreservingWhitespace,
+    mediaKindFromMime,
     mergeAccountConfig,
     normalizeAtHashSlug,
     normalizeAccountId,
@@ -22005,6 +22235,7 @@ const genericSdk = new Proxy(
     normalizeHyphenSlug,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
+    normalizeMimeType,
     normalizeMessageChannel,
     normalizeNullableString,
     normalizeOptionalAccountId,
@@ -22124,6 +22355,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
     return commandPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-mime" ||
+    request === "@openclaw/plugin-sdk/media-mime"
+  ) {
+    return mediaMimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
