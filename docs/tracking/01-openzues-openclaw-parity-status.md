@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~77.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~77.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -496,6 +496,12 @@ may lag behind this tracker.
   aliases, generic SDK re-exports, and a precise native unavailable boundary
   for interactive OpenClaw login runtime calls.
   - Status: checkpointed in `9186faf7`
+
+- [x] Imported plugin SDK provider-auth facade helper shim for Copilot IDE
+  headers, Copilot API-base derivation, fakeable Copilot token cache/fetch
+  exchange, provider env API-key detection, scoped/unscoped SDK aliases, and
+  generic SDK re-exports.
+  - Status: checkpointed in `35ca435d`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
