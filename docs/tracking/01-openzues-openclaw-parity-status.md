@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~65.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~65.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -317,6 +317,11 @@ may lag behind this tracker.
   preserving OpenClaw's `channels.msteams.webhook.path` primary route plus
   standard `/api/messages` fallback registration.
   - Status: checkpointed in `91e854a0`
+
+- [x] Microsoft Teams Bot Framework webhook JWT validation, preserving
+  OpenClaw's issuer-specific JWKS, RS256 signature, audience, issuer, and
+  app-id binding checks before webhook body parsing.
+  - Status: checkpointed in `b3f911d2`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
