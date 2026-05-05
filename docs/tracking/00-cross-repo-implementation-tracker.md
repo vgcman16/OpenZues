@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,14 +29,10 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Feishu/Lark native outbound route slice is checkpointed in `d1515da1`.
+The bundled plugin runtime entry import slice is checkpointed in `8cb314f4`.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/schemas.py`
-- `src/openzues/services/ops_mesh.py`
-- `src/openzues/services/gateway_channels.py`
 - `src/openzues/cli.py`
-- `tests/test_ops_mesh.py`
 - `tests/test_cli.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
@@ -52,12 +48,33 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled runtime entry import checkpointed in `8cb314f4` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue ESM/import-depth and executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark native outbound route checkpointed in `d1515da1` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific media/reply/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001BK` bundled plugin runtime entry import
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: enabled bundled/package OpenClaw plugin rows with
+    `runtimeEntrySource` can be evaluated by the native CLI runtime without a
+    fake activation adapter; the loader shims OpenClaw plugin-SDK aliases,
+    unwraps default exports, calls `register`/`activate`, records registered
+    tools as runtime executor specs, marks the plugin imported, and resolves
+    manifest tool contracts to `runtimeActivation.status="ok"`.
+  - Evidence required: focused no-fake-adapter plugin doctor test, adjacent
+    SDK alias/activation adapter tests, gateway plugin runtime tests, ruff,
+    mypy
+  - Status: checkpointed in `8cb314f4`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused plugin runtime import proof (`1
+    passed`), adjacent plugin activation proof (`7 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001N` Feishu/Lark native outbound route
   - Source: `openclaw-main/extensions/feishu/src/send-target.ts`,

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -118,6 +118,11 @@ may lag behind this tracker.
   `openclaw.extensions` or default `index.*` candidates to native activation
   adapters.
   - Status: checkpointed in `4f732754`
+
+- [x] Bundled plugin runtime entry import without a fake activation adapter,
+  including CommonJS OpenClaw plugin-SDK alias shims and native
+  `register`/`activate` tool collection.
+  - Status: checkpointed in `8cb314f4`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
@@ -621,10 +626,23 @@ may lag behind this tracker.
     activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
     metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
     checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
-    in `55e1fb28`, and manifest document extractor contract metadata
-    checkpointed in `2196c65e`, but deeper module import/runtime activation
+    in `55e1fb28`, manifest document extractor contract metadata checkpointed
+    in `2196c65e`, and bundled plugin runtime entry import checkpointed in
+    `8cb314f4`, but deeper ESM import/runtime executor invocation breadth
     remains.
   - Weight: 5
+
+- [x] Bundled plugin runtime entry import.
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/registry.ts`, and
+    `openclaw-main/src/plugins/loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `8cb314f4`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused plugin runtime import proof (`1
+    passed`), adjacent activation/import proof (`7 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
 
 - [x] Installed-record manifest runtime activation.
   - Source: `openclaw-main/src/plugins/loader.test.ts`,

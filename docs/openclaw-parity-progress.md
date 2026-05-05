@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.4% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.5% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -57,6 +57,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
   package runtime check surface by detecting `packageManager` from
   `package.json`/lockfiles and projecting `deps` lockfile/install-marker state
   in `openzues update status --json`.
+- Bundled plugin runtime entries now have a native import/activation path for
+  CommonJS package entries: OpenZues shims OpenClaw plugin-SDK aliases, calls
+  `register`/`activate`, and records registered tools without requiring a fake
+  activation adapter.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -9974,6 +9978,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_uses_telegram_native_route"` (`6 passed, 275
   deselected`), adjacent route-create CLI proof (`5 passed, 489 deselected`),
   `ruff check`, and `mypy`. Checkpointed in `d1515da1`.
+
+- Bundled OpenClaw plugin runtime entries can now be imported by the native
+  CLI without an injected fake activation adapter. OpenZues writes a small
+  Node loader, shims `openclaw/plugin-sdk/*` and `@openclaw/plugin-sdk/*`
+  CommonJS aliases, unwraps default runtime exports, calls `register` or
+  `activate`, and turns registered tools into native runtime executor specs so
+  manifest tool contracts resolve to `runtimeActivation.status="ok"` and
+  plugin list marks the row as imported. This closes `OZ-PLUGIN-001BK`;
+  repo-wide parity is now estimated at ~61.5%.
+- Verified the bundled plugin runtime entry import slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_imports_bundled_sdk_runtime_entry_without_fake_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "imports_bundled_sdk_runtime_entry_without_fake_adapter or
+  plugin_sdk_alias_to_activation_adapter or source_plugin_sdk_subpath_aliases or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_reports_metadata_only_tool_activation or
+  rejects_installed_activation_adapter_tool_outside_manifest_contract or
+  activation_adapter_skips_disabled_manifest_plugins"` (`7 passed, 488
+  deselected`), `python -m pytest tests\test_gateway_plugin_runtime.py -q`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
+  Checkpointed in `8cb314f4`.
 
 ## References
 
