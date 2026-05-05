@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.7% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~65.8% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10882,8 +10882,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   OpenZues resolves native Teams app credentials from config, obtains a Bot
   Framework bearer, and posts the Adaptive Card 1.5 welcome message with
   configured prompt starters through the conversation activities endpoint.
-  This closes `OZ-PROV-001AW`; repo-wide parity is now estimated at ~65.7%.
-  Remaining Microsoft Teams lifecycle breadth is group welcome handling,
+  This closes `OZ-PROV-001AW`; repo-wide parity was then estimated at ~65.7%.
+  At that checkpoint, remaining Microsoft Teams lifecycle breadth was group welcome proof,
   downloadable inbound media staging, and feedback reflection follow-up.
 - Verified the Microsoft Teams personal welcome-card slice with
   `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added -q`
@@ -10892,6 +10892,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`6 passed, 320 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `72b1e637`.
+
+- Microsoft Teams group welcome lifecycle now has focused OpenClaw parity proof
+  for the non-personal `onMembersAdded` branch from
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/welcome-card.ts`: when `groupWelcomeCard` is enabled
+  and the bot is added to a channel/group conversation, OpenZues posts the
+  `buildGroupWelcomeText`-shaped Bot Framework activity through the same native
+  conversation activities endpoint and returns delivery metadata. This closes
+  `OZ-PROV-001AX`; repo-wide parity is now estimated at ~65.8%. Remaining
+  Microsoft Teams lifecycle breadth is downloadable inbound media staging and
+  feedback reflection follow-up.
+- Verified the Microsoft Teams group welcome lifecycle slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_sends_msteams_group_welcome_text_on_bot_added -q`
+  (`1 passed`), adjacent Teams inbound proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_group_welcome or msteams_personal_welcome or msteams_attachment or msteams_message or msteams_html or msteams_adaptive_card or msteams_feedback"`
+  (`7 passed, 320 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Proof checkpointed in `299a8655`.
 
 ## References
 

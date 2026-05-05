@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~65.8% overall, with a reasonable
   band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6119,10 +6119,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~65.7%. Verified with focused runtime pytest,
   adjacent Teams inbound proof, `ruff check`, and `mypy`; source/test
   checkpointed in `72b1e637`.
+- Closed the Microsoft Teams group welcome lifecycle seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/welcome-card.ts`: non-personal `conversationUpdate`
+  member-add events for the bot now have verified `groupWelcomeCard` handling
+  that posts the `buildGroupWelcomeText`-shaped Bot Framework activity through
+  the native conversation activities endpoint and returns delivery metadata.
+  Repo-wide parity is now estimated at ~65.8%. Verified with focused runtime
+  pytest, adjacent Teams inbound proof, `ruff check`, and `mypy`; proof
+  checkpointed in `299a8655`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
-  consumers, feedback reflection follow-up generation, group welcome lifecycle
-  handling, downloadable inbound media staging, or another
+  consumers, feedback reflection follow-up generation, downloadable inbound
+  media staging, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
