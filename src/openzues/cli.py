@@ -23455,6 +23455,134 @@ function evaluateSenderGroupAccess(params) {
   });
 }
 
+function compareProviderAutoSelectOrder(left, right) {
+  return (
+    (left.autoSelectOrder ?? Number.MAX_SAFE_INTEGER) -
+    (right.autoSelectOrder ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+function sortedProviderList(params) {
+  return Array.from(params.listProviders ? params.listProviders() : []).sort(
+    compareProviderAutoSelectOrder,
+  );
+}
+
+function readProviderConfig(providerConfigs, providerId) {
+  if (!providerId) {
+    return undefined;
+  }
+  const providerConfig = providerConfigs && providerConfigs[providerId];
+  return providerConfig && typeof providerConfig === "object" ? providerConfig : undefined;
+}
+
+function selectConfiguredOrAutoProvider(params) {
+  const configuredProviderId = normalizeOptionalString(params.configuredProviderId);
+  const configuredProvider = configuredProviderId
+    ? params.getConfiguredProvider(configuredProviderId)
+    : undefined;
+  if (configuredProviderId && !configuredProvider) {
+    return {
+      configuredProviderId,
+      missingConfiguredProvider: true,
+      provider: undefined,
+    };
+  }
+  return {
+    configuredProviderId,
+    missingConfiguredProvider: false,
+    provider: configuredProvider || sortedProviderList(params)[0],
+  };
+}
+
+function resolveProviderRawConfig(params) {
+  const canonicalProviderConfig = readProviderConfig(
+    params.providerConfigs,
+    params.providerId,
+  );
+  const selectedProviderConfig = readProviderConfig(
+    params.providerConfigs,
+    params.configuredProviderId,
+  );
+  return {
+    ...(canonicalProviderConfig || {}),
+    ...(selectedProviderConfig || {}),
+  };
+}
+
+function resolveProviderCandidate(params) {
+  const rawProviderConfig = resolveProviderRawConfig({
+    providerId: params.provider.id,
+    configuredProviderId: params.configuredProviderId,
+    providerConfigs: params.providerConfigs,
+  });
+  const providerConfig = params.resolveProviderConfig({
+    provider: params.provider,
+    cfg: params.cfgForResolve,
+    rawConfig: rawProviderConfig,
+  });
+  if (
+    !params.isProviderConfigured({
+      provider: params.provider,
+      cfg: params.cfg,
+      providerConfig,
+    })
+  ) {
+    return {
+      ok: false,
+      code: "provider-not-configured",
+      configuredProviderId: params.configuredProviderId,
+      provider: params.provider,
+    };
+  }
+  return {
+    ok: true,
+    configuredProviderId: params.configuredProviderId,
+    provider: params.provider,
+    providerConfig,
+  };
+}
+
+function resolveConfiguredCapabilityProvider(params) {
+  const configuredProviderId = normalizeOptionalString(params.configuredProviderId);
+  if (configuredProviderId) {
+    const provider = params.getConfiguredProvider(configuredProviderId);
+    if (!provider) {
+      return {
+        ok: false,
+        code: "missing-configured-provider",
+        configuredProviderId,
+      };
+    }
+    return resolveProviderCandidate({
+      ...params,
+      configuredProviderId,
+      provider,
+    });
+  }
+
+  const providers = sortedProviderList(params);
+  if (providers.length === 0) {
+    return { ok: false, code: "no-registered-provider" };
+  }
+
+  let firstUnconfigured;
+  for (const provider of providers) {
+    const resolution = resolveProviderCandidate({ ...params, provider });
+    if (resolution.ok) {
+      return resolution;
+    }
+    if (firstUnconfigured === undefined) {
+      firstUnconfigured = provider;
+    }
+  }
+  return {
+    ok: false,
+    code: "provider-not-configured",
+    provider: firstUnconfigured,
+  };
+}
+
 function resolveGroupAllowFromSources(params) {
   const explicitGroupAllowFrom =
     Array.isArray(params.groupAllowFrom) && params.groupAllowFrom.length > 0
@@ -26413,6 +26541,12 @@ const groupAccessRuntime = {
   resolveSenderScopedGroupPolicy,
 };
 
+const providerSelectionRuntime = {
+  resolveConfiguredCapabilityProvider,
+  resolveProviderRawConfig,
+  selectConfiguredOrAutoProvider,
+};
+
 const allowFromRuntime = {
   addAllowlistUserEntriesFromConfigEntry,
   buildAllowlistResolutionSummary,
@@ -26795,6 +26929,7 @@ const genericSdk = new Proxy(
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
+    ...providerSelectionRuntime,
     ...allowFromRuntime,
     ...allowlistConfigEditRuntime,
     ...accessGroupsRuntime,
@@ -27220,6 +27355,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/group-access"
   ) {
     return groupAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-selection-runtime" ||
+    request === "@openclaw/plugin-sdk/provider-selection-runtime"
+  ) {
+    return providerSelectionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/allow-from" ||

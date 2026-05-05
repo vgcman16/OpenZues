@@ -10494,6 +10494,183 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-selection.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  resolveConfiguredCapabilityProvider,
+  resolveProviderRawConfig,
+  selectConfiguredOrAutoProvider
+} = require("openclaw/plugin-sdk/provider-selection-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const providers = [
+  { id: "first", autoSelectOrder: 1 },
+  { id: "second", autoSelectOrder: 2, configured: true }
+];
+
+function getConfiguredProvider(providerId) {
+  return providers.find((entry) => entry.id === providerId);
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_selection",
+      description: "Use OpenClaw provider selection runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          explicit: selectConfiguredOrAutoProvider({
+            configuredProviderId: " second ",
+            getConfiguredProvider,
+            listProviders: () => providers
+          }),
+          missingExplicit: resolveConfiguredCapabilityProvider({
+            configuredProviderId: "missing",
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ rawConfig }) => rawConfig,
+            isProviderConfigured: ({ provider }) => provider.configured === true
+          }),
+          autoSelected: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ provider, rawConfig }) => ({
+              ...rawConfig,
+              providerId: provider.id
+            }),
+            isProviderConfigured: ({ providerConfig }) => providerConfig.providerId === "second"
+          }),
+          noRegistered: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider: () => undefined,
+            listProviders: () => [],
+            resolveProviderConfig: ({ rawConfig }) => rawConfig,
+            isProviderConfigured: () => false
+          }),
+          providerNotConfigured: resolveConfiguredCapabilityProvider({
+            cfg: {},
+            cfgForResolve: {},
+            getConfiguredProvider,
+            listProviders: () => providers,
+            resolveProviderConfig: ({ provider }) => ({ providerId: provider.id }),
+            isProviderConfigured: () => false
+          }),
+          merged: resolveProviderRawConfig({
+            providerId: "canonical",
+            configuredProviderId: "alias",
+            providerConfigs: {
+              canonical: { apiKey: "default", model: "base" },
+              alias: { model: "alias-model" }
+            }
+          }),
+          missingSelection: selectConfiguredOrAutoProvider({
+            configuredProviderId: "missing",
+            getConfiguredProvider,
+            listProviders: () => providers
+          }),
+          exportTypes: [
+            typeof resolveConfiguredCapabilityProvider,
+            typeof resolveProviderRawConfig,
+            typeof selectConfiguredOrAutoProvider,
+            typeof genericSdk.resolveConfiguredCapabilityProvider
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-selection-plugin",
+                    "name": "Runtime Provider Selection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-selection-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_selection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_selection"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "explicit": {
+            "configuredProviderId": "second",
+            "missingConfiguredProvider": False,
+            "provider": {"id": "second", "autoSelectOrder": 2, "configured": True},
+        },
+        "missingExplicit": {
+            "ok": False,
+            "code": "missing-configured-provider",
+            "configuredProviderId": "missing",
+        },
+        "autoSelected": {
+            "ok": True,
+            "provider": {"id": "second", "autoSelectOrder": 2, "configured": True},
+            "providerConfig": {"providerId": "second"},
+        },
+        "noRegistered": {"ok": False, "code": "no-registered-provider"},
+        "providerNotConfigured": {
+            "ok": False,
+            "code": "provider-not-configured",
+            "provider": {"id": "first", "autoSelectOrder": 1},
+        },
+        "merged": {"apiKey": "default", "model": "alias-model"},
+        "missingSelection": {
+            "configuredProviderId": "missing",
+            "missingConfiguredProvider": True,
+        },
+        "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
