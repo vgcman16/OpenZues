@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~67.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~67.1% overall, with a reasonable
   band of ~50-68%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6251,9 +6251,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `id`, `text`, `from`, and `createdAt`. Repo-wide parity is now estimated at
   ~67.0%. Verified with focused runtime pytest, adjacent Teams action/provider
   proof, `ruff check`, and `mypy`; source/test checkpointed in `4d3635c3`.
+- Closed the Microsoft Teams pin message action seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="msteams"`,
+  `action="pin"`, resolves `target` / `to` plus `messageId`, uses
+  route-backed Graph auth with stored delegated-token preference when
+  available, rejects channel pinning with the upstream Graph v1.0 unavailable
+  error, POSTs `message@odata.bind` to
+  `/chats/{chatId}/pinnedMessages`, and projects OpenClaw-shaped `{ok,
+  channel, action, pinnedMessageId}` results. Repo-wide parity is now
+  estimated at ~67.1%. Verified with focused runtime pytest, adjacent Teams
+  action/provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `1a99d147`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with the remaining Microsoft Teams
-  Graph action adapters: pin, unpin, list-pins, search, and member-info.
+  Graph action adapters: unpin, list-pins, search, and member-info.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
