@@ -227,6 +227,14 @@ BLUEBUBBLES_REACTION_EMOJIS = {
     "\u2753": "question",
     "\u2754": "question",
 }
+MSTEAMS_REACTION_EMOJIS = {
+    "like": "\U0001f44d",
+    "heart": "\u2764\ufe0f",
+    "laugh": "\U0001f606",
+    "surprised": "\U0001f62e",
+    "sad": "\U0001f622",
+    "angry": "\U0001f621",
+}
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -3425,6 +3433,115 @@ def _msteams_poll_card(
         ],
     }
     return poll_id, card
+
+
+def _msteams_action_target(request: GatewayMessageActionDispatchRequest) -> str:
+    target = (
+        _message_action_param_string(request.params, "to")
+        or _message_action_param_string(request.params, "target")
+        or _message_action_param_string(request.params, "conversationId")
+        or _message_action_param_string(request.params, "channelId")
+    )
+    tool_context = request.tool_context or {}
+    if target is None and isinstance(tool_context, dict):
+        target = (
+            _message_action_param_string(tool_context, "currentGraphChannelId")
+            or _message_action_param_string(tool_context, "currentChannelId")
+        )
+    if target is None:
+        raise RuntimeError("Microsoft Teams action requires a target.")
+    return target
+
+
+def _msteams_graph_conversation_target(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams Graph target is required.")
+    normalized = target.lower()
+    for prefix in ("msteams:", "teams:"):
+        if normalized.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            normalized = target.lower()
+            break
+    for prefix in ("conversation:", "channel:", "chat:", "group:"):
+        if normalized.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            normalized = target.lower()
+            break
+    if normalized.startswith("user:"):
+        raise RuntimeError(
+            "Microsoft Teams user Graph actions require a stored Graph conversation reference."
+        )
+    target = re.split(r";messageid=", target, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams Graph target is required.")
+    return target
+
+
+def _msteams_graph_message_endpoint(
+    *,
+    target: str,
+    message_id: str,
+) -> str:
+    conversation_id = _msteams_graph_conversation_target(target)
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}"
+        )
+    return (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
+    )
+
+
+def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    raw_reactions = result.get("reactions")
+    if not isinstance(raw_reactions, list):
+        return []
+    grouped: dict[str, dict[str, object]] = {}
+    for raw_reaction in raw_reactions:
+        if not isinstance(raw_reaction, dict):
+            continue
+        reaction_type = str(raw_reaction.get("reactionType") or "unknown").strip() or "unknown"
+        entry = grouped.setdefault(
+            reaction_type,
+            {
+                "reactionType": reaction_type,
+                "name": reaction_type,
+                "count": 0,
+                "users": [],
+            },
+        )
+        emoji = MSTEAMS_REACTION_EMOJIS.get(reaction_type)
+        if emoji is not None:
+            entry["emoji"] = emoji
+        current_count = entry.get("count")
+        entry["count"] = (
+            current_count if isinstance(current_count, int) and not isinstance(current_count, bool)
+            else 0
+        ) + 1
+        user = raw_reaction.get("user")
+        if not isinstance(user, dict):
+            continue
+        user_id = str(user.get("id") or "").strip()
+        if not user_id:
+            continue
+        user_entry: dict[str, object] = {"id": user_id}
+        display_name = str(user.get("displayName") or "").strip()
+        if display_name:
+            user_entry["displayName"] = display_name
+        users = entry.get("users")
+        if isinstance(users, list):
+            users.append(user_entry)
+    return list(grouped.values())
 
 
 def _signal_base_url(raw_target: str | None) -> str:
@@ -10783,6 +10900,22 @@ class OpsMeshService:
                 self._dispatch_signal_react_message_action,
                 route,
                 request,
+            )
+        if channel == "msteams" and action == "reactions":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action reactions."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_reactions_message_action,
+                route,
+                request,
+                secret_token,
             )
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
@@ -20710,6 +20843,53 @@ class OpsMeshService:
             raise RuntimeError("Microsoft Teams token response did not include access_token.")
         return token
 
+    def _msteams_fetch_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "client_credentials",
+                "scope": "https://graph.microsoft.com/.default",
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams Graph token HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams Graph token request failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Microsoft Teams Graph token response was not JSON.") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Microsoft Teams Graph token response was not an object.")
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            raise RuntimeError("Microsoft Teams Graph token response did not include access_token.")
+        return token
+
     def _msteams_bearer_token(
         self,
         *,
@@ -20730,6 +20910,59 @@ class OpsMeshService:
             app_password=secret,
         )
         return f"Bearer {access_token}"
+
+    def _msteams_graph_bearer_token(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+    ) -> str:
+        secret = str(secret_token or "").strip()
+        if secret.lower().startswith("bearer "):
+            return secret
+        if not route_config.app_id or not route_config.tenant_id or not secret:
+            raise RuntimeError(
+                "Microsoft Teams Graph actions require appId, tenantId, and app password "
+                "configuration."
+            )
+        access_token = self._msteams_fetch_graph_token(
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret,
+        )
+        return f"Bearer {access_token}"
+
+    def _dispatch_msteams_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams reactions requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            _msteams_graph_message_endpoint(
+                target=target,
+                message_id=message_id,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "reactions": _msteams_reaction_summaries(result),
+        }
 
     def _post_msteams_provider_event(
         self,

@@ -17637,6 +17637,140 @@ async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_rou
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Action Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        return {
+            "id": "msg-1",
+            "reactions": [
+                {"reactionType": "like", "user": {"id": "u1", "displayName": "Alice"}},
+                {"reactionType": "like", "user": {"displayName": "Deleted User"}},
+                {"reactionType": "like"},
+                {"reactionType": "heart", "user": {"id": "u2", "displayName": "Bob"}},
+            ],
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="reactions",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "msg-1",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "reactionType": "like",
+                "name": "like",
+                "emoji": "\U0001f44d",
+                "count": 3,
+                "users": [{"id": "u1", "displayName": "Alice"}],
+            },
+            {
+                "reactionType": "heart",
+                "name": "heart",
+                "emoji": "\u2764\ufe0f",
+                "count": 1,
+                "users": [{"id": "u2", "displayName": "Bob"}],
+            },
+        ],
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            "https://graph.microsoft.com/v1.0/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1",
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
