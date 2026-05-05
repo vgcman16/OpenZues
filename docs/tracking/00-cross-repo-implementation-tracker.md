@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~64.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~64.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams configured SSO token-exchange slice is checkpointed in
-`1bf6ab5b`.
+The Microsoft Teams configured SSO verify-state slice is checkpointed in
+`0ecfab4c`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,9 +62,28 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams configured SSO token exchange checkpointed in `1bf6ab5b` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue configured Teams verifyState magic-code handling, SSO authorization/drop policies, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams configured SSO verify-state handling checkpointed in `0ecfab4c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams SSO authorization/drop policies, delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AO` Microsoft Teams configured SSO verify-state magic code
+  - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/database.py`, `tests/test_ops_mesh.py`
+  - Contract: when SSO is configured, `signin/verifyState` resolves native
+    Teams app credentials, obtains a Bot Framework bearer, calls
+    `/api/usertoken/GetToken` with the magic-code `state`, persists the
+    delegated user token keyed by `(connectionName, userId)`, and returns only
+    safe stored metadata without leaking the state code or delegated token.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `0ecfab4c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured
+    verify-state proof (`1 passed`), adjacent Teams send/action/provider proof
+    (`17 passed, 304 deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AN` Microsoft Teams configured SSO token exchange/store
   - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
