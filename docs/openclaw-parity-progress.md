@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.7% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.8% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10482,6 +10482,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`10 passed, 297 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `02ae95da`.
+
+- Microsoft Teams channel-thread reply delivery now mirrors OpenClaw's
+  `extensions/msteams/src/messenger.ts` proactive channel thread routing:
+  native Teams sends preserve `replyToId`, and channel-targeted sends
+  reconstruct the Bot Framework conversation id as
+  `<conversationId>;messageid=<thread-root>` before posting the activity,
+  while keeping result metadata on the base conversation id. This closes
+  `OZ-PROV-001AD`; repo-wide parity is now estimated at ~63.8%. Remaining
+  Microsoft Teams breadth is FileConsentCard/Graph media upload, vote invoke
+  storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams threaded-reply slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_thread_reply -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_thread_reply or msteams_user_reference_route or msteams_native_route or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`8 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `927d5787`.
 
 ## References
 

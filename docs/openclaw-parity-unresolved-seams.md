@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.8% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5912,9 +5912,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   results. Repo-wide parity is now estimated at ~63.7%. Verified with focused
   runtime pytest, adjacent Teams/action/provider proof, `ruff check`, and
   `mypy`; checkpointed in `02ae95da`.
+- Closed the Microsoft Teams channel-thread reply seam from OpenClaw
+  `extensions/msteams/src/messenger.ts`: native Teams sends now preserve
+  `replyToId`, and channel-targeted direct sends reconstruct the Bot Framework
+  conversation id as `<conversationId>;messageid=<thread-root>` before posting
+  the activity, while keeping result metadata on the base conversation id.
+  Repo-wide parity is now estimated at ~63.8%. Verified with focused runtime
+  pytest, adjacent Teams send/action/provider proof, `ruff check`, and `mypy`;
+  checkpointed in `927d5787`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  media/thread/vote-invoke breadth or
+  media/vote-invoke breadth or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
