@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -152,6 +152,11 @@ may lag behind this tracker.
   `formatUncaughtError`, `extractErrorCode`, and `readErrorName` for imported
   runtime tools.
   - Status: checkpointed in `7888c8de`
+
+- [x] Imported plugin SDK temp-path helper shim for temp filename
+  sanitization, deterministic temp path construction, preferred temp roots, and
+  download-target cleanup helpers.
+  - Status: checkpointed in `d6a73b21`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1121,9 +1126,21 @@ may lag behind this tracker.
     imported CommonJS runtime execution checkpointed in `d80b0252`, ESM
     runtime execution checkpointed in `311f37e1`, and runtime tool factory
     context checkpointed in `ef254cbf`, text-runtime helper shim checkpointed
-    in `91918c38`, and error-runtime helper shim checkpointed in `7888c8de`,
-    but broader plugin SDK helper/runtime surface breadth remains.
+    in `91918c38`, error-runtime helper shim checkpointed in `7888c8de`, and
+    temp-path helper shim checkpointed in `d6a73b21`, but broader plugin SDK
+    helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK temp-path helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/temp-path.ts` and
+    `openclaw-main/src/infra/temp-download.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `d6a73b21`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused temp-path helper proof (`1 passed`),
+    adjacent plugin invoke proof (`15 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK error-runtime helper shim.
   - Source: `openclaw-main/src/plugin-sdk/error-runtime.ts` and
