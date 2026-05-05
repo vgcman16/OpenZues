@@ -18086,6 +18086,98 @@ function hasNonEmptyString(value) {
   return normalizeOptionalString(value) !== undefined;
 }
 
+function extractErrorCode(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const code = err.code;
+  if (typeof code === "string") {
+    return code;
+  }
+  if (typeof code === "number") {
+    return String(code);
+  }
+  return undefined;
+}
+
+function readErrorName(err) {
+  if (!err || typeof err !== "object") {
+    return "";
+  }
+  return typeof err.name === "string" ? err.name : "";
+}
+
+function collectErrorGraphCandidates(err, resolveNested) {
+  const queue = [err];
+  const seen = new Set();
+  const candidates = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current == null || seen.has(current)) {
+      continue;
+    }
+    seen.add(current);
+    candidates.push(current);
+    if (!current || typeof current !== "object" || typeof resolveNested !== "function") {
+      continue;
+    }
+    for (const nested of resolveNested(current) || []) {
+      if (nested != null && !seen.has(nested)) {
+        queue.push(nested);
+      }
+    }
+  }
+  return candidates;
+}
+
+function formatErrorMessage(err) {
+  let formatted;
+  if (err instanceof Error) {
+    formatted = err.message || err.name || "Error";
+    let cause = err.cause;
+    const seen = new Set([err]);
+    while (cause && !seen.has(cause)) {
+      seen.add(cause);
+      if (cause instanceof Error) {
+        if (cause.message) {
+          formatted += ` | ${cause.message}`;
+        }
+        cause = cause.cause;
+      } else if (typeof cause === "string") {
+        formatted += ` | ${cause}`;
+        break;
+      } else {
+        break;
+      }
+    }
+  } else if (typeof err === "string") {
+    formatted = err;
+  } else if (
+    typeof err === "number" ||
+    typeof err === "boolean" ||
+    typeof err === "bigint"
+  ) {
+    formatted = String(err);
+  } else {
+    try {
+      formatted = JSON.stringify(err);
+    } catch (_error) {
+      formatted = Object.prototype.toString.call(err);
+    }
+  }
+  return String(formatted);
+}
+
+function formatUncaughtError(err) {
+  if (extractErrorCode(err) === "INVALID_CONFIG") {
+    return formatErrorMessage(err);
+  }
+  if (err instanceof Error) {
+    return err.stack || err.message || err.name;
+  }
+  return formatErrorMessage(err);
+}
+
 function passthrough(value) {
   return value;
 }
@@ -18102,8 +18194,20 @@ const textRuntime = {
   readStringValue,
 };
 
+const errorRuntime = {
+  collectErrorGraphCandidates,
+  extractErrorCode,
+  formatErrorMessage,
+  formatUncaughtError,
+  readErrorName,
+};
+
 const genericSdk = new Proxy(
   {
+    collectErrorGraphCandidates,
+    extractErrorCode,
+    formatErrorMessage,
+    formatUncaughtError,
     hasNonEmptyString,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
@@ -18112,6 +18216,7 @@ const genericSdk = new Proxy(
     normalizeOptionalLowercaseString,
     normalizeOptionalString,
     normalizeStringifiedOptionalString,
+    readErrorName,
     readStringValue,
   },
   {
@@ -18134,6 +18239,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-runtime"
   ) {
     return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/error-runtime" ||
+    request === "@openclaw/plugin-sdk/error-runtime"
+  ) {
+    return errorRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||
