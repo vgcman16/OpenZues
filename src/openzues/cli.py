@@ -18229,6 +18229,52 @@ function resolveGlobalDedupeCache(key, options) {
   return resolveGlobalSingleton(key, () => createDedupeCache(options));
 }
 
+function enqueueKeyedTask(params) {
+  if (params.hooks && typeof params.hooks.onEnqueue === "function") {
+    params.hooks.onEnqueue();
+  }
+  const previous = params.tails.get(params.key) || Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(params.task)
+    .finally(() => {
+      if (params.hooks && typeof params.hooks.onSettle === "function") {
+        params.hooks.onSettle();
+      }
+    });
+  const tail = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  params.tails.set(params.key, tail);
+  const cleanup = () => {
+    if (params.tails.get(params.key) === tail) {
+      params.tails.delete(params.key);
+    }
+  };
+  tail.then(cleanup, cleanup);
+  return current;
+}
+
+class KeyedAsyncQueue {
+  constructor() {
+    this.tails = new Map();
+  }
+
+  getTailMapForTesting() {
+    return this.tails;
+  }
+
+  enqueue(key, task, hooks) {
+    return enqueueKeyedTask({
+      tails: this.tails,
+      key,
+      task,
+      ...(hooks ? { hooks } : {}),
+    });
+  }
+}
+
 function createAsyncLock() {
   let lock = Promise.resolve();
   return async function withLock(fn) {
@@ -21502,6 +21548,11 @@ const dedupeRuntime = {
   resolveGlobalDedupeCache,
 };
 
+const keyedAsyncQueueRuntime = {
+  KeyedAsyncQueue,
+  enqueueKeyedTask,
+};
+
 const asyncLockRuntime = {
   createAsyncLock,
 };
@@ -21783,6 +21834,7 @@ const genericSdk = new Proxy(
     deliverFormattedTextWithAttachments,
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
+    enqueueKeyedTask,
     extractErrorCode,
     extractToolPayload,
     formatUtcTimestamp,
@@ -21798,6 +21850,7 @@ const genericSdk = new Proxy(
     getSubagentDepth,
     hasNonEmptyString,
     hasConfiguredSecretInput,
+    KeyedAsyncQueue,
     hasOutboundMedia,
     hasOutboundReplyContent,
     hasOutboundText,
@@ -21991,6 +22044,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
     return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/keyed-async-queue" ||
+    request === "@openclaw/plugin-sdk/keyed-async-queue"
+  ) {
+    return keyedAsyncQueueRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/async-lock-runtime" ||

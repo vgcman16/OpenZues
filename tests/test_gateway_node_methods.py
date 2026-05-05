@@ -6664,6 +6664,193 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_keyed_async_queue_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-keyed-async-queue.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  KeyedAsyncQueue,
+  enqueueKeyedTask
+} = require("openclaw/plugin-sdk/keyed-async-queue");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.keyed_queue",
+      description: "Use OpenClaw keyed-async-queue SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const tails = new Map();
+        const gate = deferred();
+        const order = [];
+        const first = enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => {
+            order.push("a1:start");
+            await gate.promise;
+            order.push("a1:end");
+          }
+        });
+        const second = enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => {
+            order.push("a2:start");
+            order.push("a2:end");
+          }
+        });
+        const third = enqueueKeyedTask({
+          tails,
+          key: "b",
+          task: async () => {
+            order.push("b1:start");
+            order.push("b1:end");
+          }
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const beforeRelease = {
+          hasA1: order.includes("a1:start"),
+          hasB1: order.includes("b1:start"),
+          hasA2: order.includes("a2:start")
+        };
+        gate.resolve();
+        await Promise.all([first, second, third]);
+
+        let failureMessage = null;
+        try {
+          await enqueueKeyedTask({
+            tails,
+            key: "a",
+            task: async () => {
+              throw new Error("boom");
+            }
+          });
+        } catch (error) {
+          failureMessage = error && error.message;
+        }
+        const afterFailure = await enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => "ok"
+        });
+
+        let enqueued = 0;
+        let settled = 0;
+        await enqueueKeyedTask({
+          tails,
+          key: "hooks",
+          task: async () => "hooked",
+          hooks: {
+            onEnqueue: () => { enqueued += 1; },
+            onSettle: () => { settled += 1; }
+          }
+        });
+
+        const queue = new KeyedAsyncQueue();
+        const actorGate = deferred();
+        const actorRun = queue.enqueue("actor", async () => {
+          await actorGate.promise;
+          return 1;
+        });
+        const hasActorBefore = queue.getTailMapForTesting().has("actor");
+        actorGate.resolve();
+        const actorResult = await actorRun;
+        await Promise.resolve();
+        const hasActorAfter = queue.getTailMapForTesting().has("actor");
+
+        return {
+          beforeRelease,
+          order,
+          tailsSize: tails.size,
+          failureMessage,
+          afterFailure,
+          hooks: { enqueued, settled },
+          actorResult,
+          hasActorBefore,
+          hasActorAfter
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-keyed-queue-plugin",
+                    "name": "Runtime Keyed Queue Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-keyed-queue-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.keyed_queue"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.keyed_queue"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "beforeRelease": {"hasA1": True, "hasB1": True, "hasA2": False},
+        "order": ["a1:start", "b1:start", "b1:end", "a1:end", "a2:start", "a2:end"],
+        "tailsSize": 0,
+        "failureMessage": "boom",
+        "afterFailure": "ok",
+        "hooks": {"enqueued": 1, "settled": 1},
+        "actorResult": 1,
+        "hasActorBefore": True,
+        "hasActorAfter": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:
