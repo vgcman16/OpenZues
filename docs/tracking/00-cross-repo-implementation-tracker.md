@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~67.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~67.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams unpin message action slice is checkpointed in `dafcd607`.
+The Microsoft Teams list-pins message action slice is checkpointed in `9531fbe3`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams unpin message action checkpointed in `dafcd607` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Graph action breadth: list-pins, search, and member-info |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams list-pins message action checkpointed in `9531fbe3` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Graph action breadth: search and member-info |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BM` Microsoft Teams list-pins message action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.read.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="list-pins"` resolves route-backed Graph chat targets, rejects
+    channel list-pins with the upstream Graph v1.0 unavailable error, GETs
+    `/chats/{chatId}/pinnedMessages?$expand=message`, follows bounded
+    `@odata.nextLink` pagination, and returns OpenClaw-shaped `{ok, channel,
+    action, pins}` with `id`, `pinnedMessageId`, `messageId`, and `text`.
+  - Evidence required: focused runtime test, adjacent Teams action tests,
+    ruff, mypy
+  - Status: checkpointed in `9531fbe3`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams list-pins proof (`1
+    passed`), adjacent Teams action/provider proof (`13 passed, 327
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001BL` Microsoft Teams unpin message action
   - Source: `openclaw-main/extensions/msteams/src/actions.ts`,

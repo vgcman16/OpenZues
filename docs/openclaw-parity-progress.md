@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~67.2% overall, with a reasonable band of ~50-68%.
+- Estimated repo-wide parity: ~67.3% overall, with a reasonable band of ~50-68%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11169,6 +11169,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`12 passed, 327 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `dafcd607`.
+- Microsoft Teams list-pins actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.read.test.ts`: native
+  `message.action` dispatch for `channel="msteams"`, `action="list-pins"`
+  resolves route-backed Graph chat targets, obtains route-backed Graph
+  credentials with delegated-token preference when available, rejects channel
+  list-pins with the upstream Graph v1.0 unavailable error, GETs
+  `/chats/{chatId}/pinnedMessages?$expand=message`, follows bounded
+  `@odata.nextLink` pagination, and returns OpenClaw-shaped `{ok, channel,
+  action, pins}` summaries. This closes `OZ-PROV-001BM`; repo-wide parity is
+  now estimated at ~67.3%. Remaining Teams Graph action breadth is
+  search/member-info.
+- Verified the Microsoft Teams list-pins action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_list_pins_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_list_pins or msteams_unpin or msteams_pin or msteams_read or msteams_reactions or msteams_react or msteams_native_route or msteams_delegated"`
+  (`13 passed, 327 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `9531fbe3`.
 
 ## References
 

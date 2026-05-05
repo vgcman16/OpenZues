@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~67.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~67.3% overall, with a reasonable
   band of ~50-68%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6279,9 +6279,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~67.2%. Verified with focused runtime pytest, adjacent Teams
   action/provider proof, `ruff check`, and `mypy`; source/test checkpointed in
   `dafcd607`.
+- Closed the Microsoft Teams list-pins message action seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.read.test.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="msteams"`,
+  `action="list-pins"`, resolves route-backed Graph chat targets, uses
+  route-backed Graph auth with stored delegated-token preference when
+  available, rejects channel list-pins with the upstream Graph v1.0
+  unavailable error, GETs
+  `/chats/{chatId}/pinnedMessages?$expand=message`, follows bounded
+  `@odata.nextLink` pagination, and projects OpenClaw-shaped `{ok, channel,
+  action, pins}` results. Repo-wide parity is now estimated at ~67.3%.
+  Verified with focused runtime pytest, adjacent Teams action/provider proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `9531fbe3`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with the remaining Microsoft Teams
-  Graph action adapters: list-pins, search, and member-info.
+  Graph action adapters: search and member-info.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

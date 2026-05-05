@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~67.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~67.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -224,6 +224,11 @@ may lag behind this tracker.
   chat pinned-resource DELETEs, `pinnedMessageId` / `messageId` fallback, and
   the upstream Graph v1.0 channel unpinning unavailable boundary.
   - Status: checkpointed in `dafcd607`
+
+- [x] Microsoft Teams list-pins action support, preserving OpenClaw Graph chat
+  pin listing, `$expand=message`, bounded `@odata.nextLink` pagination, and
+  pinned-message summary projection.
+  - Status: checkpointed in `9531fbe3`
 
 - [x] Microsoft Teams native readiness probe support, preserving OpenClaw Bot
   Framework credential posture, Graph app-token posture metadata, optional
