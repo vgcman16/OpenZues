@@ -6226,6 +6226,99 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_text_autolink_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-text-autolink-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { isAutoLinkedFileRef } = require("openclaw/plugin-sdk/text-autolink-runtime");
+const textRuntime = require("openclaw/plugin-sdk/text-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.text_autolink",
+      description: "Use OpenClaw text-autolink-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          httpsPath: isAutoLinkedFileRef("https://docs/readme.md", "docs/readme.md"),
+          httpPath: isAutoLinkedFileRef("http://src/main.py", "src/main.py"),
+          caseExt: isAutoLinkedFileRef("https://README.MD", "README.MD"),
+          dottedParent: isAutoLinkedFileRef("https://docs.v1/readme.md", "docs.v1/readme.md"),
+          disallowedExt: isAutoLinkedFileRef("https://docs/image.png", "docs/image.png"),
+          mismatch: isAutoLinkedFileRef("https://example.com/readme.md", "readme.md"),
+          noName: isAutoLinkedFileRef("https://.md", ".md"),
+          textRuntimeExport: textRuntime.isAutoLinkedFileRef("http://notes.go", "notes.go")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-text-autolink-plugin",
+                    "name": "Runtime Text Autolink Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-text-autolink-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.text_autolink"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.text_autolink"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "httpsPath": True,
+        "httpPath": True,
+        "caseExt": True,
+        "dottedParent": False,
+        "disallowedExt": False,
+        "mismatch": False,
+        "noName": False,
+        "textRuntimeExport": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:

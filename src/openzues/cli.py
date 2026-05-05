@@ -18037,6 +18037,17 @@ const Module = require("module");
 
 const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+const FILE_REF_EXTENSIONS_WITH_TLD = new Set([
+  "md",
+  "go",
+  "py",
+  "pl",
+  "sh",
+  "am",
+  "at",
+  "be",
+  "cc",
+]);
 
 function normalizeLowercaseStringOrEmpty(value) {
   return normalizeOptionalLowercaseString(value) || "";
@@ -18070,6 +18081,30 @@ function normalizeStringifiedOptionalString(value) {
     return normalizeOptionalString(String(value));
   }
   return undefined;
+}
+
+function isAutoLinkedFileRef(href, label) {
+  const stripped = href.replace(/^https?:\/\//i, "");
+  if (stripped !== label) {
+    return false;
+  }
+  const dotIndex = label.lastIndexOf(".");
+  if (dotIndex < 1) {
+    return false;
+  }
+  const ext = normalizeLowercaseStringOrEmpty(label.slice(dotIndex + 1));
+  if (!FILE_REF_EXTENSIONS_WITH_TLD.has(ext)) {
+    return false;
+  }
+  const segments = label.split("/");
+  if (segments.length > 1) {
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      if (segments[i] && segments[i].includes(".")) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function parseFiniteNumber(value) {
@@ -21110,6 +21145,7 @@ function passthrough(value) {
 
 const textRuntime = {
   hasNonEmptyString,
+  isAutoLinkedFileRef,
   localeLowercasePreservingWhitespace,
   lowercasePreservingWhitespace,
   normalizeAtHashSlug,
@@ -21122,6 +21158,10 @@ const textRuntime = {
   normalizeStringEntriesLower,
   normalizeStringifiedOptionalString,
   readStringValue,
+};
+
+const textAutolinkRuntime = {
+  isAutoLinkedFileRef,
 };
 
 const stringNormalizationRuntime = {
@@ -21450,6 +21490,7 @@ const genericSdk = new Proxy(
     hasOutboundReplyContent,
     hasOutboundText,
     isAcpSessionKey,
+    isAutoLinkedFileRef,
     isCronSessionKey,
     isDangerousNameMatchingEnabled,
     isNumericTargetId,
@@ -21574,6 +21615,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-runtime"
   ) {
     return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/text-autolink-runtime" ||
+    request === "@openclaw/plugin-sdk/text-autolink-runtime"
+  ) {
+    return textAutolinkRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
