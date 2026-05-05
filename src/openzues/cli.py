@@ -24274,6 +24274,103 @@ function summarizeMapping(label, mapping, unresolved, runtime) {
   }
 }
 
+const ACCESS_GROUP_ALLOW_FROM_PREFIX = "accessGroup:";
+
+function parseAccessGroupAllowFromEntry(entry) {
+  const trimmed = String(entry || "").trim();
+  if (!trimmed.startsWith(ACCESS_GROUP_ALLOW_FROM_PREFIX)) {
+    return null;
+  }
+  const name = trimmed.slice(ACCESS_GROUP_ALLOW_FROM_PREFIX.length).trim();
+  return name.length > 0 ? name : null;
+}
+
+function resolveMessageSenderGroupEntries(params) {
+  const group = params && params.group;
+  if (!group || group.type !== "message.senders") {
+    return [];
+  }
+  const members = group.members || {};
+  return [
+    ...(Array.isArray(members["*"]) ? members["*"] : []),
+    ...(Array.isArray(members[params.channel]) ? members[params.channel] : []),
+  ].map(String);
+}
+
+async function resolveAccessGroupAllowFromMatches(params) {
+  const cfg = params && params.cfg;
+  const groups = cfg && cfg.accessGroups;
+  if (!groups) {
+    return [];
+  }
+  const names = Array.from(
+    new Set(
+      (Array.isArray(params.allowFrom) ? params.allowFrom : [])
+        .map((entry) => parseAccessGroupAllowFromEntry(String(entry)))
+        .filter(Boolean),
+    ),
+  );
+  if (names.length === 0) {
+    return [];
+  }
+  const matched = [];
+  for (const name of names) {
+    const group = groups[name];
+    if (!group) {
+      continue;
+    }
+    const senderEntries = resolveMessageSenderGroupEntries({
+      group,
+      channel: params.channel,
+    });
+    if (
+      senderEntries.length > 0 &&
+      typeof params.isSenderAllowed === "function" &&
+      params.isSenderAllowed(params.senderId, senderEntries) === true
+    ) {
+      matched.push(`${ACCESS_GROUP_ALLOW_FROM_PREFIX}${name}`);
+      continue;
+    }
+    let allowed = false;
+    try {
+      allowed =
+        typeof params.resolveMembership === "function" &&
+        (await params.resolveMembership({
+          cfg,
+          name,
+          group,
+          channel: params.channel,
+          accountId: params.accountId,
+          senderId: params.senderId,
+        })) === true;
+    } catch (_error) {
+      allowed = false;
+    }
+    if (allowed) {
+      matched.push(`${ACCESS_GROUP_ALLOW_FROM_PREFIX}${name}`);
+    }
+  }
+  return matched;
+}
+
+async function expandAllowFromWithAccessGroups(params) {
+  const allowFrom = (Array.isArray(params.allowFrom) ? params.allowFrom : []).map(String);
+  const matched = await resolveAccessGroupAllowFromMatches({
+    cfg: params.cfg,
+    allowFrom,
+    channel: params.channel,
+    accountId: params.accountId,
+    senderId: params.senderId,
+    isSenderAllowed: params.isSenderAllowed,
+    resolveMembership: params.resolveMembership,
+  });
+  if (matched.length === 0) {
+    return allowFrom;
+  }
+  const senderEntry = params.senderAllowEntry ?? params.senderId;
+  return Array.from(new Set([...allowFrom, senderEntry]));
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -25259,6 +25356,13 @@ const allowFromRuntime = {
   summarizeMapping,
 };
 
+const accessGroupsRuntime = {
+  ACCESS_GROUP_ALLOW_FROM_PREFIX,
+  expandAllowFromWithAccessGroups,
+  parseAccessGroupAllowFromEntry,
+  resolveAccessGroupAllowFromMatches,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -25530,6 +25634,7 @@ const genericSdk = new Proxy(
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
     ...allowFromRuntime,
+    ...accessGroupsRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -25947,6 +26052,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/allow-from"
   ) {
     return allowFromRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/access-groups" ||
+    request === "@openclaw/plugin-sdk/access-groups"
+  ) {
+    return accessGroupsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

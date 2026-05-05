@@ -8188,6 +8188,176 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_access_groups_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-access-groups.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  ACCESS_GROUP_ALLOW_FROM_PREFIX,
+  expandAllowFromWithAccessGroups,
+  parseAccessGroupAllowFromEntry,
+  resolveAccessGroupAllowFromMatches
+} = require("openclaw/plugin-sdk/access-groups");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.access_groups",
+      description: "Use OpenClaw access-groups SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          accessGroups: {
+            admins: {
+              type: "message.senders",
+              members: {
+                "*": ["global-admin"],
+                telegram: ["tg-admin"]
+              }
+            },
+            external: {
+              type: "custom",
+              members: {}
+            },
+            throwing: {
+              type: "custom",
+              members: {}
+            }
+          }
+        };
+        const resolverCalls = [];
+        const resolveMembership = async ({ name, channel, accountId, senderId }) => {
+          resolverCalls.push(`${name}:${channel}:${accountId}:${senderId}`);
+          if (name === "throwing") {
+            throw new Error("membership failed");
+          }
+          return name === "external" && accountId === "default";
+        };
+        const isSenderAllowed = (senderId, allowFrom) => allowFrom.includes(senderId);
+        const matches = await resolveAccessGroupAllowFromMatches({
+          cfg,
+          allowFrom: [
+            "accessGroup:admins",
+            " accessGroup:external ",
+            "accessGroup:missing",
+            "accessGroup:throwing",
+            "accessGroup:admins"
+          ],
+          channel: "telegram",
+          accountId: "default",
+          senderId: "tg-admin",
+          isSenderAllowed,
+          resolveMembership
+        });
+        const expanded = await expandAllowFromWithAccessGroups({
+          cfg,
+          allowFrom: ["accessGroup:admins", "other", "other"],
+          channel: "telegram",
+          accountId: "default",
+          senderId: "tg-admin",
+          isSenderAllowed,
+          resolveMembership
+        });
+        const unmatched = await expandAllowFromWithAccessGroups({
+          cfg,
+          allowFrom: ["accessGroup:external", "accessGroup:throwing"],
+          channel: "telegram",
+          accountId: "secondary",
+          senderId: "nobody",
+          isSenderAllowed,
+          resolveMembership
+        });
+        return {
+          prefix: ACCESS_GROUP_ALLOW_FROM_PREFIX,
+          parsed: [
+            parseAccessGroupAllowFromEntry(" accessGroup: admins "),
+            parseAccessGroupAllowFromEntry("plain-user"),
+            parseAccessGroupAllowFromEntry("accessGroup: ")
+          ],
+          matches,
+          resolverCalls,
+          expanded,
+          unmatched,
+          exportTypes: [
+            typeof resolveAccessGroupAllowFromMatches,
+            typeof expandAllowFromWithAccessGroups,
+            typeof genericSdk.expandAllowFromWithAccessGroups
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-access-groups-plugin",
+                    "name": "Runtime Access Groups Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-access-groups-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.access_groups"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.access_groups"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefix": "accessGroup:",
+        "parsed": ["admins", None, None],
+        "matches": ["accessGroup:admins", "accessGroup:external"],
+        "resolverCalls": [
+            "external:telegram:default:tg-admin",
+            "throwing:telegram:default:tg-admin",
+            "external:telegram:secondary:nobody",
+            "throwing:telegram:secondary:nobody",
+        ],
+        "expanded": ["accessGroup:admins", "other", "tg-admin"],
+        "unmatched": ["accessGroup:external", "accessGroup:throwing"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
