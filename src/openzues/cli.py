@@ -17972,6 +17972,7 @@ _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
 _OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "tools": "tool",
+    "externalAuthProviders": "external-auth-provider",
     "speechProviders": "speech",
     "realtimeTranscriptionProviders": "realtime-transcription",
     "realtimeVoiceProviders": "realtime-voice",

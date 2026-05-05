@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.1% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5526,10 +5526,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
   migration provider contract pytest, adjacent plugin manifest inventory proof,
   `ruff check`, and `mypy`; checkpointed in `17e62174`.
-- Next repo-wide queue head: continue plugin manifest/runtime contract breadth
-  with `contracts.externalAuthProviders`, or rotate to packaging/companion/
-  provider/canvas breadth if a stronger source-backed seam is selected after
-  the next discovery pass.
+- Closed the manifest external auth provider contract seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/manifest-registry.ts`,
+  `src/plugins/providers.ts`, and `src/plugins/provider-runtime.ts`: manifest
+  `contracts.externalAuthProviders` entries now survive native `plugins list
+  --json` projection and emit `external-auth-provider:<id>` capability strings.
+  Repo-wide parity is now estimated at ~60.1%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  external auth provider contract pytest, adjacent plugin manifest inventory
+  proof, `ruff check`, and `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: rotate to packaging distribution inventory
+  validity, Telegram audio/voice routing, canvas shortcode normalization, or
+  companion remote-bin discovery based on the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
