@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.5% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~68.6% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11396,6 +11396,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `38f27358`.
+- Feishu/Lark edit message actions now mirror the text/card edit branch of
+  OpenClaw `extensions/feishu/src/channel.ts` and
+  `extensions/feishu/src/send.ts`: native `message.action` dispatch for
+  `channel="feishu"` or `channel="lark"`, `action="edit"` requires upstream
+  message-id aliases, enforces exactly one of `text` / `message` or `card`,
+  PATCHes Feishu `im/v1/messages/{messageId}` with route-backed bearer auth,
+  and returns OpenClaw-shaped `{ok, channel, action, messageId, contentType}`
+  results. This closes `OZ-PROV-001BZ`; repo-wide parity is now estimated at
+  ~68.6%. The next Feishu message-action seam is `pin`.
+- Verified the Feishu/Lark edit action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_feishu_edit_route -q`
+  (`1 passed`), adjacent Feishu provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "feishu"` (`6 passed, 347
+  deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `2203efa7`.
 
 ## References
 

@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~68.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~68.6% overall, with a reasonable
   band of ~50-69%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6426,8 +6426,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~68.5%. Verified with focused runtime
   pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
   source/test checkpointed in `38f27358`.
+- Closed the Feishu/Lark edit message action seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native OpenZues `message.action` dispatch now supports `channel="feishu"`
+  or `channel="lark"`, `action="edit"`, accepts upstream message-id aliases,
+  enforces exactly one of text/message or card content, PATCHes
+  `im/v1/messages/{messageId}` with route-backed bearer auth, and projects
+  OpenClaw-shaped `{ok, channel, action, messageId, contentType}` results.
+  Repo-wide parity is now estimated at ~68.6%. Verified with focused runtime
+  pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `2203efa7`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, continuing Feishu/Lark `edit` action breadth
+  send/poll/replay metadata gap, continuing Feishu/Lark `pin` action breadth
   from `extensions/feishu/src/channel.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
