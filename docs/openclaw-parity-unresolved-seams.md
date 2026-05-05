@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~68.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~68.2% overall, with a reasonable
   band of ~50-69%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6384,9 +6384,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   results. Repo-wide parity is now estimated at ~68.1%. Verified with focused
   runtime pytest, adjacent Teams action/provider proof, `ruff check`, and
   `mypy`; source/test checkpointed in `30fbcc69`.
+- Closed the Twitch send message action seam from OpenClaw
+  `extensions/twitch/src/actions.ts`, `extensions/twitch/src/outbound.ts`,
+  and `extensions/twitch/src/actions.test.ts`: native OpenZues
+  `message.action` dispatch now supports `channel="twitch"`,
+  `action="send"`, accepts required `message` plus optional `to` scalar
+  params, falls back to the route default channel, reuses the native
+  route-backed Twitch chat sender and markdown stripping path, and projects
+  OpenClaw-shaped `{ok, channel, messageId, timestamp}` results. Repo-wide
+  parity is now estimated at ~68.2%. Verified with focused runtime pytest,
+  adjacent Twitch provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `9baee646`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Twitch `message.action send`
-  from `extensions/twitch/src/actions.ts`.
+  send/poll/replay metadata gap, starting with Feishu/Lark message-action
+  contract breadth from `extensions/feishu/src/message-action-contract.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

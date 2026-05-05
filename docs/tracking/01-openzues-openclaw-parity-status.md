@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~68.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~68.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -182,6 +182,12 @@ may lag behind this tracker.
   normalization, markdown stripping, media URL text fallback, native Twitch
   chat delivery, and result metadata.
   - Status: checkpointed in `6185301b`
+
+- [x] Twitch send message action support, preserving OpenClaw required
+  message/optional target handling, default route channel fallback,
+  route-backed chat sender reuse, markdown stripping, and
+  `{channel,messageId,timestamp}` result projection.
+  - Status: checkpointed in `9baee646`
 
 - [x] Signal native reaction action support, preserving OpenClaw JSON-RPC
   `sendReaction` payloads, direct/group target normalization, target-author
