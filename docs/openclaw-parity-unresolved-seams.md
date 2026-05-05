@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~74.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~75.0% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -7016,9 +7016,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   through `tools.invoke`. Repo-wide parity is now estimated at ~74.9%.
   Verified with focused channel-reply-options pytest, adjacent plugin invoke
   proof, `ruff check`, and `mypy`; source/test checkpointed in `61357e44`.
+- Closed the imported OpenClaw plugin SDK channel-reply-pipeline seam from
+  `src/plugin-sdk/channel-reply-pipeline.ts`,
+  `src/auto-reply/reply/source-reply-delivery-mode.ts`,
+  `src/channels/reply-prefix.ts`, and `src/channels/typing.ts`: native runtime
+  entries can now import `createChannelReplyPipeline`,
+  `createReplyPrefixContext`, `createReplyPrefixOptions`,
+  `createTypingCallbacks`, and `resolveChannelSourceReplyDeliveryMode`,
+  preserving pipeline assembly, provided-vs-constructed typing callbacks,
+  transform-payload passthrough, source reply delivery-mode resolution for
+  requested/native/group/channel/direct/default visible replies, message-tool
+  availability fallback, and generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~75.0%. Verified with
+  focused channel-reply-pipeline pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `f9f1bf6a`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-reply-options-runtime/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-reply-options-runtime/channel-reply-pipeline/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
