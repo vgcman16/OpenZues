@@ -6319,6 +6319,147 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_dedupe_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-dedupe-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDedupeCache,
+  resolveGlobalDedupeCache
+} = require("openclaw/plugin-sdk/dedupe-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.dedupe",
+      description: "Use OpenClaw dedupe-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const blank = createDedupeCache({ ttlMs: 1000, maxSize: 10 });
+        const zeroTtl = createDedupeCache({ ttlMs: 0, maxSize: 10 });
+        const negativeTtl = createDedupeCache({ ttlMs: -100, maxSize: 10 });
+        const touched = createDedupeCache({ ttlMs: 10000, maxSize: 2 });
+        const floored = createDedupeCache({ ttlMs: 1000, maxSize: 0.9 });
+        const reset = createDedupeCache({ ttlMs: 1000, maxSize: 10 });
+        const globalKey = Symbol.for("openzues.test.dedupe.runtime");
+        const globalA = resolveGlobalDedupeCache(globalKey, { ttlMs: 1000, maxSize: 2 });
+        const globalB = resolveGlobalDedupeCache(globalKey, { ttlMs: 1000, maxSize: 2 });
+
+        const blankResults = [
+          blank.check("", 100),
+          blank.check(undefined, 100),
+          blank.peek(null, 100),
+          blank.size()
+        ];
+        const ttlResults = [
+          zeroTtl.check("a", 100),
+          zeroTtl.check("a", 10000),
+          negativeTtl.check("b", 100),
+          negativeTtl.peek("b", 10000)
+        ];
+        const touchResults = [
+          touched.check("a", 100),
+          touched.check("b", 200),
+          touched.check("a", 300),
+          touched.check("c", 400),
+          touched.peek("a", 500),
+          touched.peek("b", 500),
+          touched.peek("c", 500)
+        ];
+        const floorResults = [
+          floored.check("a", 100),
+          floored.size(),
+          floored.peek("a", 200)
+        ];
+        reset.check("a", 100);
+        reset.check("b", 200);
+        reset.delete("a");
+        const deleteSize = reset.size();
+        reset.clear();
+        globalA.clear();
+        const globalResults = [
+          globalA.check("g", 100),
+          globalB.peek("g", 200),
+          globalA === globalB
+        ];
+
+        return {
+          blankResults,
+          ttlResults,
+          touchResults,
+          floorResults,
+          deleteSize,
+          clearedSize: reset.size(),
+          globalResults
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-dedupe-plugin",
+                    "name": "Runtime Dedupe Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-dedupe-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.dedupe"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.dedupe"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "blankResults": [False, False, False, 0],
+        "ttlResults": [False, True, False, True],
+        "touchResults": [False, False, True, False, True, False, True],
+        "floorResults": [False, 0, False],
+        "deleteSize": 1,
+        "clearedSize": 0,
+        "globalResults": [False, True, True],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:

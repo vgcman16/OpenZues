@@ -18143,6 +18143,92 @@ function pruneMapToMaxSize(map, maxSize) {
   }
 }
 
+function resolveGlobalSingleton(key, create) {
+  const globalStore = globalThis;
+  if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
+    return globalStore[key];
+  }
+  const created = create();
+  globalStore[key] = created;
+  return created;
+}
+
+function createDedupeCache(options) {
+  const ttlMs = Math.max(0, options.ttlMs);
+  const maxSize = Math.max(0, Math.floor(options.maxSize));
+  const cache = new Map();
+
+  const touch = (key, now) => {
+    cache.delete(key);
+    cache.set(key, now);
+  };
+
+  const prune = (now) => {
+    const cutoff = ttlMs > 0 ? now - ttlMs : undefined;
+    if (cutoff !== undefined) {
+      for (const [entryKey, entryTs] of cache) {
+        if (entryTs < cutoff) {
+          cache.delete(entryKey);
+        }
+      }
+    }
+    if (maxSize <= 0) {
+      cache.clear();
+      return;
+    }
+    pruneMapToMaxSize(cache, maxSize);
+  };
+
+  const hasUnexpired = (key, now, touchOnRead) => {
+    const existing = cache.get(key);
+    if (existing === undefined) {
+      return false;
+    }
+    if (ttlMs > 0 && now - existing >= ttlMs) {
+      cache.delete(key);
+      return false;
+    }
+    if (touchOnRead) {
+      touch(key, now);
+    }
+    return true;
+  };
+
+  return {
+    check: (key, now = Date.now()) => {
+      if (!key) {
+        return false;
+      }
+      if (hasUnexpired(key, now, true)) {
+        return true;
+      }
+      touch(key, now);
+      prune(now);
+      return false;
+    },
+    peek: (key, now = Date.now()) => {
+      if (!key) {
+        return false;
+      }
+      return hasUnexpired(key, now, false);
+    },
+    delete: (key) => {
+      if (!key) {
+        return;
+      }
+      cache.delete(key);
+    },
+    clear: () => {
+      cache.clear();
+    },
+    size: () => cache.size,
+  };
+}
+
+function resolveGlobalDedupeCache(key, options) {
+  return resolveGlobalSingleton(key, () => createDedupeCache(options));
+}
+
 function createAsyncLock() {
   let lock = Promise.resolve();
   return async function withLock(fn) {
@@ -21201,6 +21287,11 @@ const collectionRuntime = {
   pruneMapToMaxSize,
 };
 
+const dedupeRuntime = {
+  createDedupeCache,
+  resolveGlobalDedupeCache,
+};
+
 const asyncLockRuntime = {
   createAsyncLock,
 };
@@ -21454,6 +21545,7 @@ const genericSdk = new Proxy(
     createAccountListHelpers,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createDedupeCache,
     createAsyncLock,
     createAsyncComputedAccountStatusAdapter,
     createComputedAccountStatusAdapter,
@@ -21554,6 +21646,7 @@ const genericSdk = new Proxy(
     resolveAccountWithDefaultFallback,
     resolveConfiguredFromCredentialStatuses,
     resolveConfiguredFromRequiredCredentialStatuses,
+    resolveGlobalDedupeCache,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -21669,6 +21762,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/collection-runtime"
   ) {
     return collectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/dedupe-runtime" ||
+    request === "@openclaw/plugin-sdk/dedupe-runtime"
+  ) {
+    return dedupeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/async-lock-runtime" ||
