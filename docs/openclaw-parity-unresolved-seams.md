@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~75.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~75.3% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -7054,9 +7054,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~75.2%. Verified with focused channel-inbound pytest,
   adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
   checkpointed in `aa9825e0`.
+- Closed the imported OpenClaw plugin SDK channel-route seam from
+  `src/plugin-sdk/channel-route.ts`: native runtime entries can now import
+  route normalization, target/thread accessors, dedupe/compact/deprecated key
+  aliases, exact route matching, conversation-sharing comparisons, injected
+  explicit-target parsing, numeric thread id stringification, and account
+  normalization while preserving generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~75.3%. Verified with
+  focused channel-route pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `0f67c4a0`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
