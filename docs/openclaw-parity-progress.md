@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~68.0% overall, with a reasonable band of ~50-69%.
+- Estimated repo-wide parity: ~68.1% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11312,6 +11312,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`15 passed, 332 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `86be3a2c`.
+- Microsoft Teams adaptive-card send actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/channel.actions.test.ts`: native `message.action`
+  dispatch for `channel="msteams"`, `action="send"` with a `card` payload
+  resolves Teams conversation targets, posts an Adaptive Card activity through
+  the route-backed Bot Framework service URL, and returns OpenClaw-shaped
+  `{ok, channel, messageId, conversationId}` results. This closes
+  `OZ-PROV-001BU`; repo-wide parity is now estimated at ~68.1%. The next
+  provider action seam is Twitch `message.action send`.
+- Verified the Microsoft Teams adaptive-card send action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_send_card_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams and message_action"`
+  (`16 passed, 332 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `30fbcc69`.
 
 ## References
 
