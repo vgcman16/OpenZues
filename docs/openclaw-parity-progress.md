@@ -3,11 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~71.8% overall, with a reasonable band of ~50-70%.
+- Estimated repo-wide parity: ~73.2% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin number-runtime, secure-random-runtime, collection-runtime, async-lock-runtime, transport-ready-runtime, plus target-resolver-runtime helper slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
@@ -127,6 +127,54 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Imported OpenClaw plugin runtime entries now get a native
   `openclaw/plugin-sdk/boolean-param` shim for OpenClaw's loose boolean tool
   parameter reader.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/channel-actions` shim for common action gates,
+  parameter readers, reaction id fallback, result/schema helpers, timestamp
+  normalization, media URL guards, poll selection limits, and available-tag
+  parsing.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/status-helpers` shim for channel/account status summary
+  defaults, runtime snapshots, token/webhook summaries, issue collection, and
+  match metadata helpers.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/channel-status` shim for credential snapshot field
+  projection, configured-status resolution, the pairing-approved message, and
+  channel status helper reexports.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/text-chunking` shim for outbound text chunking that
+  prefers newline boundaries, then spaces, then hard limits.
+- Imported OpenClaw plugin runtime entries now get native
+  `openclaw/plugin-sdk/string-normalization-runtime` helpers, plus
+  `text-runtime` reexports, for string list normalization and channel slug
+  normalization.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/dangerous-name-runtime` shim for provider/account
+  break-glass dangerous-name matching flag resolution.
+- Imported OpenClaw plugin runtime entries now get native
+  `openclaw/plugin-sdk/channel-logging` helpers for inbound-drop, typing, and
+  ack-cleanup failure logging, with the same helpers available through generic
+  `channel-feedback`/`channel-inbound` SDK fallbacks.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/time-runtime` shim for timezone validation plus UTC and
+  zoned timestamp formatting.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/number-runtime` shim for `parseFiniteNumber`
+  coercion of finite numbers and `parseFloat`-style numeric strings.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/secure-random-runtime` shim for base64url secure token
+  generation and UUID generation.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/collection-runtime` shim for bounded map-cache pruning
+  that removes oldest entries first and clears non-positive limits.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/async-lock-runtime` shim for serializing async critical
+  sections and releasing the lock after rejections.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/transport-ready-runtime` shim for success polling,
+  timeout logging, abort return, and not-ready error projection.
+- Imported OpenClaw plugin runtime entries now get a native
+  `openclaw/plugin-sdk/target-resolver-runtime` shim for unresolved-target
+  rows and token-trimmed resolver mapping.
 - Plugin manifest provider metadata now preserves OpenClaw provider endpoint
   suffix/Vertex fields plus provider-scoped `modelIdNormalization` and
   `providerRequest` contracts in `plugins list --json` and persisted registry
@@ -2185,7 +2233,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
 - Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/direct-media/read-media/post-media/local-media-root/audio-as-voice/media-max/capabilities/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; broader Feishu inbound receiver/audio transcription and other provider edge cases remain open.
-- Remote marketplace clone/update breadth and deeper runtime plugin activation/import execution breadth beyond the verified CommonJS/ESM invoke bridge, request-time tool factory context, text-runtime string helper shim, error-runtime helper shim, temp-path helper shim, secret-input helper shim, routing/session helper shim, reply-chunking helper shim, reply-payload helper shim, account-helper shim, account-core/account-resolution shims, tool-payload shim, and boolean-param shim, especially broader plugin SDK helper/runtime surfaces.
+- Remote marketplace clone/update breadth and deeper runtime plugin activation/import execution breadth beyond the verified CommonJS/ESM invoke bridge, request-time tool factory context, text-runtime string helper shim, string-normalization helper shim, dangerous-name helper shim, channel-logging helper shim, time-runtime helper shim, error-runtime helper shim, temp-path helper shim, secret-input helper shim, routing/session helper shim, reply-chunking helper shim, text-chunking helper shim, reply-payload helper shim, account-helper shim, account-core/account-resolution shims, tool-payload shim, boolean-param shim, channel-actions shim, status-helpers shim, and channel-status shim, especially broader plugin SDK helper/runtime surfaces.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
 
@@ -11986,6 +12034,235 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`23 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Checkpointed in `65bd842f`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/channel-actions` helpers from
+  `src/plugin-sdk/channel-actions.ts`,
+  `src/agents/tools/common.ts`,
+  `src/channels/plugins/actions/shared.ts`,
+  `src/channels/plugins/actions/reaction-message-id.ts`,
+  `src/agents/date-time.ts`, `src/agents/sandbox-paths.ts`,
+  `src/polls.ts`, and `src/agents/schema/typebox.ts`: common channel action
+  gates, parameter readers, reaction id fallback, JSON result/schema helpers,
+  timestamp normalization, data-URL media guards, poll selection limits, and
+  available-tag parsing are available through the native SDK alias shim and
+  generic SDK proxy. This closes `OZ-PLUGIN-001SH`; repo-wide parity is now
+  estimated at ~71.9%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the channel-actions shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_actions_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or plugin_executor"`
+  (`24 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `447d15ff`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/status-helpers` helpers from
+  `src/plugin-sdk/status-helpers.ts` and
+  `src/channels/plugins/status-issues/shared.ts`: channel/account status
+  summary defaults, runtime snapshots, computed account adapters,
+  token/webhook summaries, dependent-credential issue collection, runtime
+  error issue collection, enabled-account issue filtering, and match metadata
+  helpers are available through the native SDK alias shim and generic SDK
+  proxy. This closes `OZ-PLUGIN-001SI`; repo-wide parity is now estimated at
+  ~72.0%. The next plugin/runtime seam remains broader SDK helper/runtime
+  surface breadth.
+- Verified the status-helpers shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_status_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`25 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `41323ea2`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/channel-status` helpers from
+  `src/plugin-sdk/channel-status.ts`,
+  `src/channels/account-snapshot-fields.ts`, and
+  `src/channels/plugins/pairing-message.ts`: credential snapshot projection,
+  configured-status resolution from credential statuses, required credential
+  status resolution, the pairing-approved message, and channel status helper
+  reexports are available through the native SDK alias shim and generic SDK
+  proxy. This closes `OZ-PLUGIN-001SJ`; repo-wide parity is now estimated at
+  ~72.1%. The next plugin/runtime seam remains broader SDK helper/runtime
+  surface breadth.
+- Verified the channel-status shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_status_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`26 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `14ff20a1`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/text-chunking` helpers from
+  `src/plugin-sdk/text-chunking.ts` and `src/shared/text-chunking.ts`:
+  `chunkTextForOutbound` now preserves upstream empty-input behavior,
+  newline/space boundary preference, hard-limit fallback, and non-positive
+  limit behavior through the native SDK alias shim and generic SDK proxy. This
+  closes `OZ-PLUGIN-001SK`; repo-wide parity is now estimated at ~72.2%. The
+  next plugin/runtime seam remains broader SDK helper/runtime surface breadth.
+- Verified the text-chunking shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_text_chunking_helper -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`27 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `20267310`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/string-normalization-runtime` helpers from
+  `src/plugin-sdk/string-normalization-runtime.ts` and
+  `src/shared/string-normalization.ts`: list normalization, lowercase list
+  normalization, hyphen slug normalization, at/hash slug normalization, and
+  `openclaw/plugin-sdk/text-runtime` reexports are available through the native
+  SDK alias shim and generic SDK proxy. This closes `OZ-PLUGIN-001SL`;
+  repo-wide parity is now estimated at ~72.3%. The next plugin/runtime seam
+  remains broader SDK helper/runtime surface breadth.
+- Verified the string-normalization shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_string_normalization_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`28 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `06cd452d`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/dangerous-name-runtime` helpers from
+  `src/plugin-sdk/dangerous-name-runtime.ts` and
+  `src/config/dangerous-name-matching.ts`: `isDangerousNameMatchingEnabled`
+  and `resolveDangerousNameMatchingEnabled` now preserve provider defaults and
+  account-level boolean overrides through the native SDK alias shim and generic
+  SDK proxy. This closes `OZ-PLUGIN-001SM`; repo-wide parity is now estimated
+  at ~72.4%. The next plugin/runtime seam remains broader SDK helper/runtime
+  surface breadth.
+- Verified the dangerous-name shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_dangerous_name_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`29 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `01473fb4`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/channel-logging` helpers from
+  `src/plugin-sdk/channel-logging.ts` and `src/channels/logging.ts`:
+  `logInboundDrop`, `logTypingFailure`, and `logAckFailure` preserve upstream
+  log message formatting through the native SDK alias shim and generic SDK
+  proxy, including generic reexports for `channel-feedback` and
+  `channel-inbound` imports. This closes `OZ-PLUGIN-001SN`; repo-wide parity
+  is now estimated at ~72.5%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the channel-logging shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_logging_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`30 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `c42b0d77`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/time-runtime` helpers from
+  `src/plugin-sdk/time-runtime.ts` and
+  `src/infra/format-time/format-datetime.ts`: timezone validation,
+  `formatUtcTimestamp`, and `formatZonedTimestamp` now preserve upstream UTC,
+  seconds-display, invalid-timezone, and `Intl.DateTimeFormat` behavior through
+  the native SDK alias shim and generic SDK proxy. This closes
+  `OZ-PLUGIN-001SO`; repo-wide parity is now estimated at ~72.6%. The next
+  plugin/runtime seam remains broader SDK helper/runtime surface breadth.
+- Verified the time-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_time_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`31 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `eb944ee1`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/number-runtime` helpers from
+  `src/plugin-sdk/number-runtime.ts` and
+  `src/infra/parse-finite-number.ts`: `parseFiniteNumber` now preserves
+  upstream finite-number, `parseFloat` string, blank, invalid, `NaN`,
+  infinity, and non-string rejection behavior through the native SDK alias shim
+  and generic SDK proxy. This closes `OZ-PLUGIN-001SP`; repo-wide parity is now
+  estimated at ~72.7%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the number-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_number_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`32 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `7e272081`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/secure-random-runtime` helpers from
+  `src/plugin-sdk/secure-random-runtime.ts` and `src/infra/secure-random.ts`:
+  `generateSecureToken` and `generateSecureUuid` now preserve upstream
+  base64url token, default/custom/zero-byte token, and UUID behavior through
+  the native SDK alias shim and generic SDK proxy. This closes
+  `OZ-PLUGIN-001SQ`; repo-wide parity is now estimated at ~72.8%. The next
+  plugin/runtime seam remains broader SDK helper/runtime surface breadth.
+- Verified the secure-random-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_secure_random_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`33 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `78d458e7`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/collection-runtime` helpers from
+  `src/plugin-sdk/collection-runtime.ts` and `src/infra/map-size.ts`:
+  `pruneMapToMaxSize` now preserves upstream floor, non-positive clear,
+  oldest-entry deletion, and undersized-map behavior through the native SDK
+  alias shim and generic SDK proxy. This closes `OZ-PLUGIN-001SR`; repo-wide
+  parity is now estimated at ~72.9%. The next plugin/runtime seam remains
+  broader SDK helper/runtime surface breadth.
+- Verified the collection-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_collection_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_collection_runtime_helpers or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`34 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `624e55e4`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/async-lock-runtime` helpers from
+  `src/plugin-sdk/async-lock-runtime.ts` and `src/infra/json-files.ts`:
+  `createAsyncLock` now preserves upstream queued execution, rejection
+  release, and later-caller progression behavior through the native SDK alias
+  shim and generic SDK proxy. This closes `OZ-PLUGIN-001SS`; repo-wide parity
+  is now estimated at ~73.0%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the async-lock-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_async_lock_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_async_lock_runtime_helpers or imported_openclaw_collection_runtime_helpers or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`35 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `9cc677fe`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/transport-ready-runtime` helpers from
+  `src/plugin-sdk/transport-ready-runtime.ts` and
+  `src/infra/transport-ready.ts`: `waitForTransportReady` now preserves
+  upstream immediate success, timeout logging/error, abort return, and polling
+  interval floor behavior through the native SDK alias shim and generic SDK
+  proxy. This closes `OZ-PLUGIN-001ST`; repo-wide parity is now estimated at
+  ~73.1%. The next plugin/runtime seam remains broader SDK helper/runtime
+  surface breadth.
+- Verified the transport-ready-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_transport_ready_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_transport_ready_runtime_helpers or imported_openclaw_async_lock_runtime_helpers or imported_openclaw_collection_runtime_helpers or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`36 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `dc7e76c6`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/target-resolver-runtime` helpers from
+  `src/plugin-sdk/target-resolver-runtime.ts` and
+  `src/channels/plugins/target-resolvers.ts`: unresolved target rows and
+  optional-token resolution now preserve upstream missing-token, token trim,
+  resolver invocation, and mapped-result behavior through the native SDK alias
+  shim and generic SDK proxy. This closes `OZ-PLUGIN-001SU`; repo-wide parity
+  is now estimated at ~73.2%. The next plugin/runtime seam remains broader SDK
+  helper/runtime surface breadth.
+- Verified the target-resolver-runtime shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_target_resolver_runtime_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_target_resolver_runtime_helpers or imported_openclaw_transport_ready_runtime_helpers or imported_openclaw_async_lock_runtime_helpers or imported_openclaw_collection_runtime_helpers or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`37 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Checkpointed in `4ea6901b`.
 
 ## References
 

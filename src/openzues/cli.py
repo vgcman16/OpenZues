@@ -18072,8 +18072,296 @@ function normalizeStringifiedOptionalString(value) {
   return undefined;
 }
 
+function parseFiniteNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function generateSecureUuid() {
+  return crypto.randomUUID();
+}
+
+function generateSecureToken(bytes = 16) {
+  return crypto.randomBytes(bytes).toString("base64url");
+}
+
+function pruneMapToMaxSize(map, maxSize) {
+  const limit = Math.max(0, Math.floor(maxSize));
+  if (limit <= 0) {
+    map.clear();
+    return;
+  }
+  while (map.size > limit) {
+    const oldest = map.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    map.delete(oldest.value);
+  }
+}
+
+function createAsyncLock() {
+  let lock = Promise.resolve();
+  return async function withLock(fn) {
+    const prev = lock;
+    let release;
+    lock = new Promise((resolve) => {
+      release = resolve;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      if (release) {
+        release();
+      }
+    }
+  };
+}
+
+function sleepWithAbort(ms, signal) {
+  if (signal && signal.aborted) {
+    return Promise.reject(new Error("aborted"));
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      reject(new Error("aborted"));
+    }
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
+async function waitForTransportReady(params) {
+  const started = Date.now();
+  const timeoutMs = Math.max(0, params.timeoutMs);
+  const deadline = started + timeoutMs;
+  const logAfterMs = Math.max(0, params.logAfterMs ?? timeoutMs);
+  const logIntervalMs = Math.max(1000, params.logIntervalMs ?? 30000);
+  const pollIntervalMs = Math.max(50, params.pollIntervalMs ?? 150);
+  let nextLogAt = started + logAfterMs;
+  let lastError = null;
+
+  while (true) {
+    if (params.abortSignal && params.abortSignal.aborted) {
+      return;
+    }
+    const res = await params.check();
+    if (res && res.ok) {
+      return;
+    }
+    lastError = res && res.error != null ? res.error : null;
+
+    const now = Date.now();
+    if (now >= deadline) {
+      break;
+    }
+    if (now >= nextLogAt) {
+      const elapsedMs = now - started;
+      const message = `${params.label} not ready after ${elapsedMs}ms (${
+        lastError ?? "unknown error"
+      })`;
+      if (params.runtime && typeof params.runtime.error === "function") {
+        params.runtime.error(message);
+      }
+      nextLogAt = now + logIntervalMs;
+    }
+
+    try {
+      await sleepWithAbort(pollIntervalMs, params.abortSignal);
+    } catch (error) {
+      if (params.abortSignal && params.abortSignal.aborted) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  const message = `${params.label} not ready after ${timeoutMs}ms (${
+    lastError ?? "unknown error"
+  })`;
+  if (params.runtime && typeof params.runtime.error === "function") {
+    params.runtime.error(message);
+  }
+  throw new Error(`${params.label} not ready (${lastError ?? "unknown error"})`);
+}
+
+function buildUnresolvedTargetResults(inputs, note) {
+  return (Array.isArray(inputs) ? inputs : []).map((input) => ({
+    input,
+    resolved: false,
+    note,
+  }));
+}
+
+async function resolveTargetsWithOptionalToken(params) {
+  const token =
+    typeof params.token === "string" && params.token.trim() ? params.token.trim() : undefined;
+  if (!token) {
+    return buildUnresolvedTargetResults(params.inputs, params.missingTokenNote);
+  }
+  const resolved = await params.resolveWithToken({
+    token,
+    inputs: params.inputs,
+  });
+  return resolved.map(params.mapResolved);
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
+}
+
+function normalizeStringEntries(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((entry) => normalizeOptionalString(String(entry)) || "")
+    .filter(Boolean);
+}
+
+function normalizeStringEntriesLower(list) {
+  return normalizeStringEntries(list).map(
+    (entry) => normalizeOptionalLowercaseString(entry) || "",
+  );
+}
+
+function normalizeSlugInput(raw) {
+  return (normalizeOptionalLowercaseString(raw) || "").normalize("NFC");
+}
+
+function normalizeHyphenSlug(raw) {
+  const trimmed = normalizeSlugInput(raw);
+  if (!trimmed) {
+    return "";
+  }
+  const dashed = trimmed.replace(/\s+/g, "-");
+  const cleaned = dashed.replace(/[^\p{L}\p{M}\p{N}#@._+-]+/gu, "-");
+  return cleaned.replace(/-{2,}/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+}
+
+function normalizeAtHashSlug(raw) {
+  const trimmed = normalizeSlugInput(raw);
+  if (!trimmed) {
+    return "";
+  }
+  const withoutPrefix = trimmed.replace(/^[@#]+/, "");
+  const dashed = withoutPrefix.replace(/[\s_]+/g, "-");
+  const cleaned = dashed.replace(/[^\p{L}\p{M}\p{N}-]+/gu, "-");
+  return cleaned.replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function isDangerousNameMatchingEnabled(config) {
+  return Boolean(config && config.dangerouslyAllowNameMatching === true);
+}
+
+function resolveDangerousNameMatchingEnabled(input) {
+  const accountConfig = input && input.accountConfig;
+  if (
+    accountConfig &&
+    typeof accountConfig.dangerouslyAllowNameMatching === "boolean"
+  ) {
+    return accountConfig.dangerouslyAllowNameMatching;
+  }
+  return isDangerousNameMatchingEnabled(input && input.providerConfig);
+}
+
+function logInboundDrop(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  params.log(`${params.channel}: drop ${params.reason}${target}`);
+}
+
+function logTypingFailure(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  const action = params && params.action ? ` action=${params.action}` : "";
+  params.log(`${params.channel} typing${action} failed${target}: ${String(params.error)}`);
+}
+
+function logAckFailure(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  params.log(`${params.channel} ack cleanup failed${target}: ${String(params.error)}`);
+}
+
+function resolveTimezone(value) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return value;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function formatUtcTimestamp(date, options) {
+  const yyyy = String(date.getUTCFullYear()).padStart(4, "0");
+  const mm = pad2(date.getUTCMonth() + 1);
+  const dd = pad2(date.getUTCDate());
+  const hh = pad2(date.getUTCHours());
+  const min = pad2(date.getUTCMinutes());
+  if (!(options && options.displaySeconds)) {
+    return `${yyyy}-${mm}-${dd}T${hh}:${min}Z`;
+  }
+  const sec = pad2(date.getUTCSeconds());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}Z`;
+}
+
+function formatZonedTimestamp(date, options) {
+  try {
+    const intlOptions = {
+      timeZone: options && options.timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "short",
+    };
+    if (options && options.displaySeconds) {
+      intlOptions.second = "2-digit";
+    }
+    const parts = new Intl.DateTimeFormat("en-US", intlOptions).formatToParts(date);
+    const pick = (type) => {
+      const part = parts.find((entry) => entry.type === type);
+      return part && part.value;
+    };
+    const yyyy = pick("year");
+    const mm = pick("month");
+    const dd = pick("day");
+    const hh = pick("hour");
+    const min = pick("minute");
+    const sec = options && options.displaySeconds ? pick("second") : undefined;
+    const tzPart = [...parts].reverse().find((entry) => entry.type === "timeZoneName");
+    const tz = tzPart && tzPart.value ? tzPart.value.trim() : undefined;
+    if (!yyyy || !mm || !dd || !hh || !min) {
+      return undefined;
+    }
+    if (options && options.displaySeconds && sec) {
+      return `${yyyy}-${mm}-${dd} ${hh}:${min}:${sec}${tz ? ` ${tz}` : ""}`;
+    }
+    return `${yyyy}-${mm}-${dd} ${hh}:${min}${tz ? ` ${tz}` : ""}`;
+  } catch (_error) {
+    return undefined;
+  }
 }
 
 function lowercasePreservingWhitespace(value) {
@@ -19062,6 +19350,686 @@ function readBooleanParam(params, key) {
   return undefined;
 }
 
+class ToolInputError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ToolInputError";
+    this.status = 400;
+  }
+}
+
+class ToolAuthorizationError extends ToolInputError {
+  constructor(message) {
+    super(message);
+    this.name = "ToolAuthorizationError";
+    this.status = 403;
+  }
+}
+
+function toSnakeCaseKey(key) {
+  return lowercasePreservingWhitespace(
+    String(key || "")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2"),
+  );
+}
+
+function resolveSnakeCaseParamKey(params, key) {
+  if (params && Object.prototype.hasOwnProperty.call(params, key)) {
+    return key;
+  }
+  const snakeKey = toSnakeCaseKey(key);
+  if (
+    snakeKey !== key &&
+    params &&
+    Object.prototype.hasOwnProperty.call(params, snakeKey)
+  ) {
+    return snakeKey;
+  }
+  return undefined;
+}
+
+function readSnakeCaseParamRaw(params, key) {
+  const resolvedKey = resolveSnakeCaseParamKey(params, key);
+  return resolvedKey ? params[resolvedKey] : undefined;
+}
+
+function readStringParam(params, key, options = {}) {
+  const required = options.required === true;
+  const trim = options.trim !== false;
+  const label = options.label || key;
+  const allowEmpty = options.allowEmpty === true;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (typeof raw !== "string") {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  const value = trim ? raw.trim() : raw;
+  if (!value && !allowEmpty) {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  return value;
+}
+
+function readStringOrNumberParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return String(raw);
+  }
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    if (value) {
+      return value;
+    }
+  }
+  if (required) {
+    throw new ToolInputError(`${label} required`);
+  }
+  return undefined;
+}
+
+function readNumberParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const integer = options.integer === true;
+  const strict = options.strict === true;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  let value;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    value = raw;
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed) {
+      const parsed = strict ? Number(trimmed) : Number.parseFloat(trimmed);
+      if (Number.isFinite(parsed)) {
+        value = parsed;
+      }
+    }
+  }
+  if (value === undefined) {
+    if (required) {
+      throw new ToolInputError(`${label} required`);
+    }
+    return undefined;
+  }
+  return integer ? Math.trunc(value) : value;
+}
+
+function readStringArrayParam(params, key, options = {}) {
+  const required = options.required === true;
+  const label = options.label || key;
+  const raw = readSnakeCaseParamRaw(params || {}, key);
+  if (Array.isArray(raw)) {
+    const values = raw
+      .filter((entry) => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (values.length === 0) {
+      if (required) {
+        throw new ToolInputError(`${label} required`);
+      }
+      return undefined;
+    }
+    return values;
+  }
+  if (typeof raw === "string") {
+    const value = raw.trim();
+    if (!value) {
+      if (required) {
+        throw new ToolInputError(`${label} required`);
+      }
+      return undefined;
+    }
+    return [value];
+  }
+  if (required) {
+    throw new ToolInputError(`${label} required`);
+  }
+  return undefined;
+}
+
+function readReactionParams(params, options) {
+  const emojiKey = (options && options.emojiKey) || "emoji";
+  const removeKey = (options && options.removeKey) || "remove";
+  const remove = typeof params[removeKey] === "boolean" ? params[removeKey] : false;
+  const emoji = readStringParam(params, emojiKey, { required: true, allowEmpty: true });
+  if (remove && !emoji) {
+    throw new ToolInputError(options.removeErrorMessage);
+  }
+  return { emoji, remove, isEmpty: !emoji };
+}
+
+function createActionGate(actions) {
+  return (key, defaultValue = true) => {
+    const value = actions && actions[key];
+    if (value === undefined) {
+      return defaultValue;
+    }
+    return value !== false;
+  };
+}
+
+function createUnionActionGate(accounts, createGate) {
+  const gates = (Array.isArray(accounts) ? accounts : []).map((account) => createGate(account));
+  return (key, defaultValue = true) => gates.some((gate) => gate(key, defaultValue));
+}
+
+function listTokenSourcedAccounts(accounts) {
+  return (Array.isArray(accounts) ? accounts : []).filter(
+    (account) => account && account.tokenSource !== "none",
+  );
+}
+
+function resolveReactionMessageId(params) {
+  return (
+    readStringOrNumberParam((params && params.args) || {}, "messageId") ||
+    (params && params.toolContext && params.toolContext.currentMessageId)
+  );
+}
+
+function stringifyToolPayload(payload) {
+  if (typeof payload === "string") {
+    return payload;
+  }
+  try {
+    const encoded = JSON.stringify(payload, null, 2);
+    if (typeof encoded === "string") {
+      return encoded;
+    }
+  } catch (_error) {
+    // Fall through to String for non-serializable values.
+  }
+  return String(payload);
+}
+
+function textResult(text, details) {
+  return { content: [{ type: "text", text }], details };
+}
+
+function jsonResult(payload) {
+  return textResult(JSON.stringify(payload, null, 2), payload);
+}
+
+function parseAvailableTags(raw) {
+  if (raw === undefined || raw === null || !Array.isArray(raw)) {
+    return undefined;
+  }
+  const result = raw
+    .filter((tag) => tag && typeof tag === "object" && typeof tag.name === "string")
+    .map((tag) => ({
+      ...(typeof tag.id === "string" ? { id: tag.id } : {}),
+      name: tag.name,
+      ...(typeof tag.moderated === "boolean" ? { moderated: tag.moderated } : {}),
+      ...(tag.emoji_id === null || typeof tag.emoji_id === "string"
+        ? { emoji_id: tag.emoji_id }
+        : {}),
+      ...(tag.emoji_name === null || typeof tag.emoji_name === "string"
+        ? { emoji_name: tag.emoji_name }
+        : {}),
+    }));
+  return result.length ? result : undefined;
+}
+
+function normalizeTimestamp(raw) {
+  if (raw == null) {
+    return undefined;
+  }
+  let timestampMs;
+  if (raw instanceof Date) {
+    timestampMs = raw.getTime();
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    timestampMs = raw < 1000000000000 ? Math.round(raw * 1000) : Math.round(raw);
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (Number.isFinite(num)) {
+        if (trimmed.includes(".")) {
+          timestampMs = Math.round(num * 1000);
+        } else if (trimmed.length >= 13) {
+          timestampMs = Math.round(num);
+        } else {
+          timestampMs = Math.round(num * 1000);
+        }
+      }
+    } else {
+      const parsed = Date.parse(trimmed);
+      if (!Number.isNaN(parsed)) {
+        timestampMs = parsed;
+      }
+    }
+  }
+  if (timestampMs === undefined || !Number.isFinite(timestampMs)) {
+    return undefined;
+  }
+  return { timestampMs, timestampUtc: new Date(timestampMs).toISOString() };
+}
+
+function withNormalizedTimestamp(value, rawTimestamp) {
+  const normalized = normalizeTimestamp(rawTimestamp);
+  if (!normalized) {
+    return value;
+  }
+  return {
+    ...value,
+    timestampMs:
+      typeof value.timestampMs === "number" && Number.isFinite(value.timestampMs)
+        ? value.timestampMs
+        : normalized.timestampMs,
+    timestampUtc:
+      typeof value.timestampUtc === "string" && value.timestampUtc.trim()
+        ? value.timestampUtc
+        : normalized.timestampUtc,
+  };
+}
+
+function assertMediaNotDataUrl(media) {
+  const raw = String(media || "").trim();
+  if (/^data:/i.test(raw)) {
+    throw new Error("data: URLs are not supported for media. Use buffer instead.");
+  }
+}
+
+function resolvePollMaxSelections(optionCount, allowMultiselect) {
+  return allowMultiselect ? Math.max(2, optionCount) : 1;
+}
+
+function enumValuesFrom(values) {
+  if (Array.isArray(values)) {
+    return values;
+  }
+  if (values && typeof values === "object") {
+    return Object.values(values).filter((value) => typeof value === "string");
+  }
+  return [];
+}
+
+function stringEnum(values, options = {}) {
+  const enumValues = enumValuesFrom(values);
+  return {
+    type: "string",
+    ...(enumValues.length > 0 ? { enum: [...enumValues] } : {}),
+    ...options,
+  };
+}
+
+function optionalStringEnum(values, options = {}) {
+  return stringEnum(values, options);
+}
+
+function createMessageToolButtonsSchema() {
+  return {
+    type: "array",
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          text: { type: "string" },
+          callback_data: { type: "string" },
+          style: stringEnum(["danger", "success", "primary"]),
+        },
+        required: ["text", "callback_data"],
+      },
+    },
+    description: "Button rows for channels that support button-style actions.",
+  };
+}
+
+function createMessageToolCardSchema() {
+  return {
+    type: "object",
+    additionalProperties: true,
+    description: "Structured card payload for channels that support card-style messages.",
+  };
+}
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asString(value) {
+  return typeof value === "string" ? normalizeOptionalString(value) : undefined;
+}
+
+function formatMatchMetadata(params) {
+  const matchKey =
+    typeof (params && params.matchKey) === "string"
+      ? params.matchKey
+      : typeof (params && params.matchKey) === "number"
+        ? String(params.matchKey)
+        : undefined;
+  const matchSource = asString(params && params.matchSource);
+  const parts = [
+    matchKey ? `matchKey=${matchKey}` : null,
+    matchSource ? `matchSource=${matchSource}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function appendMatchMetadata(message, params) {
+  const meta = formatMatchMetadata(params || {});
+  return meta ? `${message} (${meta})` : message;
+}
+
+function resolveEnabledConfiguredAccountId(account) {
+  const accountId = asString(account && account.accountId) || "default";
+  const enabled = !account || account.enabled !== false;
+  const configured = Boolean(account && account.configured === true);
+  return enabled && configured ? accountId : null;
+}
+
+function collectIssuesForEnabledAccounts(params) {
+  const issues = [];
+  for (const entry of (params && params.accounts) || []) {
+    const account = params.readAccount(entry);
+    if (!account || account.enabled === false) {
+      continue;
+    }
+    const accountId = asString(account.accountId) || DEFAULT_ACCOUNT_ID;
+    params.collectIssues({ account, accountId, issues });
+  }
+  return issues;
+}
+
+function createDefaultChannelRuntimeState(accountId, extra) {
+  return {
+    accountId,
+    running: false,
+    lastStartAt: null,
+    lastStopAt: null,
+    lastError: null,
+    ...(extra || {}),
+  };
+}
+
+function buildBaseChannelStatusSummary(snapshot, extra) {
+  return {
+    configured: (snapshot && snapshot.configured) ?? false,
+    ...(extra || {}),
+    running: (snapshot && snapshot.running) ?? false,
+    lastStartAt: (snapshot && snapshot.lastStartAt) ?? null,
+    lastStopAt: (snapshot && snapshot.lastStopAt) ?? null,
+    lastError: (snapshot && snapshot.lastError) ?? null,
+  };
+}
+
+function buildProbeChannelStatusSummary(snapshot, extra) {
+  return {
+    ...buildBaseChannelStatusSummary(snapshot || {}, extra),
+    probe: snapshot && snapshot.probe,
+    lastProbeAt: (snapshot && snapshot.lastProbeAt) ?? null,
+  };
+}
+
+function buildWebhookChannelStatusSummary(snapshot, extra) {
+  return buildBaseChannelStatusSummary(snapshot || {}, {
+    mode: (snapshot && snapshot.mode) || "webhook",
+    ...(extra || {}),
+  });
+}
+
+function buildRuntimeAccountStatusSnapshot(params, extra) {
+  const runtime = params && params.runtime;
+  const probe = params && params.probe;
+  return {
+    running: (runtime && runtime.running) ?? false,
+    lastStartAt: (runtime && runtime.lastStartAt) ?? null,
+    lastStopAt: (runtime && runtime.lastStopAt) ?? null,
+    lastError: (runtime && runtime.lastError) ?? null,
+    probe,
+    ...(runtime && typeof runtime.connected === "boolean" ? { connected: runtime.connected } : {}),
+    ...(runtime && typeof runtime.restartPending === "boolean"
+      ? { restartPending: runtime.restartPending }
+      : {}),
+    ...(runtime && typeof runtime.reconnectAttempts === "number"
+      ? { reconnectAttempts: runtime.reconnectAttempts }
+      : {}),
+    ...(runtime && typeof runtime.lastConnectedAt === "number"
+      ? { lastConnectedAt: runtime.lastConnectedAt }
+      : {}),
+    ...(runtime && runtime.lastDisconnect ? { lastDisconnect: runtime.lastDisconnect } : {}),
+    ...(runtime && typeof runtime.lastEventAt === "number"
+      ? { lastEventAt: runtime.lastEventAt }
+      : {}),
+    ...(runtime && typeof runtime.lastTransportActivityAt === "number"
+      ? { lastTransportActivityAt: runtime.lastTransportActivityAt }
+      : {}),
+    ...(runtime && typeof runtime.healthState === "string"
+      ? { healthState: runtime.healthState }
+      : {}),
+    ...(extra || {}),
+  };
+}
+
+function buildBaseAccountStatusSnapshot(params, extra) {
+  const account = (params && params.account) || {};
+  const runtime = params && params.runtime;
+  return {
+    accountId: account.accountId,
+    name: account.name,
+    enabled: account.enabled,
+    configured: account.configured,
+    ...buildRuntimeAccountStatusSnapshot({
+      runtime,
+      probe: params && params.probe,
+    }),
+    lastInboundAt: (runtime && runtime.lastInboundAt) ?? null,
+    lastOutboundAt: (runtime && runtime.lastOutboundAt) ?? null,
+    ...(extra || {}),
+  };
+}
+
+function buildComputedAccountStatusSnapshot(params, extra) {
+  return buildBaseAccountStatusSnapshot(
+    {
+      account: {
+        accountId: params && params.accountId,
+        name: params && params.name,
+        enabled: params && params.enabled,
+        configured: params && params.configured,
+      },
+      runtime: params && params.runtime,
+      probe: params && params.probe,
+    },
+    extra,
+  );
+}
+
+function buildComputedAccountStatusAdapterBase(options) {
+  return {
+    defaultRuntime: options.defaultRuntime,
+    buildChannelSummary: options.buildChannelSummary,
+    probeAccount: options.probeAccount,
+    formatCapabilitiesProbe: options.formatCapabilitiesProbe,
+    auditAccount: options.auditAccount,
+    buildCapabilitiesDiagnostics: options.buildCapabilitiesDiagnostics,
+    logSelfId: options.logSelfId,
+    resolveAccountState: options.resolveAccountState,
+    collectStatusIssues: options.collectStatusIssues,
+  };
+}
+
+function createComputedAccountStatusAdapter(options) {
+  return {
+    ...buildComputedAccountStatusAdapterBase(options),
+    buildAccountSnapshot: (params) => {
+      const resolved = options.resolveAccountSnapshot(params);
+      const { extra, ...snapshot } = resolved;
+      return buildComputedAccountStatusSnapshot(
+        {
+          ...snapshot,
+          runtime: params.runtime,
+          probe: params.probe,
+        },
+        extra,
+      );
+    },
+  };
+}
+
+function createAsyncComputedAccountStatusAdapter(options) {
+  return {
+    ...buildComputedAccountStatusAdapterBase(options),
+    buildAccountSnapshot: async (params) => {
+      const resolved = await options.resolveAccountSnapshot(params);
+      const { extra, ...snapshot } = resolved;
+      return buildComputedAccountStatusSnapshot(
+        {
+          ...snapshot,
+          runtime: params.runtime,
+          probe: params.probe,
+        },
+        extra,
+      );
+    },
+  };
+}
+
+function buildTokenChannelStatusSummary(snapshot, opts) {
+  const base = {
+    ...buildBaseChannelStatusSummary(snapshot || {}),
+    tokenSource: (snapshot && snapshot.tokenSource) || "none",
+    probe: snapshot && snapshot.probe,
+    lastProbeAt: (snapshot && snapshot.lastProbeAt) ?? null,
+  };
+  if (opts && opts.includeMode === false) {
+    return base;
+  }
+  return {
+    ...base,
+    mode: (snapshot && snapshot.mode) ?? null,
+  };
+}
+
+function createDependentCredentialStatusIssueCollector(options) {
+  const isDependencyConfigured =
+    options.isDependencyConfigured ||
+    ((value) => {
+      const normalized = typeof value === "string" ? normalizeOptionalString(value) : undefined;
+      return Boolean(normalized && normalized !== "none");
+    });
+  return (accounts) =>
+    (Array.isArray(accounts) ? accounts : []).flatMap((account) => {
+      if (account.configured !== false) {
+        return [];
+      }
+      return [
+        {
+          channel: options.channel,
+          accountId: account.accountId ?? "",
+          kind: "config",
+          message: isDependencyConfigured(account[options.dependencySourceKey])
+            ? options.missingDependentMessage
+            : options.missingPrimaryMessage,
+        },
+      ];
+    });
+}
+
+function collectStatusIssuesFromLastError(channel, accounts) {
+  return (Array.isArray(accounts) ? accounts : []).flatMap((account) => {
+    const lastError = typeof account.lastError === "string" ? account.lastError.trim() : "";
+    if (!lastError) {
+      return [];
+    }
+    return [
+      {
+        channel,
+        accountId: account.accountId,
+        kind: "runtime",
+        message: `Channel error: ${lastError}`,
+      },
+    ];
+  });
+}
+
+const PAIRING_APPROVED_MESSAGE =
+  "\u2705 OpenClaw access approved. Send a message to start chatting.";
+const CREDENTIAL_STATUS_KEYS = [
+  "tokenStatus",
+  "botTokenStatus",
+  "appTokenStatus",
+  "signingSecretStatus",
+  "userTokenStatus",
+];
+
+function readCredentialStatus(record, key) {
+  const value = record && record[key];
+  return value === "available" || value === "configured_unavailable" || value === "missing"
+    ? value
+    : undefined;
+}
+
+function projectCredentialSnapshotFields(account) {
+  const record = isRecord(account) ? account : null;
+  if (!record) {
+    return {};
+  }
+  const result = {};
+  for (const key of ["tokenSource", "botTokenSource", "appTokenSource", "signingSecretSource"]) {
+    const value = normalizeOptionalString(record[key]);
+    if (value) {
+      result[key] = value;
+    }
+  }
+  for (const key of CREDENTIAL_STATUS_KEYS) {
+    const status = readCredentialStatus(record, key);
+    if (status) {
+      result[key] = status;
+    }
+  }
+  return result;
+}
+
+function resolveConfiguredFromCredentialStatuses(account) {
+  const record = isRecord(account) ? account : null;
+  if (!record) {
+    return undefined;
+  }
+  let sawCredentialStatus = false;
+  for (const key of CREDENTIAL_STATUS_KEYS) {
+    const status = readCredentialStatus(record, key);
+    if (!status) {
+      continue;
+    }
+    sawCredentialStatus = true;
+    if (status !== "missing") {
+      return true;
+    }
+  }
+  return sawCredentialStatus ? false : undefined;
+}
+
+function resolveConfiguredFromRequiredCredentialStatuses(account, requiredKeys) {
+  const record = isRecord(account) ? account : null;
+  if (!record || !Array.isArray(requiredKeys)) {
+    return undefined;
+  }
+  let sawCredentialStatus = false;
+  for (const key of requiredKeys) {
+    const status = readCredentialStatus(record, key);
+    if (!status) {
+      continue;
+    }
+    sawCredentialStatus = true;
+    if (status === "missing") {
+      return false;
+    }
+  }
+  return sawCredentialStatus ? true : undefined;
+}
+
 function isToolPayloadTextBlock(block) {
   return (
     Boolean(block) &&
@@ -19478,6 +20446,14 @@ function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
     chunks.push(remaining);
   }
   return chunks;
+}
+
+function chunkTextForOutbound(text, limit) {
+  return chunkTextByBreakResolver(text, limit, (window) => {
+    const lastNewline = window.lastIndexOf("\n");
+    const lastSpace = window.lastIndexOf(" ");
+    return lastNewline > 0 ? lastNewline : lastSpace;
+  });
 }
 
 function scanParenAwareBreakpoints(text, start, end) {
@@ -20015,12 +20991,66 @@ const textRuntime = {
   hasNonEmptyString,
   localeLowercasePreservingWhitespace,
   lowercasePreservingWhitespace,
+  normalizeAtHashSlug,
+  normalizeHyphenSlug,
   normalizeLowercaseStringOrEmpty,
   normalizeNullableString,
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
+  normalizeStringEntries,
+  normalizeStringEntriesLower,
   normalizeStringifiedOptionalString,
   readStringValue,
+};
+
+const stringNormalizationRuntime = {
+  normalizeAtHashSlug,
+  normalizeHyphenSlug,
+  normalizeStringEntries,
+  normalizeStringEntriesLower,
+};
+
+const dangerousNameRuntime = {
+  isDangerousNameMatchingEnabled,
+  resolveDangerousNameMatchingEnabled,
+};
+
+const channelLoggingRuntime = {
+  logAckFailure,
+  logInboundDrop,
+  logTypingFailure,
+};
+
+const timeRuntime = {
+  formatUtcTimestamp,
+  formatZonedTimestamp,
+  resolveTimezone,
+};
+
+const numberRuntime = {
+  parseFiniteNumber,
+};
+
+const secureRandomRuntime = {
+  generateSecureToken,
+  generateSecureUuid,
+};
+
+const collectionRuntime = {
+  pruneMapToMaxSize,
+};
+
+const asyncLockRuntime = {
+  createAsyncLock,
+};
+
+const transportReadyRuntime = {
+  waitForTransportReady,
+};
+
+const targetResolverRuntime = {
+  buildUnresolvedTargetResults,
+  resolveTargetsWithOptionalToken,
 };
 
 const errorRuntime = {
@@ -20129,6 +21159,64 @@ const booleanParamRuntime = {
   readBooleanParam,
 };
 
+const channelActionsRuntime = {
+  ToolAuthorizationError,
+  assertMediaNotDataUrl,
+  createActionGate,
+  createMessageToolButtonsSchema,
+  createMessageToolCardSchema,
+  createUnionActionGate,
+  jsonResult,
+  listTokenSourcedAccounts,
+  optionalStringEnum,
+  parseAvailableTags,
+  readNumberParam,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+  resolvePollMaxSelections,
+  resolveReactionMessageId,
+  stringEnum,
+  stringifyToolPayload,
+  textResult,
+  withNormalizedTimestamp,
+};
+
+const statusHelpersRuntime = {
+  appendMatchMetadata,
+  asString,
+  buildBaseAccountStatusSnapshot,
+  buildBaseChannelStatusSummary,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  buildRuntimeAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  buildWebhookChannelStatusSummary,
+  collectIssuesForEnabledAccounts,
+  collectStatusIssuesFromLastError,
+  createAsyncComputedAccountStatusAdapter,
+  createComputedAccountStatusAdapter,
+  createDefaultChannelRuntimeState,
+  createDependentCredentialStatusIssueCollector,
+  formatMatchMetadata,
+  isRecord,
+  resolveEnabledConfiguredAccountId,
+};
+
+const channelStatusRuntime = {
+  PAIRING_APPROVED_MESSAGE,
+  buildBaseChannelStatusSummary,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  buildTokenChannelStatusSummary,
+  collectStatusIssuesFromLastError,
+  createDefaultChannelRuntimeState,
+  projectCredentialSnapshotFields,
+  resolveConfiguredFromCredentialStatuses,
+  resolveConfiguredFromRequiredCredentialStatuses,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -20138,6 +21226,10 @@ const replyChunkingRuntime = {
   isSilentReplyText,
   resolveChunkMode,
   resolveTextChunkLimit,
+};
+
+const textChunkingRuntime = {
+  chunkTextForOutbound,
 };
 
 const replyPayloadRuntime = {
@@ -20169,22 +21261,45 @@ const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
     DEFAULT_MAIN_KEY,
+    PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
+    appendMatchMetadata,
+    asString,
     buildRandomTempFilePath,
     buildAgentMainSessionKey,
     buildAgentSessionKey,
+    buildBaseAccountStatusSnapshot,
+    buildBaseChannelStatusSummary,
+    buildComputedAccountStatusSnapshot,
     buildGroupHistoryKey,
     buildMediaPayload,
     buildOutboundBaseSessionKey,
+    buildUnresolvedTargetResults,
+    buildProbeChannelStatusSummary,
+    buildRuntimeAccountStatusSnapshot,
+    buildTokenChannelStatusSummary,
+    buildWebhookChannelStatusSummary,
     coerceSecretRef,
     collectErrorGraphCandidates,
+    collectIssuesForEnabledAccounts,
+    collectStatusIssuesFromLastError,
     countOutboundMedia,
     createAccountActionGate,
+    createActionGate,
     createAccountListHelpers,
+    createMessageToolButtonsSchema,
+    createMessageToolCardSchema,
+    createAsyncLock,
+    createAsyncComputedAccountStatusAdapter,
+    createComputedAccountStatusAdapter,
+    createDefaultChannelRuntimeState,
+    createDependentCredentialStatusIssueCollector,
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
+    createUnionActionGate,
     chunkMarkdownTextWithMode,
     chunkText,
+    chunkTextForOutbound,
     chunkTextWithMode,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
@@ -20193,11 +21308,16 @@ const genericSdk = new Proxy(
     deriveLastRoutePolicy,
     extractErrorCode,
     extractToolPayload,
+    formatUtcTimestamp,
+    formatZonedTimestamp,
+    formatMatchMetadata,
     formatTextWithAttachmentLinks,
     formatSetExplicitDefaultInstruction,
     formatSetExplicitDefaultToConfiguredInstruction,
     formatErrorMessage,
     formatUncaughtError,
+    generateSecureToken,
+    generateSecureUuid,
     getSubagentDepth,
     hasNonEmptyString,
     hasConfiguredSecretInput,
@@ -20206,7 +21326,9 @@ const genericSdk = new Proxy(
     hasOutboundText,
     isAcpSessionKey,
     isCronSessionKey,
+    isDangerousNameMatchingEnabled,
     isNumericTargetId,
+    isRecord,
     isReasoningReplyPayload,
     isSilentReplyPayloadText,
     isSilentReplyText,
@@ -20215,13 +21337,19 @@ const genericSdk = new Proxy(
     listBoundAccountIds,
     listCombinedAccountIds,
     listConfiguredAccountIds,
+    listTokenSourcedAccounts,
     localeLowercasePreservingWhitespace,
+    logAckFailure,
+    logInboundDrop,
+    logTypingFailure,
     lowercasePreservingWhitespace,
     mergeAccountConfig,
+    normalizeAtHashSlug,
     normalizeAccountId,
     normalizeAgentId,
     normalizeChatType,
     normalizeE164,
+    normalizeHyphenSlug,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
     normalizeMessageChannel,
@@ -20233,19 +21361,32 @@ const genericSdk = new Proxy(
     normalizeResolvedSecretInputString,
     normalizeSecretInput,
     normalizeSecretInputString,
+    normalizeStringEntries,
+    normalizeStringEntriesLower,
     normalizeStringifiedOptionalString,
     normalizeOutboundReplyPayload,
     parseAgentSessionKey,
     parseEnvTemplateSecretRef,
+    parseFiniteNumber,
     parseLegacySecretRefEnvMarker,
     parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
     pathExists,
+    pruneMapToMaxSize,
+    parseAvailableTags,
+    projectCredentialSnapshotFields,
     readBooleanParam,
     readErrorName,
+    readNumberParam,
+    readReactionParams,
     readStringValue,
+    readStringArrayParam,
+    readStringOrNumberParam,
+    readStringParam,
     resolveAccountEntry,
     resolveAccountWithDefaultFallback,
+    resolveConfiguredFromCredentialStatuses,
+    resolveConfiguredFromRequiredCredentialStatuses,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -20253,16 +21394,22 @@ const genericSdk = new Proxy(
     resolveChunkMode,
     resolveAgentRoute,
     resolveDefaultAgentBoundAccountId,
+    resolveDangerousNameMatchingEnabled,
+    resolveEnabledConfiguredAccountId,
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
     resolveOutboundMediaUrls,
     resolvePayloadMediaUrls,
     resolvePreferredOpenClawTmpDir,
+    resolvePollMaxSelections,
+    resolveReactionMessageId,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
     resolveTextChunkLimit,
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
+    resolveTimezone,
+    resolveTargetsWithOptionalToken,
     resolveUserPath,
     sanitizeTempFileName,
     sanitizeAgentId,
@@ -20272,8 +21419,14 @@ const genericSdk = new Proxy(
     sendPayloadMediaSequenceOrFallback,
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
+    stringEnum,
+    stringifyToolPayload,
     stripPlainTextToolCallBlocks,
+    textResult,
+    ToolAuthorizationError,
+    waitForTransportReady,
     withTempDownloadPath,
+    withNormalizedTimestamp,
   },
   {
     get(target, prop) {
@@ -20301,6 +21454,66 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/error-runtime"
   ) {
     return errorRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/string-normalization-runtime" ||
+    request === "@openclaw/plugin-sdk/string-normalization-runtime"
+  ) {
+    return stringNormalizationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/dangerous-name-runtime" ||
+    request === "@openclaw/plugin-sdk/dangerous-name-runtime"
+  ) {
+    return dangerousNameRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-logging" ||
+    request === "@openclaw/plugin-sdk/channel-logging"
+  ) {
+    return channelLoggingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/time-runtime" ||
+    request === "@openclaw/plugin-sdk/time-runtime"
+  ) {
+    return timeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/number-runtime" ||
+    request === "@openclaw/plugin-sdk/number-runtime"
+  ) {
+    return numberRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secure-random-runtime" ||
+    request === "@openclaw/plugin-sdk/secure-random-runtime"
+  ) {
+    return secureRandomRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/collection-runtime" ||
+    request === "@openclaw/plugin-sdk/collection-runtime"
+  ) {
+    return collectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/async-lock-runtime" ||
+    request === "@openclaw/plugin-sdk/async-lock-runtime"
+  ) {
+    return asyncLockRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/transport-ready-runtime" ||
+    request === "@openclaw/plugin-sdk/transport-ready-runtime"
+  ) {
+    return transportReadyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/target-resolver-runtime" ||
+    request === "@openclaw/plugin-sdk/target-resolver-runtime"
+  ) {
+    return targetResolverRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
@@ -20353,10 +21566,34 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return booleanParamRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/channel-actions" ||
+    request === "@openclaw/plugin-sdk/channel-actions"
+  ) {
+    return channelActionsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/status-helpers" ||
+    request === "@openclaw/plugin-sdk/status-helpers"
+  ) {
+    return statusHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-status" ||
+    request === "@openclaw/plugin-sdk/channel-status"
+  ) {
+    return channelStatusRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
     request === "@openclaw/plugin-sdk/reply-chunking"
   ) {
     return replyChunkingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/text-chunking" ||
+    request === "@openclaw/plugin-sdk/text-chunking"
+  ) {
+    return textChunkingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-payload" ||

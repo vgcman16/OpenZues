@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~73.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -199,6 +199,66 @@ may lag behind this tracker.
 - [x] Imported plugin SDK boolean-param shim for loose boolean tool parameter
   reading.
   - Status: checkpointed in `65bd842f`
+
+- [x] Imported plugin SDK channel-actions shim for action gates, parameter
+  readers, reaction id fallback, result/schema helpers, timestamp
+  normalization, media guards, poll selection limits, and available-tag
+  parsing.
+  - Status: checkpointed in `447d15ff`
+
+- [x] Imported plugin SDK status-helper shim for channel/account status summary
+  defaults, runtime snapshots, token/webhook summaries, issue collection, and
+  match metadata helpers.
+  - Status: checkpointed in `41323ea2`
+
+- [x] Imported plugin SDK channel-status shim for credential snapshot field
+  projection, configured-status resolution, pairing-approved message, and
+  channel status helper reexports.
+  - Status: checkpointed in `14ff20a1`
+
+- [x] Imported plugin SDK text-chunking shim for outbound text chunking with
+  newline/space boundary preference and hard-limit fallback.
+  - Status: checkpointed in `20267310`
+
+- [x] Imported plugin SDK string-normalization shim for string list
+  normalization, slug normalization, and `text-runtime` reexports.
+  - Status: checkpointed in `06cd452d`
+
+- [x] Imported plugin SDK dangerous-name shim for provider/account
+  break-glass dangerous-name matching flag resolution.
+  - Status: checkpointed in `01473fb4`
+
+- [x] Imported plugin SDK channel-logging shim for inbound-drop, typing
+  failure, and ack-cleanup failure log message formatting.
+  - Status: checkpointed in `c42b0d77`
+
+- [x] Imported plugin SDK time-runtime shim for timezone validation plus UTC
+  and zoned timestamp formatting.
+  - Status: checkpointed in `eb944ee1`
+
+- [x] Imported plugin SDK number-runtime shim for `parseFiniteNumber`
+  coercion of finite numbers and `parseFloat`-style numeric strings.
+  - Status: checkpointed in `7e272081`
+
+- [x] Imported plugin SDK secure-random-runtime shim for base64url secure token
+  generation and UUID generation.
+  - Status: checkpointed in `78d458e7`
+
+- [x] Imported plugin SDK collection-runtime shim for bounded map-cache
+  pruning.
+  - Status: checkpointed in `624e55e4`
+
+- [x] Imported plugin SDK async-lock-runtime shim for serializing async
+  critical sections and releasing the lock after rejections.
+  - Status: checkpointed in `9cc677fe`
+
+- [x] Imported plugin SDK transport-ready-runtime shim for success polling,
+  timeout logging/error, abort return, and polling interval floor behavior.
+  - Status: checkpointed in `dc7e76c6`
+
+- [x] Imported plugin SDK target-resolver-runtime shim for unresolved-target
+  row projection and token-trimmed resolver mapping.
+  - Status: checkpointed in `4ea6901b`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1175,9 +1235,110 @@ may lag behind this tracker.
     reply-payload helper shim checkpointed in `5d628f16`, account-helper
     shim checkpointed in `6d2cf33b`, account-core/account-resolution shim
     checkpointed in `47fa2f39`, tool-payload shim checkpointed in
-    `387717ed`, and boolean-param shim checkpointed in `65bd842f`, but
-    broader plugin SDK helper/runtime surface breadth remains.
+    `387717ed`, boolean-param shim checkpointed in `65bd842f`,
+    channel-actions shim checkpointed in `447d15ff`, status-helper shim
+    checkpointed in `41323ea2`, channel-status shim checkpointed in
+    `14ff20a1`, text-chunking shim checkpointed in `20267310`,
+    string-normalization shim checkpointed in `06cd452d`, dangerous-name shim
+    checkpointed in `01473fb4`, channel-logging shim checkpointed in
+    `c42b0d77`, and time-runtime shim checkpointed in `eb944ee1`, but broader
+    plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK time-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/time-runtime.ts` and
+    `openclaw-main/src/infra/format-time/format-datetime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `eb944ee1`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused time-runtime proof (`1 passed`),
+    adjacent plugin invoke proof (`31 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK channel-logging shim.
+  - Source: `openclaw-main/src/plugin-sdk/channel-logging.ts` and
+    `openclaw-main/src/channels/logging.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `c42b0d77`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-logging proof (`1 passed`),
+    adjacent plugin invoke proof (`30 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK dangerous-name shim.
+  - Source: `openclaw-main/src/plugin-sdk/dangerous-name-runtime.ts` and
+    `openclaw-main/src/config/dangerous-name-matching.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `01473fb4`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused dangerous-name proof (`1 passed`),
+    adjacent plugin invoke proof (`29 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK string-normalization shim.
+  - Source: `openclaw-main/src/plugin-sdk/string-normalization-runtime.ts`
+    and `openclaw-main/src/shared/string-normalization.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `06cd452d`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused string-normalization proof (`1
+    passed`), adjacent plugin invoke proof (`28 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] Imported plugin SDK text-chunking shim.
+  - Source: `openclaw-main/src/plugin-sdk/text-chunking.ts` and
+    `openclaw-main/src/shared/text-chunking.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `20267310`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused text-chunking proof (`1 passed`),
+    adjacent plugin invoke proof (`27 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK channel-status shim.
+  - Source: `openclaw-main/src/plugin-sdk/channel-status.ts`,
+    `openclaw-main/src/channels/account-snapshot-fields.ts`, and
+    `openclaw-main/src/channels/plugins/pairing-message.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `14ff20a1`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-status proof (`1 passed`),
+    adjacent plugin invoke proof (`26 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK status-helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/status-helpers.ts`,
+    `openclaw-main/src/channels/plugins/status-issues/shared.ts`, and
+    `openclaw-main/src/plugin-sdk/status-helpers.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `41323ea2`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused status-helper proof (`1 passed`),
+    adjacent plugin invoke proof (`25 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] Imported plugin SDK channel-actions shim.
+  - Source: `openclaw-main/src/plugin-sdk/channel-actions.ts`,
+    `openclaw-main/src/agents/tools/common.ts`,
+    `openclaw-main/src/channels/plugins/actions/shared.ts`,
+    `openclaw-main/src/channels/plugins/actions/reaction-message-id.ts`,
+    `openclaw-main/src/agents/date-time.ts`,
+    `openclaw-main/src/agents/sandbox-paths.ts`, `openclaw-main/src/polls.ts`,
+    and `openclaw-main/src/agents/schema/typebox.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `447d15ff`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-actions proof (`1 passed`),
+    adjacent plugin invoke proof (`24 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK boolean-param shim.
   - Source: `openclaw-main/src/plugin-sdk/boolean-param.ts`
