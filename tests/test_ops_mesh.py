@@ -7834,6 +7834,26 @@ def test_notification_route_create_accepts_signal_native_route_kind() -> None:
     assert route.conversation_target.channel == "signal"
 
 
+def test_notification_route_create_accepts_irc_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="IRC Native Provider",
+        kind="irc",
+        target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="irc",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="channel:ops-room",
+        ),
+        secret_token="irc-server-password",
+    )
+
+    assert route.kind == "irc"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "irc"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -17327,6 +17347,99 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_r
         "message": "Signal **native** parity.",
         "recipient": ["+15551234567"],
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-irc"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="IRC Native Provider",
+        kind="irc",
+        target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="irc-server-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "irc",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "channel:ops-room",
+        },
+    )
+    irc_sends: list[dict[str, object]] = []
+
+    def fake_send_irc_privmsg(
+        self: OpsMeshService,
+        *,
+        host: str,
+        port: int,
+        tls: bool,
+        nick: str,
+        username: str,
+        realname: str,
+        password: str | None,
+        target: str,
+        message: str,
+    ) -> None:
+        del self
+        irc_sends.append(
+            {
+                "host": host,
+                "port": port,
+                "tls": tls,
+                "nick": nick,
+                "username": username,
+                "realname": realname,
+                "password": password,
+                "target": target,
+                "message": message,
+            }
+        )
+
+    monkeypatch.setattr(OpsMeshService, "_send_irc_privmsg", fake_send_irc_privmsg)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="irc",
+        to="irc:channel:ops-room",
+        message="IRC **native** parity.",
+        reply_to_id="abc123",
+        account_id="default",
+        idempotency_key="idem-native-irc-send",
+    )
+
+    assert result["messageId"].startswith("irc:")
+    assert result["chatId"] == "#ops-room"
+    assert result["channelId"] == "#ops-room"
+    assert irc_sends == [
+        {
+            "host": "irc.example.net",
+            "port": 6697,
+            "tls": True,
+            "nick": "openzues",
+            "username": "openzues",
+            "realname": "OpenZues",
+            "password": "irc-server-password",
+            "target": "#ops-room",
+            "message": "IRC **native** parity.\n\n[reply:abc123]",
+        }
+    ]
 
 
 @pytest.mark.asyncio

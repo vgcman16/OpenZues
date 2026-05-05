@@ -12,6 +12,8 @@ import math
 import mimetypes
 import re
 import secrets
+import socket
+import ssl
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -257,6 +259,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "synology-chat",
     "mattermost",
     "signal",
+    "irc",
     "line",
     "matrix",
 }
@@ -300,6 +303,17 @@ OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"outbound not configured for channel", re.IGNORECASE),
     re.compile(r"user .* not in room", re.IGNORECASE),
 )
+
+
+@dataclass(frozen=True)
+class _IrcRouteConfig:
+    host: str
+    port: int
+    tls: bool
+    nick: str
+    username: str
+    realname: str
+    password: str | None
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -3306,6 +3320,67 @@ def _signal_rpc_result_timestamp(result: object) -> int | None:
     return None
 
 
+def _irc_wire_value(value: str | None, label: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise RuntimeError(f"IRC {label} is required.")
+    if any(character in normalized for character in ("\r", "\n", "\x00")):
+        raise RuntimeError(f"IRC {label} cannot contain control characters.")
+    return normalized
+
+
+def _irc_normalize_target(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    if target.lower().startswith("irc:"):
+        target = target[len("irc:") :].strip()
+    lower = target.lower()
+    if lower.startswith("channel:"):
+        channel = target[len("channel:") :].strip()
+        target = channel if channel.startswith(("#", "&")) else f"#{channel}"
+    elif lower.startswith("user:"):
+        target = target[len("user:") :].strip()
+    elif lower.startswith("direct:"):
+        target = target[len("direct:") :].strip()
+    if (
+        not target
+        or ":" in target
+        or any(character.isspace() for character in target)
+        or any(ord(character) < 32 for character in target)
+    ):
+        return None
+    return target
+
+
+def _irc_route_config(target: str | None, secret_token: str | None) -> _IrcRouteConfig:
+    parsed = urlparse(str(target or "").strip())
+    scheme = parsed.scheme.lower()
+    if scheme not in {"irc", "ircs"} or not parsed.hostname:
+        raise RuntimeError("IRC route target must be an irc(s) server URL.")
+    tls = scheme == "ircs"
+    try:
+        port = parsed.port or (6697 if tls else 6667)
+    except ValueError as exc:
+        raise RuntimeError("IRC route target port is invalid.") from exc
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    nick = query.get("nick") or (unquote(parsed.username) if parsed.username else "") or "openzues"
+    username = query.get("username") or nick
+    realname = query.get("realname") or "OpenZues"
+    password = str(secret_token or "").strip() or (
+        unquote(parsed.password) if parsed.password else ""
+    )
+    return _IrcRouteConfig(
+        host=_irc_wire_value(parsed.hostname, "host"),
+        port=port,
+        tls=tls,
+        nick=_irc_wire_value(nick, "nick"),
+        username=_irc_wire_value(username, "username"),
+        realname=_irc_wire_value(realname, "realname"),
+        password=_irc_wire_value(password, "password") if password else None,
+    )
+
+
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
 
@@ -5372,6 +5447,10 @@ def _conversation_target_peer_id_matches(
         route_room_id = str(_matrix_route_match_target(route_peer_id) or "").strip().lower()
         event_room_id = str(_matrix_route_match_target(event_peer_id) or "").strip().lower()
         return bool(route_room_id and route_room_id == event_room_id)
+    if channel == "irc":
+        route_irc_target = str(_irc_normalize_target(route_peer_id) or "").strip().lower()
+        event_irc_target = str(_irc_normalize_target(event_peer_id) or "").strip().lower()
+        return bool(route_irc_target and route_irc_target == event_irc_target)
     return False
 
 
@@ -10250,6 +10329,8 @@ class OpsMeshService:
             return self._post_mattermost_provider_event
         if route_kind == "signal":
             return self._post_signal_provider_event
+        if route_kind == "irc":
+            return self._post_irc_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -18013,6 +18094,55 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _send_irc_privmsg(
+        self,
+        *,
+        host: str,
+        port: int,
+        tls: bool,
+        nick: str,
+        username: str,
+        realname: str,
+        password: str | None,
+        target: str,
+        message: str,
+    ) -> None:
+        del self
+        safe_host = _irc_wire_value(host, "host")
+        safe_nick = _irc_wire_value(nick, "nick")
+        safe_username = _irc_wire_value(username, "username")
+        safe_realname = _irc_wire_value(realname, "realname")
+        safe_target = _irc_wire_value(target, "target")
+        safe_message = str(message or "").strip()
+        if not safe_message:
+            raise RuntimeError("Message must be non-empty for IRC sends.")
+        if "\x00" in safe_message:
+            raise RuntimeError("IRC message cannot contain null characters.")
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def send_session(connection: socket.socket) -> None:
+            if password:
+                send_line(connection, f"PASS {_irc_wire_value(password, 'password')}")
+            send_line(connection, f"NICK {safe_nick}")
+            send_line(connection, f"USER {safe_username} 0 * :{safe_realname}")
+            for line in safe_message.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                send_line(connection, f"PRIVMSG {safe_target} :{line}")
+            send_line(connection, "QUIT :OpenZues delivery complete")
+
+        try:
+            with socket.create_connection((safe_host, port), timeout=15.0) as raw_socket:
+                raw_socket.settimeout(15.0)
+                if tls:
+                    context = ssl.create_default_context()
+                    with context.wrap_socket(raw_socket, server_hostname=safe_host) as tls_socket:
+                        send_session(tls_socket)
+                else:
+                    send_session(raw_socket)
+        except OSError as exc:
+            raise RuntimeError(f"IRC provider request failed: {exc}") from exc
+
     def _request_json_provider_url(
         self,
         target: str,
@@ -20206,6 +20336,63 @@ class OpsMeshService:
         }
         if timestamp is not None:
             native_result["timestamp"] = timestamp
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_irc_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("IRC native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target = _irc_normalize_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if target is None:
+            raise RuntimeError("IRC route is missing a valid channel or user target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = "\n".join(part for part in message_parts if part).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for IRC sends.")
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            message = f"{message}\n\n[reply:{reply_to_id}]"
+        config = _irc_route_config(str(route.get("target") or ""), secret_token)
+        self._send_irc_privmsg(
+            host=config.host,
+            port=config.port,
+            tls=config.tls,
+            nick=config.nick,
+            username=config.username,
+            realname=config.realname,
+            password=config.password,
+            target=target,
+            message=message,
+        )
+        message_id = f"irc:{uuid.uuid4().hex}"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": target,
+            "channelId": target,
+        }
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result

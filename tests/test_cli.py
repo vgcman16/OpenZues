@@ -19797,6 +19797,60 @@ def test_routes_create_command_accepts_signal_native_route(
     assert routes[0]["conversation_target"]["channel"] == "signal"
 
 
+def test_routes_create_command_accepts_irc_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "IRC Native Gateway",
+            "--kind",
+            "irc",
+            "--target",
+            "ircs://irc.example.net:6697?nick=openzues&username=openzues",
+            "--conversation-channel",
+            "irc",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "channel:ops-room",
+            "--secret-token",
+            "irc-server-password",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "IRC Native Gateway"
+    assert payload["kind"] == "irc"
+    assert payload["target"] == "ircs://irc.example.net:6697?nick=openzues&username=openzues"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "irc"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "channel:ops-room"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "irc"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "irc"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

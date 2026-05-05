@@ -231,6 +231,12 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "media": True,
         "polls": False,
     },
+    "irc": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "media": False,
+        "polls": False,
+    },
     "zalo": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7387,6 +7393,7 @@ _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "matrix",
     "mattermost",
     "nextcloud-talk",
+    "irc",
     "signal",
     "slack",
     "synology-chat",
@@ -29296,7 +29303,7 @@ def routes_create_command(
         "--kind",
         help=(
             "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
-            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, line, "
+            "googlechat, nextcloud-talk, synology-chat, mattermost, signal, irc, line, "
             "or matrix."
         ),
     ),
@@ -29362,13 +29369,14 @@ def routes_create_command(
         "synology-chat",
         "mattermost",
         "signal",
+        "irc",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
             "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
-            "signal, line, matrix."
+            "signal, irc, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29387,6 +29395,7 @@ def routes_create_command(
                 "synology-chat",
                 "mattermost",
                 "signal",
+                "irc",
                 "line",
                 "matrix",
             }
@@ -29408,6 +29417,7 @@ def routes_create_command(
                 "synology-chat",
                 "mattermost",
                 "signal",
+                "irc",
                 "line",
                 "matrix",
             ],

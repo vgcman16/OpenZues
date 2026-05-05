@@ -64,6 +64,11 @@ _CHANNEL_META = (
         "detailLabel": "Signal",
     },
     {
+        "id": "irc",
+        "label": "IRC",
+        "detailLabel": "IRC",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",
