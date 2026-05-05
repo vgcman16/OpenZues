@@ -24633,6 +24633,192 @@ function createRawChannelSendResultAdapter(params) {
   };
 }
 
+function normalizePairingFilenameKey(value, kind) {
+  if (typeof value !== "string") {
+    throw new Error(`invalid pairing ${kind}: expected non-empty string`);
+  }
+  const raw = normalizeLowercaseStringOrEmpty(value);
+  if (!raw) {
+    throw new Error(`invalid pairing ${kind}: expected non-empty string`);
+  }
+  const safe = raw.replace(/[\\/:*?"<>|]/g, "_").replace(/\.\./g, "_");
+  if (!safe || safe === "_") {
+    throw new Error(`invalid pairing ${kind}: sanitized filename key is empty`);
+  }
+  return safe;
+}
+
+function resolvePairingCredentialsDir(env = process.env) {
+  const oauthDir = env && typeof env.OPENCLAW_OAUTH_DIR === "string"
+    ? env.OPENCLAW_OAUTH_DIR.trim()
+    : "";
+  if (oauthDir) {
+    return oauthDir;
+  }
+  const stateDir = env && typeof env.OPENCLAW_STATE_DIR === "string"
+    ? env.OPENCLAW_STATE_DIR.trim()
+    : "";
+  return path.join(stateDir || path.join(os.homedir(), ".openclaw"), "credentials");
+}
+
+function resolveChannelAllowFromPath(channel, env = process.env, accountId) {
+  const channelKey = normalizePairingFilenameKey(channel, "channel");
+  const accountKey =
+    typeof accountId === "string" && accountId.trim()
+      ? normalizePairingFilenameKey(accountId, "account id")
+      : null;
+  const filename = accountKey
+    ? `${channelKey}-${accountKey}-allowFrom.json`
+    : `${channelKey}-allowFrom.json`;
+  return path.join(resolvePairingCredentialsDir(env), filename);
+}
+
+function readAllowFromEntriesAtPath(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return [];
+    }
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const entries = Array.isArray(parsed)
+      ? parsed
+      : parsed && Array.isArray(parsed.allowFrom)
+        ? parsed.allowFrom
+        : [];
+    return Array.from(
+      new Set(
+        entries
+          .map((entry) => normalizeOptionalString(entry) || "")
+          .filter((entry) => entry.length > 0),
+      ),
+    );
+  } catch (_error) {
+    return [];
+  }
+}
+
+function readChannelAllowFromStoreSync(channel, env = process.env, accountId) {
+  const resolvedAccountId = normalizeAccountId(accountId);
+  const scopedEntries = readAllowFromEntriesAtPath(
+    resolveChannelAllowFromPath(channel, env, resolvedAccountId),
+  );
+  if (resolvedAccountId !== DEFAULT_ACCOUNT_ID) {
+    return scopedEntries;
+  }
+  const legacyEntries = readAllowFromEntriesAtPath(resolveChannelAllowFromPath(channel, env));
+  return Array.from(new Set([...scopedEntries, ...legacyEntries]));
+}
+
+async function readChannelAllowFromStore(channel, env = process.env, accountId) {
+  return readChannelAllowFromStoreSync(channel, env, accountId);
+}
+
+function buildPairingReply(params) {
+  return [
+    "OpenClaw: access not configured.",
+    "",
+    params.idLine,
+    "Pairing code:",
+    "```",
+    params.code,
+    "```",
+    "",
+    "Ask the bot owner to approve with:",
+    `openclaw pairing approve ${params.channel} ${params.code}`,
+  ].join("\n");
+}
+
+async function issuePairingChallenge(params) {
+  const { code, created } = await params.upsertPairingRequest({
+    id: params.senderId,
+    meta: params.meta,
+  });
+  if (!created) {
+    return { created: false };
+  }
+  if (typeof params.onCreated === "function") {
+    params.onCreated({ code });
+  }
+  const replyText =
+    typeof params.buildReplyText === "function"
+      ? params.buildReplyText({ code, senderIdLine: params.senderIdLine })
+      : buildPairingReply({
+          channel: params.channel,
+          idLine: params.senderIdLine,
+          code,
+        });
+  try {
+    await params.sendPairingReply(replyText);
+  } catch (error) {
+    if (typeof params.onReplyError === "function") {
+      params.onReplyError(error);
+    }
+  }
+  return { created: true, code };
+}
+
+function createScopedPairingAccess(params) {
+  const resolvedAccountId = normalizeAccountId(params.accountId);
+  return {
+    accountId: resolvedAccountId,
+    readAllowFromStore: () =>
+      params.core.channel.pairing.readAllowFromStore({
+        channel: params.channel,
+        accountId: resolvedAccountId,
+      }),
+    readStoreForDmPolicy: (provider, accountId) =>
+      params.core.channel.pairing.readAllowFromStore({
+        channel: provider,
+        accountId: normalizeAccountId(accountId),
+      }),
+    upsertPairingRequest: (input) =>
+      params.core.channel.pairing.upsertPairingRequest({
+        channel: params.channel,
+        accountId: resolvedAccountId,
+        ...input,
+      }),
+  };
+}
+
+function createChannelPairingChallengeIssuer(params) {
+  return (challenge) =>
+    issuePairingChallenge({
+      channel: params.channel,
+      upsertPairingRequest: params.upsertPairingRequest,
+      ...challenge,
+    });
+}
+
+function createChannelPairingController(params) {
+  const access = createScopedPairingAccess(params);
+  return {
+    ...access,
+    issueChallenge: createChannelPairingChallengeIssuer({
+      channel: params.channel,
+      upsertPairingRequest: access.upsertPairingRequest,
+    }),
+  };
+}
+
+function createPairingPrefixStripper(prefixRe, map = (entry) => entry) {
+  return (entry) => map(String(entry).trim().replace(prefixRe, "").trim());
+}
+
+function createLoggedPairingApprovalNotifier(format, log = console.log) {
+  return async (params) => {
+    log(typeof format === "function" ? format(params) : format);
+  };
+}
+
+function createTextPairingAdapter(params) {
+  return {
+    idLabel: params.idLabel,
+    normalizeAllowEntry: params.normalizeAllowEntry,
+    notifyApproval: async (ctx) => {
+      await params.notify({ ...ctx, message: params.message });
+    },
+  };
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -25651,6 +25837,17 @@ const channelSendResultRuntime = {
   createRawChannelSendResultAdapter,
 };
 
+const channelPairingRuntime = {
+  createChannelPairingChallengeIssuer,
+  createChannelPairingController,
+  createLoggedPairingApprovalNotifier,
+  createPairingPrefixStripper,
+  createTextPairingAdapter,
+  readChannelAllowFromStore,
+  readChannelAllowFromStoreSync,
+  resolveChannelAllowFromPath,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -25925,6 +26122,7 @@ const genericSdk = new Proxy(
     ...accessGroupsRuntime,
     ...directDmRuntime,
     ...channelSendResultRuntime,
+    ...channelPairingRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26372,6 +26570,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-send-result"
   ) {
     return channelSendResultRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-pairing" ||
+    request === "@openclaw/plugin-sdk/channel-pairing"
+  ) {
+    return channelPairingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

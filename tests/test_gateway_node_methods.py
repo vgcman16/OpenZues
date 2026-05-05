@@ -9094,6 +9094,217 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_pairing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-pairing.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createChannelPairingChallengeIssuer,
+  createChannelPairingController,
+  createLoggedPairingApprovalNotifier,
+  createPairingPrefixStripper,
+  createTextPairingAdapter,
+  readChannelAllowFromStoreSync,
+  resolveChannelAllowFromPath
+} = require("openclaw/plugin-sdk/channel-pairing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_pairing",
+      description: "Use OpenClaw channel pairing SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const replies = [];
+        const logs = [];
+        const runtime = {
+          channel: {
+            pairing: {
+              readAllowFromStore: async ({ channel, accountId }) => {
+                calls.push(`read:${channel}:${accountId}`);
+                return ["alice"];
+              },
+              upsertPairingRequest: async (input) => {
+                calls.push(
+                  `upsert:${input.channel || ""}:${input.accountId || ""}:${input.id}:${
+                    input.meta ? input.meta.name : ""
+                  }`
+                );
+                return { code: "123456", created: true };
+              }
+            }
+          }
+        };
+        const controller = createChannelPairingController({
+          core: runtime,
+          channel: "googlechat",
+          accountId: "Primary"
+        });
+        const allowFrom = await controller.readAllowFromStore();
+        const challenge = await controller.issueChallenge({
+          senderId: "user-1",
+          senderIdLine: "Your id: user-1",
+          meta: { name: "Alice" },
+          sendPairingReply: async (text) => {
+            replies.push(text);
+          }
+        });
+        const issuerUpserts = [];
+        const issueChallenge = createChannelPairingChallengeIssuer({
+          channel: "quietchat",
+          upsertPairingRequest: async (input) => {
+            issuerUpserts.push(input);
+            return { code: "654321", created: true };
+          }
+        });
+        const issuerResult = await issueChallenge({
+          senderId: "user-2",
+          senderIdLine: "Your id: user-2",
+          sendPairingReply: async (text) => {
+            replies.push(text);
+          }
+        });
+        const strip = createPairingPrefixStripper(/^(telegram|tg):/i);
+        const lower = createPairingPrefixStripper(/^nextcloud:/i, (entry) =>
+          entry.toLowerCase()
+        );
+        const notifyCalls = [];
+        const adapter = createTextPairingAdapter({
+          idLabel: "telegramUserId",
+          message: "approved",
+          normalizeAllowEntry: strip,
+          notify: async (ctx) => {
+            notifyCalls.push(ctx);
+          }
+        });
+        await adapter.notifyApproval({ cfg: {}, id: "123" });
+        const logged = createLoggedPairingApprovalNotifier(({ id }) => `approved ${id}`, (msg) =>
+          logs.push(msg)
+        );
+        await logged({ cfg: {}, id: "u-1" });
+        return {
+          controller: {
+            accountId: controller.accountId,
+            allowFrom,
+            challenge,
+            calls,
+            replyContains: replies[0].includes("123456"),
+            issuerReplyContains: replies[1].includes("654321"),
+            issuerResult,
+            issuerUpserts
+          },
+          adapters: {
+            strip: [strip("telegram:123"), strip("  tg:456  ")],
+            lower: lower("  nextcloud:USER  "),
+            idLabel: adapter.idLabel,
+            normalized: adapter.normalizeAllowEntry("telegram:789"),
+            notifyCalls,
+            logs
+          },
+          storeHelpers: {
+            pathTail: resolveChannelAllowFromPath(
+              "Telegram",
+              { OPENCLAW_OAUTH_DIR: "/tmp/oauth" },
+              "Work"
+            ).replace(/\\\\/g, "/"),
+            readType: typeof readChannelAllowFromStoreSync
+          },
+          exportTypes: [
+            typeof createChannelPairingController,
+            typeof createChannelPairingChallengeIssuer,
+            typeof createPairingPrefixStripper,
+            typeof createTextPairingAdapter,
+            typeof createLoggedPairingApprovalNotifier
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-pairing-plugin",
+                    "name": "Runtime Channel Pairing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-pairing-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_pairing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_pairing"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "controller": {
+            "accountId": "primary",
+            "allowFrom": ["alice"],
+            "challenge": {"created": True, "code": "123456"},
+            "calls": [
+                "read:googlechat:primary",
+                "upsert:googlechat:primary:user-1:Alice",
+            ],
+            "replyContains": True,
+            "issuerReplyContains": True,
+            "issuerResult": {"created": True, "code": "654321"},
+            "issuerUpserts": [{"id": "user-2"}],
+        },
+        "adapters": {
+            "strip": ["123", "456"],
+            "lower": "user",
+            "idLabel": "telegramUserId",
+            "normalized": "789",
+            "notifyCalls": [{"cfg": {}, "id": "123", "message": "approved"}],
+            "logs": ["approved u-1"],
+        },
+        "storeHelpers": {
+            "pathTail": "/tmp/oauth/telegram-work-allowFrom.json",
+            "readType": "function",
+        },
+        "exportTypes": ["function", "function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
