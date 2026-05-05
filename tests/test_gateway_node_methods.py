@@ -6764,6 +6764,194 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_debounce_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound-debounce.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createInboundDebouncer,
+  resolveInboundDebounceMs
+} = require("openclaw/plugin-sdk/channel-inbound-debounce");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound_debounce",
+      description: "Use OpenClaw channel inbound debounce SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          messages: {
+            inbound: {
+              debounceMs: 12.9,
+              byChannel: {
+                telegram: 3.7,
+                slack: -4
+              }
+            }
+          }
+        };
+        const resolved = [
+          resolveInboundDebounceMs({ cfg, channel: "telegram" }),
+          resolveInboundDebounceMs({ cfg, channel: "slack" }),
+          resolveInboundDebounceMs({ cfg, channel: "discord" }),
+          resolveInboundDebounceMs({ cfg, channel: "discord", overrideMs: 2.9 }),
+          resolveInboundDebounceMs({
+            cfg: { messages: { inbound: { debounceMs: Number.POSITIVE_INFINITY } } },
+            channel: "matrix"
+          }),
+          genericSdk.resolveInboundDebounceMs({ cfg: {}, channel: "whatsapp" })
+        ];
+
+        const coalesced = [];
+        const debouncer = createInboundDebouncer({
+          debounceMs: 8,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            coalesced.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await debouncer.enqueue({ key: "room", id: "a" });
+        await debouncer.enqueue({ key: "room", id: "b" });
+        await wait(18);
+
+        const orderedImmediate = [];
+        const immediateDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          buildKey: (item) => item.key,
+          shouldDebounce: (item) => item.debounce !== false,
+          onFlush: async (items) => {
+            orderedImmediate.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await immediateDebouncer.enqueue({ key: "room", id: "buffered" });
+        await immediateDebouncer.enqueue({ key: "room", id: "immediate", debounce: false });
+
+        const forced = [];
+        const forcedDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            forced.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await forcedDebouncer.enqueue({ key: "force", id: "one" });
+        await forcedDebouncer.flushKey("force");
+        await forcedDebouncer.flushKey("missing");
+
+        const saturated = [];
+        const saturatedDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          maxTrackedKeys: 1,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            saturated.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await saturatedDebouncer.enqueue({ key: "first", id: "buffered" });
+        await saturatedDebouncer.enqueue({ key: "second", id: "fallback" });
+        await saturatedDebouncer.flushKey("first");
+
+        const errorReports = [];
+        const errorDebouncer = createInboundDebouncer({
+          debounceMs: 0,
+          buildKey: (item) => item.key,
+          onFlush: async () => {
+            throw new Error("flush failed");
+          },
+          onError: (error, items) => {
+            errorReports.push([error.message, items.length]);
+          }
+        });
+        await errorDebouncer.enqueue({ key: "err", id: "bad" });
+
+        return {
+          resolved,
+          coalesced,
+          orderedImmediate,
+          forced,
+          saturated,
+          errorReports,
+          genericCreate: typeof genericSdk.createInboundDebouncer
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-debounce-plugin",
+                    "name": "Runtime Channel Inbound Debounce Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-channel-inbound-debounce-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.channel_inbound_debounce"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.channel_inbound_debounce"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "resolved": [3, 0, 12, 2, 0, 0],
+        "coalesced": ["a+b"],
+        "orderedImmediate": ["buffered", "immediate"],
+        "forced": ["one"],
+        "saturated": ["fallback", "buffered"],
+        "errorReports": [["flush failed", 1]],
+        "genericCreate": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

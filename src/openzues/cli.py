@@ -18750,6 +18750,211 @@ async function runTasksWithConcurrency(params) {
   return { results, firstError, hasError };
 }
 
+function resolveInboundDebounceNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.max(0, Math.trunc(value));
+}
+
+function resolveInboundDebounceMs(params) {
+  const inbound =
+    params && params.cfg && params.cfg.messages && params.cfg.messages.inbound;
+  const override = resolveInboundDebounceNumber(params && params.overrideMs);
+  const byChannel =
+    inbound && inbound.byChannel
+      ? resolveInboundDebounceNumber(inbound.byChannel[params.channel])
+      : undefined;
+  const base = resolveInboundDebounceNumber(inbound && inbound.debounceMs);
+  return override ?? byChannel ?? base ?? 0;
+}
+
+function createInboundDebouncer(params) {
+  const buffers = new Map();
+  const keyChains = new Map();
+  const defaultDebounceMs = Math.max(0, Math.trunc(params.debounceMs));
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.trunc(params.maxTrackedKeys ?? 2048),
+  );
+
+  const resolveDebounceMs = (item) => {
+    const resolved =
+      typeof params.resolveDebounceMs === "function"
+        ? params.resolveDebounceMs(item)
+        : undefined;
+    if (typeof resolved !== "number" || !Number.isFinite(resolved)) {
+      return defaultDebounceMs;
+    }
+    return Math.max(0, Math.trunc(resolved));
+  };
+
+  const runFlush = async (items) => {
+    try {
+      await params.onFlush(items);
+    } catch (err) {
+      try {
+        if (typeof params.onError === "function") {
+          params.onError(err, items);
+        }
+      } catch {
+        // Keep the keyed chain non-throwing even if the reporter fails.
+      }
+    }
+  };
+
+  const enqueueKeyTask = (key, task) => {
+    const previous = keyChains.get(key) || Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    const settled = next.catch(() => undefined);
+    keyChains.set(key, settled);
+    const cleanup = () => {
+      if (keyChains.get(key) === settled) {
+        keyChains.delete(key);
+      }
+    };
+    settled.then(cleanup, cleanup);
+    return next;
+  };
+
+  const enqueueReservedKeyTask = (key, task) => {
+    let readyReleased = false;
+    let releaseReady;
+    const ready = new Promise((resolve) => {
+      releaseReady = resolve;
+    });
+    return {
+      task: enqueueKeyTask(key, async () => {
+        await ready;
+        await task();
+      }),
+      release() {
+        if (readyReleased) {
+          return;
+        }
+        readyReleased = true;
+        releaseReady();
+      },
+    };
+  };
+
+  const releaseBuffer = (buffer) => {
+    if (buffer.readyReleased) {
+      return;
+    }
+    buffer.readyReleased = true;
+    buffer.releaseReady();
+  };
+
+  const flushBuffer = async (key, buffer) => {
+    if (buffers.get(key) === buffer) {
+      buffers.delete(key);
+    }
+    if (buffer.timeout) {
+      clearTimeout(buffer.timeout);
+      buffer.timeout = null;
+    }
+    releaseBuffer(buffer);
+    await buffer.task;
+  };
+
+  const flushKey = async (key) => {
+    const buffer = buffers.get(key);
+    if (!buffer) {
+      return;
+    }
+    await flushBuffer(key, buffer);
+  };
+
+  const scheduleFlush = (key, buffer) => {
+    if (buffer.timeout) {
+      clearTimeout(buffer.timeout);
+    }
+    buffer.timeout = setTimeout(async () => {
+      await flushBuffer(key, buffer);
+    }, buffer.debounceMs);
+    if (buffer.timeout && typeof buffer.timeout.unref === "function") {
+      buffer.timeout.unref();
+    }
+  };
+
+  const canTrackKey = (key) => {
+    if (buffers.has(key) || keyChains.has(key)) {
+      return true;
+    }
+    return new Set([...buffers.keys(), ...keyChains.keys()]).size < maxTrackedKeys;
+  };
+
+  const enqueue = async (item) => {
+    const key = params.buildKey(item);
+    const debounceMs = resolveDebounceMs(item);
+    const canDebounce =
+      debounceMs > 0 &&
+      (typeof params.shouldDebounce === "function"
+        ? params.shouldDebounce(item)
+        : true);
+
+    if (!canDebounce || !key) {
+      if (key) {
+        if (buffers.has(key)) {
+          const reservedTask = enqueueReservedKeyTask(key, async () => {
+            await runFlush([item]);
+          });
+          try {
+            await flushKey(key);
+          } finally {
+            reservedTask.release();
+          }
+          await reservedTask.task;
+          return;
+        }
+        if (keyChains.has(key)) {
+          await enqueueKeyTask(key, async () => {
+            await runFlush([item]);
+          });
+          return;
+        }
+      }
+      await runFlush([item]);
+      return;
+    }
+
+    const existing = buffers.get(key);
+    if (existing) {
+      existing.items.push(item);
+      existing.debounceMs = debounceMs;
+      scheduleFlush(key, existing);
+      return;
+    }
+    if (!canTrackKey(key)) {
+      await enqueueKeyTask(key, async () => {
+        await runFlush([item]);
+      });
+      return;
+    }
+
+    let buffer;
+    const reservedTask = enqueueReservedKeyTask(key, async () => {
+      if (buffer.items.length === 0) {
+        return;
+      }
+      await runFlush(buffer.items);
+    });
+    buffer = {
+      items: [item],
+      timeout: null,
+      debounceMs,
+      releaseReady: reservedTask.release,
+      readyReleased: false,
+      task: reservedTask.task,
+    };
+    buffers.set(key, buffer);
+    scheduleFlush(key, buffer);
+  };
+
+  return { enqueue, flushKey };
+}
+
 function createDedupeCache(options) {
   const ttlMs = Math.max(0, options.ttlMs);
   const maxSize = Math.max(0, Math.floor(options.maxSize));
@@ -22179,6 +22384,11 @@ const concurrencyRuntime = {
   runTasksWithConcurrency,
 };
 
+const channelInboundDebounceRuntime = {
+  createInboundDebouncer,
+  resolveInboundDebounceMs,
+};
+
 const keyedAsyncQueueRuntime = {
   KeyedAsyncQueue,
   enqueueKeyedTask,
@@ -22447,6 +22657,7 @@ const genericSdk = new Proxy(
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
     createDedupeCache,
+    createInboundDebouncer,
     createScopedExpiringIdCache,
     createRateLimitRetryRunner,
     createTelegramRetryRunner,
@@ -22554,6 +22765,7 @@ const genericSdk = new Proxy(
     readNumberParam,
     readResponseWithLimit,
     readReactionParams,
+    resolveInboundDebounceMs,
     resolveRetryConfig,
     runTasksWithConcurrency,
     readStringValue,
@@ -22727,6 +22939,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/concurrency-runtime"
   ) {
     return concurrencyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-inbound-debounce" ||
+    request === "@openclaw/plugin-sdk/channel-inbound-debounce"
+  ) {
+    return channelInboundDebounceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||
