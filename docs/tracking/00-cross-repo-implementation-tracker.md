@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~70.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~70.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Feishu/Lark channel capability discovery slice is checkpointed in `326f471f`.
+The Feishu/Lark direct provider-route media slice is checkpointed in `77149f94`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark channel capability discovery checkpointed in `326f471f` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark direct provider-route media sends |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark direct provider-route media sends checkpointed in `77149f94` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark message-resource download/read-media |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001CP` Feishu/Lark direct provider-route media sends
+  - Source: `openclaw-main/extensions/feishu/src/media.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: direct `gateway.send`/`send_direct_channel_message` calls on
+    native Feishu/Lark routes accept media URLs, upload through the verified
+    Feishu media runtime, send the native media payload, and preserve final
+    `messageId`, ordered `mediaIds`, `mediaUrls`, chat/channel, and delivery
+    provider result metadata.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `77149f94`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu direct media proof (`1 passed`),
+    adjacent Feishu provider proof (`27 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
 
 - [x] `OZ-PROV-001CO` Feishu/Lark channel capability discovery
   - Source: `openclaw-main/extensions/feishu/src/channel.ts`
