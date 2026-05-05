@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.7% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6207,9 +6207,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~66.6%. Verified with focused runtime pytest, adjacent
   Teams reaction/probe proof, `ruff check`, and `mypy`; source/test
   checkpointed in `ddbeb84f`.
+- Closed the Microsoft Teams delegated refresh-token seam from OpenClaw
+  `extensions/msteams/src/token.ts` and
+  `extensions/msteams/src/oauth.token.ts`: native Teams SSO token rows can now
+  persist refresh tokens, scopes, and user-principal metadata; expired
+  delegated Graph tokens refresh through Azure before app-token fallback; the
+  refreshed access token is saved; and the previous refresh token is preserved
+  when Azure omits a replacement. Repo-wide parity is now estimated at
+  ~66.7%. Verified with focused runtime pytest, adjacent Teams reaction/probe
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `34a34a44`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams delegated auth
-  setup/refresh-token breadth or another source-backed channel/provider route
+  setup/bootstrap breadth or another source-backed channel/provider route
   action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

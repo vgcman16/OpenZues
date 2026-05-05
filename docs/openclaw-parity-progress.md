@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~66.6% overall, with a reasonable band of ~50-67%.
+- Estimated repo-wide parity: ~66.7% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11054,6 +11054,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`9 passed, 326 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `ddbeb84f`.
+- Microsoft Teams delegated Graph token refresh now mirrors OpenClaw
+  `extensions/msteams/src/token.ts` and
+  `extensions/msteams/src/oauth.token.ts`: stored Teams SSO rows can carry a
+  refresh token, scopes, and user-principal metadata, expired delegated rows
+  refresh through the Azure v2 token endpoint before app-token fallback, the
+  refreshed access token is persisted for later sends, and the previous
+  refresh token is preserved when Azure omits a new one. This closes
+  `OZ-PROV-001BG`; repo-wide parity is now estimated at ~66.7%. Remaining
+  Teams breadth is the operator-facing delegated OAuth setup/bootstrap surface
+  and broader channel/provider queue heads.
+- Verified the Microsoft Teams delegated refresh-token slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_msteams_react_refreshes_expired_stored_delegated_token -q`
+  (`1 passed`), adjacent Teams reaction/probe proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react or msteams_reactions or delegated_auth_status or msteams_native_route"`
+  (`10 passed, 326 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py src\openzues\database.py`.
+  Checkpointed in `34a34a44`.
 
 ## References
 
