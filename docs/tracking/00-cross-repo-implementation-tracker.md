@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~64.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~64.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,10 +29,11 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams poll vote storage slice is checkpointed in `b3726879`.
+The Microsoft Teams FileConsent card slice is checkpointed in `ad3c8a5c`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
+- `src/openzues/services/gateway_outbound_runtime.py`
 - `src/openzues/services/ops_mesh.py`
 - `src/openzues/services/gateway_channels.py`
 - `src/openzues/cli.py`
@@ -59,9 +60,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams poll vote storage checkpointed in `b3726879` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams Graph/FileConsent upload or inbound monitor/session routing |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams FileConsent card checkpointed in `ad3c8a5c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams FileConsent accept/upload, Graph upload, or inbound monitor/session routing |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AG` Microsoft Teams FileConsent card emission
+  - Source: `openclaw-main/extensions/msteams/src/file-consent.ts`,
+    `openclaw-main/extensions/msteams/src/file-consent-helpers.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_outbound_runtime.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams direct sends with media and FileConsent metadata emit a
+    Bot Framework `application/vnd.microsoft.teams.card.file.consent`
+    attachment with `description`, `sizeInBytes`, `acceptContext`, and
+    `declineContext`, omit top-level text from the consent activity, and
+    preserve `pendingUploadId`, `mediaUrls`, and `filenames` through
+    direct-send responses and saved delivery metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `ad3c8a5c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams FileConsent card proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`7 passed, 304
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001AF` Microsoft Teams poll vote storage
   - Source: `openclaw-main/extensions/msteams/src/polls.ts`,
