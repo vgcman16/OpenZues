@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~69.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~69.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -852,6 +852,11 @@ may lag behind this tracker.
   file-key message sends, provider file-type routing, and route-backed send
   metadata.
   - Status: checkpointed in `152dcb38`
+
+- [x] Feishu/Lark audio/video media send support, preserving OpenClaw
+  Ogg/Opus audio routing, MP4 video routing, file-key message sends, and
+  threaded reply media payloads.
+  - Status: checkpointed in `6e99a40b`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1897,7 +1902,8 @@ may lag behind this tracker.
     action checkpointed in `dd915f30`; Feishu/Lark reaction actions
     checkpointed in `1c6b44af`; Feishu/Lark presentation-card sends
     checkpointed in `75edc136`; Feishu/Lark image media sends checkpointed in
-    `64375b92`; Feishu/Lark file media sends checkpointed in `152dcb38`; Signal native
+    `64375b92`; Feishu/Lark file media sends checkpointed in `152dcb38`;
+    Feishu/Lark audio/video media sends checkpointed in `6e99a40b`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 
