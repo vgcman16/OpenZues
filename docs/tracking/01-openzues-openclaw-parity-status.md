@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~60.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -184,6 +184,10 @@ may lag behind this tracker.
 - [x] Canvas shortcode text normalization, preserving OpenClaw's visible
   assistant-message cleanup after valid `[embed ...]` removals.
   - Status: checkpointed in `c34e4a77`
+
+- [x] Package distribution inventory validation, preserving OpenClaw's
+  invalid-inventory warning posture in `doctor --json`.
+  - Status: verified; checkpoint pending
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -656,6 +660,17 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
     full canvas-render tests (`4 passed`), adjacent control-chat canvas preview
     proof (`1 passed, 194 deselected`), `ruff check`, and `mypy`.
+
+- [x] Package distribution inventory validation.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused package inventory test (`1 passed`),
+    adjacent package/runtime doctor proof (`3 passed`), `ruff check`, and
+    `mypy`.
 
 - [x] Package distribution doctor diagnostics.
   - Source: `openclaw-main/src/flows/doctor-health.ts`,

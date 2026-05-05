@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~60.3% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5543,9 +5543,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   bounded command family remains ~99%. Verified with focused canvas-render
   pytest, adjacent control-chat canvas preview proof, `ruff check`, and
   `mypy`; checkpointed in `c34e4a77`.
-- Next repo-wide queue head: rotate to packaging distribution inventory
-  validity, Telegram audio/voice routing, or companion remote-bin discovery
-  based on the strongest source-backed seam.
+- Closed the package dist inventory validation seam from OpenClaw
+  `src/infra/package-dist-inventory.ts` and `src/infra/update-global.ts`:
+  native `openzues doctor --json` now parses
+  `dist/postinstall-inventory.json` for packaged roots and reports invalid
+  JSON/non-list/non-string shapes as warning posture instead of accepting
+  presence-only inventory. Repo-wide parity is now estimated at ~60.3%;
+  runtime/CLI/doctor bounded path remains ~99.9%. Verified with focused
+  package inventory pytest, adjacent package/runtime doctor proof, `ruff
+  check`, and `mypy`; checkpoint pending commit.
+- Next repo-wide queue head: rotate to Telegram audio/voice routing,
+  companion remote-bin discovery, or update-status channel projection based on
+  the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

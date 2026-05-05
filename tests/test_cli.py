@@ -653,6 +653,71 @@ def test_doctor_json_includes_windows_package_distribution_diagnostics(
     }
 
 
+def test_doctor_json_warns_on_invalid_package_dist_inventory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    package_root = tmp_path / "OpenZues"
+    dist_path = package_root / "dist"
+    dist_path.mkdir(parents=True)
+    inventory_path = dist_path / "postinstall-inventory.json"
+    inventory_path.write_text("{}", encoding="utf-8")
+
+    class FakeDoctorView:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {
+                "profile": {"summary": "Package distribution profile is mapped."},
+                "promotion_loop": {"summary": "Learning loop is quiet."},
+                "warnings": [],
+            }
+
+    class FakeHermesPlatform:
+        async def get_doctor_view(self) -> FakeDoctorView:
+            return FakeDoctorView()
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {}
+
+    async def fake_live_view(_settings: object) -> None:
+        return None
+
+    async def fake_run_with_services(action):
+        return await action(
+            SimpleNamespace(
+                settings=SimpleNamespace(),
+                hermes_platform=FakeHermesPlatform(),
+                gateway_config=FakeGatewayConfig(),
+            )
+        )
+
+    monkeypatch.setattr(cli_module, "_try_live_hermes_doctor_view", fake_live_view)
+    monkeypatch.setattr(cli_module, "_openzues_package_root", lambda: package_root)
+    monkeypatch.setattr(cli_module, "_run_with_services", fake_run_with_services)
+
+    result = runner.invoke(app, ["doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    package_distribution = json.loads(result.stdout)["packageDistribution"]
+    assert package_distribution["status"] == "warning"
+    assert package_distribution["inventoryPresent"] is True
+    assert package_distribution["warnings"] == [
+        "Invalid package dist inventory at dist/postinstall-inventory.json"
+    ]
+    postinstall_check = next(
+        check
+        for check in package_distribution["checks"]
+        if check["key"] == "postinstall_inventory"
+    )
+    assert postinstall_check == {
+        "key": "postinstall_inventory",
+        "status": "warning",
+        "path": str(inventory_path),
+        "detail": "Invalid package dist inventory at dist/postinstall-inventory.json",
+    }
+
+
 def test_agents_list_json_includes_saved_workspace_inventory(tmp_path, monkeypatch) -> None:
     _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Agents Loop")
 

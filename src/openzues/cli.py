@@ -8013,6 +8013,22 @@ def _doctor_package_distribution_check(
     return payload
 
 
+def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
+    if not _doctor_path_exists(inventory_path):
+        return None
+    warning = (
+        "Invalid package dist inventory at "
+        f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+    )
+    try:
+        parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return warning
+    if not isinstance(parsed, list) or any(not isinstance(entry, str) for entry in parsed):
+        return warning
+    return None
+
+
 def _build_doctor_package_distribution_payload(
     package_root: Path | None = None,
 ) -> dict[str, object]:
@@ -8027,6 +8043,7 @@ def _build_doctor_package_distribution_payload(
     inventory_path = root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
     dist_present = _doctor_path_exists(dist_path)
     inventory_present = _doctor_path_exists(inventory_path)
+    inventory_warning = _doctor_package_dist_inventory_warning(inventory_path)
     inventory_required = not source_checkout
     warnings: list[str] = []
     if not root_exists:
@@ -8038,6 +8055,8 @@ def _build_doctor_package_distribution_payload(
             "Package dist inventory is missing: "
             f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
         )
+    if inventory_required and inventory_warning is not None:
+        warnings.append(inventory_warning)
     if source_checkout:
         status = "info"
         summary = "OpenZues is running from a source checkout; package inventory is informational."
@@ -8092,9 +8111,19 @@ def _build_doctor_package_distribution_payload(
             ),
             _doctor_package_distribution_check(
                 key="postinstall_inventory",
-                status="ok" if inventory_present else ("info" if source_checkout else "warning"),
+                status=(
+                    "warning"
+                    if inventory_warning is not None
+                    else "ok"
+                    if inventory_present
+                    else "info"
+                    if source_checkout
+                    else "warning"
+                ),
                 path=inventory_path,
-                detail="Package dist inventory is present."
+                detail=inventory_warning
+                if inventory_warning is not None
+                else "Package dist inventory is present."
                 if inventory_present
                 else "Package dist inventory is not required for source checkout runs."
                 if source_checkout

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.2% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~60.3% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9752,6 +9752,20 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_canvas_render.py tests\test_app.py`, and `mypy
   src\openzues\services\gateway_canvas_render.py
   src\openzues\services\control_chat.py`. Checkpointed in `c34e4a77`.
+
+- Package distribution doctor diagnostics now validate the packaged
+  `dist/postinstall-inventory.json` file instead of treating mere presence as
+  healthy: invalid JSON or non-list/non-string inventory shapes downgrade the
+  package distribution posture to `warning` and mark the
+  `postinstall_inventory` check with OpenClaw-shaped invalid-inventory detail.
+  This closes `OZ-PKG-001B`; repo-wide parity is now estimated at ~60.3%,
+  while the runtime/CLI/doctor bounded path remains ~99.9%.
+- Verified the package dist inventory validation slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_on_invalid_package_dist_inventory
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "package_dist_inventory or package_distribution or runtime_bridge_posture"`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpoint pending commit.
 
 ## References
 
