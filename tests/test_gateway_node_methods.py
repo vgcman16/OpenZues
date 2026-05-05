@@ -13337,6 +13337,154 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_device_bootstrap_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-device-bootstrap.cjs"
+    runtime_entry.write_text(
+        """
+const deviceBootstrap = require("openclaw/plugin-sdk/device-bootstrap");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.device_bootstrap",
+      description: "Use OpenClaw device bootstrap SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const profile = deviceBootstrap.normalizeDeviceBootstrapProfile({
+          roles: [" operator ", "node", "", "operator"],
+          scopes: ["operator.write", "operator.admin", "", "operator.write"]
+        });
+        const issued = await deviceBootstrap.issueDeviceBootstrapToken({
+          roles: ["operator"],
+          scopes: ["operator.write", "operator.admin", "bad.scope"]
+        });
+        const revoked = await deviceBootstrap.revokeDeviceBootstrapToken({
+          token: issued.token
+        });
+        const missingRevoke = await deviceBootstrap.revokeDeviceBootstrapToken({
+          token: "missing"
+        });
+        const clearResult = await deviceBootstrap.clearDeviceBootstrapTokens();
+        const pairing = await deviceBootstrap.listDevicePairing();
+        const approved = await deviceBootstrap.approveDevicePairing("missing-request", {
+          callerScopes: ["operator.read"]
+        });
+        return {
+          exportTypes: [
+            typeof deviceBootstrap.normalizeDeviceBootstrapProfile,
+            typeof deviceBootstrap.issueDeviceBootstrapToken,
+            typeof deviceBootstrap.revokeDeviceBootstrapToken,
+            typeof deviceBootstrap.listDevicePairing,
+            typeof genericSdk.normalizeDeviceBootstrapProfile
+          ],
+          setupProfile: deviceBootstrap.PAIRING_SETUP_BOOTSTRAP_PROFILE,
+          profile,
+          issued: {
+            tokenType: typeof issued.token,
+            tokenLength: issued.token.length,
+            expiresAtType: typeof issued.expiresAtMs
+          },
+          revoked: {
+            removed: revoked.removed,
+            recordProfile: revoked.record && revoked.record.profile
+          },
+          missingRevoke,
+          clearResult,
+          pairing,
+          approved
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-device-bootstrap-plugin",
+                    "name": "Runtime Device Bootstrap Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-device-bootstrap.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.device_bootstrap"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.device_bootstrap"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 5,
+        "setupProfile": {
+            "roles": ["node", "operator"],
+            "scopes": [
+                "operator.approvals",
+                "operator.read",
+                "operator.talk.secrets",
+                "operator.write",
+            ],
+        },
+        "profile": {
+            "roles": ["node", "operator"],
+            "scopes": ["operator.admin", "operator.read", "operator.write"],
+        },
+        "issued": {
+            "tokenType": "string",
+            "tokenLength": 43,
+            "expiresAtType": "number",
+        },
+        "revoked": {
+            "removed": True,
+            "recordProfile": {
+                "roles": ["operator"],
+                "scopes": ["operator.read", "operator.write"],
+            },
+        },
+        "missingRevoke": {"removed": False},
+        "clearResult": {"removed": 0},
+        "pairing": {"pending": [], "paired": []},
+        "approved": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

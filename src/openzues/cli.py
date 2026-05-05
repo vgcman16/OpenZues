@@ -20985,6 +20985,130 @@ function createPluginBackedWebSearchProvider(provider) {
   };
 }
 
+const BOOTSTRAP_HANDOFF_OPERATOR_SCOPES = [
+  "operator.approvals",
+  "operator.read",
+  "operator.talk.secrets",
+  "operator.write",
+];
+const PAIRING_SETUP_BOOTSTRAP_PROFILE = {
+  roles: ["node", "operator"],
+  scopes: [...BOOTSTRAP_HANDOFF_OPERATOR_SCOPES],
+};
+const DEVICE_BOOTSTRAP_TOKEN_TTL_MS = 10 * 60 * 1000;
+const DEVICE_BOOTSTRAP_TOKENS = new Map();
+
+function normalizeDeviceAuthRole(role) {
+  return String(role || "").trim();
+}
+
+function normalizeDeviceAuthScopes(scopes) {
+  if (!Array.isArray(scopes)) {
+    return [];
+  }
+  const out = new Set();
+  for (const scope of scopes) {
+    const trimmed = String(scope || "").trim();
+    if (trimmed) {
+      out.add(trimmed);
+    }
+  }
+  if (out.has("operator.admin")) {
+    out.add("operator.read");
+    out.add("operator.write");
+  } else if (out.has("operator.write")) {
+    out.add("operator.read");
+  }
+  return [...out].sort();
+}
+
+function normalizeDeviceBootstrapProfile(input) {
+  const roles = new Set();
+  for (const role of Array.isArray(input && input.roles) ? input.roles : []) {
+    const normalized = normalizeDeviceAuthRole(role);
+    if (normalized) {
+      roles.add(normalized);
+    }
+  }
+  return {
+    roles: [...roles].sort(),
+    scopes: normalizeDeviceAuthScopes(input && input.scopes ? [...input.scopes] : []),
+  };
+}
+
+function resolveBootstrapProfileScopesForRole(role, scopes) {
+  const normalizedRole = normalizeDeviceAuthRole(role);
+  const normalizedScopes = normalizeDeviceAuthScopes(Array.from(scopes || []));
+  if (normalizedRole !== "operator") {
+    return [];
+  }
+  const allowed = new Set(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES);
+  return normalizedScopes.filter((scope) => allowed.has(scope));
+}
+
+function resolveBootstrapProfileScopesForRoles(roles, scopes) {
+  return normalizeDeviceAuthScopes(
+    (roles || []).flatMap((role) => resolveBootstrapProfileScopesForRole(role, scopes || [])),
+  );
+}
+
+function normalizeDeviceBootstrapHandoffProfile(input) {
+  const profile = normalizeDeviceBootstrapProfile(input);
+  return {
+    roles: profile.roles,
+    scopes: resolveBootstrapProfileScopesForRoles(profile.roles, profile.scopes),
+  };
+}
+
+function resolveIssuedBootstrapProfile(params = {}) {
+  if (params.profile || params.roles || params.scopes) {
+    return normalizeDeviceBootstrapHandoffProfile({
+      ...(params.profile || {}),
+      ...(params.roles ? { roles: params.roles } : {}),
+      ...(params.scopes ? { scopes: params.scopes } : {}),
+    });
+  }
+  return PAIRING_SETUP_BOOTSTRAP_PROFILE;
+}
+
+async function issueDeviceBootstrapToken(params = {}) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const issuedAtMs = Date.now();
+  const profile = resolveIssuedBootstrapProfile(params);
+  DEVICE_BOOTSTRAP_TOKENS.set(token, {
+    token,
+    ts: issuedAtMs,
+    profile,
+    redeemedProfile: normalizeDeviceBootstrapProfile(undefined),
+    issuedAtMs,
+  });
+  return { token, expiresAtMs: issuedAtMs + DEVICE_BOOTSTRAP_TOKEN_TTL_MS };
+}
+
+async function clearDeviceBootstrapTokens() {
+  const removed = DEVICE_BOOTSTRAP_TOKENS.size;
+  DEVICE_BOOTSTRAP_TOKENS.clear();
+  return { removed };
+}
+
+async function revokeDeviceBootstrapToken(params = {}) {
+  const providedToken = normalizeOptionalString(params.token);
+  if (!providedToken || !DEVICE_BOOTSTRAP_TOKENS.has(providedToken)) {
+    return { removed: false };
+  }
+  const record = DEVICE_BOOTSTRAP_TOKENS.get(providedToken);
+  DEVICE_BOOTSTRAP_TOKENS.delete(providedToken);
+  return { removed: true, record };
+}
+
+async function listDevicePairing() {
+  return { pending: [], paired: [] };
+}
+
+async function approveDevicePairing() {
+  return null;
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -30400,6 +30524,16 @@ const providerWebSearchRuntime = {
   writeCachedSearchPayload,
 };
 
+const deviceBootstrapRuntime = {
+  approveDevicePairing,
+  clearDeviceBootstrapTokens,
+  issueDeviceBootstrapToken,
+  listDevicePairing,
+  normalizeDeviceBootstrapProfile,
+  PAIRING_SETUP_BOOTSTRAP_PROFILE,
+  revokeDeviceBootstrapToken,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -31102,6 +31236,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchContractRuntime,
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
+    ...deviceBootstrapRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31566,6 +31701,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-search"
   ) {
     return providerWebSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/device-bootstrap" ||
+    request === "@openclaw/plugin-sdk/device-bootstrap"
+  ) {
+    return deviceBootstrapRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
