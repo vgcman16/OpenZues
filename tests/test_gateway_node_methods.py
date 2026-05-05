@@ -7756,6 +7756,109 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_logging_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-logging.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  logAckFailure,
+  logInboundDrop,
+  logTypingFailure
+} = require("openclaw/plugin-sdk/channel-logging");
+const { logTypingFailure: logTypingFromFeedback } = require(
+  "openclaw/plugin-sdk/channel-feedback"
+);
+const { logInboundDrop: logInboundFromInbound } = require(
+  "openclaw/plugin-sdk/channel-inbound"
+);
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_logging",
+      description: "Use OpenClaw channel-logging SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const messages = [];
+        const log = (message) => messages.push(message);
+        logInboundDrop({ log, channel: "discord", reason: "no text", target: "room-1" });
+        logTypingFailure({
+          log,
+          channel: "slack",
+          action: "start",
+          target: "C1",
+          error: new Error("boom")
+        });
+        logAckFailure({ log, channel: "telegram", target: "42", error: "gone" });
+        logTypingFromFeedback({ log, channel: "zalo", error: "typing denied" });
+        logInboundFromInbound({ log, channel: "irc", reason: "duplicate" });
+        return messages;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-logging-plugin",
+                    "name": "Runtime Channel Logging Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-logging-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_logging"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_logging"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == [
+        "discord: drop no text target=room-1",
+        "slack typing action=start failed target=C1: Error: boom",
+        "telegram ack cleanup failed target=42: gone",
+        "zalo typing failed: typing denied",
+        "irc: drop duplicate",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_dangerous_name_runtime_helpers(
     tmp_path,
 ) -> None:

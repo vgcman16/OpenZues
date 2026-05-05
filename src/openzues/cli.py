@@ -18128,6 +18128,22 @@ function resolveDangerousNameMatchingEnabled(input) {
   return isDangerousNameMatchingEnabled(input && input.providerConfig);
 }
 
+function logInboundDrop(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  params.log(`${params.channel}: drop ${params.reason}${target}`);
+}
+
+function logTypingFailure(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  const action = params && params.action ? ` action=${params.action}` : "";
+  params.log(`${params.channel} typing${action} failed${target}: ${String(params.error)}`);
+}
+
+function logAckFailure(params) {
+  const target = params && params.target ? ` target=${params.target}` : "";
+  params.log(`${params.channel} ack cleanup failed${target}: ${String(params.error)}`);
+}
+
 function lowercasePreservingWhitespace(value) {
   return String(value ?? "").toLowerCase();
 }
@@ -20779,6 +20795,12 @@ const dangerousNameRuntime = {
   resolveDangerousNameMatchingEnabled,
 };
 
+const channelLoggingRuntime = {
+  logAckFailure,
+  logInboundDrop,
+  logTypingFailure,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21059,6 +21081,9 @@ const genericSdk = new Proxy(
     listConfiguredAccountIds,
     listTokenSourcedAccounts,
     localeLowercasePreservingWhitespace,
+    logAckFailure,
+    logInboundDrop,
+    logTypingFailure,
     lowercasePreservingWhitespace,
     mergeAccountConfig,
     normalizeAtHashSlug,
@@ -21178,6 +21203,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dangerous-name-runtime"
   ) {
     return dangerousNameRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-logging" ||
+    request === "@openclaw/plugin-sdk/channel-logging"
+  ) {
+    return channelLoggingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
