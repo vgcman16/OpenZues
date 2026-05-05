@@ -7756,6 +7756,295 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_status_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-status-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  appendMatchMetadata,
+  buildBaseAccountStatusSnapshot,
+  buildBaseChannelStatusSummary,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  buildRuntimeAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  buildWebhookChannelStatusSummary,
+  collectIssuesForEnabledAccounts,
+  collectStatusIssuesFromLastError,
+  createDefaultChannelRuntimeState,
+  createDependentCredentialStatusIssueCollector,
+  formatMatchMetadata,
+  resolveEnabledConfiguredAccountId
+} = require("openclaw/plugin-sdk/status-helpers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.status_helpers",
+      description: "Use OpenClaw status-helper SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const collectDependent = createDependentCredentialStatusIssueCollector({
+          channel: "telegram",
+          dependencySourceKey: "tokenSource",
+          missingPrimaryMessage: "missing token",
+          missingDependentMessage: "missing secret"
+        });
+        return {
+          runtimeDefault: createDefaultChannelRuntimeState("alerts", { healthy: true }),
+          baseSummary: buildBaseChannelStatusSummary(
+            { configured: true, running: true, lastStartAt: 1, lastError: "boom" },
+            { mode: "polling" }
+          ),
+          probeSummary: buildProbeChannelStatusSummary({
+            configured: true,
+            probe: { ok: true },
+            lastProbeAt: 5
+          }),
+          webhookSummary: buildWebhookChannelStatusSummary({}, { tokenSource: "env" }),
+          runtimeAccount: buildRuntimeAccountStatusSnapshot(
+            {
+              runtime: {
+                running: true,
+                connected: true,
+                reconnectAttempts: 2,
+                lastEventAt: 7,
+                healthState: "ok"
+              },
+              probe: { ok: true }
+            },
+            { port: 3978 }
+          ),
+          baseAccount: buildBaseAccountStatusSnapshot(
+            {
+              account: {
+                accountId: "default",
+                name: "Default",
+                enabled: true,
+                configured: true
+              },
+              runtime: {
+                running: true,
+                lastInboundAt: 11,
+                lastOutboundAt: 12
+              },
+              probe: { ok: true }
+            },
+            { mode: "webhook" }
+          ),
+          computedAccount: buildComputedAccountStatusSnapshot(
+            { accountId: "ops", configured: true },
+            { connected: true }
+          ),
+          tokenSummary: buildTokenChannelStatusSummary(
+            { configured: true, tokenSource: "env", probe: { ok: true }, lastProbeAt: 9 },
+            { includeMode: false }
+          ),
+          dependentIssues: collectDependent([
+            { accountId: "a", configured: false, tokenSource: "env" },
+            { accountId: "b", configured: false, tokenSource: "none" },
+            { accountId: "c", configured: true, tokenSource: "env" }
+          ]),
+          runtimeIssues: collectStatusIssuesFromLastError("telegram", [
+            { accountId: "a", lastError: " boom " },
+            { accountId: "b" }
+          ]),
+          enabledIssueAccounts: collectIssuesForEnabledAccounts({
+            accounts: [
+              { accountId: "a", enabled: true },
+              { accountId: "b", enabled: false }
+            ],
+            readAccount: (value) => value,
+            collectIssues: ({ accountId, issues }) => issues.push({
+              channel: "telegram",
+              accountId,
+              kind: "config",
+              message: "missing"
+            })
+          }),
+          metadata: [
+            formatMatchMetadata({ matchKey: 123, matchSource: " route " }),
+            appendMatchMetadata("matched", { matchKey: "abc" }),
+            resolveEnabledConfiguredAccountId({
+              accountId: " default ",
+              enabled: true,
+              configured: true
+            })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-status-helpers-plugin",
+                    "name": "Runtime Status Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-status-helpers-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.status_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.status_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "runtimeDefault": {
+            "accountId": "alerts",
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "healthy": True,
+        },
+        "baseSummary": {
+            "configured": True,
+            "mode": "polling",
+            "running": True,
+            "lastStartAt": 1,
+            "lastStopAt": None,
+            "lastError": "boom",
+        },
+        "probeSummary": {
+            "configured": True,
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "probe": {"ok": True},
+            "lastProbeAt": 5,
+        },
+        "webhookSummary": {
+            "configured": False,
+            "mode": "webhook",
+            "tokenSource": "env",
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+        },
+        "runtimeAccount": {
+            "running": True,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "probe": {"ok": True},
+            "connected": True,
+            "reconnectAttempts": 2,
+            "lastEventAt": 7,
+            "healthState": "ok",
+            "port": 3978,
+        },
+        "baseAccount": {
+            "accountId": "default",
+            "name": "Default",
+            "enabled": True,
+            "configured": True,
+            "running": True,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "probe": {"ok": True},
+            "lastInboundAt": 11,
+            "lastOutboundAt": 12,
+            "mode": "webhook",
+        },
+        "computedAccount": {
+            "accountId": "ops",
+            "configured": True,
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "lastInboundAt": None,
+            "lastOutboundAt": None,
+            "connected": True,
+        },
+        "tokenSummary": {
+            "configured": True,
+            "running": False,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "tokenSource": "env",
+            "probe": {"ok": True},
+            "lastProbeAt": 9,
+        },
+        "dependentIssues": [
+            {
+                "channel": "telegram",
+                "accountId": "a",
+                "kind": "config",
+                "message": "missing secret",
+            },
+            {
+                "channel": "telegram",
+                "accountId": "b",
+                "kind": "config",
+                "message": "missing token",
+            },
+        ],
+        "runtimeIssues": [
+            {
+                "channel": "telegram",
+                "accountId": "a",
+                "kind": "runtime",
+                "message": "Channel error: boom",
+            }
+        ],
+        "enabledIssueAccounts": [
+            {
+                "channel": "telegram",
+                "accountId": "a",
+                "kind": "config",
+                "message": "missing",
+            }
+        ],
+        "metadata": ["matchKey=123 matchSource=route", "matched (matchKey=abc)", "default"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

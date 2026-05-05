@@ -19406,6 +19406,266 @@ function createMessageToolCardSchema() {
   };
 }
 
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asString(value) {
+  return typeof value === "string" ? normalizeOptionalString(value) : undefined;
+}
+
+function formatMatchMetadata(params) {
+  const matchKey =
+    typeof (params && params.matchKey) === "string"
+      ? params.matchKey
+      : typeof (params && params.matchKey) === "number"
+        ? String(params.matchKey)
+        : undefined;
+  const matchSource = asString(params && params.matchSource);
+  const parts = [
+    matchKey ? `matchKey=${matchKey}` : null,
+    matchSource ? `matchSource=${matchSource}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function appendMatchMetadata(message, params) {
+  const meta = formatMatchMetadata(params || {});
+  return meta ? `${message} (${meta})` : message;
+}
+
+function resolveEnabledConfiguredAccountId(account) {
+  const accountId = asString(account && account.accountId) || "default";
+  const enabled = !account || account.enabled !== false;
+  const configured = Boolean(account && account.configured === true);
+  return enabled && configured ? accountId : null;
+}
+
+function collectIssuesForEnabledAccounts(params) {
+  const issues = [];
+  for (const entry of (params && params.accounts) || []) {
+    const account = params.readAccount(entry);
+    if (!account || account.enabled === false) {
+      continue;
+    }
+    const accountId = asString(account.accountId) || DEFAULT_ACCOUNT_ID;
+    params.collectIssues({ account, accountId, issues });
+  }
+  return issues;
+}
+
+function createDefaultChannelRuntimeState(accountId, extra) {
+  return {
+    accountId,
+    running: false,
+    lastStartAt: null,
+    lastStopAt: null,
+    lastError: null,
+    ...(extra || {}),
+  };
+}
+
+function buildBaseChannelStatusSummary(snapshot, extra) {
+  return {
+    configured: (snapshot && snapshot.configured) ?? false,
+    ...(extra || {}),
+    running: (snapshot && snapshot.running) ?? false,
+    lastStartAt: (snapshot && snapshot.lastStartAt) ?? null,
+    lastStopAt: (snapshot && snapshot.lastStopAt) ?? null,
+    lastError: (snapshot && snapshot.lastError) ?? null,
+  };
+}
+
+function buildProbeChannelStatusSummary(snapshot, extra) {
+  return {
+    ...buildBaseChannelStatusSummary(snapshot || {}, extra),
+    probe: snapshot && snapshot.probe,
+    lastProbeAt: (snapshot && snapshot.lastProbeAt) ?? null,
+  };
+}
+
+function buildWebhookChannelStatusSummary(snapshot, extra) {
+  return buildBaseChannelStatusSummary(snapshot || {}, {
+    mode: (snapshot && snapshot.mode) || "webhook",
+    ...(extra || {}),
+  });
+}
+
+function buildRuntimeAccountStatusSnapshot(params, extra) {
+  const runtime = params && params.runtime;
+  const probe = params && params.probe;
+  return {
+    running: (runtime && runtime.running) ?? false,
+    lastStartAt: (runtime && runtime.lastStartAt) ?? null,
+    lastStopAt: (runtime && runtime.lastStopAt) ?? null,
+    lastError: (runtime && runtime.lastError) ?? null,
+    probe,
+    ...(runtime && typeof runtime.connected === "boolean" ? { connected: runtime.connected } : {}),
+    ...(runtime && typeof runtime.restartPending === "boolean"
+      ? { restartPending: runtime.restartPending }
+      : {}),
+    ...(runtime && typeof runtime.reconnectAttempts === "number"
+      ? { reconnectAttempts: runtime.reconnectAttempts }
+      : {}),
+    ...(runtime && typeof runtime.lastConnectedAt === "number"
+      ? { lastConnectedAt: runtime.lastConnectedAt }
+      : {}),
+    ...(runtime && runtime.lastDisconnect ? { lastDisconnect: runtime.lastDisconnect } : {}),
+    ...(runtime && typeof runtime.lastEventAt === "number"
+      ? { lastEventAt: runtime.lastEventAt }
+      : {}),
+    ...(runtime && typeof runtime.lastTransportActivityAt === "number"
+      ? { lastTransportActivityAt: runtime.lastTransportActivityAt }
+      : {}),
+    ...(runtime && typeof runtime.healthState === "string"
+      ? { healthState: runtime.healthState }
+      : {}),
+    ...(extra || {}),
+  };
+}
+
+function buildBaseAccountStatusSnapshot(params, extra) {
+  const account = (params && params.account) || {};
+  const runtime = params && params.runtime;
+  return {
+    accountId: account.accountId,
+    name: account.name,
+    enabled: account.enabled,
+    configured: account.configured,
+    ...buildRuntimeAccountStatusSnapshot({
+      runtime,
+      probe: params && params.probe,
+    }),
+    lastInboundAt: (runtime && runtime.lastInboundAt) ?? null,
+    lastOutboundAt: (runtime && runtime.lastOutboundAt) ?? null,
+    ...(extra || {}),
+  };
+}
+
+function buildComputedAccountStatusSnapshot(params, extra) {
+  return buildBaseAccountStatusSnapshot(
+    {
+      account: {
+        accountId: params && params.accountId,
+        name: params && params.name,
+        enabled: params && params.enabled,
+        configured: params && params.configured,
+      },
+      runtime: params && params.runtime,
+      probe: params && params.probe,
+    },
+    extra,
+  );
+}
+
+function buildComputedAccountStatusAdapterBase(options) {
+  return {
+    defaultRuntime: options.defaultRuntime,
+    buildChannelSummary: options.buildChannelSummary,
+    probeAccount: options.probeAccount,
+    formatCapabilitiesProbe: options.formatCapabilitiesProbe,
+    auditAccount: options.auditAccount,
+    buildCapabilitiesDiagnostics: options.buildCapabilitiesDiagnostics,
+    logSelfId: options.logSelfId,
+    resolveAccountState: options.resolveAccountState,
+    collectStatusIssues: options.collectStatusIssues,
+  };
+}
+
+function createComputedAccountStatusAdapter(options) {
+  return {
+    ...buildComputedAccountStatusAdapterBase(options),
+    buildAccountSnapshot: (params) => {
+      const resolved = options.resolveAccountSnapshot(params);
+      const { extra, ...snapshot } = resolved;
+      return buildComputedAccountStatusSnapshot(
+        {
+          ...snapshot,
+          runtime: params.runtime,
+          probe: params.probe,
+        },
+        extra,
+      );
+    },
+  };
+}
+
+function createAsyncComputedAccountStatusAdapter(options) {
+  return {
+    ...buildComputedAccountStatusAdapterBase(options),
+    buildAccountSnapshot: async (params) => {
+      const resolved = await options.resolveAccountSnapshot(params);
+      const { extra, ...snapshot } = resolved;
+      return buildComputedAccountStatusSnapshot(
+        {
+          ...snapshot,
+          runtime: params.runtime,
+          probe: params.probe,
+        },
+        extra,
+      );
+    },
+  };
+}
+
+function buildTokenChannelStatusSummary(snapshot, opts) {
+  const base = {
+    ...buildBaseChannelStatusSummary(snapshot || {}),
+    tokenSource: (snapshot && snapshot.tokenSource) || "none",
+    probe: snapshot && snapshot.probe,
+    lastProbeAt: (snapshot && snapshot.lastProbeAt) ?? null,
+  };
+  if (opts && opts.includeMode === false) {
+    return base;
+  }
+  return {
+    ...base,
+    mode: (snapshot && snapshot.mode) ?? null,
+  };
+}
+
+function createDependentCredentialStatusIssueCollector(options) {
+  const isDependencyConfigured =
+    options.isDependencyConfigured ||
+    ((value) => {
+      const normalized = typeof value === "string" ? normalizeOptionalString(value) : undefined;
+      return Boolean(normalized && normalized !== "none");
+    });
+  return (accounts) =>
+    (Array.isArray(accounts) ? accounts : []).flatMap((account) => {
+      if (account.configured !== false) {
+        return [];
+      }
+      return [
+        {
+          channel: options.channel,
+          accountId: account.accountId ?? "",
+          kind: "config",
+          message: isDependencyConfigured(account[options.dependencySourceKey])
+            ? options.missingDependentMessage
+            : options.missingPrimaryMessage,
+        },
+      ];
+    });
+}
+
+function collectStatusIssuesFromLastError(channel, accounts) {
+  return (Array.isArray(accounts) ? accounts : []).flatMap((account) => {
+    const lastError = typeof account.lastError === "string" ? account.lastError.trim() : "";
+    if (!lastError) {
+      return [];
+    }
+    return [
+      {
+        channel,
+        accountId: account.accountId,
+        kind: "runtime",
+        message: `Channel error: ${lastError}`,
+      },
+    ];
+  });
+}
+
 function isToolPayloadTextBlock(block) {
   return (
     Boolean(block) &&
@@ -20497,6 +20757,27 @@ const channelActionsRuntime = {
   withNormalizedTimestamp,
 };
 
+const statusHelpersRuntime = {
+  appendMatchMetadata,
+  asString,
+  buildBaseAccountStatusSnapshot,
+  buildBaseChannelStatusSummary,
+  buildComputedAccountStatusSnapshot,
+  buildProbeChannelStatusSummary,
+  buildRuntimeAccountStatusSnapshot,
+  buildTokenChannelStatusSummary,
+  buildWebhookChannelStatusSummary,
+  collectIssuesForEnabledAccounts,
+  collectStatusIssuesFromLastError,
+  createAsyncComputedAccountStatusAdapter,
+  createComputedAccountStatusAdapter,
+  createDefaultChannelRuntimeState,
+  createDependentCredentialStatusIssueCollector,
+  formatMatchMetadata,
+  isRecord,
+  resolveEnabledConfiguredAccountId,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -20538,20 +20819,35 @@ const genericSdk = new Proxy(
     DEFAULT_ACCOUNT_ID,
     DEFAULT_MAIN_KEY,
     SILENT_REPLY_TOKEN,
+    appendMatchMetadata,
+    asString,
     buildRandomTempFilePath,
     buildAgentMainSessionKey,
     buildAgentSessionKey,
+    buildBaseAccountStatusSnapshot,
+    buildBaseChannelStatusSummary,
+    buildComputedAccountStatusSnapshot,
     buildGroupHistoryKey,
     buildMediaPayload,
     buildOutboundBaseSessionKey,
+    buildProbeChannelStatusSummary,
+    buildRuntimeAccountStatusSnapshot,
+    buildTokenChannelStatusSummary,
+    buildWebhookChannelStatusSummary,
     coerceSecretRef,
     collectErrorGraphCandidates,
+    collectIssuesForEnabledAccounts,
+    collectStatusIssuesFromLastError,
     countOutboundMedia,
     createAccountActionGate,
     createActionGate,
     createAccountListHelpers,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createAsyncComputedAccountStatusAdapter,
+    createComputedAccountStatusAdapter,
+    createDefaultChannelRuntimeState,
+    createDependentCredentialStatusIssueCollector,
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
     createUnionActionGate,
@@ -20565,6 +20861,7 @@ const genericSdk = new Proxy(
     deriveLastRoutePolicy,
     extractErrorCode,
     extractToolPayload,
+    formatMatchMetadata,
     formatTextWithAttachmentLinks,
     formatSetExplicitDefaultInstruction,
     formatSetExplicitDefaultToConfiguredInstruction,
@@ -20579,6 +20876,7 @@ const genericSdk = new Proxy(
     isAcpSessionKey,
     isCronSessionKey,
     isNumericTargetId,
+    isRecord,
     isReasoningReplyPayload,
     isSilentReplyPayloadText,
     isSilentReplyText,
@@ -20632,6 +20930,7 @@ const genericSdk = new Proxy(
     resolveChunkMode,
     resolveAgentRoute,
     resolveDefaultAgentBoundAccountId,
+    resolveEnabledConfiguredAccountId,
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
     resolveOutboundMediaUrls,
@@ -20743,6 +21042,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-actions"
   ) {
     return channelActionsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/status-helpers" ||
+    request === "@openclaw/plugin-sdk/status-helpers"
+  ) {
+    return statusHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
