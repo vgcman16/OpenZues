@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~76.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~76.7% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,8 +58,8 @@ Current percentage rollup:
   active-registry executor projection, runtime activation doctor posture, and
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
-  command-auth, channel-setup, allowlist-config-edit, group-access, and
-  provider-selection-runtime helper slices.
+  command-auth, channel-setup, allowlist-config-edit, group-access,
+  provider-selection-runtime, and windows-spawn helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7204,9 +7204,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~76.6%. Verified with focused
   provider-selection-runtime pytest, adjacent plugin invoke proof, `ruff check`,
   and `mypy`; source/test checkpointed in `395d23fc`.
+- Closed the imported OpenClaw plugin SDK windows-spawn seam from
+  `src/plugin-sdk/windows-spawn.ts`: native runtime entries can now import
+  PATH/PATHEXT executable resolution, direct/non-Windows spawning, JS/CJS/MJS
+  Node entrypoint wrapping, CMD/BAT shim entrypoint inspection, package.json
+  `bin` fallback resolution, fail-closed unresolved wrapper policy, opt-in
+  shell fallback, and materialized argv construction through `tools.invoke`.
+  Repo-wide parity is now estimated at ~76.7%. Verified with focused
+  windows-spawn pytest, adjacent plugin invoke proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `1c172bde`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
