@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~59.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -170,6 +170,10 @@ may lag behind this tracker.
   package root, source-checkout, dist, and postinstall-inventory posture in
   `doctor --json`.
   - Status: checkpointed in `47d73351`
+
+- [x] Companion node presence alive lifecycle, preserving authenticated
+  background beacon persistence and upstream-shaped handled/reason results.
+  - Status: verified; checkpoint pending
 
 - [x] Telegram GIF media send animation routing, preserving OpenClaw's
   `sendAnimation` behavior for GIF media while keeping document forcing,
@@ -595,6 +599,20 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
     -q` (`1 passed`), adjacent doctor/runtime bridge proof (`3 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Companion node presence alive lifecycle.
+  - Source: `openclaw-main/src/gateway/server-node-events.ts`,
+    `openclaw-main/src/shared/node-presence.ts`,
+    `openclaw-main/apps/ios/Sources/Push/BackgroundAliveBeacon.swift`,
+    Android gateway session invoke tests
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_pairing.py`, `src/openzues/database.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Status: verified; checkpoint pending.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused service/API presence tests (`1 passed`
+    each), adjacent node pairing/event API proof (`3 passed` each),
     `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.

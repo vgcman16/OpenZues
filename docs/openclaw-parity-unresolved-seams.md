@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~59.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~59.8% overall, with a reasonable
   band of ~50-60%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -58,7 +58,7 @@ Current percentage rollup:
   active-registry executor projection, and runtime activation doctor posture
   slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
-  latest package distribution doctor diagnostics slice.
+  latest companion node presence alive slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5494,6 +5494,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and CLI/operator-control bounded paths remain ~99.9%. Verified with the
   focused package distribution doctor pytest, adjacent doctor/runtime bridge
   proof, `ruff check`, and `mypy`; checkpointed in `47d73351`.
+- Closed the companion node presence alive seam from OpenClaw
+  `src/gateway/server-node-events.ts`, `src/shared/node-presence.ts`,
+  `apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and Android gateway
+  session invoke tests: authenticated `node.presence.alive` events now persist
+  paired-node last-seen metadata without requiring a live socket, normalize
+  triggers, throttle repeated persisted writes, and return upstream-shaped
+  handled/reason responses. Repo-wide parity is now estimated at ~59.8%;
+  gateway/session/tool-contract and runtime/CLI/doctor bounded paths remain
+  ~99.9%. Verified with focused service/API presence tests, adjacent node
+  pairing/event API proof, `ruff check`, and `mypy`; checkpoint pending
+  commit.
 - Next repo-wide queue head: continue deeper plugin runtime import/activation
   breadth or rotate to packaging/companion/provider breadth, whichever is the
   strongest source-backed seam after the next discovery pass.

@@ -38600,6 +38600,79 @@ async def test_node_pair_approve_verify_and_rename_lifecycle(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_node_presence_alive_persists_paired_node_last_seen_and_throttles(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "data" / "openzues-test.db")
+    await database.initialize()
+    pairing_service = GatewayNodePairingService(database)
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        pairing_service=pairing_service,
+    )
+    requester = GatewayNodeMethodRequester(
+        node_id="pair-node-presence",
+        caller_scopes=("operator.pairing",),
+    )
+
+    created = await service.call(
+        "node.pair.request",
+        {
+            "nodeId": "pair-node-presence",
+            "displayName": "Presence Phone",
+            "platform": "ios",
+        },
+        now_ms=1_000,
+    )
+    await service.call(
+        "node.pair.approve",
+        {"requestId": created["request"]["requestId"]},
+        requester=requester,
+        now_ms=2_000,
+    )
+
+    first = await service.call(
+        "node.event",
+        {
+            "event": "node.presence.alive",
+            "payload": {"trigger": "bg_app_refresh", "sentAtMs": 12_000},
+        },
+        requester=requester,
+        now_ms=12_000,
+    )
+    second = await service.call(
+        "node.event",
+        {
+            "event": "node.presence.alive",
+            "payload": {"trigger": "silent_push", "sentAtMs": 12_100},
+        },
+        requester=requester,
+        now_ms=12_100,
+    )
+
+    pairing = await service.call("node.pair.list", {})
+    events = await database.list_events()
+
+    assert first == {
+        "ok": True,
+        "event": "node.presence.alive",
+        "handled": True,
+        "reason": "persisted",
+    }
+    assert second == {
+        "ok": True,
+        "event": "node.presence.alive",
+        "handled": True,
+        "reason": "throttled",
+    }
+    paired = pairing["paired"][0]
+    assert paired["lastSeenAtMs"] == 12_000
+    assert paired["lastSeenReason"] == "bg_app_refresh"
+    assert events == []
+
+
+@pytest.mark.asyncio
 async def test_node_pair_approve_respects_explicit_caller_scope_requirements(tmp_path) -> None:
     database = Database(tmp_path / "data" / "openzues-test.db")
     await database.initialize()

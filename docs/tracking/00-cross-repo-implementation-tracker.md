@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~59.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,14 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The package distribution doctor diagnostics slice is checkpointed in `47d73351`.
+The companion node presence alive slice is verified and awaiting checkpoint commit.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/cli.py`
-- `tests/test_cli.py`
+- `src/openzues/database.py`
+- `src/openzues/services/gateway_node_methods.py`
+- `src/openzues/services/gateway_node_pairing.py`
+- `tests/test_gateway_node_methods.py`
+- `tests/test_gateway_nodes_api.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -50,10 +53,32 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Package distribution doctor diagnostics checkpointed in `47d73351` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Document extractor contract metadata checkpointed in `2196c65e` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue plugin manifest/runtime contract breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
+| OZ-COMP-001 | Companion apps/nodes parity | Node presence alive verified; checkpoint pending | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
 ## Active Slice Detail
+
+- [x] `OZ-COMP-001A` companion `node.presence.alive` lifecycle
+  - Source: `openclaw-main/src/gateway/server-node-events.ts`,
+    `openclaw-main/src/shared/node-presence.ts`,
+    `openclaw-main/apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and
+    Android gateway session invoke tests.
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_pairing.py`, `src/openzues/database.py`,
+    `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Contract: authenticated `node.presence.alive` events can arrive without a
+    live node socket, persist paired-node `lastSeenAtMs`/`lastSeenReason`,
+    normalize allowed triggers, throttle repeated persisted writes per device,
+    avoid ordinary node-event persistence, and return OpenClaw-shaped
+    handled/reason payloads.
+  - Evidence required: focused service/API node presence tests, adjacent
+    pairing/event API tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused service/API tests (`1 passed` each),
+    adjacent service/API selections (`3 passed` each), `ruff check` on touched
+    node/database files, and `mypy` on touched source modules.
 
 - [x] `OZ-PKG-001A` package distribution doctor diagnostics
   - Source: `openclaw-main/src/flows/doctor-health.ts`,

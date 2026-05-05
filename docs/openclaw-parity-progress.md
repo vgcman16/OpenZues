@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~59.7% overall, with a reasonable band of ~50-60%.
+- Estimated repo-wide parity: ~59.8% overall, with a reasonable band of ~50-60%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9644,6 +9644,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   gateway_doctor_json_includes_gateway_capability_summary"` (`3 passed`),
   `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `47d73351`.
+
+- Authenticated companion `node.presence.alive` background beacons now follow
+  the OpenClaw-shaped lifecycle: they work without a live socket when the
+  node token authenticates, persist paired-node `lastSeenAtMs` and
+  `lastSeenReason`, normalize supported triggers, return
+  `persisted`/`throttled`/`unpaired`/`missing_device_identity` style results,
+  and avoid recording ordinary node events for presence-only beacons. This
+  closes `OZ-COMP-001A`; repo-wide parity is now estimated at ~59.8%.
+- Verified the node presence alive slice with focused service `python -m pytest
+  tests\test_gateway_node_methods.py::test_node_presence_alive_persists_paired_node_last_seen_and_throttles
+  -q` (`1 passed`), focused API `python -m pytest
+  tests\test_gateway_nodes_api.py::test_remote_node_presence_alive_endpoint_persists_without_live_socket
+  -q` (`1 passed`), adjacent service `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "node_presence_alive or
+  node_pair_approve_verify_and_rename_lifecycle or
+  node_pair_request_broadcasts_requested_event_only_for_new_requests"` (`3
+  passed`), adjacent API `python -m pytest tests\test_gateway_nodes_api.py -q
+  -k "remote_node_presence_alive or remote_node_event_endpoint_records_event
+  or last_heartbeat_endpoint_returns_latest_recorded_heartbeat"` (`3 passed`),
+  `ruff check` on touched node/database tests and services, and `mypy` on
+  `src\openzues\database.py`,
+  `src\openzues\services\gateway_node_pairing.py`, and
+  `src\openzues\services\gateway_node_methods.py`. Checkpoint pending commit.
 
 ## References
 
