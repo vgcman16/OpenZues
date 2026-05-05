@@ -13967,6 +13967,122 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_directory_config_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-directory-config-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const directoryConfig = require("openclaw/plugin-sdk/directory-config-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function stripGroupPrefix(entry) {
+  return entry.replace(/^room:/i, "").toLowerCase();
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.directory_config_runtime",
+      description: "Use OpenClaw directory config runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const inspected = directoryConfig.listInspectedDirectoryEntriesFromSources({
+          cfg: {},
+          kind: "group",
+          inspectAccount: () => ({ ids: [["room:A"], ["room:B", "room:A"]] }),
+          resolveSources: (account) => account.ids,
+          normalizeId: stripGroupPrefix,
+          query: "a"
+        });
+        const resolvedGroups = directoryConfig.listResolvedDirectoryGroupEntriesFromMapKeys({
+          cfg: {},
+          resolveAccount: () => ({ groups: { "room:A": {}, "room:B": {} } }),
+          resolveGroups: (account) => account.groups,
+          normalizeId: stripGroupPrefix,
+          limit: 1
+        });
+
+        return {
+          exportTypes: [
+            typeof directoryConfig.applyDirectoryQueryAndLimit,
+            typeof directoryConfig.listDirectoryEntriesFromSources,
+            typeof directoryConfig.listResolvedDirectoryGroupEntriesFromMapKeys,
+            typeof genericSdk.listResolvedDirectoryGroupEntriesFromMapKeys,
+            typeof directoryConfig.createChannelDirectoryAdapter
+          ],
+          filtered: directoryConfig.applyDirectoryQueryAndLimit(
+            ["alpha", "beta", "gamma"],
+            { query: "a", limit: 2 }
+          ),
+          entries: directoryConfig.toDirectoryEntries("group", ["room-a"]),
+          inspected,
+          resolvedGroups
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "directory-config-runtime-plugin",
+                    "name": "Directory Config Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-directory-config-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.directory_config_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.directory_config_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "undefined"],
+        "filtered": ["alpha", "beta"],
+        "entries": [{"kind": "group", "id": "room-a"}],
+        "inspected": [{"kind": "group", "id": "a"}],
+        "resolvedGroups": [{"kind": "group", "id": "a"}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

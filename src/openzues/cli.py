@@ -30938,6 +30938,23 @@ const directoryRuntime = {
   toDirectoryEntries,
 };
 
+const directoryConfigRuntime = {
+  applyDirectoryQueryAndLimit,
+  collectNormalizedDirectoryIds,
+  createInspectedDirectoryEntriesLister,
+  createResolvedDirectoryEntriesLister,
+  listDirectoryEntriesFromSources,
+  listDirectoryGroupEntriesFromMapKeys,
+  listDirectoryGroupEntriesFromMapKeysAndAllowFrom,
+  listDirectoryUserEntriesFromAllowFrom,
+  listDirectoryUserEntriesFromAllowFromAndMapKeys,
+  listInspectedDirectoryEntriesFromSources,
+  listResolvedDirectoryEntriesFromSources,
+  listResolvedDirectoryGroupEntriesFromMapKeys,
+  listResolvedDirectoryUserEntriesFromAllowFrom,
+  toDirectoryEntries,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -32138,6 +32155,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/directory-runtime"
   ) {
     return directoryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/directory-config-runtime" ||
+    request === "@openclaw/plugin-sdk/directory-config-runtime"
+  ) {
+    return directoryConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
