@@ -251,6 +251,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "whatsapp",
     "zalo",
     "feishu",
+    "googlechat",
     "line",
     "matrix",
 }
@@ -1467,7 +1468,20 @@ def _message_action_param_integer(
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
-    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:", "matrix:@", "@")):
+    if normalized.startswith(
+        (
+            "direct:",
+            "dm:",
+            "user:",
+            "users/",
+            "googlechat:users/",
+            "google-chat:users/",
+            "gchat:users/",
+            "matrix:user:",
+            "matrix:@",
+            "@",
+        )
+    ):
         return "direct"
     if normalized.startswith("group:"):
         return "group"
@@ -2933,6 +2947,109 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
+
+
+def _googlechat_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Google Chat route is missing an access token secret.")
+    return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+
+def _googlechat_normalize_target(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    target = re.sub(
+        r"^(googlechat|google-chat|gchat):",
+        "",
+        target,
+        flags=re.IGNORECASE,
+    ).strip()
+    lowered = target.lower()
+    if lowered.startswith("user:"):
+        target = target.split(":", 1)[1].strip()
+        if target.lower().startswith("users/"):
+            target = target[len("users/") :]
+        target = f"users/{target}"
+    elif lowered.startswith("space:"):
+        target = target.split(":", 1)[1].strip()
+        if target.lower().startswith("spaces/"):
+            target = target[len("spaces/") :]
+        target = f"spaces/{target}"
+    lowered = target.lower()
+    if lowered.startswith("users/"):
+        suffix = target[len("users/") :]
+        return f"users/{suffix.lower()}" if "@" in suffix else target
+    if lowered.startswith("spaces/"):
+        return target
+    if "@" in target:
+        return f"users/{target.lower()}"
+    return target
+
+
+def _googlechat_strip_message_suffix(target: str) -> str:
+    index = target.lower().find("/messages/")
+    if index == -1:
+        return target
+    return target[:index]
+
+
+def _googlechat_space_target(raw_target: str | None) -> str | None:
+    normalized = _googlechat_normalize_target(raw_target)
+    if not normalized:
+        return None
+    base = _googlechat_strip_message_suffix(normalized)
+    if base.lower().startswith("spaces/"):
+        return base
+    if base.lower().startswith("users/"):
+        raise RuntimeError(
+            "Google Chat native provider route requires a spaces/... target; "
+            "user DM resolution is not available without the Google Chat directory runtime."
+        )
+    return base
+
+
+def _googlechat_messages_endpoint(
+    target: str | None,
+    *,
+    space: str,
+    thread: str | None,
+) -> str:
+    route_target = str(target or "").strip()
+    if _normalized_http_webhook_url(route_target) is None:
+        endpoint = f"{GOOGLE_CHAT_API_BASE_URL.rstrip('/')}/{space.strip('/')}/messages"
+    else:
+        stripped = route_target.rstrip("/")
+        stripped_lower = stripped.lower()
+        normalized_space = space.strip("/")
+        if stripped_lower.endswith("/messages"):
+            endpoint = stripped
+        elif stripped_lower.endswith(f"/{normalized_space.lower()}"):
+            endpoint = f"{stripped}/messages"
+        else:
+            endpoint = f"{stripped}/{normalized_space}/messages"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    if thread:
+        separator = "&" if "?" in endpoint else "?"
+        endpoint = (
+            f"{endpoint}{separator}"
+            f"{urlencode({'messageReplyOption': 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD'})}"
+        )
+    return endpoint
+
+
+def _googlechat_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("name") or result.get("messageName")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
 
 
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
@@ -4972,6 +5089,15 @@ def _conversation_target_peer_id_matches(
 ) -> bool:
     if route_peer_id == event_peer_id:
         return True
+    if channel == "googlechat":
+        route_googlechat_target = _googlechat_normalize_target(route_peer_id)
+        event_googlechat_target = _googlechat_normalize_target(event_peer_id)
+        return bool(
+            route_googlechat_target
+            and event_googlechat_target
+            and route_googlechat_target.strip().lower()
+            == event_googlechat_target.strip().lower()
+        )
     if channel == "telegram":
         route_target = _parse_telegram_delivery_target(route_peer_id)
         event_target = _parse_telegram_delivery_target(event_peer_id)
@@ -9848,6 +9974,8 @@ class OpsMeshService:
             return self._post_zalo_provider_event
         if route_kind == "feishu":
             return self._post_feishu_provider_event
+        if route_kind == "googlechat":
+            return self._post_googlechat_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -19363,6 +19491,78 @@ class OpsMeshService:
             "chatId": delivered_chat,
             "channelId": delivered_chat,
         }
+
+    def _post_googlechat_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Google Chat native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        route_conversation_target = _normalize_conversation_target(
+            event.get("routeConversationTarget")
+        )
+        target_candidate = (
+            event.get("to")
+            or (conversation_target or {}).get("peer_id")
+            or (route_conversation_target or {}).get("peer_id")
+            or route.get("target")
+        )
+        space = _googlechat_space_target(str(target_candidate or ""))
+        if space is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            raise RuntimeError(
+                "Google Chat native provider route does not support media sends yet."
+            )
+        text = str(event.get("message") or "").strip()
+        if not text:
+            raise RuntimeError("Google Chat route is missing message text.")
+        thread = str(event.get("threadId") or event.get("replyToId") or "").strip()
+        payload: dict[str, object] = {"text": text}
+        if thread:
+            payload["thread"] = {"name": thread}
+        result = self._post_json_webhook(
+            _googlechat_messages_endpoint(
+                str(route.get("target") or ""),
+                space=space,
+                thread=thread or None,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(f"Google Chat send failed: {result.get('error')}")
+        message_id = _googlechat_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Google Chat API response did not include a message name.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": space,
+            "channelId": space,
+        }
+        if thread:
+            native_result["threadId"] = thread
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        return native_result
 
     def _post_line_provider_event(
         self,

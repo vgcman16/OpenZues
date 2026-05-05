@@ -202,6 +202,13 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "reply": True,
         "media": True,
     },
+    "googlechat": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": False,
+        "polls": False,
+    },
     "zalo": {
         "chatTypes": ["direct", "group"],
         "media": True,
@@ -7353,6 +7360,7 @@ def _with_doctor_gateway_runtime_payload(
 _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "bluebubbles",
     "discord",
+    "googlechat",
     "line",
     "matrix",
     "slack",
@@ -29261,8 +29269,8 @@ def routes_create_command(
         "webhook",
         "--kind",
         help=(
-            "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, line, "
-            "or matrix."
+            "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
+            "googlechat, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -29322,12 +29330,13 @@ def routes_create_command(
         "whatsapp",
         "zalo",
         "feishu",
+        "googlechat",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
-            "zalo, feishu, line, matrix."
+            "zalo, feishu, googlechat, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
@@ -29341,6 +29350,7 @@ def routes_create_command(
                 "whatsapp",
                 "zalo",
                 "feishu",
+                "googlechat",
                 "line",
                 "matrix",
             }
@@ -29357,6 +29367,7 @@ def routes_create_command(
                 "whatsapp",
                 "zalo",
                 "feishu",
+                "googlechat",
                 "line",
                 "matrix",
             ],

@@ -7732,6 +7732,26 @@ def test_notification_route_create_accepts_feishu_native_route_kind() -> None:
     assert route.conversation_target.channel == "feishu"
 
 
+def test_notification_route_create_accepts_googlechat_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Google Chat Native Provider",
+        kind="googlechat",
+        target="spaces/AAAAAAA",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="googlechat",
+            account_id="workspace",
+            peer_kind="channel",
+            peer_id="spaces/AAAAAAA",
+        ),
+        secret_token="google-chat-access-token",
+    )
+
+    assert route.kind == "googlechat"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "googlechat"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -16514,6 +16534,128 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_r
         "messageId": "om_feishu_1",
         "chatId": "oc_chat_1",
         "channelId": "oc_chat_1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "googlechat:spaces/AAAAAAA"
+    await database.create_notification_route(
+        name="Google Chat Native Send Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/AAAAAAA/messages/msg-1"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="Google Chat **native** parity.",
+        account_id="workspace",
+        thread_id="spaces/AAAAAAA/threads/thread-1",
+        reply_to_id="spaces/AAAAAAA/messages/root",
+        idempotency_key="idem-native-googlechat-send",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="googlechat",
+                account_id="workspace",
+                peer_kind="channel",
+                peer_id=googlechat_target,
+            ),
+        ),
+        thread_id="spaces/AAAAAAA/threads/thread-1",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-googlechat-send",
+        "channel": "googlechat",
+        "messageId": "spaces/AAAAAAA/messages/msg-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "googlechat",
+            "target": googlechat_target,
+            "accountId": "workspace",
+            "threadId": "spaces/AAAAAAA/threads/thread-1",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "spaces/AAAAAAA",
+        "channelId": "spaces/AAAAAAA",
+        "threadId": "spaces/AAAAAAA/threads/thread-1",
+        "replyToId": "spaces/AAAAAAA/messages/root",
+    }
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages"
+            "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+            {
+                "text": "Google Chat **native** parity.",
+                "thread": {"name": "spaces/AAAAAAA/threads/thread-1"},
+            },
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "spaces/AAAAAAA/messages/msg-1",
+        "chatId": "spaces/AAAAAAA",
+        "channelId": "spaces/AAAAAAA",
+        "threadId": "spaces/AAAAAAA/threads/thread-1",
+        "replyToId": "spaces/AAAAAAA/messages/root",
     }
 
 

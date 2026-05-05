@@ -19529,6 +19529,58 @@ def test_routes_create_command_accepts_feishu_native_route(tmp_path, monkeypatch
     assert routes[0]["conversation_target"]["channel"] == "feishu"
 
 
+def test_routes_create_command_accepts_googlechat_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Google Chat Native Gateway",
+            "--kind",
+            "googlechat",
+            "--target",
+            "https://chat.googleapis.com/v1",
+            "--conversation-channel",
+            "googlechat",
+            "--conversation-account",
+            "workspace",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "googlechat:spaces/AAAAAAA",
+            "--secret-token",
+            "google-chat-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Google Chat Native Gateway"
+    assert payload["kind"] == "googlechat"
+    assert payload["target"] == "https://chat.googleapis.com/v1"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "googlechat"
+    assert conversation_target["account_id"] == "workspace"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "googlechat:spaces/AAAAAAA"
+    assert "googlechat:spaces/AAAAAAA" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "googlechat"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "googlechat"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

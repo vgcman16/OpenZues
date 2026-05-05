@@ -39,6 +39,11 @@ _CHANNEL_META = (
         "detailLabel": "Feishu/Lark",
     },
     {
+        "id": "googlechat",
+        "label": "Google Chat",
+        "detailLabel": "Google Chat",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

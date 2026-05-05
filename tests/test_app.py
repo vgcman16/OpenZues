@@ -4811,6 +4811,8 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "telegram",
         "whatsapp",
         "zalo",
+        "feishu",
+        "googlechat",
         "line",
         "matrix",
     ]
@@ -4944,6 +4946,47 @@ def test_gateway_channels_endpoint_classifies_zalo_native_route(tmp_path) -> Non
     assert payload["channelDefaultAccountId"]["zalo"] == "zalo-bot"
 
 
+def test_gateway_channels_endpoint_classifies_googlechat_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Google Chat Native Gateway",
+                "kind": "googlechat",
+                "target": "https://chat.googleapis.com/v1",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "googlechat",
+                    "account_id": "workspace",
+                    "peer_kind": "channel",
+                    "peer_id": "googlechat:spaces/AAAAAAA",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "googlechat" in payload["channelOrder"]
+    assert payload["channelLabels"]["googlechat"] == "Google Chat"
+    assert payload["channelDetailLabels"]["googlechat"] == "Google Chat"
+    assert payload["channels"]["googlechat"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["googlechat"] == "workspace"
+
+
+NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
+    '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
+    '"line", "matrix"].includes(routeKind)'
+)
+
+
 def test_notification_route_operator_form_offers_line_native_routes() -> None:
     template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
         encoding="utf-8"
@@ -4953,10 +4996,7 @@ def test_notification_route_operator_form_offers_line_native_routes() -> None:
     )
 
     assert '<option value="line">LINE native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
-    )
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
@@ -4968,10 +5008,7 @@ def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
     )
 
     assert '<option value="matrix">Matrix native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
-    )
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
@@ -4983,10 +5020,19 @@ def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
     )
 
     assert '<option value="zalo">Zalo native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_googlechat_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
     )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="googlechat">Google Chat native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(
