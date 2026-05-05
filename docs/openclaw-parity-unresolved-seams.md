@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.4% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -154,6 +154,17 @@ conversation metadata, and report `poll` in CLI channel capabilities. Verified
 on 2026-05-05 with focused runtime/CLI proofs, adjacent provider/CLI proofs,
 `ruff check`, and `mypy`; checkpointed in `b0ad5491`. Remaining poll breadth
 is invoke-based vote extraction/storage and inbound notification handling.
+
+Provider-native Microsoft Teams read-only reaction listing is now landed for
+the OpenClaw Graph message-action slice: native `message.action`
+`channel="msteams"`, `action="reactions"` resolves explicit or tool-context
+targets, fetches a Graph app token, reads the message resource, groups
+`reactions` by type while counting anonymous/deleted-user reactions, preserves
+known emoji labels, and returns OpenClaw-shaped `{ok, reactions}` summaries.
+Verified on 2026-05-05 with focused runtime proof, adjacent action/provider
+proof, `ruff check`, and `mypy`; checkpointed in `4996cf5c`. Remaining action
+breadth is delegated `react`/`unreact`, pins, reads/search, member/channel
+metadata, and inbound reaction event routing.
 
 Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
 session extension mutation path: admin-scoped callers can patch only registered
@@ -5857,11 +5868,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   through the CLI channel capabilities surface. Repo-wide parity is now
   estimated at ~63.3%. Verified with focused runtime/CLI pytest, adjacent
   provider/CLI proof, `ruff check`, and `mypy`; checkpointed in `b0ad5491`.
+- Closed the Microsoft Teams read-only reaction listing action seam from
+  OpenClaw `extensions/msteams/src/actions.ts` and
+  `extensions/msteams/src/graph-messages.ts`: native `message.action`
+  dispatch now handles `channel="msteams"`, `action="reactions"` via Graph
+  app auth, resolves explicit/tool-context targets, reads message reactions,
+  groups by type, counts reactions without user ids, and returns OpenClaw-style
+  reaction summary objects. Repo-wide parity is now estimated at ~63.4%.
+  Verified with focused runtime pytest, adjacent action/provider proof, `ruff
+  check`, and `mypy`; checkpointed in `4996cf5c`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams stored
-  conversation-reference, media/thread/action/vote-invoke breadth or another
-  source-backed channel/provider route/action adapter, or packaging/plugin
-  breadth seam if provider discovery proves no smaller route slice.
+  conversation-reference, media/thread/delegated-action/vote-invoke breadth or
+  another source-backed channel/provider route/action adapter, or
+  packaging/plugin breadth seam if provider discovery proves no smaller route
+  slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

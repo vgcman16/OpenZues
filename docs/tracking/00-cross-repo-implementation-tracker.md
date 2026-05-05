@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~63.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~63.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Microsoft Teams native poll slice is checkpointed in `b0ad5491`.
+The Microsoft Teams reaction-list action slice is checkpointed in `4996cf5c`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -59,9 +59,30 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams native poll checkpointed in `b0ad5491` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams stored conversation/media/thread/action/vote breadth or next provider-specific send/poll/replay gap |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams reaction-list action checkpointed in `4996cf5c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams stored conversation/media/thread/delegated-action/vote breadth or next provider-specific send/poll/replay gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001Z` Microsoft Teams reaction-list action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.read.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="reactions"` resolves explicit `to` / `target` / conversation ids
+    or Graph-channel tool context, obtains a Graph app token from route
+    `appId`/`tenantId` plus secret, reads the Graph message resource, groups
+    reactions by `reactionType`, counts entries without user ids, preserves
+    known emoji labels, and returns OpenClaw-shaped `{ok, reactions}`.
+  - Evidence required: focused runtime test, adjacent provider/action tests,
+    ruff, mypy
+  - Status: checkpointed in `4996cf5c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams reaction-list proof
+    (`1 passed`), adjacent action/provider proof (`9 passed, 295
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001Y` Microsoft Teams native polls
   - Source: `openclaw-main/extensions/msteams/src/polls.ts`,

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.3% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.4% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10393,6 +10393,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_ops_mesh.py tests\test_cli.py`, and `mypy
   src\openzues\services\ops_mesh.py src\openzues\cli.py`. Checkpointed in
   `b0ad5491`.
+
+- Microsoft Teams read-only reaction listing now mirrors OpenClaw's
+  `extensions/msteams/src/actions.ts` and
+  `extensions/msteams/src/graph-messages.ts` `message.action`
+  `reactions` contract: native Teams routes resolve action targets from
+  explicit `to` / `target` / conversation ids or Graph channel tool context,
+  obtain a Graph app token through the route `appId`/`tenantId` plus secret,
+  GET the Graph message resource, group `reactions` by `reactionType`, count
+  entries even when user ids are absent, preserve known emoji labels, and
+  return OpenClaw-shaped `{ok, reactions}` summaries. This closes
+  `OZ-PROV-001Z`; repo-wide parity is now estimated at ~63.4%. Delegated
+  write reactions, pin/read/search/member/channel actions, and inbound
+  reaction events remain follow-up Teams action seams.
+- Verified the Microsoft Teams reaction-list action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route -q`
+  (`1 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_reactions or msteams_native_route or signal_react or matrix_reactions_list_route or slack_reactions_list_route or discord_reactions_list_route"`
+  (`9 passed, 295 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `4996cf5c`.
 
 ## References
 
