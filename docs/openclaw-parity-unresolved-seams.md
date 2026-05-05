@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.0% overall, with a reasonable
-  band of ~50-63%.
+- Repo-wide OpenClaw parity is estimated at ~63.1% overall, with a reasonable
+  band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -5800,10 +5800,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~63.0%. Verified with focused
   schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
   check`, and `mypy`; checkpointed in `6185301b`.
+- Closed the Signal native reaction action seam from OpenClaw
+  `extensions/signal/src/message-actions.ts`,
+  `extensions/signal/src/send-reactions.ts`, and
+  `src/channels/plugins/actions/reaction-message-id.ts`: native Signal
+  `message.action` dispatch now accepts `action="react"`, normalizes
+  direct/group targets, sends JSON-RPC `sendReaction` payloads, preserves
+  OpenClaw `targetAuthor` fallback and required group-author behavior,
+  supports `remove=true`, and falls back to `toolContext.currentMessageId`
+  when the caller omits `messageId`. Repo-wide parity is now estimated at
+  ~63.1%. Verified with focused Signal reaction pytest, adjacent
+  provider/action proof, `ruff check`, and `mypy`; checkpointed in
+  `c9b45ffb`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  provider-specific send/poll/replay metadata gap, starting with another
-  source-backed channel/provider route or action adapter, or packaging/plugin
-  breadth seam if provider discovery proves no smaller route slice.
+  send/poll/replay metadata gap, starting with another source-backed
+  channel/provider route or action adapter, or packaging/plugin breadth seam if
+  provider discovery proves no smaller route slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

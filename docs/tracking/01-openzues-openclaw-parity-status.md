@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~63.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~63.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -182,6 +182,12 @@ may lag behind this tracker.
   normalization, markdown stripping, media URL text fallback, native Twitch
   chat delivery, and result metadata.
   - Status: checkpointed in `6185301b`
+
+- [x] Signal native reaction action support, preserving OpenClaw JSON-RPC
+  `sendReaction` payloads, direct/group target normalization, target-author
+  fallback and required group-author behavior, `remove=true`, and
+  `toolContext.currentMessageId` fallback.
+  - Status: checkpointed in `c9b45ffb`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
@@ -1538,7 +1544,8 @@ may lag behind this tracker.
     checkpointed in `a6732846`; Synology Chat native route checkpointed in
     `b69d5489`; Mattermost native route checkpointed in `44541ef9`; Signal
     native route checkpointed in `81491ab7`; IRC native route checkpointed in
-    `8726ab49`; Twitch native route checkpointed in `6185301b`
+    `8726ab49`; Twitch native route checkpointed in `6185301b`; Signal native
+    reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.

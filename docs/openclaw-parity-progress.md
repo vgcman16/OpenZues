@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.0% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~63.1% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10314,6 +10314,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\schemas.py src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_channels.py src\openzues\cli.py`.
   Checkpointed in `6185301b`.
+
+- Signal native reaction actions now mirror OpenClaw's
+  `extensions/signal/src/message-actions.ts`,
+  `extensions/signal/src/send-reactions.ts`, and shared
+  `src/channels/plugins/actions/reaction-message-id.ts` contract: native
+  `message.action` dispatch accepts `channel="signal"` and `action="react"`,
+  normalizes `signal:`/`uuid:` direct recipients and `signal:group:` targets,
+  requires target-author metadata for group reactions, falls back to
+  `toolContext.currentMessageId` when `messageId` is omitted, posts JSON-RPC
+  `sendReaction` payloads to `/api/v1/rpc`, and returns OpenClaw-shaped
+  `{ok, added}` / `{ok, removed}` results. This closes `OZ-PROV-001W`;
+  repo-wide parity is now estimated at ~63.1%.
+- Verified the Signal native reaction action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_react_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_group_react_remove_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_react_current_message_context -q`
+  (`3 passed`), adjacent provider/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "signal_react or signal_native_route or send_direct_channel_message_uses_signal_native_route or irc_native_route or twitch_native_route"`
+  (`8 passed, 292 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `c9b45ffb`.
 
 ## References
 
