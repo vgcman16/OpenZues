@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -235,6 +235,10 @@ may lag behind this tracker.
   base64url `{url, bootstrapToken}` payload and file-backed node/operator
   bootstrap token profile for `qr --setup-code-only --url ...`.
   - Status: checkpointed in `5262359f`
+
+- [x] Companion QR invalid URL preflight, preserving OpenClaw's
+  `Configured publicUrl is invalid.` guard before bootstrap token issue.
+  - Status: checkpointed in `f21c799c`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -901,6 +905,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_cli.py::test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload
     -q` (`1 passed`), adjacent setup/bootstrap CLI proof (`3 passed, 494
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Companion QR invalid URL preflight.
+  - Source: `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f21c799c`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue
+    -q` (`1 passed`), adjacent QR setup-code proof (`2 passed, 496
     deselected`), `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.7% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.8% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -48,7 +48,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   --setup-code-only --url ...`, emitting OpenClaw base64url JSON setup codes
   with `{url, bootstrapToken}` and issuing file-backed node/operator bootstrap
   tokens under the default handoff profile without leaking gateway
-  token/password overrides.
+  token/password overrides; invalid URL overrides now fail before token issue
+  with the OpenClaw-shaped `Configured publicUrl is invalid.` diagnostic.
 - Provider-native Slack route parity now validates Slack `thread_ts` values
   before setting `thread_ts`, falls back from internal reply ids to valid Slack
   thread ids, and leaves invalid internal ids out of Slack API payloads.
@@ -10049,6 +10050,19 @@ These are complete within the bounded OpenZues-local parity contract verified in
   `mypy src\openzues\cli.py
   src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
   `5262359f`.
+
+- QR setup-code URL preflight now matches OpenClaw's invalid-override guard:
+  malformed `--url` values such as `http://localhost:notaport` return
+  `Configured publicUrl is invalid.` before any bootstrap token is issued.
+  This closes `OZ-COMP-001D`; repo-wide parity is now estimated at ~61.8%.
+- Verified the QR invalid URL preflight slice with `python -m pytest
+  tests\test_cli.py::test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_setup_code_only"` (`2 passed, 496 deselected`), `ruff check
+  src\openzues\cli.py src\openzues\services\device_bootstrap_tokens.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `f21c799c`.
 
 ## References
 
