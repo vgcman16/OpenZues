@@ -16660,6 +16660,234 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_nati
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_media_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    media_path = tmp_path / "chart.png"
+    media_path.write_bytes(b"png-bytes")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "spaces/AAAAAAA"
+    await database.create_notification_route(
+        name="Google Chat Native Media Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_uploads: list[dict[str, object]] = []
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_googlechat_attachment_upload(
+        self: OpsMeshService,
+        route_target: str,
+        *,
+        space: str,
+        filename: str,
+        media_bytes: bytes,
+        content_type: str | None,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_uploads.append(
+            {
+                "routeTarget": route_target,
+                "space": space,
+                "filename": filename,
+                "mediaBytes": media_bytes,
+                "contentType": content_type,
+                "secretToken": secret_token,
+            }
+        )
+        return {"attachmentDataRef": {"attachmentUploadToken": "upload-token-1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/AAAAAAA/messages/msg-media"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_googlechat_attachment_upload",
+        fake_googlechat_attachment_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="chart caption",
+        media_urls=[str(media_path)],
+        account_id="workspace",
+        idempotency_key="idem-native-googlechat-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "spaces/AAAAAAA/messages/msg-media"
+    assert result["mediaIds"] == ["upload-token-1"]
+    assert result["mediaUrls"] == [str(media_path)]
+    assert googlechat_uploads == [
+        {
+            "routeTarget": "https://chat.googleapis.com/v1",
+            "space": "spaces/AAAAAAA",
+            "filename": "chart.png",
+            "mediaBytes": b"png-bytes",
+            "contentType": "image/png",
+            "secretToken": "google-chat-access-token",
+        }
+    ]
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages",
+            {
+                "text": "chart caption",
+                "attachment": [
+                    {
+                        "attachmentDataRef": {"attachmentUploadToken": "upload-token-1"},
+                        "contentName": "chart.png",
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == ["upload-token-1"]
+    assert delivery["route_scope"]["provider_result"]["filenames"] == ["chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_resolves_googlechat_dm_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-dm"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "googlechat:users/Owner@Example.COM"
+    await database.create_notification_route(
+        name="Google Chat Native DM Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "direct",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_gets: list[tuple[str, str | None, str | None]] = []
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, payload, extra_headers, timeout_seconds
+        assert method == "GET"
+        googlechat_gets.append((target, secret_header_name, secret_token))
+        return {"name": "spaces/DM123"}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/DM123/messages/msg-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="DM parity.",
+        account_id="workspace",
+        idempotency_key="idem-native-googlechat-dm",
+    )
+
+    assert result["messageId"] == "spaces/DM123/messages/msg-1"
+    assert result["chatId"] == "spaces/DM123"
+    assert googlechat_gets == [
+        (
+            "https://chat.googleapis.com/v1/spaces:findDirectMessage"
+            "?name=users%2Fowner%40example.com",
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/DM123/messages",
+            {"text": "DM parity."},
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

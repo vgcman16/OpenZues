@@ -257,6 +257,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
 }
 NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "bluebubbles",
+    "googlechat",
     "line",
     "matrix",
     "discord",
@@ -2950,6 +2951,7 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
 
 
 GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
+GOOGLE_CHAT_UPLOAD_BASE_URL = "https://chat.googleapis.com/upload/v1"
 
 
 def _googlechat_bearer_token(secret_token: str | None) -> str:
@@ -3005,12 +3007,14 @@ def _googlechat_space_target(raw_target: str | None) -> str | None:
     base = _googlechat_strip_message_suffix(normalized)
     if base.lower().startswith("spaces/"):
         return base
-    if base.lower().startswith("users/"):
-        raise RuntimeError(
-            "Google Chat native provider route requires a spaces/... target; "
-            "user DM resolution is not available without the Google Chat directory runtime."
-        )
     return base
+
+
+def _googlechat_api_base(target: str | None) -> str:
+    route_target = str(target or "").strip()
+    if _normalized_http_webhook_url(route_target) is not None:
+        return route_target
+    return GOOGLE_CHAT_API_BASE_URL
 
 
 def _googlechat_messages_endpoint(
@@ -3019,19 +3023,15 @@ def _googlechat_messages_endpoint(
     space: str,
     thread: str | None,
 ) -> str:
-    route_target = str(target or "").strip()
-    if _normalized_http_webhook_url(route_target) is None:
-        endpoint = f"{GOOGLE_CHAT_API_BASE_URL.rstrip('/')}/{space.strip('/')}/messages"
+    stripped = _googlechat_api_base(target).rstrip("/")
+    stripped_lower = stripped.lower()
+    normalized_space = space.strip("/")
+    if stripped_lower.endswith("/messages"):
+        endpoint = stripped
+    elif stripped_lower.endswith(f"/{normalized_space.lower()}"):
+        endpoint = f"{stripped}/messages"
     else:
-        stripped = route_target.rstrip("/")
-        stripped_lower = stripped.lower()
-        normalized_space = space.strip("/")
-        if stripped_lower.endswith("/messages"):
-            endpoint = stripped
-        elif stripped_lower.endswith(f"/{normalized_space.lower()}"):
-            endpoint = f"{stripped}/messages"
-        else:
-            endpoint = f"{stripped}/{normalized_space}/messages"
+        endpoint = f"{stripped}/{normalized_space}/messages"
     if _normalized_http_webhook_url(endpoint) is None:
         raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
     if thread:
@@ -3041,6 +3041,41 @@ def _googlechat_messages_endpoint(
             f"{urlencode({'messageReplyOption': 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD'})}"
         )
     return endpoint
+
+
+def _googlechat_direct_message_endpoint(target: str | None, *, user_name: str) -> str:
+    endpoint = f"{_googlechat_api_base(target).rstrip('/')}/spaces:findDirectMessage"
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{urlencode({'name': user_name})}"
+
+
+def _googlechat_upload_endpoint(*, space: str) -> str:
+    return (
+        f"{GOOGLE_CHAT_UPLOAD_BASE_URL.rstrip('/')}/{space.strip('/')}"
+        "/attachments:upload?uploadType=multipart"
+    )
+
+
+def _googlechat_direct_message_space(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("name")
+    if candidate is None:
+        return None
+    normalized = str(candidate).strip()
+    return normalized if normalized else None
+
+
+def _googlechat_attachment_upload_token(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    data_ref = result.get("attachmentDataRef")
+    if not isinstance(data_ref, dict):
+        return None
+    token = data_ref.get("attachmentUploadToken")
+    if token is None:
+        return None
+    return str(token).strip() or None
 
 
 def _googlechat_message_id(result: object) -> str | None:
@@ -18066,6 +18101,58 @@ class OpsMeshService:
             raise RuntimeError(f"Slack API returned {error}.")
         return result
 
+    def _request_googlechat_attachment_upload(
+        self,
+        route_target: str,
+        *,
+        space: str,
+        filename: str,
+        media_bytes: bytes,
+        content_type: str | None,
+        secret_token: str | None,
+    ) -> object | None:
+        del route_target
+        boundary = f"openzues-{uuid.uuid4().hex}"
+        upload_filename = filename or "attachment"
+        metadata = json.dumps({"filename": upload_filename}, separators=(",", ":"))
+        body = bytearray()
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b"Content-Type: application/json; charset=UTF-8\r\n\r\n")
+        body.extend(metadata.encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(
+            f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode(
+                "ascii"
+            )
+        )
+        body.extend(media_bytes)
+        body.extend(f"\r\n--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _googlechat_upload_endpoint(space=space),
+            data=bytes(body),
+            headers={
+                "Authorization": _googlechat_bearer_token(secret_token),
+                "Content-Type": f"multipart/related; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=60) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Google Chat upload returned HTTP {response.status}")
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Google Chat upload returned HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Google Chat upload failed: {exc.reason}") from exc
+        try:
+            return json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Google Chat upload returned a non-JSON response.") from exc
+
     def _download_slack_media_url(self, media_url: str) -> bytes:
         if self.canvas_state_dir is not None:
             local_path = resolve_canvas_http_path_to_local_path(
@@ -19511,7 +19598,24 @@ class OpsMeshService:
             or (route_conversation_target or {}).get("peer_id")
             or route.get("target")
         )
-        space = _googlechat_space_target(str(target_candidate or ""))
+        normalized_target = _googlechat_space_target(str(target_candidate or ""))
+        if normalized_target is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        if normalized_target.lower().startswith("users/"):
+            direct_message = self._request_json_provider_url(
+                _googlechat_direct_message_endpoint(
+                    str(route.get("target") or ""),
+                    user_name=normalized_target,
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_googlechat_bearer_token(secret_token),
+            )
+            space = _googlechat_direct_message_space(direct_message)
+            if space is None:
+                raise RuntimeError(f"No Google Chat DM found for {normalized_target}.")
+        else:
+            space = normalized_target
         if space is None:
             raise RuntimeError("Google Chat route is missing a space target.")
         raw_media_urls = event.get("mediaUrls")
@@ -19523,17 +19627,44 @@ class OpsMeshService:
                 else None
             ),
         )
-        if media_urls:
-            raise RuntimeError(
-                "Google Chat native provider route does not support media sends yet."
-            )
         text = str(event.get("message") or "").strip()
-        if not text:
+        if not text and not media_urls:
             raise RuntimeError("Google Chat route is missing message text.")
         thread = str(event.get("threadId") or event.get("replyToId") or "").strip()
-        payload: dict[str, object] = {"text": text}
+        payload: dict[str, object] = {}
+        if text:
+            payload["text"] = text
         if thread:
             payload["thread"] = {"name": thread}
+        media_ids: list[str] = []
+        filenames: list[str] = []
+        if media_urls:
+            attachments: list[dict[str, object]] = []
+            for media_url in media_urls:
+                media_bytes, content_type, filename = self._download_matrix_media_url(media_url)
+                upload_filename = filename or _matrix_media_filename(media_url, "attachment")
+                upload = self._request_googlechat_attachment_upload(
+                    str(route.get("target") or ""),
+                    space=space,
+                    filename=upload_filename,
+                    media_bytes=media_bytes,
+                    content_type=content_type,
+                    secret_token=secret_token,
+                )
+                upload_token = _googlechat_attachment_upload_token(upload)
+                if upload_token is None:
+                    raise RuntimeError(
+                        "Google Chat upload response did not include an attachment token."
+                    )
+                media_ids.append(upload_token)
+                filenames.append(upload_filename)
+                attachments.append(
+                    {
+                        "attachmentDataRef": {"attachmentUploadToken": upload_token},
+                        "contentName": upload_filename,
+                    }
+                )
+            payload["attachment"] = attachments
         result = self._post_json_webhook(
             _googlechat_messages_endpoint(
                 str(route.get("target") or ""),
@@ -19557,6 +19688,10 @@ class OpsMeshService:
             "chatId": space,
             "channelId": space,
         }
+        if media_urls:
+            native_result["mediaIds"] = media_ids
+            native_result["mediaUrls"] = media_urls
+            native_result["filenames"] = filenames
         if thread:
             native_result["threadId"] = thread
         reply_to_id = str(event.get("replyToId") or "").strip()
