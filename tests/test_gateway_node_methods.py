@@ -7595,6 +7595,189 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_reply_options_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-reply-options.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createReplyPrefixOptions,
+  createTypingCallbacks
+} = require("openclaw/plugin-sdk/channel-reply-options-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_reply_options",
+      description: "Use OpenClaw channel reply options SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            defaults: { identity: { name: "Default Agent" } },
+            list: [
+              { id: "assistant", identity: { name: "Zeus" } }
+            ]
+          },
+          messages: { responsePrefix: "auto" },
+          channels: {
+            matrix: {
+              responsePrefix: "[matrix]",
+              accounts: {
+                work: { responsePrefix: "[work]" }
+              }
+            }
+          }
+        };
+        const accountPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "matrix",
+          accountId: "work"
+        });
+        const channelPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "matrix"
+        });
+        const globalPrefix = createReplyPrefixOptions({
+          cfg,
+          agentId: "assistant",
+          channel: "slack"
+        });
+        accountPrefix.onModelSelected({
+          provider: "anthropic",
+          model: "claude-opus-4-6-20260205",
+          thinkLevel: "high"
+        });
+        const prefixContext = accountPrefix.responsePrefixContextProvider();
+
+        const typingEvents = [];
+        const callbacks = createTypingCallbacks({
+          start: async () => { typingEvents.push("start"); },
+          stop: async () => { typingEvents.push("stop"); },
+          onStartError: (err) => typingEvents.push(`start-error:${err.message || err}`),
+          onStopError: (err) => typingEvents.push(`stop-error:${err.message || err}`),
+          keepaliveIntervalMs: 1000,
+          maxDurationMs: 0
+        });
+        await callbacks.onReplyStart();
+        callbacks.onIdle();
+        callbacks.onCleanup();
+        await wait(0);
+        await callbacks.onReplyStart();
+
+        const errorEvents = [];
+        const errorCallbacks = createTypingCallbacks({
+          start: async () => { throw new Error("boom"); },
+          stop: async () => { throw new Error("stop-boom"); },
+          onStartError: (err) => errorEvents.push(`start:${err.message || err}`),
+          onStopError: (err) => errorEvents.push(`stop:${err.message || err}`),
+          keepaliveIntervalMs: 1000,
+          maxConsecutiveFailures: 1,
+          maxDurationMs: 0
+        });
+        await errorCallbacks.onReplyStart();
+        await wait(0);
+        errorCallbacks.onCleanup();
+        await wait(0);
+
+        return {
+          prefixes: [
+            accountPrefix.responsePrefix,
+            channelPrefix.responsePrefix,
+            globalPrefix.responsePrefix,
+            genericSdk.createReplyPrefixOptions({ cfg, agentId: "assistant" }).responsePrefix
+          ],
+          prefixContext: [
+            prefixContext.identityName,
+            prefixContext.provider,
+            prefixContext.model,
+            prefixContext.modelFull,
+            prefixContext.thinkingLevel
+          ],
+          typingEvents,
+          errorEvents,
+          exportTypes: [
+            typeof createReplyPrefixOptions,
+            typeof createTypingCallbacks,
+            typeof genericSdk.createTypingCallbacks
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-reply-options-plugin",
+                    "name": "Runtime Channel Reply Options Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-reply-options-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_reply_options"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_reply_options"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefixes": ["[work]", "[matrix]", "[Zeus]", "[Zeus]"],
+        "prefixContext": [
+            "Zeus",
+            "anthropic",
+            "claude-opus-4-6",
+            "anthropic/claude-opus-4-6-20260205",
+            "high",
+        ],
+        "typingEvents": ["start", "stop"],
+        "errorEvents": ["start:boom", "stop:stop-boom"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

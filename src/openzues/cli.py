@@ -19323,6 +19323,191 @@ function resetInboundDedupe() {
   resolveInboundDedupeInFlight().clear();
 }
 
+function resolveAgentConfigEntry(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const normalized = normalizeLowercaseStringOrEmpty(agentId);
+  const entries = agents && Array.isArray(agents.list) ? agents.list : [];
+  const matched = entries.find(
+    (entry) => normalizeLowercaseStringOrEmpty(entry && entry.id) === normalized,
+  );
+  return matched || (agents && agents.defaults) || {};
+}
+
+function resolveAgentIdentity(cfg, agentId) {
+  const entry = resolveAgentConfigEntry(cfg, agentId);
+  return entry && entry.identity && typeof entry.identity === "object" ? entry.identity : undefined;
+}
+
+function resolveIdentityNamePrefix(cfg, agentId) {
+  const identity = resolveAgentIdentity(cfg, agentId);
+  const name = normalizeOptionalString(identity && identity.name);
+  return name ? `[${name}]` : undefined;
+}
+
+function getChannelConfig(cfg, channel) {
+  const channels = cfg && cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+  const value = channels[channel];
+  return value && typeof value === "object" ? value : undefined;
+}
+
+function resolveResponsePrefix(cfg, agentId, opts) {
+  const channel = opts && opts.channel;
+  const accountId = opts && opts.accountId;
+  if (channel && accountId) {
+    const channelCfg = getChannelConfig(cfg, channel);
+    const accounts = channelCfg && channelCfg.accounts && typeof channelCfg.accounts === "object"
+      ? channelCfg.accounts
+      : {};
+    const accountCfg = accounts[accountId];
+    if (accountCfg && Object.prototype.hasOwnProperty.call(accountCfg, "responsePrefix")) {
+      return accountCfg.responsePrefix === "auto"
+        ? resolveIdentityNamePrefix(cfg, agentId)
+        : accountCfg.responsePrefix;
+    }
+  }
+  if (channel) {
+    const channelCfg = getChannelConfig(cfg, channel);
+    if (channelCfg && Object.prototype.hasOwnProperty.call(channelCfg, "responsePrefix")) {
+      return channelCfg.responsePrefix === "auto"
+        ? resolveIdentityNamePrefix(cfg, agentId)
+        : channelCfg.responsePrefix;
+    }
+  }
+  const messages = cfg && cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  if (Object.prototype.hasOwnProperty.call(messages, "responsePrefix")) {
+    return messages.responsePrefix === "auto"
+      ? resolveIdentityNamePrefix(cfg, agentId)
+      : messages.responsePrefix;
+  }
+  return undefined;
+}
+
+function extractShortModelName(fullModel) {
+  const value = String(fullModel || "");
+  const slash = value.lastIndexOf("/");
+  const modelPart = slash >= 0 ? value.slice(slash + 1) : value;
+  return modelPart.replace(/-\d{8}$/, "").replace(/-latest$/, "");
+}
+
+function createReplyPrefixContext(params) {
+  const cfg = (params && params.cfg) || {};
+  const agentId = params && params.agentId;
+  const identity = resolveAgentIdentity(cfg, agentId) || {};
+  const prefixContext = {
+    identityName: normalizeOptionalString(identity.name),
+  };
+  const onModelSelected = (ctx) => {
+    const selected = ctx && typeof ctx === "object" ? ctx : {};
+    prefixContext.provider = selected.provider;
+    prefixContext.model = extractShortModelName(selected.model);
+    prefixContext.modelFull = `${selected.provider}/${selected.model}`;
+    prefixContext.thinkingLevel = selected.thinkLevel ?? "off";
+  };
+  return {
+    prefixContext,
+    responsePrefix: resolveResponsePrefix(cfg, agentId, {
+      channel: params && params.channel,
+      accountId: params && params.accountId,
+    }),
+    responsePrefixContextProvider: () => prefixContext,
+    onModelSelected,
+  };
+}
+
+function createReplyPrefixOptions(params) {
+  const bundle = createReplyPrefixContext(params);
+  return {
+    responsePrefix: bundle.responsePrefix,
+    responsePrefixContextProvider: bundle.responsePrefixContextProvider,
+    onModelSelected: bundle.onModelSelected,
+  };
+}
+
+function createTypingCallbacks(params) {
+  const keepaliveIntervalMs = params.keepaliveIntervalMs ?? 3000;
+  const maxConsecutiveFailures = Math.max(1, params.maxConsecutiveFailures ?? 2);
+  const maxDurationMs = params.maxDurationMs ?? 60000;
+  let consecutiveFailures = 0;
+  let keepaliveTimer;
+  let ttlTimer;
+  let stopSent = false;
+  let closed = false;
+
+  const clearKeepalive = () => {
+    if (keepaliveTimer) {
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = undefined;
+    }
+  };
+  const clearTtl = () => {
+    if (ttlTimer) {
+      clearTimeout(ttlTimer);
+      ttlTimer = undefined;
+    }
+  };
+  const fireStart = async () => {
+    if (closed) {
+      return;
+    }
+    try {
+      await params.start();
+      consecutiveFailures = 0;
+    } catch (err) {
+      consecutiveFailures += 1;
+      params.onStartError(err);
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        clearKeepalive();
+      }
+    }
+  };
+  const fireStop = () => {
+    closed = true;
+    clearKeepalive();
+    clearTtl();
+    if (!params.stop || stopSent) {
+      return;
+    }
+    stopSent = true;
+    void Promise.resolve(params.stop()).catch((err) =>
+      (params.onStopError || params.onStartError)(err),
+    );
+  };
+  const startTtl = () => {
+    if (maxDurationMs <= 0) {
+      return;
+    }
+    clearTtl();
+    ttlTimer = setTimeout(fireStop, maxDurationMs);
+  };
+  const onReplyStart = async () => {
+    if (closed) {
+      return;
+    }
+    stopSent = false;
+    consecutiveFailures = 0;
+    clearKeepalive();
+    clearTtl();
+    const startPromise = fireStart();
+    void startPromise.then(() => {
+      if (closed || consecutiveFailures >= maxConsecutiveFailures) {
+        return;
+      }
+      if (keepaliveIntervalMs > 0) {
+        keepaliveTimer = setInterval(() => {
+          void fireStart();
+        }, keepaliveIntervalMs);
+      }
+      startTtl();
+    });
+    await Promise.resolve();
+  };
+  return {
+    onReplyStart,
+    onIdle: fireStop,
+    onCleanup: fireStop,
+  };
+}
+
 function enqueueKeyedTask(params) {
   if (params.hooks && typeof params.hooks.onEnqueue === "function") {
     params.hooks.onEnqueue();
@@ -22717,6 +22902,11 @@ const replyDedupeRuntime = {
   resetInboundDedupe,
 };
 
+const channelReplyOptionsRuntime = {
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+};
+
 const globalSingletonRuntime = {
   createScopedExpiringIdCache,
   resolveGlobalMap,
@@ -23031,8 +23221,10 @@ const genericSdk = new Proxy(
     createMessageToolCardSchema,
     createDedupeCache,
     createInboundDebouncer,
+    createReplyPrefixOptions,
     createScopedExpiringIdCache,
     createReplyReferencePlanner,
+    createTypingCallbacks,
     createRateLimitRetryRunner,
     createTelegramRetryRunner,
     createAsyncLock,
@@ -23336,6 +23528,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound-debounce"
   ) {
     return channelInboundDebounceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-reply-options-runtime"
+  ) {
+    return channelReplyOptionsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/markdown-table-runtime" ||
