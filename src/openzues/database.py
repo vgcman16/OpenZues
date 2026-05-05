@@ -281,6 +281,8 @@ class Database:
                     created_at_ms INTEGER NOT NULL,
                     approved_at_ms INTEGER NOT NULL,
                     last_connected_at_ms INTEGER,
+                    last_seen_at_ms INTEGER,
+                    last_seen_reason TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -639,6 +641,12 @@ class Database:
             await self._ensure_column(db, "gateway_wake_requests", "reason", "TEXT")
             await self._ensure_column(db, "gateway_wake_requests", "agent_id", "TEXT")
             await self._ensure_column(db, "gateway_wake_requests", "session_key", "TEXT")
+            await self._ensure_column(
+                db, "gateway_node_paired_nodes", "last_seen_at_ms", "INTEGER"
+            )
+            await self._ensure_column(
+                db, "gateway_node_paired_nodes", "last_seen_reason", "TEXT"
+            )
             await self._ensure_column(db, "control_chat_messages", "session_key", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model_provider", "TEXT")
             await self._ensure_column(db, "control_chat_messages", "model", "TEXT")
@@ -990,6 +998,12 @@ class Database:
                 if payload["last_connected_at_ms"] is not None
                 else None
             ),
+            "last_seen_at_ms": (
+                int(payload["last_seen_at_ms"])
+                if payload.get("last_seen_at_ms") is not None
+                else None
+            ),
+            "last_seen_reason": payload.get("last_seen_reason"),
             "created_at": payload["created_at"],
             "updated_at": payload["updated_at"],
         }
@@ -1149,6 +1163,34 @@ class Database:
                 WHERE node_id = ?
                 """,
                 (display_name, now, node_id),
+            )
+            await db.commit()
+        return await self.get_gateway_node_paired_node(node_id)
+
+    async def update_gateway_node_paired_node_presence(
+        self,
+        node_id: str,
+        *,
+        last_seen_at_ms: int,
+        last_seen_reason: str,
+    ) -> dict[str, Any] | None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM gateway_node_paired_nodes WHERE node_id = ?",
+                (node_id,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return None
+            await db.execute(
+                """
+                UPDATE gateway_node_paired_nodes
+                SET last_seen_at_ms = ?, last_seen_reason = ?, updated_at = ?
+                WHERE node_id = ?
+                """,
+                (last_seen_at_ms, last_seen_reason, now, node_id),
             )
             await db.commit()
         return await self.get_gateway_node_paired_node(node_id)

@@ -2028,6 +2028,7 @@ def _emit_hermes_doctor(payload: dict[str, object], *, json_output: bool) -> Non
         "bundledPluginRuntimeDependencies",
         "startupChannelMaintenance",
         "runtimeBridge",
+        "packageDistribution",
         "acp",
         "extras",
     ):
@@ -7975,6 +7976,169 @@ async def _with_doctor_runtime_bridge_payload(
 ) -> dict[str, object]:
     next_payload = dict(payload)
     next_payload["runtimeBridge"] = await _build_doctor_runtime_bridge_payload(services)
+    return next_payload
+
+
+_PACKAGE_DIST_INVENTORY_RELATIVE_PATH = Path("dist") / "postinstall-inventory.json"
+
+
+def _openzues_package_root() -> Path:
+    try:
+        return Path(__file__).resolve(strict=False).parents[2]
+    except IndexError:  # pragma: no cover - defensive fallback for unusual loaders
+        return Path.cwd()
+
+
+def _doctor_path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _doctor_package_distribution_check(
+    *,
+    key: str,
+    status: str,
+    detail: str,
+    path: Path | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "key": key,
+        "status": status,
+    }
+    if path is not None:
+        payload["path"] = str(path)
+    payload["detail"] = detail
+    return payload
+
+
+def _doctor_package_dist_inventory_warning(inventory_path: Path) -> str | None:
+    if not _doctor_path_exists(inventory_path):
+        return None
+    warning = (
+        "Invalid package dist inventory at "
+        f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+    )
+    try:
+        parsed = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return warning
+    if not isinstance(parsed, list) or any(not isinstance(entry, str) for entry in parsed):
+        return warning
+    return None
+
+
+def _build_doctor_package_distribution_payload(
+    package_root: Path | None = None,
+) -> dict[str, object]:
+    root = package_root or _openzues_package_root()
+    root_exists = _doctor_path_exists(root)
+    source_checkout = (
+        root_exists
+        and _doctor_path_exists(root / "pyproject.toml")
+        and _doctor_path_exists(root / "src" / "openzues")
+    )
+    dist_path = root / "dist"
+    inventory_path = root / _PACKAGE_DIST_INVENTORY_RELATIVE_PATH
+    dist_present = _doctor_path_exists(dist_path)
+    inventory_present = _doctor_path_exists(inventory_path)
+    inventory_warning = _doctor_package_dist_inventory_warning(inventory_path)
+    inventory_required = not source_checkout
+    warnings: list[str] = []
+    if not root_exists:
+        warnings.append(f"Package root not found: {root}")
+    if inventory_required and not dist_present:
+        warnings.append(f"Packaged dist directory is missing: {dist_path}")
+    if inventory_required and not inventory_present:
+        warnings.append(
+            "Package dist inventory is missing: "
+            f"{_PACKAGE_DIST_INVENTORY_RELATIVE_PATH.as_posix()}"
+        )
+    if inventory_required and inventory_warning is not None:
+        warnings.append(inventory_warning)
+    if source_checkout:
+        status = "info"
+        summary = "OpenZues is running from a source checkout; package inventory is informational."
+        distribution = "source-checkout"
+    elif warnings:
+        status = "warning"
+        summary = "OpenZues package distribution has missing packaged runtime artifacts."
+        distribution = "packaged"
+    else:
+        status = "ok"
+        summary = "OpenZues package distribution inventory is present."
+        distribution = "packaged"
+    return {
+        "status": status,
+        "summary": summary,
+        "source": "openzues-native",
+        "openClawContribution": "doctor:package-distribution",
+        "windowsFirst": True,
+        "platform": sys.platform,
+        "packageRoot": str(root),
+        "distribution": distribution,
+        "sourceCheckout": source_checkout,
+        "distPresent": dist_present,
+        "inventoryPath": str(inventory_path),
+        "inventoryPresent": inventory_present,
+        "inventoryRequired": inventory_required,
+        "checks": [
+            _doctor_package_distribution_check(
+                key="package_root",
+                status="ok" if root_exists else "warning",
+                path=root,
+                detail="Package root is readable."
+                if root_exists
+                else "Package root is missing or unreadable.",
+            ),
+            _doctor_package_distribution_check(
+                key="source_checkout",
+                status="info" if source_checkout else "ok",
+                detail="Source checkout markers are present."
+                if source_checkout
+                else "Source checkout markers are absent.",
+            ),
+            _doctor_package_distribution_check(
+                key="dist",
+                status="ok" if dist_present else ("info" if source_checkout else "warning"),
+                path=dist_path,
+                detail="Packaged dist directory is present."
+                if dist_present
+                else "Packaged dist directory is not required for source checkout runs."
+                if source_checkout
+                else "Packaged dist directory is missing.",
+            ),
+            _doctor_package_distribution_check(
+                key="postinstall_inventory",
+                status=(
+                    "warning"
+                    if inventory_warning is not None
+                    else "ok"
+                    if inventory_present
+                    else "info"
+                    if source_checkout
+                    else "warning"
+                ),
+                path=inventory_path,
+                detail=inventory_warning
+                if inventory_warning is not None
+                else "Package dist inventory is present."
+                if inventory_present
+                else "Package dist inventory is not required for source checkout runs."
+                if source_checkout
+                else "Package dist inventory is missing.",
+            ),
+        ],
+        "warnings": warnings,
+    }
+
+
+def _with_doctor_package_distribution_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
+    next_payload = dict(payload)
+    next_payload["packageDistribution"] = _build_doctor_package_distribution_payload()
     return next_payload
 
 
@@ -17837,15 +18001,19 @@ _OPENCLAW_MIN_HOST_VERSION_FORMAT = (
 _OPENCLAW_MIN_HOST_VERSION_RE = re.compile(r"^>=(\d+)\.(\d+)\.(\d+)$")
 _OPENCLAW_PLUGIN_CONTRACT_CAPABILITY_LABELS: dict[str, str] = {
     "tools": "tool",
+    "externalAuthProviders": "external-auth-provider",
     "speechProviders": "speech",
     "realtimeTranscriptionProviders": "realtime-transcription",
     "realtimeVoiceProviders": "realtime-voice",
     "mediaUnderstandingProviders": "media-understanding",
+    "documentExtractors": "document-extractor",
     "imageGenerationProviders": "image-generation",
     "videoGenerationProviders": "video-generation",
     "musicGenerationProviders": "music-generation",
+    "webContentExtractors": "web-content-extractor",
     "webFetchProviders": "web-fetch",
     "webSearchProviders": "web-search",
+    "migrationProviders": "migration-provider",
     "memoryEmbeddingProviders": "memory-embedding",
 }
 
@@ -18704,18 +18872,90 @@ def _plugin_runtime_entry_sdk_alias_metadata(
     if not plugin_sdk_imports:
         return {}
     dist_root = _plugin_runtime_entry_dist_root(plugin_root)
-    if dist_root is None:
+    if dist_root is not None:
+        plugin_sdk_root = dist_root / "plugin-sdk"
+        if plugin_sdk_root.is_dir():
+            alias_root = (
+                dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+            )
+            return {
+                "pluginSdkResolution": "dist",
+                "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
+                "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
+                "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+            }
+    source_alias_map = _plugin_runtime_entry_source_sdk_alias_map(
+        plugin_root,
+        plugin_sdk_imports,
+    )
+    if not source_alias_map:
         return {}
-    plugin_sdk_root = dist_root / "plugin-sdk"
-    if not plugin_sdk_root.is_dir():
-        return {}
-    alias_root = dist_root / "extensions" / "node_modules" / "openclaw" / "plugin-sdk"
+    source_root = plugin_root / "plugin-sdk"
     return {
-        "pluginSdkResolution": "dist",
-        "pluginSdkPackageRoot": str(dist_root.parent.resolve(strict=False)),
-        "pluginSdkDistRoot": str(dist_root.resolve(strict=False)),
-        "pluginSdkAliasRoot": str(alias_root.resolve(strict=False)),
+        "pluginSdkResolution": "src",
+        "pluginSdkSourceRoot": str(source_root.resolve(strict=False)),
+        "pluginSdkAliasMap": source_alias_map,
     }
+
+
+def _plugin_runtime_entry_source_sdk_alias_map(
+    plugin_root: Path,
+    plugin_sdk_imports: Sequence[str],
+) -> dict[str, object]:
+    source_root = plugin_root / "plugin-sdk"
+    if not source_root.is_dir():
+        return {}
+    alias_map: dict[str, object] = {}
+    for specifier in plugin_sdk_imports:
+        subpath = _plugin_sdk_import_subpath(specifier)
+        if subpath is None:
+            continue
+        target = _plugin_source_sdk_alias_target(source_root, subpath)
+        if target is None:
+            continue
+        if subpath:
+            aliases = (
+                f"openclaw/plugin-sdk/{subpath}",
+                f"@openclaw/plugin-sdk/{subpath}",
+            )
+        else:
+            aliases = ("openclaw/plugin-sdk", "@openclaw/plugin-sdk")
+        for alias in aliases:
+            alias_map[alias] = str(target.resolve(strict=False))
+    return alias_map
+
+
+def _plugin_sdk_import_subpath(specifier: str) -> str | None:
+    for package_name in ("openclaw/plugin-sdk", "@openclaw/plugin-sdk"):
+        if specifier == package_name:
+            return ""
+        prefix = f"{package_name}/"
+        if specifier.startswith(prefix):
+            subpath = specifier[len(prefix) :].strip("/")
+            if subpath and ".." not in Path(subpath).parts:
+                return subpath
+    return None
+
+
+def _plugin_source_sdk_alias_target(source_root: Path, subpath: str) -> Path | None:
+    candidates: list[Path]
+    if subpath:
+        candidates = [
+            source_root / f"{subpath}{extension}"
+            for extension in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+        ]
+    else:
+        candidates = [
+            source_root / "root-alias.cjs",
+            *(
+                source_root / f"index{extension}"
+                for extension in _OPENCLAW_PUBLIC_SURFACE_SOURCE_EXTENSIONS
+            ),
+        ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _plugin_runtime_entry_dist_root(plugin_root: Path) -> Path | None:
@@ -28937,6 +29177,7 @@ def doctor(
             services.gateway_config,
         )
         payload = await _with_doctor_runtime_bridge_payload(payload, services)
+        payload = _with_doctor_package_distribution_payload(payload)
         payload = _with_doctor_contribution_surfaces(payload)
         return payload
 

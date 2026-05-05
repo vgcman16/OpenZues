@@ -2,9 +2,9 @@
 
 ## Snapshot
 
-- Updated: 2026-05-02.
-- Estimated repo-wide parity: ~58.7% overall, with a reasonable band of ~50-59%.
-- Estimated active gateway/session/tool-contract family parity: ~99.2% for the bounded local OpenZues path.
+- Updated: 2026-05-04.
+- Estimated repo-wide parity: ~60.4% overall, with a reasonable band of ~50-60%.
+- Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
 - Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path link/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture slices; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
@@ -28,7 +28,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Session tool contracts are locked across the bounded local path for `sessions_history`, `session_status`, `sessions_list`, `sessions_send`, `sessions_yield`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.preview`, and direct session-history REST/SSE behavior.
 - Custom-agent control-plane ownership is landed for persisted agent create/update/delete, identity lookup, workspace file ownership, session creation/filtering, alias resolution, and deleted-agent send/steer guards.
 - `tools.invoke` core bridge is landed for allow/deny policy, owner-only controls, before-call hooks, ordered registry-backed plugin runtime service envelopes, safe core mappings, plugin error projection, plugin-published `tools.catalog` and `tools.effective` groups, plugin-host `plugins.uiDescriptors` control UI descriptor projection, and OpenClaw-style projection/visibility for neighboring session tools.
-- Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread payloads.
+- Native runtime seams are now landed for ACP spawn dispatch/tracking plus delete/reset cleanup, app-wired sandbox-required child-turn dispatch through Codex app-server workspace-write policy, route-backed thread-bound spawn binding, shared provider-native send metadata, and Telegram native document/reply/silent/thread/GIF-animation payloads.
 - TTS control-plane parity now includes `tts.personas`, `tts.setPersona`,
   status persona projection, config/fakeable persona descriptors, prefs-backed
   selected persona persistence, and JSON-capable `capability` / `infer` Typer
@@ -57,9 +57,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native WhatsApp document parity now derives and includes document
   filenames from outbound media URLs while preserving reply context and split
   media delivery behavior.
+- Provider-native WhatsApp audio parity now sends audio/voice media as Cloud
+  API `type="audio"` payloads, preserving reply context and splitting visible
+  text into a follow-up message instead of an unsupported media caption.
 - Provider-native Discord media parity now follows OpenClaw's shared outbound
   media sequence contract with one webhook send per media URL, text only on the
   first media send, final-id projection, and ordered provider `messageIds`.
+- Provider-native Telegram GIF media parity now routes URL/media-kind GIFs to
+  Bot API `sendAnimation` when `forceDocument` is not set, preserving
+  caption, reply, silent, thread, and animation `mediaIds` result metadata.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -9544,6 +9550,239 @@ These are complete within the bounded OpenZues-local parity contract verified in
   plugins_install_prefers_dist_runtime_bundled_tree_for_package_root"` (`6
   passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
   src\openzues\cli.py`.
+
+- Telegram GIF media send parity is now landed: native Telegram route-backed
+  direct sends detect GIF media from URL/content kind (or `gifPlayback=true`)
+  and call Bot API `sendAnimation` instead of `sendPhoto` unless
+  `forceDocument=true`, while preserving caption, reply, silent, thread, and
+  animation `mediaIds` metadata. Checkpoint in `51ee9573`.
+- Progress estimates are now roughly 59.3% repo-wide and 99.8% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the provider queue
+  continues with remaining provider-specific send/poll/replay edge cases, and
+  the plugin queue remains available for deeper bundled plugin runtime
+  activation.
+- Verified the Telegram GIF media send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_animation_for_gif_media or telegram_native_options or
+  telegram_media_group or send_direct_channel_message_uses_telegram_native_route
+  or send_direct_channel_poll_uses_telegram_native_route"` (`5 passed`), `ruff
+  check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`.
+
+- WhatsApp audio/voice media send parity is now landed: native WhatsApp
+  route-backed direct sends detect audio media from media kind, URL mime, or
+  `audioAsVoice=true` and send Cloud API `type="audio"` payloads. Visible text
+  is sent as a follow-up text message because WhatsApp audio payloads do not
+  support captions, while reply context and media result metadata remain on
+  the audio delivery. Checkpoint in `c27d3439`.
+- Progress estimates are now roughly 59.4% repo-wide and 99.9% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the provider queue
+  continues with remaining provider-specific send/poll/replay edge cases, and
+  package/companion/plugin breadth remains open in the repo-wide tracker.
+- Verified the WhatsApp audio/voice media send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_audio_voice_payload or whatsapp_gif_video or whatsapp_reply_document
+  or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`.
+
+- Source plugin-SDK subpath alias metadata is now landed: source/git-style
+  bundled plugin runtime entries that import OpenClaw plugin-SDK subpaths now
+  project `pluginSdkResolution="src"`, `pluginSdkSourceRoot`, and a
+  `pluginSdkAliasMap` containing both `openclaw/plugin-sdk/<subpath>` and
+  `@openclaw/plugin-sdk/<subpath>` aliases for native activation adapters.
+  Checkpointed in `55e1fb28`.
+- Progress estimates are now roughly 59.6% repo-wide and 99.9% for the active
+  gateway/session/tool-contract family while runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%; the plugin queue
+  continues with deeper runtime activation/import breadth, and package/
+  companion/provider breadth remains open in the repo-wide tracker.
+- Verified the source plugin-SDK subpath alias slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "source_plugin_sdk_subpath_aliases or plugin_sdk_alias_to_activation_adapter
+  or bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  runtime_text_transform_plugins"` (`6 passed`), `ruff check
+  src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- Manifest document extractor contracts are now preserved in native
+  `plugins list --json`: `contracts.documentExtractors` entries project into
+  plugin records and capability strings as `document-extractor:<id>`, matching
+  OpenClaw's manifest normalization and bundled contract snapshot behavior.
+  This closes `OZ-PLUGIN-001BF`; repo-wide parity is now estimated at ~59.6%,
+  while the active plugin/runtime/CLI bounded path remains ~99.9%.
+- Verified the document extractor contract metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "document_extractor_contracts or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`9 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `2196c65e`.
+
+- Windows-first package distribution doctor diagnostics are now exposed through
+  `openzues doctor --json` as `packageDistribution`, including package root,
+  source-checkout classification, `dist` presence, `dist/postinstall-inventory.json`
+  inventory status, platform, and OpenClaw contribution metadata. This closes
+  `OZ-PKG-001A`; repo-wide parity is now estimated at ~59.7%, while the
+  runtime/CLI/doctor bounded path remains ~99.9%.
+- Verified the package distribution doctor slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "package_distribution_diagnostics or runtime_bridge_posture or
+  gateway_doctor_json_includes_gateway_capability_summary"` (`3 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `47d73351`.
+
+- Authenticated companion `node.presence.alive` background beacons now follow
+  the OpenClaw-shaped lifecycle: they work without a live socket when the
+  node token authenticates, persist paired-node `lastSeenAtMs` and
+  `lastSeenReason`, normalize supported triggers, return
+  `persisted`/`throttled`/`unpaired`/`missing_device_identity` style results,
+  and avoid recording ordinary node events for presence-only beacons. This
+  closes `OZ-COMP-001A`; repo-wide parity is now estimated at ~59.8%.
+- Verified the node presence alive slice with focused service `python -m pytest
+  tests\test_gateway_node_methods.py::test_node_presence_alive_persists_paired_node_last_seen_and_throttles
+  -q` (`1 passed`), focused API `python -m pytest
+  tests\test_gateway_nodes_api.py::test_remote_node_presence_alive_endpoint_persists_without_live_socket
+  -q` (`1 passed`), adjacent service `python -m pytest
+  tests\test_gateway_node_methods.py -q -k "node_presence_alive or
+  node_pair_approve_verify_and_rename_lifecycle or
+  node_pair_request_broadcasts_requested_event_only_for_new_requests"` (`3
+  passed`), adjacent API `python -m pytest tests\test_gateway_nodes_api.py -q
+  -k "remote_node_presence_alive or remote_node_event_endpoint_records_event
+  or last_heartbeat_endpoint_returns_latest_recorded_heartbeat"` (`3 passed`),
+  `ruff check` on touched node/database tests and services, and `mypy` on
+  `src\openzues\database.py`,
+  `src\openzues\services\gateway_node_pairing.py`, and
+  `src\openzues\services\gateway_node_methods.py`. Checkpointed in
+  `caded84a`.
+
+- Manifest web-content extractor contracts are now preserved in native
+  `plugins list --json`: `contracts.webContentExtractors` entries project into
+  plugin records and capability strings as `web-content-extractor:<id>`,
+  matching OpenClaw's manifest normalization and bundled contract inventory
+  behavior. This closes `OZ-PLUGIN-001BG`; repo-wide parity is now estimated at
+  ~59.9%, while the active plugin/runtime/CLI bounded path remains ~99.9%.
+- Verified the web-content extractor contract metadata slice with `python -m
+  pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "web_content_extractor_contracts or document_extractor_contracts or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`10 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `3b392789`.
+
+- Manifest migration provider contracts are now preserved in native
+  `plugins list --json`: `contracts.migrationProviders` entries project into
+  plugin records and capability strings as `migration-provider:<id>`, matching
+  OpenClaw's manifest normalization, bundled contract inventory, and migration
+  provider runtime discovery contracts. This closes `OZ-PLUGIN-001BH`;
+  repo-wide parity is now estimated at ~60.0%, while the active
+  plugin/runtime/CLI bounded path remains ~99.9%.
+- Verified the migration provider contract metadata slice with `python -m
+  pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_migration_provider_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "migration_provider_contracts or web_content_extractor_contracts or
+  document_extractor_contracts or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`11 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `17e62174`.
+
+- Manifest external auth provider contracts are now preserved in native
+  `plugins list --json`: `contracts.externalAuthProviders` entries project
+  into plugin records and capability strings as
+  `external-auth-provider:<id>`, matching OpenClaw's manifest normalization,
+  manifest registry, and provider runtime external-auth discovery contracts.
+  This closes `OZ-PLUGIN-001BI`; repo-wide parity is now estimated at ~60.1%,
+  while the active plugin/runtime/CLI bounded path remains ~99.9%.
+- Verified the external auth provider contract metadata slice with `python -m
+  pytest tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "external_auth_provider_contracts or migration_provider_contracts or
+  web_content_extractor_contracts or document_extractor_contracts or
+  plugins_list_json_preserves_manifest_config_contracts or
+  plugins_list_json_preserves_manifest_model_support or
+  plugins_list_json_preserves_manifest_channel_configs or
+  plugins_list_json_preserves_manifest_qa_runners or
+  plugins_list_json_preserves_manifest_auth_and_env_metadata or
+  plugins_list_json_preserves_manifest_activation_and_setup or
+  plugins_list_json_preserves_manifest_command_aliases or
+  plugins_list_json_discovers_openclaw_manifest_load_paths"` (`12 passed`),
+  `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `5fdfb23c`.
+
+- Canvas shortcode extraction now matches OpenClaw's final assistant-text
+  normalization: after valid `[embed ...]` shortcodes are removed, visible text
+  collapses triple-or-more newlines to a single blank line and trims leading/
+  trailing whitespace, while fenced shortcodes and invalid targets remain
+  visible. This closes `OZ-CANVAS-001A`; repo-wide parity is now estimated at
+  ~60.2%, while the browser/canvas/nodes/voice bounded command family remains
+  ~99%.
+- Verified the canvas shortcode normalization slice with `python -m pytest
+  tests\test_gateway_canvas_render.py::test_extract_canvas_shortcodes_trims_and_collapses_removed_embed_gap
+  -q` (`1 passed`), `python -m pytest tests\test_gateway_canvas_render.py -q`
+  (`4 passed`), adjacent `python -m pytest tests\test_app.py -q -k
+  "canvas_embed_previews"` (`1 passed, 194 deselected`), `ruff check
+  src\openzues\services\gateway_canvas_render.py
+  tests\test_gateway_canvas_render.py tests\test_app.py`, and `mypy
+  src\openzues\services\gateway_canvas_render.py
+  src\openzues\services\control_chat.py`. Checkpointed in `c34e4a77`.
+
+- Package distribution doctor diagnostics now validate the packaged
+  `dist/postinstall-inventory.json` file instead of treating mere presence as
+  healthy: invalid JSON or non-list/non-string inventory shapes downgrade the
+  package distribution posture to `warning` and mark the
+  `postinstall_inventory` check with OpenClaw-shaped invalid-inventory detail.
+  This closes `OZ-PKG-001B`; repo-wide parity is now estimated at ~60.3%,
+  while the runtime/CLI/doctor bounded path remains ~99.9%.
+- Verified the package dist inventory validation slice with `python -m pytest
+  tests\test_cli.py::test_doctor_json_warns_on_invalid_package_dist_inventory
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "package_dist_inventory or package_distribution or runtime_bridge_posture"`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py`. Checkpointed in `3bf0ff86`.
+
+- Telegram native route-backed media sends now route audio/voice payloads
+  through OpenClaw-shaped Bot API methods: `mediaKind="audio"` uses
+  `sendAudio`, and `audioAsVoice=true` with voice-compatible audio URLs uses
+  `sendVoice` with the `voice` payload key while preserving caption, thread,
+  reply, silent, and media-id metadata. This closes `OZ-PROV-001I`;
+  repo-wide parity is now estimated at ~60.4%, while provider-native outbound
+  breadth remains open for deeper provider-specific edges.
+- Verified the Telegram audio/voice media send slice with `python -m pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_audio_voice_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "telegram_audio_voice_payload or telegram_animation_for_gif_media or
+  telegram_media_group or telegram_native_options or
+  send_direct_channel_message_uses_telegram_native_route or
+  send_direct_channel_poll_uses_telegram_native_route"` (`6 passed`),
+  `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
+  `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `9e1743fb`.
 
 ## References
 

@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-02
+Last updated: 2026-05-04
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -20,8 +20,8 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~59.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
-| Active gateway/session/tool-contract path | ~99.7% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~60.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
 | Hermes reference surface | 80-85% | Reference-only rough status from repo inspection | `docs/tracking/03-hermes-reference-status.md` |
@@ -29,15 +29,16 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The bundled plugin-SDK alias context slice is checkpointed in `e6b506db`.
+The Telegram audio/voice media routing slice is checkpointed in `9e1743fb`.
 Any follow-up changes should target the next queue head only:
 
-- `src/openzues/cli.py`
-- `tests/test_cli.py`
+- `src/openzues/services/ops_mesh.py`
+- `tests/test_ops_mesh.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
 - `docs/tracking/01-openzues-openclaw-parity-status.md`
+- `docs/tracking/02-openclaw-source-domain-map.md`
 
 Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
@@ -47,12 +48,167 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | --- | --- | --- | ---: | --- |
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
-| OZ-PKG-001 | Packaging/distribution breadth | Open | Broad | Map Windows-first doctor/package surfaces against OpenClaw |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Bundled plugin-SDK alias context checkpointed in `e6b506db` | Repo-wide +0.1%, CLI/runtime +0.1% | Continue bundled plugin-sdk import/runtime activation depth |
-| OZ-COMP-001 | Companion apps/nodes parity | Open | Broad | Inventory OpenClaw macOS/iOS/Android node behavior and choose first local bridge seam |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Native provider result metadata passthrough checkpointed in `fb9c9763` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
+| OZ-PKG-001 | Packaging/distribution breadth | Package dist inventory validation checkpointed in `3bf0ff86` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
+| OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
+| OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send checkpointed in `9e1743fb` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001I` Telegram audio/voice media send routing
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/voice.ts`,
+    `openclaw-main/src/media/audio.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: route-backed Telegram `gateway/send` sends audio media through
+    `sendAudio` by default and through `sendVoice` with `voice` payload when
+    `audioAsVoice=true` and the media URL is voice-compatible, preserving
+    caption/thread/reply/silent/media result metadata.
+  - Evidence required: focused Telegram audio/voice test, adjacent Telegram
+    native-route tests, ruff, mypy
+  - Status: checkpointed in `9e1743fb`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
+    adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] `OZ-PKG-001B` package dist inventory validation
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: packaged roots must parse `dist/postinstall-inventory.json` as a
+    JSON array of strings; invalid inventory downgrades package-distribution
+    doctor status/checks to warning with the invalid-inventory detail.
+  - Evidence required: focused package doctor test, adjacent package/runtime
+    doctor tests, ruff, mypy
+  - Status: checkpointed in `3bf0ff86`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused package inventory test (`1 passed`),
+    adjacent package/runtime doctor proof (`3 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] `OZ-CANVAS-001A` canvas shortcode text normalization
+  - Source: `openclaw-main/src/chat/canvas-render.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_canvas_render.py`,
+    `tests/test_gateway_canvas_render.py`, `tests/test_app.py`
+  - Contract: valid assistant-message `[embed ...]` shortcodes are removed and
+    converted to canvas previews, then visible text collapses three-or-more
+    newlines to one blank line and trims leading/trailing whitespace; fenced
+    shortcodes and invalid targets remain visible.
+  - Evidence required: focused canvas-render test, adjacent control-chat canvas
+    preview test, ruff, mypy
+  - Status: checkpointed in `c34e4a77`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
+    full canvas-render tests (`4 passed`), adjacent control-chat canvas preview
+    proof (`1 passed, 194 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BI` manifest external auth provider contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/providers.ts`,
+    `openclaw-main/src/plugins/provider-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.externalAuthProviders` values are
+    normalized, preserved in native plugin records, and projected as
+    `external-auth-provider:<id>` capability strings.
+  - Evidence required: focused plugin list JSON test, adjacent plugin manifest
+    contract projection tests, ruff, mypy
+  - Status: checkpointed in `5fdfb23c`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`12 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BH` manifest migration provider contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/contracts/registry.ts`,
+    `openclaw-main/src/plugins/migration-provider-runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.migrationProviders` values are
+    normalized, preserved in native plugin records, and projected as
+    `migration-provider:<id>` capability strings.
+  - Evidence required: focused plugin list JSON test, adjacent plugin manifest
+    contract projection tests, ruff, mypy
+  - Status: checkpointed in `17e62174`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_migration_provider_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`11 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BG` manifest web-content extractor contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/web-content-extractors.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.webContentExtractors` values are
+    normalized, preserved in native plugin records, and projected as
+    `web-content-extractor:<id>` capability strings.
+  - Evidence required: focused plugin list JSON test, adjacent plugin manifest
+    contract projection tests, ruff, mypy
+  - Status: checkpointed in `3b392789`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`10 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-COMP-001A` companion `node.presence.alive` lifecycle
+  - Source: `openclaw-main/src/gateway/server-node-events.ts`,
+    `openclaw-main/src/shared/node-presence.ts`,
+    `openclaw-main/apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and
+    Android gateway session invoke tests.
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_pairing.py`, `src/openzues/database.py`,
+    `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Contract: authenticated `node.presence.alive` events can arrive without a
+    live node socket, persist paired-node `lastSeenAtMs`/`lastSeenReason`,
+    normalize allowed triggers, throttle repeated persisted writes per device,
+    avoid ordinary node-event persistence, and return OpenClaw-shaped
+    handled/reason payloads.
+  - Evidence required: focused service/API node presence tests, adjacent
+    pairing/event API tests, ruff, mypy
+  - Status: checkpointed in `caded84a`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused service/API tests (`1 passed` each),
+    adjacent service/API selections (`3 passed` each), `ruff check` on touched
+    node/database files, and `mypy` on touched source modules.
+
+- [x] `OZ-PKG-001A` package distribution doctor diagnostics
+  - Source: `openclaw-main/src/flows/doctor-health.ts`,
+    `openclaw-main/src/commands/doctor-install.ts`,
+    `openclaw-main/src/infra/update-global.ts`, and
+    `openclaw-main/src/infra/package-dist-inventory.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues doctor --json` emits `packageDistribution` with
+    package root, source-checkout classification, `dist` presence,
+    `dist/postinstall-inventory.json` inventory status, platform,
+    Windows-first posture, checks, warnings, and
+    `doctor:package-distribution` contribution metadata.
+  - Evidence required: focused package distribution doctor test, adjacent
+    doctor/runtime bridge tests, ruff, mypy
+  - Status: checkpointed in `47d73351`
+  - Weight: 1
+  - Last verified: 2026-05-04, `python -m pytest
+    tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "package_distribution_diagnostics or runtime_bridge_posture or
+    gateway_doctor_json_includes_gateway_capability_summary"` (`3 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and
+    `mypy src\openzues\cli.py`.
 
 - [x] `OZ-RT-001A` `sessions.pluginPatch` registered plugin session extension state
   - Source: `openclaw-main/src/gateway/server-methods/sessions.ts`,
@@ -1536,6 +1692,58 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and `mypy
     src\openzues\cli.py`.
 
+- [x] `OZ-PLUGIN-001BE` source plugin-SDK subpath alias context
+  - Source: `openclaw-main/src/plugins/sdk-alias.ts` and
+    `openclaw-main/src/plugins/sdk-alias.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: source/git-style bundled plugin runtime entries that import
+    OpenClaw plugin-SDK subpaths project `pluginSdkResolution="src"`,
+    `pluginSdkSourceRoot`, and a `pluginSdkAliasMap` containing both scoped
+    and unscoped SDK aliases for each discovered local shim file, allowing
+    native activation adapters to resolve source runtime shims.
+  - Evidence required: focused source SDK alias activation-adapter test,
+    adjacent SDK alias/runtime-entry tests, ruff, mypy
+  - Status: checkpointed in `55e1fb28`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "source_plugin_sdk_subpath_aliases or plugin_sdk_alias_to_activation_adapter
+    or bundled_runtime_plugin_sdk_imports or runtime_entry_source or
+    plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+    runtime_text_transform_plugins"` (`6 passed`), `ruff check
+    src\openzues\cli.py tests\test_cli.py`, and `mypy src\openzues\cli.py`.
+
+- [x] `OZ-PLUGIN-001BF` manifest document extractor contract metadata
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    and `openclaw-main/src/plugins/document-extractors.runtime.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest `contracts.documentExtractors` values are
+    normalized into plugin inventory records, survive `plugins list --json`,
+    and project capability strings as `document-extractor:<id>` so document
+    extractor plugins are visible to native inventory/doctor surfaces.
+  - Evidence required: focused document extractor contract test, adjacent
+    plugin manifest inventory tests, ruff, mypy
+  - Status: checkpointed in `2196c65e`
+  - Weight: 1
+  - Last verified: 2026-05-04, `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+    "document_extractor_contracts or
+    plugins_list_json_preserves_manifest_config_contracts or
+    plugins_list_json_preserves_manifest_model_support or
+    plugins_list_json_preserves_manifest_channel_configs or
+    plugins_list_json_preserves_manifest_qa_runners or
+    plugins_list_json_preserves_manifest_auth_and_env_metadata or
+    plugins_list_json_preserves_manifest_activation_and_setup or
+    plugins_list_json_preserves_manifest_command_aliases or
+    plugins_list_json_discovers_openclaw_manifest_load_paths"` (`9 passed`),
+    `ruff check src\openzues\cli.py tests\test_cli.py`, and
+    `mypy src\openzues\cli.py`.
+
 - [x] `OZ-RT-001B` TTS persona gateway and CLI methods
   - Source: `openclaw-main/src/gateway/server-methods/tts.ts`,
     `openclaw-main/src/config/types.tts.ts`, and
@@ -1754,6 +1962,53 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
     src\openzues\services\gateway_outbound_runtime.py
     src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001G` Telegram GIF media send animation routing
+  - Source: `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/send.test.ts`, and
+    `openclaw-main/extensions/telegram/src/outbound-adapter.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: Telegram route-backed direct sends detect GIF media from URL or
+    OpenClaw-style media kind/gif playback hints and call Bot API
+    `sendAnimation` instead of `sendPhoto` unless `forceDocument=true`, while
+    preserving caption, reply, silent, thread, and animation `mediaIds`
+    provider metadata.
+  - Evidence required: focused Telegram GIF send test, adjacent Telegram
+    native send/poll/media tests, ruff, mypy
+  - Status: checkpointed in `51ee9573`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "telegram_animation_for_gif_media or telegram_native_options or
+    telegram_media_group or send_direct_channel_message_uses_telegram_native_route
+    or send_direct_channel_poll_uses_telegram_native_route"` (`5 passed`),
+    `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`,
+    and `mypy src\openzues\services\ops_mesh.py`.
+
+- [x] `OZ-PROV-001H` WhatsApp audio/voice media send payload
+  - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,
+    `openclaw-main/extensions/whatsapp/src/send.test.ts`, and
+    `openclaw-main/extensions/whatsapp/src/outbound-media-contract.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Contract: WhatsApp route-backed direct sends detect audio media from media
+    kind, URL mime, or `audioAsVoice=true`, send Cloud API `type="audio"`
+    payloads instead of default image payloads, split visible text into a
+    follow-up text message because audio payloads do not support captions, and
+    preserve reply context plus audio delivery result metadata.
+  - Evidence required: focused WhatsApp audio send test, adjacent WhatsApp
+    native media/reply/gif/poll tests, ruff, mypy
+  - Status: checkpointed in `c27d3439`
+  - Weight: 1
+  - Last verified: 2026-05-02, `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
+    -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+    "whatsapp_audio_voice_payload or whatsapp_gif_video or whatsapp_reply_document
+    or whatsapp_media or send_direct_channel_poll_uses_whatsapp"` (`5
+    passed`), `ruff check src\openzues\services\ops_mesh.py
+    tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
 
 ## Canonical Checklist Format
 

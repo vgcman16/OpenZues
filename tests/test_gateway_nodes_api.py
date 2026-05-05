@@ -25129,6 +25129,70 @@ def test_remote_node_event_endpoint_records_event(tmp_path) -> None:
     }
 
 
+def test_remote_node_presence_alive_endpoint_persists_without_live_socket(tmp_path) -> None:
+    app_settings = Settings(
+        data_dir=tmp_path / "data",
+        db_path=tmp_path / "data" / "openzues-test.db",
+    )
+    first_app = create_app(app_settings)
+
+    with TestClient(first_app, client=("testclient", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        request_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.request",
+                "params": {
+                    "nodeId": "node-presence-remote-1",
+                    "displayName": "Remote Presence Node",
+                    "platform": "ios",
+                },
+            },
+        )
+        approve_response = client.post(
+            "/api/gateway/node-methods/call",
+            json={
+                "method": "node.pair.approve",
+                "params": {"requestId": request_response.json()["request"]["requestId"]},
+            },
+        )
+
+    assert request_response.status_code == 200
+    assert approve_response.status_code == 200
+    token = approve_response.json()["node"]["token"]
+
+    remote_app = create_app(app_settings)
+    with TestClient(remote_app, client=("203.0.113.7", 50000)) as client:
+        _allow_mutating_api_requests(client)
+        response = client.post(
+            "/api/gateway/nodes/node-presence-remote-1/method-call",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "method": "node.event",
+                "params": {
+                    "event": "node.presence.alive",
+                    "payload": {"trigger": "silent_push", "sentAtMs": 99_000},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "event": "node.presence.alive",
+        "handled": True,
+        "reason": "persisted",
+    }
+
+    database = Database(app_settings.db_path)
+    asyncio.run(database.initialize())
+    paired = asyncio.run(database.get_gateway_node_paired_node("node-presence-remote-1"))
+    assert paired is not None
+    assert paired["last_seen_reason"] == "silent_push"
+    assert isinstance(paired["last_seen_at_ms"], int)
+    assert asyncio.run(database.list_events()) == []
+
+
 def test_last_heartbeat_endpoint_returns_latest_recorded_heartbeat(tmp_path) -> None:
     app_settings = Settings(
         data_dir=tmp_path / "data",

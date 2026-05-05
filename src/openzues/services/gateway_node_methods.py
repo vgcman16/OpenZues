@@ -138,6 +138,19 @@ _NODE_VOICE_TRANSCRIPT_DEDUPE_WINDOW_MS = 1_500
 _MAX_RECENT_NODE_VOICE_TRANSCRIPTS = 200
 _NODE_EXEC_FINISHED_DEDUPE_WINDOW_MS = 10 * 60 * 1_000
 _MAX_RECENT_NODE_EXEC_FINISHED_RUNS = 2_000
+_NODE_PRESENCE_ALIVE_EVENT = "node.presence.alive"
+_NODE_PRESENCE_PERSIST_MIN_INTERVAL_MS = 60_000
+_MAX_RECENT_NODE_PRESENCE_KEYS = 1_024
+_NODE_PRESENCE_ALIVE_REASONS = frozenset(
+    {
+        "background",
+        "silent_push",
+        "bg_app_refresh",
+        "significant_location",
+        "manual",
+        "connect",
+    }
+)
 _CANVAS_CAPABILITY_PATH_PREFIX = "/__openclaw__/cap"
 _CANVAS_CAPABILITY_TTL_MS = 10 * 60_000
 _SESSION_LABEL_MAX_LENGTH = 512
@@ -1561,6 +1574,7 @@ class GatewayNodeMethodService:
         ] = {}
         self._recent_node_voice_transcripts: dict[str, tuple[str, int]] = {}
         self._recent_node_exec_finished_runs: dict[str, int] = {}
+        self._recent_node_presence_persist_at: dict[str, int] = {}
         self._apns_wake_nudge_at_by_node_id: dict[str, int] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._plugin_approval_records: dict[str, GatewayPluginApprovalRecord] = {}
@@ -2704,12 +2718,21 @@ class GatewayNodeMethodService:
         resolved_method = method.strip()
         payload = _validate_object_params(resolved_method, params)
         resolved_requester = requester or GatewayNodeMethodRequester()
+        node_id: str | None
 
-        if resolved_method in _NODE_ONLY_METHODS:
+        if resolved_method in _NODE_ONLY_METHODS and not (
+            resolved_method == "node.event"
+            and payload.get("event") == _NODE_PRESENCE_ALIVE_EVENT
+        ):
             node_id = self._require_connected_node_identity(
                 resolved_method,
                 resolved_requester,
             )
+        elif (
+            resolved_method == "node.event"
+            and payload.get("event") == _NODE_PRESENCE_ALIVE_EVENT
+        ):
+            node_id = self._requester_node_identity(resolved_requester)
         else:
             node_id = None
 
@@ -10721,6 +10744,12 @@ class GatewayNodeMethodService:
                     parsed_payload = json.loads(resolved_payload_json)
                 except json.JSONDecodeError:
                     parsed_payload = None
+            if event_name == _NODE_PRESENCE_ALIVE_EVENT:
+                return await self._handle_node_presence_alive_event(
+                    node_id=node_id,
+                    payload=parsed_payload,
+                    now_ms=now_ms,
+                )
             event_record: dict[str, Any] = {
                 "nodeId": node_id,
                 "event": event_name,
@@ -12712,6 +12741,101 @@ class GatewayNodeMethodService:
             return client_id
         raise ValueError(f"{method} requires a connected device identity")
 
+    def _requester_node_identity(self, requester: GatewayNodeMethodRequester) -> str | None:
+        node_id = str(requester.node_id or "").strip()
+        if node_id:
+            return node_id
+        client_id = str(requester.client_id or "").strip()
+        return client_id or None
+
+    async def _handle_node_presence_alive_event(
+        self,
+        *,
+        node_id: str | None,
+        payload: object,
+        now_ms: int | None,
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": False,
+                "reason": "invalid_payload",
+            }
+        if node_id is None:
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": False,
+                "reason": "missing_device_identity",
+            }
+        timestamp_ms = _timestamp_ms(now_ms)
+        last_persisted_at = self._recent_node_presence_persist_at.get(node_id)
+        if (
+            last_persisted_at is not None
+            and timestamp_ms - last_persisted_at < _NODE_PRESENCE_PERSIST_MIN_INTERVAL_MS
+        ):
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": True,
+                "reason": "throttled",
+            }
+        if self._pairing_service is None:
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": False,
+                "reason": "unpaired",
+            }
+        last_seen_reason = _normalize_node_presence_alive_reason(payload.get("trigger"))
+        try:
+            updated = await self._pairing_service.update_paired_node_presence(
+                node_id,
+                last_seen_at_ms=timestamp_ms,
+                last_seen_reason=last_seen_reason,
+            )
+        except Exception:
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": False,
+                "reason": "persist_failed",
+            }
+        if updated is None:
+            return {
+                "ok": True,
+                "event": _NODE_PRESENCE_ALIVE_EVENT,
+                "handled": False,
+                "reason": "unpaired",
+            }
+        self._recent_node_presence_persist_at[node_id] = timestamp_ms
+        self._prune_recent_node_presence_persist_at(now_ms=timestamp_ms)
+        return {
+            "ok": True,
+            "event": _NODE_PRESENCE_ALIVE_EVENT,
+            "handled": True,
+            "reason": "persisted",
+        }
+
+    def _prune_recent_node_presence_persist_at(self, *, now_ms: int) -> None:
+        if len(self._recent_node_presence_persist_at) <= _MAX_RECENT_NODE_PRESENCE_KEYS:
+            return
+        cutoff = now_ms - (_NODE_PRESENCE_PERSIST_MIN_INTERVAL_MS * 10)
+        stale_keys = [
+            key
+            for key, timestamp_ms in self._recent_node_presence_persist_at.items()
+            if timestamp_ms < cutoff
+        ]
+        for key in stale_keys:
+            self._recent_node_presence_persist_at.pop(key, None)
+        while len(self._recent_node_presence_persist_at) > _MAX_RECENT_NODE_PRESENCE_KEYS:
+            oldest_key = min(
+                self._recent_node_presence_persist_at,
+                key=self._recent_node_presence_persist_at.__getitem__,
+            )
+            self._recent_node_presence_persist_at.pop(oldest_key, None)
+
     def _remember_gateway_chat_run(
         self,
         session_key: str,
@@ -13596,6 +13720,14 @@ class GatewayNodeMethodService:
 
 def _timestamp_ms(now_ms: int | None) -> int:
     return int(time.time() * 1000) if now_ms is None else int(now_ms)
+
+
+def _normalize_node_presence_alive_reason(value: object) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _NODE_PRESENCE_ALIVE_REASONS:
+            return normalized
+    return "background"
 
 
 def _can_requester_abort_gateway_chat_run(
@@ -20419,7 +20551,7 @@ def _known_paired_node_payload(
     *,
     commands: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "nodeId": node.node_id,
         "displayName": node.display_name,
         "platform": node.platform,
@@ -20440,6 +20572,11 @@ def _known_paired_node_payload(
         "connectedAtMs": node.last_connected_at_ms,
         "approvedAtMs": node.approved_at_ms,
     }
+    if node.last_seen_at_ms is not None:
+        payload["lastSeenAtMs"] = node.last_seen_at_ms
+    if node.last_seen_reason is not None:
+        payload["lastSeenReason"] = node.last_seen_reason
+    return payload
 
 
 def _merge_known_node_payload(
@@ -20452,7 +20589,7 @@ def _merge_known_node_payload(
         persisted.get("commands"),
         observed_commands,
     )
-    return {
+    merged = {
         "nodeId": observed["nodeId"],
         "displayName": observed.get("displayName") or persisted.get("displayName"),
         "platform": observed.get("platform") or persisted.get("platform"),
@@ -20485,6 +20622,11 @@ def _merge_known_node_payload(
             else persisted.get("approvedAtMs")
         ),
     }
+    if persisted.get("lastSeenAtMs") is not None:
+        merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
+    if persisted.get("lastSeenReason") is not None:
+        merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    return merged
 
 
 def _known_node_sort_key_from_payload(payload: dict[str, Any]) -> tuple[int, str, str]:
@@ -20543,7 +20685,7 @@ def _stored_paired_node_payload(
     *,
     commands: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "nodeId": node.node_id,
         "token": node.token,
         "displayName": node.display_name,
@@ -20561,6 +20703,11 @@ def _stored_paired_node_payload(
         "approvedAtMs": node.approved_at_ms,
         "lastConnectedAtMs": node.last_connected_at_ms,
     }
+    if node.last_seen_at_ms is not None:
+        payload["lastSeenAtMs"] = node.last_seen_at_ms
+    if node.last_seen_reason is not None:
+        payload["lastSeenReason"] = node.last_seen_reason
+    return payload
 
 
 def _device_pair_pending_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -20630,7 +20777,7 @@ def _merge_paired_node_payload(
     persisted: dict[str, Any],
     observed: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    merged = {
         "nodeId": persisted["nodeId"],
         "token": (
             persisted.get("token")
@@ -20672,6 +20819,11 @@ def _merge_paired_node_payload(
             else persisted.get("lastConnectedAtMs")
         ),
     }
+    if persisted.get("lastSeenAtMs") is not None:
+        merged["lastSeenAtMs"] = persisted.get("lastSeenAtMs")
+    if persisted.get("lastSeenReason") is not None:
+        merged["lastSeenReason"] = persisted.get("lastSeenReason")
+    return merged
 
 
 def _paired_node_sort_key(payload: dict[str, Any]) -> tuple[int, str]:

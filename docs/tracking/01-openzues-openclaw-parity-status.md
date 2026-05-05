@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-02
+Last updated: 2026-05-04
 
 Primary ledgers:
 
@@ -16,8 +16,8 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~59.2% | Medium | Breadth-weighted planning estimate, not generated metric |
-| Active gateway/session/tool-contract family | ~99.7% | High for bounded local path | Does not mean whole product parity |
+| Repo-wide OpenClaw parity | ~60.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
 | Runtime/CLI/doctor native bridge | ~99.9% | High for bounded native bridge | Packaging, ACP bridge depth, and deeper installed plugin activation remain |
@@ -156,6 +156,61 @@ may lag behind this tracker.
 - [x] Bundled plugin-SDK alias context, preserving dist package SDK root and
   extension-local alias root metadata for native activation adapters.
   - Status: checkpointed in `e6b506db`
+
+- [x] Source plugin-SDK subpath alias context, preserving source/git-style
+  bundled plugin SDK alias maps for native activation adapters.
+  - Status: checkpointed in `55e1fb28`
+
+- [x] Manifest document extractor contract metadata, preserving
+  `contracts.documentExtractors` in `plugins list --json` records and
+  capability strings.
+  - Status: checkpointed in `2196c65e`
+
+- [x] Manifest web-content extractor contract metadata, preserving
+  `contracts.webContentExtractors` in `plugins list --json` records and
+  capability strings.
+  - Status: checkpointed in `3b392789`
+
+- [x] Manifest migration provider contract metadata, preserving
+  `contracts.migrationProviders` in `plugins list --json` records and
+  capability strings.
+  - Status: checkpointed in `17e62174`
+
+- [x] Manifest external auth provider contract metadata, preserving
+  `contracts.externalAuthProviders` in `plugins list --json` records and
+  capability strings.
+  - Status: checkpointed in `5fdfb23c`
+
+- [x] Canvas shortcode text normalization, preserving OpenClaw's visible
+  assistant-message cleanup after valid `[embed ...]` removals.
+  - Status: checkpointed in `c34e4a77`
+
+- [x] Package distribution inventory validation, preserving OpenClaw's
+  invalid-inventory warning posture in `doctor --json`.
+  - Status: checkpointed in `3bf0ff86`
+
+- [x] Telegram audio/voice media send routing, preserving OpenClaw's
+  `sendAudio`/`sendVoice` Bot API split for native provider routes.
+  - Status: checkpointed in `9e1743fb`
+
+- [x] Package distribution doctor diagnostics, preserving Windows-first
+  package root, source-checkout, dist, and postinstall-inventory posture in
+  `doctor --json`.
+  - Status: checkpointed in `47d73351`
+
+- [x] Companion node presence alive lifecycle, preserving authenticated
+  background beacon persistence and upstream-shaped handled/reason results.
+  - Status: checkpointed in `caded84a`
+
+- [x] Telegram GIF media send animation routing, preserving OpenClaw's
+  `sendAnimation` behavior for GIF media while keeping document forcing,
+  caption, reply, silent, thread, and animation `mediaIds` metadata.
+  - Status: checkpointed in `51ee9573`
+
+- [x] WhatsApp audio/voice media send payload, preserving OpenClaw's audio
+  media behavior by sending Cloud API `type="audio"` payloads and splitting
+  visible text into a follow-up text message.
+  - Status: checkpointed in `c27d3439`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -514,8 +569,12 @@ may lag behind this tracker.
     and installed activation-adapter manifest tool contract enforcement
     checkpointed in `aac25d80`, and installed activation-adapter runtime load
     options checkpointed in `ee12d2d4`, and installed-record manifest runtime
-    activation checkpointed in `b8f39fe3`, but deeper module import/runtime
-    activation remains.
+    activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
+    metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
+    checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
+    in `55e1fb28`, and manifest document extractor contract metadata
+    checkpointed in `2196c65e`, but deeper module import/runtime activation
+    remains.
   - Weight: 5
 
 - [x] Installed-record manifest runtime activation.
@@ -529,6 +588,134 @@ may lag behind this tracker.
   - Last verified: 2026-05-02, focused installed-record activation test (`1
     passed`), adjacent installed-plugin CLI proof (`7 passed`), `ruff check`,
     and `mypy`.
+
+- [x] Source plugin-SDK subpath alias context.
+  - Source: `openclaw-main/src/plugins/sdk-alias.ts` and
+    `openclaw-main/src/plugins/sdk-alias.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `55e1fb28`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_cli.py::test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter
+    -q` (`1 passed`), adjacent plugin SDK/runtime-entry proof (`6 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest document extractor contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/document-extractors.runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `2196c65e`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_document_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`9 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest web-content extractor contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/web-content-extractors.runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `3b392789`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_web_content_extractor_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`10 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest migration provider contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+    `openclaw-main/src/plugins/contracts/registry.ts`,
+    `openclaw-main/src/plugins/migration-provider-runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `17e62174`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_migration_provider_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`11 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Manifest external auth provider contract metadata.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/providers.ts`,
+    `openclaw-main/src/plugins/provider-runtime.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5fdfb23c`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_external_auth_provider_contracts
+    -q` (`1 passed`), adjacent plugin manifest inventory proof (`12 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Canvas shortcode text normalization.
+  - Source: `openclaw-main/src/chat/canvas-render.ts`
+  - Target: `src/openzues/services/gateway_canvas_render.py`
+  - Test: `tests/test_gateway_canvas_render.py`, `tests/test_app.py`
+  - Status: checkpointed in `c34e4a77`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
+    full canvas-render tests (`4 passed`), adjacent control-chat canvas preview
+    proof (`1 passed, 194 deselected`), `ruff check`, and `mypy`.
+
+- [x] Package distribution inventory validation.
+  - Source: `openclaw-main/src/infra/package-dist-inventory.ts`,
+    `openclaw-main/src/infra/update-global.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `3bf0ff86`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused package inventory test (`1 passed`),
+    adjacent package/runtime doctor proof (`3 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Telegram audio/voice media send routing.
+  - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,
+    `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/voice.ts`,
+    `openclaw-main/src/media/audio.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `9e1743fb`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
+    adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
+    `mypy`.
+
+- [x] Package distribution doctor diagnostics.
+  - Source: `openclaw-main/src/flows/doctor-health.ts`,
+    `openclaw-main/src/commands/doctor-install.ts`,
+    `openclaw-main/src/infra/update-global.ts`,
+    `openclaw-main/src/infra/package-dist-inventory.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `47d73351`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_doctor_json_includes_windows_package_distribution_diagnostics
+    -q` (`1 passed`), adjacent doctor/runtime bridge proof (`3 passed`),
+    `ruff check`, and `mypy`.
+
+- [x] Companion node presence alive lifecycle.
+  - Source: `openclaw-main/src/gateway/server-node-events.ts`,
+    `openclaw-main/src/shared/node-presence.ts`,
+    `openclaw-main/apps/ios/Sources/Push/BackgroundAliveBeacon.swift`,
+    Android gateway session invoke tests
+  - Target: `src/openzues/services/gateway_node_methods.py`,
+    `src/openzues/services/gateway_node_pairing.py`, `src/openzues/database.py`
+  - Test: `tests/test_gateway_node_methods.py`, `tests/test_gateway_nodes_api.py`
+  - Status: checkpointed in `caded84a`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused service/API presence tests (`1 passed`
+    each), adjacent node pairing/event API proof (`3 passed` each),
+    `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
@@ -1029,8 +1216,35 @@ may lag behind this tracker.
     query placement checkpointed in `0d40be27`; WhatsApp document filename
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
-    checkpointed in `fb9c9763`
+    checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
+    `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`
   - Weight: 3
+
+- [x] WhatsApp audio/voice media send payload.
+  - Source: `openclaw-main/extensions/whatsapp/src/send.ts`,
+    `openclaw-main/extensions/whatsapp/src/send.test.ts`, and
+    `openclaw-main/extensions/whatsapp/src/outbound-media-contract.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `c27d3439`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
+    -q` (`1 passed`), adjacent WhatsApp native media/reply/gif/poll proof (`5
+    passed`), `ruff check`, and `mypy`.
+
+- [x] Telegram GIF media send animation routing.
+  - Source: `openclaw-main/extensions/telegram/src/send.ts`,
+    `openclaw-main/extensions/telegram/src/send.test.ts`, and
+    `openclaw-main/extensions/telegram/src/outbound-adapter.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: checkpointed in `51ee9573`.
+  - Weight: 1
+  - Last verified: 2026-05-02, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_animation_for_gif_media
+    -q` (`1 passed`), adjacent Telegram native send/poll/media proof (`5
+    passed`), `ruff check`, and `mypy`.
 
 - [x] Native provider result metadata passthrough.
   - Source: `openclaw-main/src/infra/outbound/deliver.ts`,

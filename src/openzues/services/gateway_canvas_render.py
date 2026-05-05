@@ -43,7 +43,11 @@ def extract_canvas_shortcodes(text: str | None) -> dict[str, object]:
             previews.append(preview)
         cursor = end
     stripped += source[cursor:]
-    return {"text": stripped, "previews": previews}
+    return {"text": _normalize_canvas_shortcode_text(stripped), "previews": previews}
+
+
+def _normalize_canvas_shortcode_text(text: str) -> str:
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _parse_canvas_attributes(raw: str) -> dict[str, str]:

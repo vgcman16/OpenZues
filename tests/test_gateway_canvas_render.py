@@ -22,6 +22,21 @@ def test_extract_canvas_shortcodes_builds_preview_from_ref() -> None:
     }
 
 
+def test_extract_canvas_shortcodes_trims_and_collapses_removed_embed_gap() -> None:
+    result = extract_canvas_shortcodes('\nIntro\n\n[embed ref="cv_1" /]\n\n\nAfter\n')
+
+    assert result["text"] == "Intro\n\nAfter"
+    assert result["previews"] == [
+        {
+            "kind": "canvas",
+            "surface": "assistant_message",
+            "render": "url",
+            "url": "/__openclaw__/canvas/documents/cv_1/index.html",
+            "viewId": "cv_1",
+        }
+    ]
+
+
 def test_extract_canvas_shortcodes_uses_explicit_url_and_ignores_fences() -> None:
     result = extract_canvas_shortcodes(
         "\n".join(
@@ -34,7 +49,7 @@ def test_extract_canvas_shortcodes_uses_explicit_url_and_ignores_fences() -> Non
         )
     )
 
-    assert result["text"] == "```\n[embed ref=\"cv_ignored\" /]\n```\n"
+    assert result["text"] == "```\n[embed ref=\"cv_ignored\" /]\n```"
     assert result["previews"] == [
         {
             "kind": "canvas",

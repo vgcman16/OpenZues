@@ -1,12 +1,12 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-02
+Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~58.7% overall, with a reasonable
-  band of ~50-59%.
-- The active gateway/session/tool-contract family is estimated at ~99.2% of the
+- Repo-wide OpenClaw parity is estimated at ~60.4% overall, with a reasonable
+  band of ~50-60%.
+- The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
   `chat.send`, `chat.inject`, `chat.abort`, `sessions.create`,
@@ -57,8 +57,8 @@ Current percentage rollup:
   installed plugin disabled activation gate,
   active-registry executor projection, and runtime activation doctor posture
   slices.
-- The gateway session/tool-contract family is estimated at ~99.2% after the
-  latest native provider result metadata passthrough slice.
+- The gateway session/tool-contract family is estimated at ~99.9% after the
+  latest companion node presence alive slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
   metadata mini-queue, marketplace source-shape install/update queue, native
   ACP client interactive replay,
@@ -5428,6 +5428,141 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   import/activation queue, especially bundled package plugin-sdk
   import/runtime activation. The provider-native adapter breadth queue remains
   the next alternate after that slice.
+- Closed the Telegram GIF media send seam from OpenClaw
+  `extensions/telegram/src/send.ts`,
+  `extensions/telegram/src/send.test.ts`, and
+  `extensions/telegram/src/outbound-adapter.ts`: native Telegram route-backed
+  direct sends now detect GIF media from URL/content kind (or
+  `gifPlayback=true`) and call Bot API `sendAnimation` instead of `sendPhoto`
+  unless `forceDocument=true`, while preserving caption, reply, silent, thread,
+  and animation `mediaIds` provider metadata. Repo-wide parity is now estimated
+  at ~59.3%; the active gateway/session/tool-contract family is now estimated
+  at ~99.8%, and runtime/CLI/doctor plus CLI/operator-control bounded paths
+  remain ~99.9%. Verified with the focused Telegram GIF send pytest, adjacent
+  Telegram native send/poll/media proof, `ruff check`, and `mypy`;
+  checkpointed in `51ee9573`.
+- Next repo-wide queue head: continue provider-specific send/poll/replay edge
+  cases or return to deeper bundled plugin runtime activation, whichever is the
+  strongest source-backed seam after the next discovery pass.
+- Closed the WhatsApp audio/voice media send seam from OpenClaw
+  `extensions/whatsapp/src/send.ts`,
+  `extensions/whatsapp/src/send.test.ts`, and
+  `extensions/whatsapp/src/outbound-media-contract.ts`: native WhatsApp
+  route-backed direct sends now detect audio media from media kind, URL mime,
+  or `audioAsVoice=true` and send Cloud API `type="audio"` payloads instead of
+  default image payloads. Visible text is split into a follow-up text message
+  because WhatsApp audio messages do not support captions, while reply context
+  and media result metadata remain on the audio delivery. Repo-wide parity is
+  now estimated at ~59.4%; the active gateway/session/tool-contract family is
+  now estimated at ~99.9%, and runtime/CLI/doctor plus CLI/operator-control
+  bounded paths remain ~99.9%. Verified with the focused WhatsApp audio pytest,
+  adjacent WhatsApp native media/reply/gif/poll proof, `ruff check`, and
+  `mypy`; checkpointed in `c27d3439`.
+- Next repo-wide queue head: continue provider-specific send/poll/replay edge
+  cases or rotate to packaging/companion/plugin breadth, whichever is the
+  strongest source-backed seam after the next discovery pass.
+- Closed the source plugin-SDK subpath alias seam from OpenClaw
+  `src/plugins/sdk-alias.ts` and `src/plugins/sdk-alias.test.ts`: source or
+  git-style bundled plugin runtime entries that import OpenClaw plugin-SDK
+  subpaths now project `pluginSdkResolution="src"`, `pluginSdkSourceRoot`, and
+  a `pluginSdkAliasMap` containing both scoped and unscoped plugin-SDK aliases
+  for native activation adapters. Repo-wide parity is now estimated at ~59.5%;
+  the active gateway/session/tool-contract family remains estimated at ~99.9%,
+  and runtime/CLI/doctor plus CLI/operator-control bounded paths remain
+  ~99.9%. Verified with the focused source plugin-SDK alias pytest, adjacent
+  plugin SDK/runtime-entry proof, `ruff check`, and `mypy`; checkpointed in
+  `55e1fb28`.
+- Closed the document extractor contract metadata seam from OpenClaw
+  `src/plugins/manifest.ts`,
+  `src/plugins/contracts/inventory/bundled-capability-metadata.ts`, and
+  `src/plugins/document-extractors.runtime.ts`: manifest
+  `contracts.documentExtractors` entries now survive native `plugins list
+  --json` projection and emit `document-extractor:<id>` capability strings.
+  Repo-wide parity is now estimated at ~59.6%; the active gateway/session/tool-
+  contract family remains estimated at ~99.9%, and runtime/CLI/doctor plus
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  document extractor contract pytest, adjacent plugin manifest inventory proof,
+  `ruff check`, and `mypy`; checkpointed in `2196c65e`.
+- Closed the package distribution doctor diagnostics seam from OpenClaw
+  `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`,
+  `src/infra/update-global.ts`, and `src/infra/package-dist-inventory.ts`:
+  native `openzues doctor --json` now emits a Windows-first
+  `packageDistribution` block with package root, source-checkout
+  classification, `dist` and `dist/postinstall-inventory.json` status,
+  platform, checks, warnings, and `doctor:package-distribution` contribution
+  metadata. Repo-wide parity is now estimated at ~59.7%; runtime/CLI/doctor
+  and CLI/operator-control bounded paths remain ~99.9%. Verified with the
+  focused package distribution doctor pytest, adjacent doctor/runtime bridge
+  proof, `ruff check`, and `mypy`; checkpointed in `47d73351`.
+- Closed the companion node presence alive seam from OpenClaw
+  `src/gateway/server-node-events.ts`, `src/shared/node-presence.ts`,
+  `apps/ios/Sources/Push/BackgroundAliveBeacon.swift`, and Android gateway
+  session invoke tests: authenticated `node.presence.alive` events now persist
+  paired-node last-seen metadata without requiring a live socket, normalize
+  triggers, throttle repeated persisted writes, and return upstream-shaped
+  handled/reason responses. Repo-wide parity is now estimated at ~59.8%;
+  gateway/session/tool-contract and runtime/CLI/doctor bounded paths remain
+  ~99.9%. Verified with focused service/API presence tests, adjacent node
+  pairing/event API proof, `ruff check`, and `mypy`; checkpointed in
+  `caded84a`.
+- Closed the manifest web-content extractor contract seam from OpenClaw
+  `src/plugins/manifest.ts`,
+  `src/plugins/contracts/inventory/bundled-capability-metadata.ts`, and
+  `src/plugins/web-content-extractors.runtime.ts`: manifest
+  `contracts.webContentExtractors` entries now survive native `plugins list
+  --json` projection and emit `web-content-extractor:<id>` capability strings.
+  Repo-wide parity is now estimated at ~59.9%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  web-content extractor contract pytest, adjacent plugin manifest inventory
+  proof, `ruff check`, and `mypy`; checkpointed in `3b392789`.
+- Closed the manifest migration provider contract seam from OpenClaw
+  `src/plugins/manifest.ts`,
+  `src/plugins/contracts/inventory/bundled-capability-metadata.ts`,
+  `src/plugins/contracts/registry.ts`, and
+  `src/plugins/migration-provider-runtime.ts`: manifest
+  `contracts.migrationProviders` entries now survive native `plugins list
+  --json` projection and emit `migration-provider:<id>` capability strings.
+  Repo-wide parity is now estimated at ~60.0%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  migration provider contract pytest, adjacent plugin manifest inventory proof,
+  `ruff check`, and `mypy`; checkpointed in `17e62174`.
+- Closed the manifest external auth provider contract seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/manifest-registry.ts`,
+  `src/plugins/providers.ts`, and `src/plugins/provider-runtime.ts`: manifest
+  `contracts.externalAuthProviders` entries now survive native `plugins list
+  --json` projection and emit `external-auth-provider:<id>` capability strings.
+  Repo-wide parity is now estimated at ~60.1%; runtime/CLI/doctor and
+  CLI/operator-control bounded paths remain ~99.9%. Verified with the focused
+  external auth provider contract pytest, adjacent plugin manifest inventory
+  proof, `ruff check`, and `mypy`; checkpointed in `5fdfb23c`.
+- Closed the canvas shortcode text normalization seam from OpenClaw
+  `src/chat/canvas-render.ts`: native shortcode extraction now collapses
+  triple-or-more newlines and trims visible assistant text after valid
+  `[embed ...]` removals while preserving fenced and invalid-target shortcodes.
+  Repo-wide parity is now estimated at ~60.2%; browser/canvas/nodes/voice
+  bounded command family remains ~99%. Verified with focused canvas-render
+  pytest, adjacent control-chat canvas preview proof, `ruff check`, and
+  `mypy`; checkpointed in `c34e4a77`.
+- Closed the package dist inventory validation seam from OpenClaw
+  `src/infra/package-dist-inventory.ts` and `src/infra/update-global.ts`:
+  native `openzues doctor --json` now parses
+  `dist/postinstall-inventory.json` for packaged roots and reports invalid
+  JSON/non-list/non-string shapes as warning posture instead of accepting
+  presence-only inventory. Repo-wide parity is now estimated at ~60.3%;
+  runtime/CLI/doctor bounded path remains ~99.9%. Verified with focused
+  package inventory pytest, adjacent package/runtime doctor proof, `ruff
+  check`, and `mypy`; checkpointed in `3bf0ff86`.
+- Closed the Telegram audio/voice media send seam from OpenClaw
+  `extensions/telegram/src/outbound-adapter.ts`,
+  `extensions/telegram/src/send.ts`, `extensions/telegram/src/voice.ts`, and
+  `src/media/audio.ts`: native route-backed Telegram sends now use `sendAudio`
+  for audio and `sendVoice` for voice-compatible audio when
+  `audioAsVoice=true`, preserving thread/reply/silent/caption/media metadata.
+  Repo-wide parity is now estimated at ~60.4%. Verified with focused Telegram
+  audio/voice pytest, adjacent Telegram native-route proof, `ruff check`, and
+  `mypy`; checkpointed in `9e1743fb`.
+- Next repo-wide queue head: rotate to companion remote-bin discovery or
+  update-status channel projection based on the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

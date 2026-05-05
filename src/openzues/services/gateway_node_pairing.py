@@ -53,6 +53,8 @@ class GatewayPairedNode:
     created_at_ms: int = 0
     approved_at_ms: int = 0
     last_connected_at_ms: int | None = None
+    last_seen_at_ms: int | None = None
+    last_seen_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +280,20 @@ class GatewayNodePairingService:
         )
         return _paired_node_from_row(updated_row)
 
+    async def update_paired_node_presence(
+        self,
+        node_id: str,
+        *,
+        last_seen_at_ms: int,
+        last_seen_reason: str,
+    ) -> GatewayPairedNode | None:
+        updated_row = await self.database.update_gateway_node_paired_node_presence(
+            node_id,
+            last_seen_at_ms=last_seen_at_ms,
+            last_seen_reason=last_seen_reason,
+        )
+        return _paired_node_from_row(updated_row) if updated_row is not None else None
+
     async def approve(
         self,
         request_id: str,
@@ -474,6 +490,8 @@ def _paired_node_from_row(row: dict[str, object]) -> GatewayPairedNode:
         created_at_ms=cast(int, row["created_at_ms"]),
         approved_at_ms=cast(int, row["approved_at_ms"]),
         last_connected_at_ms=cast(int | None, row.get("last_connected_at_ms")),
+        last_seen_at_ms=cast(int | None, row.get("last_seen_at_ms")),
+        last_seen_reason=_optional_string(row.get("last_seen_reason")),
     )
 
 
@@ -534,7 +552,7 @@ def _pending_payload(request: GatewayNodePairingRequest) -> dict[str, object]:
 
 
 def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "nodeId": node.node_id,
         "token": node.token,
         "displayName": node.display_name,
@@ -552,10 +570,15 @@ def _paired_list_payload(node: GatewayPairedNode) -> dict[str, object]:
         "approvedAtMs": node.approved_at_ms,
         "lastConnectedAtMs": node.last_connected_at_ms,
     }
+    if node.last_seen_at_ms is not None:
+        payload["lastSeenAtMs"] = node.last_seen_at_ms
+    if node.last_seen_reason is not None:
+        payload["lastSeenReason"] = node.last_seen_reason
+    return payload
 
 
 def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "nodeId": node.node_id,
         "token": node.token,
         "displayName": node.display_name,
@@ -573,6 +596,11 @@ def _paired_detail_payload(node: GatewayPairedNode) -> dict[str, object]:
         "approvedAtMs": node.approved_at_ms,
         "lastConnectedAtMs": node.last_connected_at_ms,
     }
+    if node.last_seen_at_ms is not None:
+        payload["lastSeenAtMs"] = node.last_seen_at_ms
+    if node.last_seen_reason is not None:
+        payload["lastSeenReason"] = node.last_seen_reason
+    return payload
 
 
 def _device_token_summary_payload(token: GatewayDeviceAuthToken) -> dict[str, object]:
