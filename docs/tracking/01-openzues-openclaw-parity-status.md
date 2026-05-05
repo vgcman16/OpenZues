@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~77.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~77.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -468,6 +468,14 @@ may lag behind this tracker.
   catalog-to-provider config conversion, native streaming usage compatibility,
   scoped/unscoped SDK aliases, and generic SDK re-exports.
   - Status: checkpointed in `903343d0`
+
+- [x] Imported plugin SDK provider entry/enable/auth-result helper shim for
+  single-provider entry registration, auth-method wizard/env-var defaults,
+  API-key provider catalogs with explicit base-URL overrides, static catalogs,
+  provider-plugin enable config without channel normalization, web-fetch/
+  web-search enable-contract aliases, OAuth auth profiles/config patches,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `0887e67a`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

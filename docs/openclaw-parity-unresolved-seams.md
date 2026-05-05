@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~77.2% overall, with a reasonable
-  band of ~50-70%.
+- Repo-wide OpenClaw parity is estimated at ~77.3% overall, with a reasonable
+  band of ~75-80%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -60,7 +60,8 @@ Current percentage rollup:
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
   provider-selection-runtime, windows-spawn, command-status, command-auth
-  native, webhook, fetch/SSRF, and provider model/catalog helper slices.
+  native, webhook, fetch/SSRF, provider model/catalog, and provider
+  entry/enable/auth-result helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7280,13 +7281,30 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `tools.invoke`. Repo-wide parity is now estimated at ~77.2%. Verified with
   focused provider model/catalog helper pytest, adjacent imported-plugin/runtime
   proof, `ruff check`, and `mypy`; source/test checkpointed in `903343d0`.
+- Closed the imported OpenClaw plugin SDK provider entry/enable/auth-result
+  helper seam from `src/plugin-sdk/provider-entry.ts`,
+  `src/plugin-sdk/provider-enable-config.ts`,
+  `src/plugin-sdk/provider-web-fetch-contract.ts`,
+  `src/plugin-sdk/provider-web-search-contract.ts`,
+  `src/plugin-sdk/provider-auth-result.ts`,
+  `src/plugins/provider-api-key-auth.ts`,
+  `src/plugins/provider-catalog.ts`, and
+  `src/agents/auth-profiles/identity.ts`: native runtime entries can now
+  define single-provider plugin entries, register provider auth methods with
+  upstream wizard/env-var defaults, build API-key provider catalogs with
+  explicit base-URL overrides, expose static catalogs, enable provider plugins
+  without channel normalization, preserve web-fetch/web-search enable-contract
+  aliases, and return OAuth provider auth profiles/config patches through
+  `tools.invoke`. Repo-wide parity is now estimated at ~77.3%. Verified with
+  focused provider entry/enable/auth-result helper pytest, adjacent
+  imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `0887e67a`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
-  channel-actions/status-helpers/channel-status path,
-  starting with the next source-backed SDK subpath or deeper route-resolution
-  binding behavior.
+  channel-actions/status-helpers/channel-status/provider-entry-enable-auth path,
+  starting with provider-auth runtime/login/API-key helper surfaces.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
