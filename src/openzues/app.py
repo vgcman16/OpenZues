@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
@@ -250,6 +250,7 @@ CONTROL_UI_ASSISTANT_AGENT_ID = "openzues"
 DIRECT_SESSION_HISTORY_DEFAULT_TEXT_MAX_CHARS = 8_000
 DIRECT_SESSION_HISTORY_SSE_KEEPALIVE_SECONDS = 15.0
 DIRECT_SESSION_HISTORY_FULL_INITIAL_LIMIT = 1_000_000_000
+MSTEAMS_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 
 PLUGIN_DUPLICATE_SERVER_RE = re.compile(
     r"skipping duplicate plugin MCP server name.*?plugin\s*=\s*\"(?P<plugin>[^\"]+)\""
@@ -4407,6 +4408,33 @@ def create_app(
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @fastapi_app.post("/api/messages")
+    async def handle_msteams_messages(request: Request) -> JSONResponse:
+        authorization = str(request.headers.get("authorization") or "")
+        if not authorization.startswith("Bearer "):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        body = await request.body()
+        if len(body) > MSTEAMS_WEBHOOK_MAX_BODY_BYTES:
+            return JSONResponse({"error": "Payload too large"}, status_code=413)
+        try:
+            activity = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+        if not isinstance(activity, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="Microsoft Teams activity must be an object.",
+            )
+        account_id = (
+            request.query_params.get("accountId")
+            or request.query_params.get("account_id")
+        )
+        result = await active_ops_mesh_service.handle_msteams_inbound_activity(
+            cast(Mapping[str, Any], activity),
+            account_id=account_id,
+        )
+        return JSONResponse(result)
 
     @fastapi_app.post("/api/gateway/memory/prove", response_model=MissionView)
     async def run_gateway_memory_proof(

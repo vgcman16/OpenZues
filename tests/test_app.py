@@ -5243,6 +5243,68 @@ def test_gateway_channels_endpoint_classifies_msteams_native_route(tmp_path) -> 
     assert payload["channelDefaultAccountId"]["msteams"] == "default"
 
 
+def test_msteams_messages_endpoint_requires_bearer_before_json_body(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/messages",
+            content="{",
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "Unauthorized"}
+
+
+def test_msteams_messages_endpoint_dispatches_signin_invoke(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post(
+            "/api/messages",
+            headers={"Authorization": "Bearer test-token"},
+            json={
+                "id": "signin-invoke-app-route",
+                "type": "invoke",
+                "name": "signin/tokenExchange",
+                "channelId": "msteams",
+                "from": {
+                    "id": "user-bf",
+                    "aadObjectId": "user-aad",
+                    "name": "User",
+                },
+                "conversation": {
+                    "id": "a:personal-dm-conversation",
+                    "conversationType": "personal",
+                },
+                "value": {
+                    "id": "exchange-flow-app-route",
+                    "connectionName": "GraphConnection",
+                    "token": "exchangeable-token",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "exchange-flow-app-route",
+            "tokenPresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "exchangeable-token" not in response.text
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
     '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
