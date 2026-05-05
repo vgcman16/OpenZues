@@ -18277,10 +18277,11 @@ function normalizeCommandBody(raw, options) {
   const mentionMatch = normalizedBotUsername
     ? normalized.match(/^\/([^\s@]+)@([^\s]+)(.*)$/)
     : null;
-  return mentionMatch &&
+  const commandBody = mentionMatch &&
     normalizeLowercaseStringOrEmpty(mentionMatch[2]) === normalizedBotUsername
     ? `/${mentionMatch[1]}${mentionMatch[3] || ""}`
     : normalized;
+  return canonicalizeCommandStatusBody(commandBody);
 }
 
 function normalizeAbortTriggerText(text) {
@@ -24009,7 +24010,18 @@ function resolveDmGroupAccessWithLists(params) {
 
 function resolveCommandAuthorizedFromAuthorizers(params) {
   if (!params.useAccessGroups) {
-    return true;
+    const mode = params.modeWhenAccessGroupsOff || "allow";
+    if (mode === "allow") {
+      return true;
+    }
+    if (mode === "deny") {
+      return false;
+    }
+    const anyConfigured = params.authorizers.some((entry) => entry.configured);
+    if (!anyConfigured) {
+      return true;
+    }
+    return params.authorizers.some((entry) => entry.configured && entry.allowed);
   }
   return params.authorizers.some((entry) => entry.configured && entry.allowed);
 }
@@ -24018,6 +24030,7 @@ function resolveControlCommandGate(params) {
   const commandAuthorized = resolveCommandAuthorizedFromAuthorizers({
     useAccessGroups: params.useAccessGroups,
     authorizers: params.authorizers,
+    modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff,
   });
   return {
     commandAuthorized,
@@ -25378,6 +25391,9 @@ function defineCommandStatusEntry(params) {
     key: params.key,
     nativeName: params.nativeName,
     description: params.description,
+    acceptsArgs: params.acceptsArgs ?? Boolean(params.args && params.args.length),
+    args: params.args,
+    argsParsing: params.argsParsing,
     textAliases: normalizedAliases,
     scope:
       params.scope ||
@@ -25407,6 +25423,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "compact",
       description: "Compact the session context.",
       textAlias: "/compact",
+      acceptsArgs: true,
       category: "session",
     }),
     defineCommandStatusEntry({
@@ -25421,6 +25438,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "think",
       description: "Set thinking level.",
       textAliases: ["/think", "/thinking", "/t"],
+      acceptsArgs: true,
       category: "options",
     }),
     defineCommandStatusEntry({
@@ -25428,6 +25446,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "model",
       description: "Set the model for this session.",
       textAlias: "/model",
+      acceptsArgs: true,
       category: "options",
     }),
     defineCommandStatusEntry({
@@ -25435,6 +25454,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "fast",
       description: "Toggle fast mode.",
       textAlias: "/fast",
+      acceptsArgs: true,
       category: "options",
     }),
     defineCommandStatusEntry({
@@ -25442,6 +25462,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "verbose",
       description: "Set response verbosity.",
       textAlias: "/verbose",
+      acceptsArgs: true,
       category: "options",
     }),
     defineCommandStatusEntry({
@@ -25449,6 +25470,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "trace",
       description: "Control trace output.",
       textAlias: "/trace",
+      acceptsArgs: true,
       category: "options",
     }),
     defineCommandStatusEntry({
@@ -25470,6 +25492,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "tools",
       description: "List available runtime tools.",
       textAlias: "/tools",
+      acceptsArgs: true,
       category: "status",
     }),
     defineCommandStatusEntry({
@@ -25498,6 +25521,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "context",
       description: "Explain how context is built and used.",
       textAlias: "/context",
+      acceptsArgs: true,
       category: "status",
     }),
     defineCommandStatusEntry({
@@ -25505,6 +25529,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "models",
       description: "List model providers/models.",
       textAlias: "/models",
+      acceptsArgs: true,
       category: "status",
     }),
     defineCommandStatusEntry({
@@ -25512,6 +25537,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "config",
       description: "Open or update configuration.",
       textAlias: "/config",
+      acceptsArgs: true,
       category: "management",
     }),
     defineCommandStatusEntry({
@@ -25519,6 +25545,7 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "debug",
       description: "Show debug information.",
       textAlias: "/debug",
+      acceptsArgs: true,
       category: "management",
     }),
     defineCommandStatusEntry({
@@ -25526,12 +25553,14 @@ function listBuiltinCommandStatusEntries() {
       nativeName: "approve",
       description: "Approve or deny exec requests.",
       textAlias: "/approve",
+      acceptsArgs: true,
       category: "management",
     }),
     defineCommandStatusEntry({
       key: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",
+      acceptsArgs: true,
       scope: "text",
       category: "management",
     }),
@@ -25575,10 +25604,56 @@ function listCommandStatusEntries(cfg, skillCommands) {
         nativeName: spec.name,
         description: spec.description,
         textAlias: `/${spec.name}`,
+        acceptsArgs: true,
         category: "tools",
       }),
     );
   return [...commands, ...skills];
+}
+
+function buildCommandStatusTextAliasMap() {
+  const aliases = new Map();
+  for (const command of listCommandStatusEntries(undefined, undefined)) {
+    const canonical =
+      normalizeOptionalString(command.textAliases && command.textAliases[0]) ||
+      `/${command.key}`;
+    for (const alias of Array.isArray(command.textAliases) ? command.textAliases : []) {
+      const normalized = normalizeOptionalLowercaseString(alias);
+      if (!normalized || aliases.has(normalized)) {
+        continue;
+      }
+      aliases.set(normalized, {
+        canonical,
+        acceptsArgs: Boolean(command.acceptsArgs),
+      });
+    }
+  }
+  return aliases;
+}
+
+function canonicalizeCommandStatusBody(commandBody) {
+  const body = String(commandBody || "");
+  const lowered = normalizeLowercaseStringOrEmpty(body);
+  const aliases = buildCommandStatusTextAliasMap();
+  const exact = aliases.get(lowered);
+  if (exact) {
+    return exact.canonical;
+  }
+  const tokenMatch = body.match(/^\/([^\s]+)(?:\s+([\s\S]+))?$/);
+  if (!tokenMatch) {
+    return body;
+  }
+  const tokenKey = `/${normalizeLowercaseStringOrEmpty(tokenMatch[1])}`;
+  const tokenSpec = aliases.get(tokenKey);
+  if (!tokenSpec) {
+    return body;
+  }
+  const rest = tokenMatch[2];
+  if (rest && !tokenSpec.acceptsArgs) {
+    return body;
+  }
+  const normalizedRest = rest ? rest.trimStart() : "";
+  return normalizedRest ? `${tokenSpec.canonical} ${normalizedRest}` : tokenSpec.canonical;
 }
 
 function groupCommandStatusEntries(commands) {
@@ -25718,6 +25793,194 @@ function buildCommandsMessagePaginated(cfg, skillCommands, options = {}) {
     hasNext: currentPage < totalPages,
     hasPrev: currentPage > 1,
   };
+}
+
+function buildCommandText(commandName, args) {
+  const name = normalizeOptionalString(commandName) || "";
+  const trimmedArgs = normalizeOptionalString(args);
+  return trimmedArgs ? `/${name} ${trimmedArgs}` : `/${name}`;
+}
+
+function serializeCommandArgs(command, args) {
+  if (!args) {
+    return undefined;
+  }
+  const raw = normalizeOptionalString(args.raw);
+  if (raw) {
+    return raw;
+  }
+  const values = args.values && typeof args.values === "object" ? args.values : undefined;
+  const definitions = Array.isArray(command && command.args) ? command.args : [];
+  if (!values || definitions.length === 0) {
+    return undefined;
+  }
+  const parts = [];
+  for (const definition of definitions) {
+    const value = values[definition.name];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const rendered = normalizeOptionalString(String(value));
+    if (!rendered) {
+      continue;
+    }
+    parts.push(rendered);
+    if (definition.captureRemaining) {
+      break;
+    }
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function buildCommandTextFromArgs(command, args) {
+  const commandName = (command && (command.nativeName || command.key)) || "";
+  return buildCommandText(commandName, serializeCommandArgs(command || {}, args));
+}
+
+function toNativeCommandSpec(command) {
+  const spec = {
+    name: command.nativeName || command.key,
+    description: command.description,
+    acceptsArgs: Boolean(command.acceptsArgs),
+  };
+  if (Array.isArray(command.args)) {
+    spec.args = command.args;
+  }
+  return spec;
+}
+
+function listNativeCommandSpecsForConfig(cfg, params = {}) {
+  return listCommandStatusEntries(cfg, params.skillCommands)
+    .filter((command) => command.scope !== "text" && command.nativeName)
+    .map((command) => toNativeCommandSpec(command));
+}
+
+function listNativeCommandSpecs(params = {}) {
+  return listNativeCommandSpecsForConfig(undefined, params);
+}
+
+function isNativeCommandSurface(surface, params = {}) {
+  const normalized = normalizeOptionalLowercaseString(surface);
+  if (!normalized) {
+    return false;
+  }
+  const configured = Array.isArray(params.nativeCommandSurfaces)
+    ? params.nativeCommandSurfaces
+    : Array.isArray(params.nativeSurfaces)
+      ? params.nativeSurfaces
+      : [];
+  return configured
+    .map((entry) => normalizeOptionalLowercaseString(entry))
+    .filter(Boolean)
+    .includes(normalized);
+}
+
+function shouldHandleTextCommands(params) {
+  if (params && params.commandSource === "native") {
+    return true;
+  }
+  if (!params || !params.cfg || !params.cfg.commands || params.cfg.commands.text !== false) {
+    return true;
+  }
+  return !isNativeCommandSurface(params.surface, params);
+}
+
+function resolveDualTextControlCommandGate(params) {
+  return resolveControlCommandGate({
+    useAccessGroups: params.useAccessGroups,
+    authorizers: [
+      { configured: params.primaryConfigured, allowed: params.primaryAllowed },
+      { configured: params.secondaryConfigured, allowed: params.secondaryAllowed },
+    ],
+    allowTextCommands: true,
+    hasControlCommand: params.hasControlCommand,
+    modeWhenAccessGroupsOff: params.modeWhenAccessGroupsOff,
+  });
+}
+
+function resolveNativeCommandSessionTargets(params) {
+  const rawSessionKey =
+    normalizeOptionalString(params.boundSessionKey) ||
+    `agent:${params.agentId}:${params.sessionPrefix}:${params.userId}`;
+  return {
+    sessionKey: params.lowercaseSessionKey
+      ? normalizeLowercaseStringOrEmpty(rawSessionKey)
+      : rawSessionKey,
+    commandTargetSessionKey:
+      normalizeOptionalString(params.boundSessionKey) || params.targetSessionKey,
+  };
+}
+
+function resolvePersistedOverrideModelRef(params) {
+  const model = normalizeOptionalString(params.overrideModel);
+  if (!model) {
+    return null;
+  }
+  const provider = normalizeOptionalString(params.overrideProvider) || params.defaultProvider;
+  return provider ? { provider, model } : { model };
+}
+
+function resolveSessionParentSessionKeyCandidate(sessionKey) {
+  const normalized = normalizeOptionalString(sessionKey);
+  if (!normalized || !normalized.includes(":")) {
+    return null;
+  }
+  const parts = normalized.split(":");
+  if (parts.length <= 1) {
+    return null;
+  }
+  parts.pop();
+  return parts.join(":") || null;
+}
+
+function resolveStoredModelOverride(params) {
+  const direct = resolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: params.sessionEntry && params.sessionEntry.providerOverride,
+    overrideModel: params.sessionEntry && params.sessionEntry.modelOverride,
+  });
+  if (direct) {
+    return { ...direct, source: "session" };
+  }
+  const parentSessionKey = normalizeOptionalString(params.parentSessionKey);
+  const parentKey =
+    parentSessionKey && parentSessionKey !== params.sessionKey
+      ? parentSessionKey
+      : resolveSessionParentSessionKeyCandidate(params.sessionKey);
+  if (!parentKey || !params.sessionStore || typeof params.sessionStore !== "object") {
+    return null;
+  }
+  const parentEntry = params.sessionStore[parentKey];
+  const parentOverride = resolvePersistedOverrideModelRef({
+    defaultProvider: params.defaultProvider,
+    overrideProvider: parentEntry && parentEntry.providerOverride,
+    overrideModel: parentEntry && parentEntry.modelOverride,
+  });
+  return parentOverride ? { ...parentOverride, source: "parent" } : null;
+}
+
+function buildCommandsPaginationKeyboard(currentPage, totalPages, agentId) {
+  const page = Math.max(1, Number(currentPage || 1));
+  const total = Math.max(1, Number(totalPages || 1));
+  const suffix = agentId ? `:${agentId}` : "";
+  const buttons = [];
+  if (page > 1) {
+    buttons.push({
+      text: "\u25c0 Prev",
+      callback_data: `commands_page_${page - 1}${suffix}`,
+    });
+  }
+  buttons.push({
+    text: `${page}/${total}`,
+    callback_data: `commands_page_noop${suffix}`,
+  });
+  if (page < total) {
+    buttons.push({
+      text: "Next \u25b6",
+      callback_data: `commands_page_${page + 1}${suffix}`,
+    });
+  }
+  return [buttons];
 }
 
 async function dispatchInboundDirectDmWithRuntime(params) {
@@ -27238,15 +27501,48 @@ const commandStatusRuntime = {
   buildHelpMessage,
 };
 
+const commandNativeRuntime = {
+  buildCommandText,
+  buildCommandTextFromArgs,
+  listNativeCommandSpecs,
+  listNativeCommandSpecsForConfig,
+  resolveCommandAuthorization: passthrough,
+  resolveNativeCommandSessionTargets,
+  resolveStoredModelOverride,
+};
+
+const commandGatingRuntime = {
+  resolveCommandAuthorizedFromAuthorizers,
+  resolveControlCommandGate,
+  resolveDualTextControlCommandGate,
+};
+
+const commandSurfaceRuntime = {
+  normalizeCommandBody,
+  shouldHandleTextCommands,
+};
+
+const nativeCommandRegistryRuntime = {
+  buildCommandText,
+  buildCommandTextFromArgs,
+  listNativeCommandSpecs,
+  listNativeCommandSpecsForConfig,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
   resolveInboundDirectDmAccessWithRuntime,
   ...commandStatusRuntime,
+  ...commandNativeRuntime,
+  ...commandGatingRuntime,
+  ...commandSurfaceRuntime,
+  buildCommandsPaginationKeyboard,
+  listSkillCommandsForAgents: passthrough,
+  buildModelsProviderData: passthrough,
   hasControlCommand,
   hasInlineCommandTokens,
   isControlCommandMessage,
-  resolveCommandAuthorizedFromAuthorizers,
   resolveDirectDmAuthorizationOutcome,
   resolveSenderCommandAuthorization,
   resolveSenderCommandAuthorizationWithRuntime,
@@ -27546,6 +27842,9 @@ const genericSdk = new Proxy(
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
     ...commandStatusRuntime,
+    ...commandNativeRuntime,
+    ...commandGatingRuntime,
+    ...commandSurfaceRuntime,
     ...commandAuthRuntime,
     ...channelSetupRuntime,
     appendMatchMetadata,
@@ -28031,6 +28330,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-auth"
   ) {
     return commandAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-auth-native" ||
+    request === "@openclaw/plugin-sdk/command-auth-native"
+  ) {
+    return commandNativeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-gating" ||
+    request === "@openclaw/plugin-sdk/command-gating"
+  ) {
+    return commandGatingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-surface" ||
+    request === "@openclaw/plugin-sdk/command-surface"
+  ) {
+    return commandSurfaceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/native-command-registry" ||
+    request === "@openclaw/plugin-sdk/native-command-registry"
+  ) {
+    return nativeCommandRegistryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||

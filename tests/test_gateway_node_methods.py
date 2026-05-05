@@ -10504,6 +10504,263 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_auth_native_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-auth-native.cjs"
+    runtime_entry.write_text(
+        """
+const commandAuth = require("openclaw/plugin-sdk/command-auth");
+const commandNative = require("openclaw/plugin-sdk/command-auth-native");
+const commandGating = require("openclaw/plugin-sdk/command-gating");
+const commandSurface = require("openclaw/plugin-sdk/command-surface");
+const nativeRegistry = require("openclaw/plugin-sdk/native-command-registry");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_auth_native",
+      description: "Use OpenClaw command auth native SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const modelCommand = {
+          key: "model",
+          nativeName: "model",
+          description: "model",
+          textAliases: ["/model"],
+          argsParsing: "positional",
+          args: [
+            { name: "model", description: "model", type: "string", captureRemaining: true }
+          ]
+        };
+        const nativeSpecs = nativeRegistry.listNativeCommandSpecsForConfig(
+          { commands: { config: false, debug: false } },
+          {
+            skillCommands: [
+              { name: "demo_skill", skillName: "demo-skill", description: "Demo skill" }
+            ]
+          }
+        );
+        return {
+          modePolicy: [
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: false }],
+              modeWhenAccessGroupsOff: "allow"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: true }],
+              modeWhenAccessGroupsOff: "deny"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [{ configured: true, allowed: false }],
+              modeWhenAccessGroupsOff: "configured"
+            }),
+            commandAuth.resolveCommandAuthorizedFromAuthorizers({
+              useAccessGroups: false,
+              authorizers: [],
+              modeWhenAccessGroupsOff: "configured"
+            })
+          ],
+          gates: [
+            commandAuth.resolveControlCommandGate({
+              useAccessGroups: true,
+              authorizers: [{ configured: true, allowed: false }],
+              allowTextCommands: true,
+              hasControlCommand: true
+            }),
+            commandGating.resolveDualTextControlCommandGate({
+              useAccessGroups: true,
+              primaryConfigured: false,
+              primaryAllowed: false,
+              secondaryConfigured: true,
+              secondaryAllowed: true,
+              hasControlCommand: true
+            })
+          ],
+          targets: [
+            commandNative.resolveNativeCommandSessionTargets({
+              agentId: "main",
+              sessionPrefix: "discord",
+              userId: "UserA",
+              targetSessionKey: "target",
+              lowercaseSessionKey: true
+            }),
+            commandNative.resolveNativeCommandSessionTargets({
+              agentId: "main",
+              sessionPrefix: "discord",
+              userId: "UserA",
+              targetSessionKey: "target",
+              boundSessionKey: "Bound-Key",
+              lowercaseSessionKey: true
+            })
+          ],
+          normalized: [
+            commandSurface.normalizeCommandBody("/help@openclaw: now", {
+              botUsername: "openclaw"
+            }),
+            commandAuth.normalizeCommandBody("/thinking high"),
+            commandAuth.normalizeCommandBody("/dock_telegram")
+          ],
+          shouldHandle: [
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "discord",
+              commandSource: "text",
+              nativeCommandSurfaces: ["discord"]
+            }),
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "whatsapp",
+              commandSource: "text",
+              nativeCommandSurfaces: ["discord"]
+            }),
+            commandSurface.shouldHandleTextCommands({
+              cfg: { commands: { text: false } },
+              surface: "discord",
+              commandSource: "native",
+              nativeCommandSurfaces: ["discord"]
+            })
+          ],
+          nativeSpecNames: nativeSpecs.map((spec) => spec.name),
+          commandText: commandNative.buildCommandTextFromArgs(modelCommand, {
+            values: { model: "gpt-5.4" }
+          }),
+          keyboard: commandAuth.buildCommandsPaginationKeyboard(2, 3, "agent-a"),
+          stored: [
+            commandAuth.resolveStoredModelOverride({
+              sessionEntry: { providerOverride: "openai", modelOverride: "gpt-5" },
+              defaultProvider: "anthropic"
+            }),
+            commandAuth.resolveStoredModelOverride({
+              sessionStore: {
+                parent: { providerOverride: "google", modelOverride: "gemini" }
+              },
+              sessionKey: "child",
+              parentSessionKey: "parent",
+              defaultProvider: "openai"
+            })
+          ],
+          exportTypes: [
+            typeof commandAuth.resolveControlCommandGate,
+            typeof commandAuth.resolveDualTextControlCommandGate,
+            typeof commandAuth.resolveNativeCommandSessionTargets,
+            typeof commandAuth.shouldHandleTextCommands,
+            typeof commandAuth.buildCommandTextFromArgs,
+            typeof commandAuth.listNativeCommandSpecsForConfig,
+            typeof commandAuth.buildCommandsPaginationKeyboard,
+            typeof commandAuth.resolveStoredModelOverride,
+            typeof genericSdk.resolveControlCommandGate
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-auth-native-plugin",
+                    "name": "Runtime Command Auth Native Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-auth-native-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_auth_native"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_auth_native"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "modePolicy": [True, False, False, True],
+        "gates": [
+            {"commandAuthorized": False, "shouldBlock": True},
+            {"commandAuthorized": True, "shouldBlock": False},
+        ],
+        "targets": [
+            {"sessionKey": "agent:main:discord:usera", "commandTargetSessionKey": "target"},
+            {"sessionKey": "bound-key", "commandTargetSessionKey": "Bound-Key"},
+        ],
+        "normalized": ["/help now", "/think high", "/dock_telegram"],
+        "shouldHandle": [False, True, True],
+        "nativeSpecNames": [
+            "new",
+            "reset",
+            "compact",
+            "stop",
+            "think",
+            "model",
+            "fast",
+            "verbose",
+            "trace",
+            "help",
+            "commands",
+            "tools",
+            "status",
+            "tasks",
+            "whoami",
+            "context",
+            "models",
+            "approve",
+            "skill",
+            "demo_skill",
+        ],
+        "commandText": "/model gpt-5.4",
+        "keyboard": [
+            [
+                {"text": "\u25c0 Prev", "callback_data": "commands_page_1:agent-a"},
+                {"text": "2/3", "callback_data": "commands_page_noop:agent-a"},
+                {"text": "Next \u25b6", "callback_data": "commands_page_3:agent-a"},
+            ]
+        ],
+        "stored": [
+            {"provider": "openai", "model": "gpt-5", "source": "session"},
+            {"provider": "google", "model": "gemini", "source": "parent"},
+        ],
+        "exportTypes": ["function"] * 9,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
