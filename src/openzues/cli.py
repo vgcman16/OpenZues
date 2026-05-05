@@ -18681,6 +18681,201 @@ function resolveAccountEntry(accounts, accountId) {
   return matchKey ? accounts[matchKey] : undefined;
 }
 
+function resolveNormalizedAccountEntry(accounts, accountId, normalizeAccountIdFn) {
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(accounts, accountId)) {
+    return accounts[accountId];
+  }
+  const normalize = typeof normalizeAccountIdFn === "function"
+    ? normalizeAccountIdFn
+    : normalizeAccountId;
+  const normalized = normalize(accountId);
+  const matchKey = Object.keys(accounts).find((key) => normalize(key) === normalized);
+  return matchKey ? accounts[matchKey] : undefined;
+}
+
+function listCombinedAccountIds(params) {
+  const ids = new Set();
+  for (const id of (params && params.configuredAccountIds) || []) {
+    if (id) {
+      ids.add(id);
+    }
+  }
+  for (const id of (params && params.additionalAccountIds) || []) {
+    if (id) {
+      ids.add(id);
+    }
+  }
+  if (params && params.implicitAccountId) {
+    ids.add(params.implicitAccountId);
+  }
+  if (ids.size === 0 && params && params.fallbackAccountIdWhenEmpty) {
+    return [params.fallbackAccountIdWhenEmpty];
+  }
+  return Array.from(ids).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveListedDefaultAccountId(params) {
+  const preferred = params && params.configuredDefaultAccountId;
+  const accountIds = (params && params.accountIds) || [];
+  const normalizeListedAccountId =
+    (params && params.normalizeListedAccountId) || normalizeAccountId;
+  if (
+    preferred &&
+    ((params && params.allowUnlistedDefaultAccount) ||
+      accountIds.some((accountId) => normalizeListedAccountId(accountId) === preferred))
+  ) {
+    return preferred;
+  }
+  if (accountIds.includes(DEFAULT_ACCOUNT_ID)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  if (params && params.ambiguousFallbackAccountId && accountIds.length > 1) {
+    return params.ambiguousFallbackAccountId;
+  }
+  return accountIds[0] || DEFAULT_ACCOUNT_ID;
+}
+
+function resolveChannelAccountSection(cfg, channelKey) {
+  const channels = cfg && cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channel = channels[channelKey];
+  return channel && typeof channel === "object" && !Array.isArray(channel) ? channel : undefined;
+}
+
+function createAccountListHelpers(channelKey, options) {
+  function listConfiguredAccountIdsFromConfig(cfg) {
+    const channel = resolveChannelAccountSection(cfg, channelKey);
+    const accounts = channel && channel.accounts;
+    if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+      return [];
+    }
+    const ids = Object.keys(accounts).filter(Boolean);
+    const normalizeConfiguredAccountId = options && options.normalizeAccountId;
+    if (typeof normalizeConfiguredAccountId !== "function") {
+      return ids;
+    }
+    return Array.from(
+      new Set(ids.map((id) => normalizeConfiguredAccountId(id)).filter(Boolean)),
+    );
+  }
+
+  function listAccountIds(cfg) {
+    return listCombinedAccountIds({
+      configuredAccountIds: listConfiguredAccountIdsFromConfig(cfg),
+      fallbackAccountIdWhenEmpty: DEFAULT_ACCOUNT_ID,
+    });
+  }
+
+  function resolveConfiguredDefaultAccountId(cfg) {
+    const channel = resolveChannelAccountSection(cfg, channelKey);
+    const preferred = normalizeOptionalAccountId(
+      typeof (channel && channel.defaultAccount) === "string"
+        ? channel.defaultAccount
+        : undefined,
+    );
+    if (!preferred) {
+      return undefined;
+    }
+    if (options && options.allowUnlistedDefaultAccount) {
+      return preferred;
+    }
+    const ids = listAccountIds(cfg);
+    return ids.some((id) => normalizeAccountId(id) === preferred) ? preferred : undefined;
+  }
+
+  function resolveDefaultAccountId(cfg) {
+    return resolveListedDefaultAccountId({
+      accountIds: listAccountIds(cfg),
+      configuredDefaultAccountId: resolveConfiguredDefaultAccountId(cfg),
+      allowUnlistedDefaultAccount: options && options.allowUnlistedDefaultAccount,
+    });
+  }
+
+  return {
+    listConfiguredAccountIds: listConfiguredAccountIdsFromConfig,
+    listAccountIds,
+    resolveDefaultAccountId,
+  };
+}
+
+function isMergeableObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeAccountConfig(params) {
+  const omitKeys = new Set(["accounts", ...((params && params.omitKeys) || [])]);
+  const channelConfig =
+    params && isMergeableObject(params.channelConfig) ? params.channelConfig : {};
+  const accountConfig =
+    params && isMergeableObject(params.accountConfig) ? params.accountConfig : {};
+  const base = {};
+  for (const [key, value] of Object.entries(channelConfig)) {
+    if (!omitKeys.has(key)) {
+      base[key] = value;
+    }
+  }
+  const merged = { ...base, ...accountConfig };
+  for (const key of (params && params.nestedObjectKeys) || []) {
+    const baseValue = base[key];
+    const accountValue = accountConfig[key];
+    if (isMergeableObject(baseValue) && isMergeableObject(accountValue)) {
+      merged[key] = { ...baseValue, ...accountValue };
+    }
+  }
+  return merged;
+}
+
+function resolveMergedAccountConfig(params) {
+  const accountConfig =
+    params && typeof params.normalizeAccountId === "function"
+      ? resolveNormalizedAccountEntry(params.accounts, params.accountId, params.normalizeAccountId)
+      : resolveAccountEntry(params && params.accounts, params && params.accountId);
+  return mergeAccountConfig({
+    channelConfig: params && params.channelConfig,
+    accountConfig,
+    omitKeys: params && params.omitKeys,
+    nestedObjectKeys: params && params.nestedObjectKeys,
+  });
+}
+
+function describeAccountSnapshot(params) {
+  const account = (params && params.account) || {};
+  return {
+    accountId: account.accountId ?? DEFAULT_ACCOUNT_ID,
+    name: normalizeOptionalString(account.name),
+    enabled: account.enabled !== false,
+    configured: params && params.configured,
+    ...((params && params.extra) || {}),
+  };
+}
+
+function describeWebhookAccountSnapshot(params) {
+  return describeAccountSnapshot({
+    account: (params && params.account) || {},
+    configured: params && params.configured,
+    extra: {
+      mode: (params && params.mode) || "webhook",
+      ...((params && params.extra) || {}),
+    },
+  });
+}
+
+function createAccountActionGate(params) {
+  return (key, defaultValue = true) => {
+    const accountActions = params && params.accountActions;
+    if (accountActions && accountActions[key] !== undefined) {
+      return accountActions[key];
+    }
+    const baseActions = params && params.baseActions;
+    if (baseActions && baseActions[key] !== undefined) {
+      return baseActions[key];
+    }
+    return defaultValue;
+  };
+}
+
 function normalizeMessageChannel(raw) {
   const normalized = normalizeOptionalLowercaseString(raw);
   if (!normalized) {
@@ -19486,6 +19681,15 @@ const routingRuntime = {
   sanitizeAgentId,
 };
 
+const accountHelpersRuntime = {
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  describeWebhookAccountSnapshot,
+  mergeAccountConfig,
+  resolveMergedAccountConfig,
+};
+
 const replyChunkingRuntime = {
   SILENT_REPLY_TOKEN,
   chunkMarkdownTextWithMode,
@@ -19536,11 +19740,15 @@ const genericSdk = new Proxy(
     coerceSecretRef,
     collectErrorGraphCandidates,
     countOutboundMedia,
+    createAccountActionGate,
+    createAccountListHelpers,
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
     chunkMarkdownTextWithMode,
     chunkText,
     chunkTextWithMode,
+    describeAccountSnapshot,
+    describeWebhookAccountSnapshot,
     deliverFormattedTextWithAttachments,
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
@@ -19565,8 +19773,10 @@ const genericSdk = new Proxy(
     isSecretRef,
     isSubagentSessionKey,
     listBoundAccountIds,
+    listCombinedAccountIds,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
+    mergeAccountConfig,
     normalizeAccountId,
     normalizeAgentId,
     normalizeLowercaseStringOrEmpty,
@@ -19589,6 +19799,9 @@ const genericSdk = new Proxy(
     readErrorName,
     readStringValue,
     resolveAccountEntry,
+    resolveListedDefaultAccountId,
+    resolveMergedAccountConfig,
+    resolveNormalizedAccountEntry,
     resolveAgentIdFromSessionKey,
     resolveChunkMode,
     resolveAgentRoute,
@@ -19657,6 +19870,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/routing"
   ) {
     return routingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-helpers" ||
+    request === "@openclaw/plugin-sdk/account-helpers"
+  ) {
+    return accountHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||

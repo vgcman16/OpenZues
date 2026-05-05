@@ -6945,6 +6945,200 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-account-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createAccountActionGate,
+  createAccountListHelpers,
+  describeAccountSnapshot,
+  describeWebhookAccountSnapshot,
+  mergeAccountConfig,
+  resolveMergedAccountConfig
+} = require("openclaw/plugin-sdk/account-helpers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_helpers",
+      description: "Use OpenClaw account-helper SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              defaultAccount: "Primary",
+              timeout: 10,
+              nested: { a: 1, b: 2 },
+              actions: { send: false, react: true },
+              accounts: {
+                Primary: {
+                  enabled: false,
+                  timeout: 20,
+                  nested: { b: 3, c: 4 },
+                  actions: { send: true }
+                },
+                Backup: { name: "Backup" }
+              }
+            }
+          }
+        };
+        const helpers = createAccountListHelpers("telegram");
+        const normalized = createAccountListHelpers("telegram", {
+          normalizeAccountId: (id) => id.trim().toLowerCase().replace(/\\s+/g, "-")
+        });
+        const gate = createAccountActionGate({
+          baseActions: cfg.channels.telegram.actions,
+          accountActions: cfg.channels.telegram.accounts.Primary.actions
+        });
+        return {
+          configuredIds: helpers.listConfiguredAccountIds(cfg),
+          normalizedIds: normalized.listConfiguredAccountIds({
+            channels: {
+              telegram: {
+                accounts: {
+                  "Router D": {},
+                  "router-d": {},
+                  "Personal A": {}
+                }
+              }
+            }
+          }),
+          accountIds: helpers.listAccountIds({
+            channels: { telegram: { accounts: { Backup: {}, Primary: {} } } }
+          }),
+          fallbackIds: helpers.listAccountIds({ channels: { telegram: {} } }),
+          defaultId: helpers.resolveDefaultAccountId(cfg),
+          preservedDefault: createAccountListHelpers("telegram", {
+            allowUnlistedDefaultAccount: true
+          }).resolveDefaultAccountId({
+            channels: { telegram: { defaultAccount: "Ops", accounts: { default: {} } } }
+          }),
+          merged: mergeAccountConfig({
+            channelConfig: cfg.channels.telegram,
+            accountConfig: cfg.channels.telegram.accounts.Primary,
+            omitKeys: ["defaultAccount"],
+            nestedObjectKeys: ["nested", "actions"]
+          }),
+          resolvedMerged: resolveMergedAccountConfig({
+            channelConfig: cfg.channels.telegram,
+            accounts: cfg.channels.telegram.accounts,
+            accountId: "primary",
+            omitKeys: ["defaultAccount"],
+            nestedObjectKeys: ["nested", "actions"]
+          }),
+          snapshot: describeAccountSnapshot({
+            account: { accountId: "primary", name: " Primary ", enabled: false },
+            configured: true,
+            extra: { kind: "bot" }
+          }),
+          webhook: describeWebhookAccountSnapshot({
+            account: {},
+            configured: false,
+            extra: { url: "set" }
+          }),
+          gate: {
+            send: gate("send"),
+            react: gate("react"),
+            delete: gate("delete", false),
+            edit: gate("edit")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-helpers-plugin",
+                    "name": "Runtime Account Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-helpers-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.account_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "configuredIds": ["Primary", "Backup"],
+        "normalizedIds": ["router-d", "personal-a"],
+        "accountIds": ["Backup", "Primary"],
+        "fallbackIds": ["default"],
+        "defaultId": "primary",
+        "preservedDefault": "ops",
+        "merged": {
+            "timeout": 20,
+            "nested": {"a": 1, "b": 3, "c": 4},
+            "actions": {"send": True, "react": True},
+            "enabled": False,
+        },
+        "resolvedMerged": {
+            "timeout": 20,
+            "nested": {"a": 1, "b": 3, "c": 4},
+            "actions": {"send": True, "react": True},
+            "enabled": False,
+        },
+        "snapshot": {
+            "accountId": "primary",
+            "name": "Primary",
+            "enabled": False,
+            "configured": True,
+            "kind": "bot",
+        },
+        "webhook": {
+            "accountId": "default",
+            "enabled": True,
+            "configured": False,
+            "mode": "webhook",
+            "url": "set",
+        },
+        "gate": {"send": True, "react": True, "delete": False, "edit": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
