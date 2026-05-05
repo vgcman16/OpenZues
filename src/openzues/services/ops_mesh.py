@@ -3420,6 +3420,23 @@ def _msteams_activity_endpoint(
     return f"{service_url.rstrip('/')}/v3/conversations/{encoded_conversation_id}/activities"
 
 
+def _msteams_activity_conversation_id(
+    *,
+    conversation_id: str,
+    reply_to_id: str | None,
+    conversation_target: dict[str, Any] | None,
+) -> str:
+    thread_id = str(reply_to_id or "").strip()
+    if not thread_id:
+        return conversation_id
+    peer_kind = str((conversation_target or {}).get("peer_kind") or "").strip().lower()
+    if peer_kind != "channel":
+        return conversation_id
+    if re.search(r";messageid=", conversation_id, flags=re.IGNORECASE):
+        return conversation_id
+    return f"{conversation_id};messageid={thread_id}"
+
+
 def _msteams_message_id(result: object) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -21265,6 +21282,7 @@ class OpsMeshService:
             route_config=route_config,
             raw_target=raw_target,
         )
+        reply_to_id = str(event.get("replyToId") or "").strip()
         poll_id: str | None = None
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()
@@ -21332,7 +21350,11 @@ class OpsMeshService:
         result = self._request_json_provider_url(
             _msteams_activity_endpoint(
                 service_url=route_config.service_url,
-                conversation_id=conversation_id,
+                conversation_id=_msteams_activity_conversation_id(
+                    conversation_id=conversation_id,
+                    reply_to_id=reply_to_id,
+                    conversation_target=conversation_target,
+                ),
             ),
             method="POST",
             payload=payload,
@@ -21353,6 +21375,8 @@ class OpsMeshService:
         }
         if poll_id is not None:
             native_result["pollId"] = poll_id
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
         return native_result
 
     def _post_signal_provider_event(
