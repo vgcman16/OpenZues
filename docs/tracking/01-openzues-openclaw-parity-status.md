@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~73.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~74.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -259,6 +259,69 @@ may lag behind this tracker.
 - [x] Imported plugin SDK target-resolver-runtime shim for unresolved-target
   row projection and token-trimmed resolver mapping.
   - Status: checkpointed in `4ea6901b`
+
+- [x] Imported plugin SDK response-limit-runtime shim for bounded Response
+  buffer reads and custom overflow errors.
+  - Status: checkpointed in `7c0035bf`
+
+- [x] Imported plugin SDK text-autolink-runtime shim for file-ref autolink
+  detection, including protocol stripping, allowed extension matching, dotted
+  parent-segment rejection, and the matching `text-runtime` reexport.
+  - Status: checkpointed in `bcce41be`
+
+- [x] Imported plugin SDK dedupe-runtime shim for ttl/max-size in-memory
+  dedupe caches and process-global dedupe cache resolution.
+  - Status: checkpointed in `865c9df0`
+
+- [x] Imported plugin SDK retry-runtime shim for retry config coercion,
+  retry-loop execution, retry-after handling, and rate-limit/Telegram retry
+  runner factories.
+  - Status: checkpointed in `4608fbc7`
+
+- [x] Imported plugin SDK keyed-async-queue shim for per-key async task
+  serialization, queue hooks, failure recovery, and tail-map observability.
+  - Status: checkpointed in `4307d460`
+
+- [x] Imported plugin SDK lazy-value shim for memoized lazy factories, literal
+  lazy values, and nullish fallback resolution.
+  - Status: checkpointed in `ef545716`
+
+- [x] Imported plugin SDK command-primitives-runtime shim for abort and BTW
+  command detection, including command-body normalization, bot mentions, and
+  abort punctuation handling.
+  - Status: checkpointed in `a39876b1`
+
+- [x] Imported plugin SDK media-mime shim for MIME normalization, extension
+  mapping, media-kind classification, CAF/PDF/image/ZIP detection, and generic
+  SDK / `media-runtime` MIME helper availability.
+  - Status: checkpointed in `ad1d6cee`
+
+- [x] Imported plugin SDK command-detection shim for control-command and inline
+  command-token detection, including bot-addressed slash normalization,
+  inbound metadata stripping, and command authorization gates.
+  - Status: checkpointed in `c0c5e8fa`
+
+- [x] Imported plugin SDK global-singleton shim for process-global
+  singleton/map resolution and scoped expiring ID caches.
+  - Status: checkpointed in `d773e608`
+
+- [x] Imported plugin SDK concurrency-runtime shim for bounded async task
+  execution, ordered results, first-error tracking, and stop/continue error
+  modes.
+  - Status: checkpointed in `e6bd981e`
+
+- [x] Imported plugin SDK channel-inbound-debounce shim for inbound debounce
+  config resolution, keyed buffering, forced flushes, saturated-key fallback,
+  and non-throwing error reporting.
+  - Status: checkpointed in `9ac09500`
+
+- [x] Imported plugin SDK markdown-table-runtime shim for markdown table mode
+  resolution and code/bullet table conversion.
+  - Status: checkpointed in `6e51b8a9`
+
+- [x] Imported plugin SDK reply-history shim for bounded per-thread history
+  recording, context assembly, clearing, enabled guards, and LRU key eviction.
+  - Status: checkpointed in `738186ae`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

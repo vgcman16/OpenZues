@@ -6226,6 +6226,1972 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_text_autolink_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-text-autolink-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { isAutoLinkedFileRef } = require("openclaw/plugin-sdk/text-autolink-runtime");
+const textRuntime = require("openclaw/plugin-sdk/text-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.text_autolink",
+      description: "Use OpenClaw text-autolink-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          httpsPath: isAutoLinkedFileRef("https://docs/readme.md", "docs/readme.md"),
+          httpPath: isAutoLinkedFileRef("http://src/main.py", "src/main.py"),
+          caseExt: isAutoLinkedFileRef("https://README.MD", "README.MD"),
+          dottedParent: isAutoLinkedFileRef("https://docs.v1/readme.md", "docs.v1/readme.md"),
+          disallowedExt: isAutoLinkedFileRef("https://docs/image.png", "docs/image.png"),
+          mismatch: isAutoLinkedFileRef("https://example.com/readme.md", "readme.md"),
+          noName: isAutoLinkedFileRef("https://.md", ".md"),
+          textRuntimeExport: textRuntime.isAutoLinkedFileRef("http://notes.go", "notes.go")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-text-autolink-plugin",
+                    "name": "Runtime Text Autolink Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-text-autolink-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.text_autolink"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.text_autolink"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "httpsPath": True,
+        "httpPath": True,
+        "caseExt": True,
+        "dottedParent": False,
+        "disallowedExt": False,
+        "mismatch": False,
+        "noName": False,
+        "textRuntimeExport": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_dedupe_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-dedupe-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDedupeCache,
+  resolveGlobalDedupeCache
+} = require("openclaw/plugin-sdk/dedupe-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.dedupe",
+      description: "Use OpenClaw dedupe-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const blank = createDedupeCache({ ttlMs: 1000, maxSize: 10 });
+        const zeroTtl = createDedupeCache({ ttlMs: 0, maxSize: 10 });
+        const negativeTtl = createDedupeCache({ ttlMs: -100, maxSize: 10 });
+        const touched = createDedupeCache({ ttlMs: 10000, maxSize: 2 });
+        const floored = createDedupeCache({ ttlMs: 1000, maxSize: 0.9 });
+        const reset = createDedupeCache({ ttlMs: 1000, maxSize: 10 });
+        const globalKey = Symbol.for("openzues.test.dedupe.runtime");
+        const globalA = resolveGlobalDedupeCache(globalKey, { ttlMs: 1000, maxSize: 2 });
+        const globalB = resolveGlobalDedupeCache(globalKey, { ttlMs: 1000, maxSize: 2 });
+
+        const blankResults = [
+          blank.check("", 100),
+          blank.check(undefined, 100),
+          blank.peek(null, 100),
+          blank.size()
+        ];
+        const ttlResults = [
+          zeroTtl.check("a", 100),
+          zeroTtl.check("a", 10000),
+          negativeTtl.check("b", 100),
+          negativeTtl.peek("b", 10000)
+        ];
+        const touchResults = [
+          touched.check("a", 100),
+          touched.check("b", 200),
+          touched.check("a", 300),
+          touched.check("c", 400),
+          touched.peek("a", 500),
+          touched.peek("b", 500),
+          touched.peek("c", 500)
+        ];
+        const floorResults = [
+          floored.check("a", 100),
+          floored.size(),
+          floored.peek("a", 200)
+        ];
+        reset.check("a", 100);
+        reset.check("b", 200);
+        reset.delete("a");
+        const deleteSize = reset.size();
+        reset.clear();
+        globalA.clear();
+        const globalResults = [
+          globalA.check("g", 100),
+          globalB.peek("g", 200),
+          globalA === globalB
+        ];
+
+        return {
+          blankResults,
+          ttlResults,
+          touchResults,
+          floorResults,
+          deleteSize,
+          clearedSize: reset.size(),
+          globalResults
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-dedupe-plugin",
+                    "name": "Runtime Dedupe Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-dedupe-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.dedupe"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.dedupe"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "blankResults": [False, False, False, 0],
+        "ttlResults": [False, True, False, True],
+        "touchResults": [False, False, True, False, True, False, True],
+        "floorResults": [False, 0, False],
+        "deleteSize": 1,
+        "clearedSize": 0,
+        "globalResults": [False, True, True],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_global_singleton_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-global-singleton.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createScopedExpiringIdCache,
+  resolveGlobalMap,
+  resolveGlobalSingleton
+} = require("openclaw/plugin-sdk/global-singleton");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.global_singleton",
+      description: "Use OpenClaw global-singleton SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const mapKey = Symbol.for("openzues.test.global-singleton.map");
+        const singletonKey = Symbol.for("openzues.test.global-singleton.value");
+        const scopedStore = new Map();
+        const cache = createScopedExpiringIdCache({
+          store: scopedStore,
+          ttlMs: 100,
+          cleanupThreshold: 1
+        });
+        const mapA = resolveGlobalMap(mapKey);
+        mapA.clear();
+        mapA.set("a", 1);
+        const mapB = resolveGlobalMap(mapKey);
+        delete globalThis[singletonKey];
+        let created = 0;
+        const singletonA = resolveGlobalSingleton(singletonKey, () => {
+          created += 1;
+          return { value: 42 };
+        });
+        const singletonB = resolveGlobalSingleton(singletonKey, () => {
+          created += 1;
+          return { value: 99 };
+        });
+
+        cache.record("room", "m1", 1000);
+        const beforeExpiry = cache.has("room", "m1", 1050);
+        const afterExpiry = cache.has("room", "m1", 1101);
+        cache.record("room", 2, 1200);
+        const coercedId = cache.has("room", "2", 1201);
+        cache.record("room", "old", 1000);
+        cache.record("room", "new", 1202);
+        const cleanupRemovedOld = !cache.has("room", "old", 1202);
+        cache.clear();
+
+        return {
+          globalMap: [mapA === mapB, mapB.get("a")],
+          singleton: [singletonA === singletonB, singletonB.value, created],
+          cache: [
+            beforeExpiry,
+            afterExpiry,
+            coercedId,
+            cleanupRemovedOld,
+            scopedStore.size
+          ],
+          generic: genericSdk.resolveGlobalMap(mapKey) === mapA
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-global-singleton-plugin",
+                    "name": "Runtime Global Singleton Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-global-singleton-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.global_singleton"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.global_singleton"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "globalMap": [True, 1],
+        "singleton": [True, 42, 1],
+        "cache": [True, False, True, True, 0],
+        "generic": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_concurrency_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-concurrency-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { runTasksWithConcurrency } = require("openclaw/plugin-sdk/concurrency-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.concurrency",
+      description: "Use OpenClaw concurrency runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        let running = 0;
+        let peak = 0;
+        const orderedTasks = [0, 1, 2, 3].map((index) => async () => {
+          running += 1;
+          peak = Math.max(peak, running);
+          await new Promise((resolve) => setTimeout(resolve, index === 0 ? 15 : 1));
+          running -= 1;
+          return index + 1;
+        });
+        const ordered = await runTasksWithConcurrency({
+          tasks: orderedTasks,
+          limit: 2
+        });
+
+        const stopSeen = [];
+        const stopped = await runTasksWithConcurrency({
+          tasks: [
+            async () => {
+              stopSeen.push(0);
+              return 10;
+            },
+            async () => {
+              stopSeen.push(1);
+              throw new Error("boom");
+            },
+            async () => {
+              stopSeen.push(2);
+              return 30;
+            }
+          ],
+          limit: 1,
+          errorMode: "stop"
+        });
+
+        const firstErr = new Error("first");
+        const continuedErrors = [];
+        const continued = await runTasksWithConcurrency({
+          tasks: [
+            async () => {
+              throw firstErr;
+            },
+            async () => 20,
+            async () => {
+              throw new Error("second");
+            },
+            async () => 40
+          ],
+          limit: 1,
+          errorMode: "continue",
+          onTaskError(error, index) {
+            continuedErrors.push([error.message, index]);
+          }
+        });
+
+        const empty = await runTasksWithConcurrency({ tasks: [], limit: 3 });
+        const generic = await genericSdk.runTasksWithConcurrency({
+          tasks: [async () => 5],
+          limit: 0
+        });
+
+        return {
+          ordered: [
+            ordered.results,
+            ordered.hasError,
+            ordered.firstError === undefined,
+            peak
+          ],
+          stopped: [
+            stopSeen,
+            stopped.results[0],
+            stopped.results[2] === undefined,
+            stopped.hasError,
+            stopped.firstError.message
+          ],
+          continued: [
+            continued.results[1],
+            continued.results[3],
+            continued.results[0] === undefined,
+            continued.hasError,
+            continued.firstError.message,
+            continuedErrors
+          ],
+          empty: [
+            empty.results.length,
+            empty.hasError,
+            empty.firstError === undefined
+          ],
+          generic: generic.results
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-concurrency-plugin",
+                    "name": "Runtime Concurrency Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-concurrency-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.concurrency"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.concurrency"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "ordered": [[1, 2, 3, 4], False, True, 2],
+        "stopped": [[0, 1], 10, True, True, "boom"],
+        "continued": [
+            20,
+            40,
+            True,
+            True,
+            "first",
+            [["first", 0], ["second", 2]],
+        ],
+        "empty": [0, False, True],
+        "generic": [5],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_debounce_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound-debounce.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createInboundDebouncer,
+  resolveInboundDebounceMs
+} = require("openclaw/plugin-sdk/channel-inbound-debounce");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound_debounce",
+      description: "Use OpenClaw channel inbound debounce SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          messages: {
+            inbound: {
+              debounceMs: 12.9,
+              byChannel: {
+                telegram: 3.7,
+                slack: -4
+              }
+            }
+          }
+        };
+        const resolved = [
+          resolveInboundDebounceMs({ cfg, channel: "telegram" }),
+          resolveInboundDebounceMs({ cfg, channel: "slack" }),
+          resolveInboundDebounceMs({ cfg, channel: "discord" }),
+          resolveInboundDebounceMs({ cfg, channel: "discord", overrideMs: 2.9 }),
+          resolveInboundDebounceMs({
+            cfg: { messages: { inbound: { debounceMs: Number.POSITIVE_INFINITY } } },
+            channel: "matrix"
+          }),
+          genericSdk.resolveInboundDebounceMs({ cfg: {}, channel: "whatsapp" })
+        ];
+
+        const coalesced = [];
+        const debouncer = createInboundDebouncer({
+          debounceMs: 8,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            coalesced.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await debouncer.enqueue({ key: "room", id: "a" });
+        await debouncer.enqueue({ key: "room", id: "b" });
+        await wait(18);
+
+        const orderedImmediate = [];
+        const immediateDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          buildKey: (item) => item.key,
+          shouldDebounce: (item) => item.debounce !== false,
+          onFlush: async (items) => {
+            orderedImmediate.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await immediateDebouncer.enqueue({ key: "room", id: "buffered" });
+        await immediateDebouncer.enqueue({ key: "room", id: "immediate", debounce: false });
+
+        const forced = [];
+        const forcedDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            forced.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await forcedDebouncer.enqueue({ key: "force", id: "one" });
+        await forcedDebouncer.flushKey("force");
+        await forcedDebouncer.flushKey("missing");
+
+        const saturated = [];
+        const saturatedDebouncer = createInboundDebouncer({
+          debounceMs: 50,
+          maxTrackedKeys: 1,
+          buildKey: (item) => item.key,
+          onFlush: async (items) => {
+            saturated.push(items.map((item) => item.id).join("+"));
+          }
+        });
+        await saturatedDebouncer.enqueue({ key: "first", id: "buffered" });
+        await saturatedDebouncer.enqueue({ key: "second", id: "fallback" });
+        await saturatedDebouncer.flushKey("first");
+
+        const errorReports = [];
+        const errorDebouncer = createInboundDebouncer({
+          debounceMs: 0,
+          buildKey: (item) => item.key,
+          onFlush: async () => {
+            throw new Error("flush failed");
+          },
+          onError: (error, items) => {
+            errorReports.push([error.message, items.length]);
+          }
+        });
+        await errorDebouncer.enqueue({ key: "err", id: "bad" });
+
+        return {
+          resolved,
+          coalesced,
+          orderedImmediate,
+          forced,
+          saturated,
+          errorReports,
+          genericCreate: typeof genericSdk.createInboundDebouncer
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-debounce-plugin",
+                    "name": "Runtime Channel Inbound Debounce Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-channel-inbound-debounce-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.channel_inbound_debounce"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.channel_inbound_debounce"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "resolved": [3, 0, 12, 2, 0, 0],
+        "coalesced": ["a+b"],
+        "orderedImmediate": ["buffered", "immediate"],
+        "forced": ["one"],
+        "saturated": ["fallback", "buffered"],
+        "errorReports": [["flush failed", 1]],
+        "genericCreate": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-markdown-table-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  convertMarkdownTables,
+  resolveMarkdownTableMode
+} = require("openclaw/plugin-sdk/markdown-table-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.markdown_table",
+      description: "Use OpenClaw markdown table runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const table = "Intro\\n\\n| Name | Value |\\n|---|---|\\n| A | 1 |\\n| B | 2 |\\n\\nDone";
+        const code = convertMarkdownTables(table, "code");
+        const block = convertMarkdownTables("| A | B |\\n|---|---|\\n| 1 | 2 |", "block");
+        const bullets = convertMarkdownTables(
+          "| Name | Value | Extra |\\n|---|---|---|\\n| A | 1 | x |\\n| B | | y |",
+          "bullets"
+        );
+        const offInput = "| A | B |\\n|---|---|\\n| 1 | 2 |";
+        const noTable = "hello | no table";
+        const cfg = {
+          channels: {
+            telegram: {
+              markdown: { tables: "bullets" },
+              accounts: {
+                Work: { markdown: { tables: "off" } },
+                default: { markdown: { tables: "code" } }
+              }
+            },
+            slack: { markdown: { tables: "block" } }
+          }
+        };
+        const modes = [
+          resolveMarkdownTableMode({ cfg, channel: "telegram", accountId: "work" }),
+          resolveMarkdownTableMode({ cfg, channel: "telegram" }),
+          resolveMarkdownTableMode({ cfg, channel: "slack" }),
+          resolveMarkdownTableMode({
+            cfg: { telegram: { markdown: { tables: "off" } } },
+            channel: "telegram"
+          }),
+          resolveMarkdownTableMode({ cfg: null, channel: "unknown" }),
+          genericSdk.resolveMarkdownTableMode({ cfg, channel: "discord" })
+        ];
+
+        return {
+          code: [
+            code.includes("```"),
+            code.includes("| Name | Value |"),
+            code.includes("Intro"),
+            code.includes("Done")
+          ],
+          block: [
+            block.includes("```"),
+            block.includes("| 1 | 2 |")
+          ],
+          bullets: [
+            bullets.includes("A"),
+            bullets.includes("\\u2022 Value: 1"),
+            bullets.includes("\\u2022 Extra: y"),
+            (bullets.match(/\\u2022 Value:/g) || []).length,
+            bullets.includes("|---|---|---|")
+          ],
+          passthrough: [
+            convertMarkdownTables(offInput, "off") === offInput,
+            convertMarkdownTables(noTable, "bullets") === noTable
+          ],
+          modes,
+          genericConvert: genericSdk.convertMarkdownTables(offInput, "code").includes("```")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-markdown-table-plugin",
+                    "name": "Runtime Markdown Table Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-markdown-table-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.markdown_table"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.markdown_table"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "code": [True, True, True, True],
+        "block": [True, True],
+        "bullets": [True, True, True, 1, False],
+        "passthrough": [True, True],
+        "modes": ["off", "code", "code", "off", "code", "code"],
+        "genericConvert": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_history_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-history.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  HISTORY_CONTEXT_MARKER,
+  buildHistoryContext,
+  buildHistoryContextFromEntries,
+  buildHistoryContextFromMap,
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntries,
+  clearHistoryEntriesIfEnabled,
+  evictOldHistoryKeys,
+  recordPendingHistoryEntry,
+  recordPendingHistoryEntryIfEnabled
+} = require("openclaw/plugin-sdk/reply-history");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const formatEntry = (entry) => `${entry.sender}: ${entry.body}`;
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_history",
+      description: "Use OpenClaw reply history SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const historyMap = new Map();
+        recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Ada", body: "one", messageId: "m1" },
+          limit: 2
+        });
+        const capped = recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Grace", body: "two", messageId: "m2" },
+          limit: 2
+        });
+        const cappedSnapshot = capped.map((entry) => entry.body);
+        recordPendingHistoryEntry({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Lin", body: "three", messageId: "m3" },
+          limit: 2
+        });
+        const skippedNull = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "room",
+          entry: null,
+          limit: 2
+        });
+        const skippedLimit = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "room",
+          entry: { sender: "Skip", body: "zero" },
+          limit: 0
+        });
+        const enabled = recordPendingHistoryEntryIfEnabled({
+          historyMap,
+          historyKey: "enabled",
+          entry: { sender: "Eve", body: "enabled" },
+          limit: 1
+        });
+
+        const pendingContext = buildPendingHistoryContextFromMap({
+          historyMap,
+          historyKey: "room",
+          limit: 2,
+          currentMessage: "now",
+          formatEntry,
+          lineBreak: "|"
+        });
+        const appendedContext = buildHistoryContextFromMap({
+          historyMap,
+          historyKey: "room",
+          limit: 3,
+          entry: { sender: "You", body: "latest" },
+          currentMessage: "reply?",
+          formatEntry
+        });
+        const entriesContext = buildHistoryContextFromEntries({
+          entries: [
+            { sender: "A", body: "old" },
+            { sender: "B", body: "current" }
+          ],
+          currentMessage: "fresh",
+          formatEntry
+        });
+        const includeLastContext = buildHistoryContextFromEntries({
+          entries: [
+            { sender: "A", body: "old" },
+            { sender: "B", body: "current" }
+          ],
+          currentMessage: "fresh",
+          formatEntry,
+          excludeLast: false
+        });
+        const emptyContext = buildHistoryContext({
+          historyText: "   ",
+          currentMessage: "current only"
+        });
+        const retainedBeforeClear = historyMap.get("room").map((entry) => entry.body);
+
+        clearHistoryEntries({ historyMap, historyKey: "enabled" });
+        clearHistoryEntriesIfEnabled({ historyMap, historyKey: "room", limit: 0 });
+        const sizeAfterSkippedClear = historyMap.get("room").length;
+        clearHistoryEntriesIfEnabled({ historyMap, historyKey: "room", limit: 2 });
+
+        const evictionMap = new Map([
+          ["a", [1]],
+          ["b", [2]],
+          ["c", [3]]
+        ]);
+        evictOldHistoryKeys(evictionMap, 2);
+
+        const genericContext = genericSdk.buildHistoryContext({
+          historyText: "Ada: hi",
+          currentMessage: "Now"
+        });
+
+        return {
+          constants: [DEFAULT_GROUP_HISTORY_LIMIT, HISTORY_CONTEXT_MARKER],
+          capped: cappedSnapshot,
+          retained: retainedBeforeClear,
+          skipped: [skippedNull.length, skippedLimit.length, enabled[0].body],
+          pendingContext,
+          appendedContext: [
+            appendedContext.includes("Grace: two"),
+            appendedContext.includes("Lin: three"),
+            appendedContext.includes("You: latest"),
+            appendedContext.includes("[Current message - respond to this]")
+          ],
+          entriesContext: [
+            entriesContext.includes("A: old"),
+            entriesContext.includes("B: current")
+          ],
+          includeLastContext: [
+            includeLastContext.includes("A: old"),
+            includeLastContext.includes("B: current")
+          ],
+          emptyContext,
+          cleared: [
+            historyMap.get("enabled").length,
+            sizeAfterSkippedClear,
+            historyMap.get("room").length
+          ],
+          eviction: Array.from(evictionMap.keys()),
+          genericContext: genericContext.includes(HISTORY_CONTEXT_MARKER)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-history-plugin",
+                    "name": "Runtime Reply History Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-history-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_history"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_history"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": [
+            50,
+            "[Chat messages since your last reply - for context]",
+        ],
+        "capped": ["one", "two"],
+        "retained": ["two", "three", "latest"],
+        "skipped": [0, 0, "enabled"],
+        "pendingContext": (
+            "[Chat messages since your last reply - for context]|"
+            "Grace: two|Lin: three||[Current message - respond to this]|now"
+        ),
+        "appendedContext": [True, True, False, True],
+        "entriesContext": [True, False],
+        "includeLastContext": [True, True],
+        "emptyContext": "current only",
+        "cleared": [0, 3, 0],
+        "eviction": ["b", "c"],
+        "genericContext": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-retry-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  TELEGRAM_RETRY_DEFAULTS,
+  createRateLimitRetryRunner,
+  createTelegramRetryRunner,
+  resolveRetryConfig,
+  retryAsync
+} = require("openclaw/plugin-sdk/retry-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.retry",
+      description: "Use OpenClaw retry-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const rounded = resolveRetryConfig(undefined, {
+          attempts: 2.6,
+          minDelayMs: 10.4,
+          maxDelayMs: 9,
+          jitter: 2
+        });
+        const clamped = resolveRetryConfig(undefined, {
+          attempts: 0,
+          minDelayMs: 250,
+          maxDelayMs: 100,
+          jitter: -1
+        });
+
+        let numericCalls = 0;
+        const numericResult = await retryAsync(async () => {
+          numericCalls += 1;
+          if (numericCalls < 2) {
+            throw new Error("fail once");
+          }
+          return "ok";
+        }, 3, 0);
+
+        const retryDelays = [];
+        let optionCalls = 0;
+        const optionResult = await retryAsync(async () => {
+          optionCalls += 1;
+          if (optionCalls < 2) {
+            throw new Error("rate limited");
+          }
+          return "done";
+        }, {
+          attempts: 2,
+          minDelayMs: 0,
+          maxDelayMs: 0,
+          jitter: 0,
+          label: "matrix",
+          retryAfterMs: () => 0,
+          onRetry: (info) => retryDelays.push({
+            attempt: info.attempt,
+            maxAttempts: info.maxAttempts,
+            delayMs: info.delayMs,
+            label: info.label
+          })
+        });
+
+        let stopCalls = 0;
+        let stopMessage = null;
+        try {
+          await retryAsync(async () => {
+            stopCalls += 1;
+            throw new Error("do not retry");
+          }, {
+            attempts: 3,
+            minDelayMs: 0,
+            maxDelayMs: 0,
+            shouldRetry: () => false
+          });
+        } catch (error) {
+          stopMessage = error && error.message;
+        }
+
+        const rateRunner = createRateLimitRetryRunner({
+          defaults: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+          logLabel: "discord",
+          shouldRetry: () => true
+        });
+        let rateCalls = 0;
+        const rateResult = await rateRunner(async () => {
+          rateCalls += 1;
+          if (rateCalls < 2) {
+            throw new Error("429");
+          }
+          return "sent";
+        }, "send");
+
+        const telegramRunner = createTelegramRetryRunner({
+          retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 }
+        });
+        let telegramCalls = 0;
+        const telegramResult = await telegramRunner(async () => {
+          telegramCalls += 1;
+          if (telegramCalls < 2) {
+            const error = new Error("429 retry");
+            error.parameters = { retry_after: 0 };
+            throw error;
+          }
+          return "telegram";
+        }, "send");
+
+        return {
+          rounded,
+          clamped,
+          numericCalls,
+          numericResult,
+          optionCalls,
+          optionResult,
+          retryDelays,
+          stopCalls,
+          stopMessage,
+          rateCalls,
+          rateResult,
+          telegramCalls,
+          telegramResult,
+          telegramDefaults: TELEGRAM_RETRY_DEFAULTS
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-retry-plugin",
+                    "name": "Runtime Retry Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-retry-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.retry"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.retry"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "rounded": {"attempts": 3, "minDelayMs": 10, "maxDelayMs": 10, "jitter": 1},
+        "clamped": {"attempts": 1, "minDelayMs": 250, "maxDelayMs": 250, "jitter": 0},
+        "numericCalls": 2,
+        "numericResult": "ok",
+        "optionCalls": 2,
+        "optionResult": "done",
+        "retryDelays": [{"attempt": 1, "maxAttempts": 2, "delayMs": 0, "label": "matrix"}],
+        "stopCalls": 1,
+        "stopMessage": "do not retry",
+        "rateCalls": 2,
+        "rateResult": "sent",
+        "telegramCalls": 2,
+        "telegramResult": "telegram",
+        "telegramDefaults": {
+            "attempts": 3,
+            "minDelayMs": 400,
+            "maxDelayMs": 30000,
+            "jitter": 0.1,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_keyed_async_queue_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-keyed-async-queue.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  KeyedAsyncQueue,
+  enqueueKeyedTask
+} = require("openclaw/plugin-sdk/keyed-async-queue");
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.keyed_queue",
+      description: "Use OpenClaw keyed-async-queue SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const tails = new Map();
+        const gate = deferred();
+        const order = [];
+        const first = enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => {
+            order.push("a1:start");
+            await gate.promise;
+            order.push("a1:end");
+          }
+        });
+        const second = enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => {
+            order.push("a2:start");
+            order.push("a2:end");
+          }
+        });
+        const third = enqueueKeyedTask({
+          tails,
+          key: "b",
+          task: async () => {
+            order.push("b1:start");
+            order.push("b1:end");
+          }
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        const beforeRelease = {
+          hasA1: order.includes("a1:start"),
+          hasB1: order.includes("b1:start"),
+          hasA2: order.includes("a2:start")
+        };
+        gate.resolve();
+        await Promise.all([first, second, third]);
+
+        let failureMessage = null;
+        try {
+          await enqueueKeyedTask({
+            tails,
+            key: "a",
+            task: async () => {
+              throw new Error("boom");
+            }
+          });
+        } catch (error) {
+          failureMessage = error && error.message;
+        }
+        const afterFailure = await enqueueKeyedTask({
+          tails,
+          key: "a",
+          task: async () => "ok"
+        });
+
+        let enqueued = 0;
+        let settled = 0;
+        await enqueueKeyedTask({
+          tails,
+          key: "hooks",
+          task: async () => "hooked",
+          hooks: {
+            onEnqueue: () => { enqueued += 1; },
+            onSettle: () => { settled += 1; }
+          }
+        });
+
+        const queue = new KeyedAsyncQueue();
+        const actorGate = deferred();
+        const actorRun = queue.enqueue("actor", async () => {
+          await actorGate.promise;
+          return 1;
+        });
+        const hasActorBefore = queue.getTailMapForTesting().has("actor");
+        actorGate.resolve();
+        const actorResult = await actorRun;
+        await Promise.resolve();
+        const hasActorAfter = queue.getTailMapForTesting().has("actor");
+
+        return {
+          beforeRelease,
+          order,
+          tailsSize: tails.size,
+          failureMessage,
+          afterFailure,
+          hooks: { enqueued, settled },
+          actorResult,
+          hasActorBefore,
+          hasActorAfter
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-keyed-queue-plugin",
+                    "name": "Runtime Keyed Queue Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-keyed-queue-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.keyed_queue"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.keyed_queue"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "beforeRelease": {"hasA1": True, "hasB1": True, "hasA2": False},
+        "order": ["a1:start", "b1:start", "b1:end", "a1:end", "a2:start", "a2:end"],
+        "tailsSize": 0,
+        "failureMessage": "boom",
+        "afterFailure": "ok",
+        "hooks": {"enqueued": 1, "settled": 1},
+        "actorResult": 1,
+        "hasActorBefore": True,
+        "hasActorAfter": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lazy_value_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lazy-value.cjs"
+    runtime_entry.write_text(
+        """
+const { createCachedLazyValueGetter } = require("openclaw/plugin-sdk/lazy-value");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lazy_value",
+      description: "Use OpenClaw lazy-value SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        let calls = 0;
+        const getSchema = createCachedLazyValueGetter(() => {
+          calls += 1;
+          return { type: "object" };
+        });
+        const first = getSchema();
+        const second = getSchema();
+        const fallback = { type: "object", properties: {} };
+        const getFallback = createCachedLazyValueGetter(() => undefined, fallback);
+        const getLiteral = createCachedLazyValueGetter("literal");
+        return {
+          calls,
+          first,
+          sameObject: first === second,
+          fallbackSame: getFallback() === fallback,
+          fallbackValue: getFallback(),
+          literal: getLiteral()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-lazy-value-plugin",
+                    "name": "Runtime Lazy Value Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lazy-value-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lazy_value"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.lazy_value"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "calls": 1,
+        "first": {"type": "object"},
+        "sameObject": True,
+        "fallbackSame": True,
+        "fallbackValue": {"type": "object", "properties": {}},
+        "literal": "literal",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-primitives-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  isAbortRequestText,
+  isBtwRequestText
+} = require("openclaw/plugin-sdk/command-primitives-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_primitives",
+      description: "Use OpenClaw command-primitives-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          abort: [
+            isAbortRequestText("/stop"),
+            isAbortRequestText("/STOP"),
+            isAbortRequestText("/stop!!!"),
+            isAbortRequestText("stop action"),
+            isAbortRequestText("stop openclaw!!!"),
+            isAbortRequestText("/stop@openclaw_bot", { botUsername: "openclaw_bot" }),
+            isAbortRequestText("/status"),
+            isAbortRequestText("please do not do that"),
+            isAbortRequestText("/abort"),
+            isAbortRequestText("do not do that")
+          ],
+          btw: [
+            isBtwRequestText("/btw"),
+            isBtwRequestText("/btw: what now"),
+            isBtwRequestText("/btw@openclaw_bot what", { botUsername: "openclaw_bot" }),
+            isBtwRequestText("/status")
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-primitives-plugin",
+                    "name": "Runtime Command Primitives Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-command-primitives-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_primitives"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_primitives"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "abort": [True, True, True, True, True, True, False, False, False, True],
+        "btw": [True, True, True, False],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_mime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-media-mime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  detectMime,
+  extensionForMime,
+  getFileExtension,
+  mediaKindFromMime,
+  normalizeMimeType
+} = require("openclaw/plugin-sdk/media-mime");
+const genericSdk = require("openclaw/plugin-sdk");
+const mediaRuntime = require("openclaw/plugin-sdk/media-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_mime",
+      description: "Use OpenClaw media-mime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const caf = Buffer.concat([Buffer.from("caff", "ascii"), Buffer.alloc(32)]);
+        const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]);
+        const pdf = Buffer.from("%PDF-1.7\\n", "ascii");
+        return {
+          normalized: [
+            normalizeMimeType("Audio/MP4; codecs=mp4a.40.2"),
+            normalizeMimeType("   ") ?? null
+          ],
+          extensions: [
+            getFileExtension("https://example.test/files/report.PDF?download=1"),
+            getFileExtension("C:/tmp/a2ui.bundle.js"),
+            getFileExtension("noext") ?? null
+          ],
+          mappedExtensions: [
+            extensionForMime("IMAGE/JPEG; charset=utf-8"),
+            extensionForMime("audio/mp4"),
+            extensionForMime("video/unknown") ?? null
+          ],
+          kinds: [
+            mediaKindFromMime("image/png"),
+            mediaKindFromMime("audio/ogg"),
+            mediaKindFromMime("video/mp4"),
+            mediaKindFromMime("text/html; charset=utf-8"),
+            mediaKindFromMime("model/gltf+json") ?? null
+          ],
+          detected: [
+            await detectMime({ headerMime: " Text/Plain; charset=utf-8" }),
+            await detectMime({
+              headerMime: "application/octet-stream",
+              filePath: "/tmp/report.pdf"
+            }),
+            await detectMime({ buffer: caf, headerMime: "application/octet-stream" }),
+            await detectMime({ buffer: zip, filePath: "/tmp/book.xlsx" }),
+            await detectMime({ buffer: pdf, filePath: "/tmp/file.bin" }),
+            await detectMime({ headerMime: "application/octet-stream" })
+          ],
+          generic: [
+            genericSdk.extensionForMime("text/css"),
+            mediaRuntime.extensionForMime("application/json")
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-media-mime-plugin",
+                    "name": "Runtime Media Mime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-media-mime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.media_mime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.media_mime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "normalized": ["audio/mp4", None],
+        "extensions": [".pdf", ".js", None],
+        "mappedExtensions": [".jpg", ".m4a", None],
+        "kinds": ["image", "audio", "video", "document", None],
+        "detected": [
+            "text/plain",
+            "application/pdf",
+            "audio/x-caf",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/pdf",
+            "application/octet-stream",
+        ],
+        "generic": [".css", ".json"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_detection_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-detection.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  shouldComputeCommandAuthorized
+} = require("openclaw/plugin-sdk/command-detection");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_detection",
+      description: "Use OpenClaw command-detection SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const metaWrapped = [
+          "Conversation info (untrusted metadata):",
+          "```json",
+          "{\\"message_id\\":\\"msg-abc\\",\\"chat_id\\":\\"chat-123\\"}",
+          "```",
+          "",
+          "/model spark"
+        ].join("\\n");
+        const timestampWrapped = [
+          "[Wed 2026-03-11 23:51 PDT] Sender (untrusted metadata):",
+          "```json",
+          "{\\"name\\":\\"Alice\\",\\"id\\":\\"user-1\\"}",
+          "```",
+          "",
+          "/status"
+        ].join("\\n");
+        return {
+          control: [
+            hasControlCommand("send"),
+            hasControlCommand("/commands"),
+            hasControlCommand("/commands:"),
+            hasControlCommand("/status please"),
+            hasControlCommand("/send on"),
+            hasControlCommand("/help@otherbot", undefined, { botUsername: "openclaw" }),
+            hasControlCommand("/help@openclaw", undefined, { botUsername: "openclaw" }),
+            hasControlCommand(metaWrapped),
+            hasControlCommand(timestampWrapped),
+            hasControlCommand("/config show", { commands: { config: false } }),
+            hasControlCommand("/config show", { commands: { config: true } })
+          ],
+          message: [
+            isControlCommandMessage("stop"),
+            isControlCommandMessage("/stop"),
+            isControlCommandMessage("plain text"),
+            shouldComputeCommandAuthorized("hello /status"),
+            shouldComputeCommandAuthorized("plain text")
+          ],
+          inline: [
+            hasInlineCommandTokens("hello /status"),
+            hasInlineCommandTokens("hey /think high"),
+            hasInlineCommandTokens("http://example.com/path"),
+            hasInlineCommandTokens("stop")
+          ],
+          generic: genericSdk.hasControlCommand("/status")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-detection-plugin",
+                    "name": "Runtime Command Detection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-command-detection-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.command_detection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.command_detection"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "control": [
+            False,
+            True,
+            True,
+            False,
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+            True,
+        ],
+        "message": [True, True, False, True, False],
+        "inline": [True, True, False, False],
+        "generic": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -7752,6 +9718,97 @@ module.exports = {
         "buttonSchema": ["danger", "success", "primary"],
         "cardSchemaAdditional": True,
         "authError": {"name": "ToolAuthorizationError", "status": 403},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_response_limit_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-response-limit-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { readResponseWithLimit } = require("openclaw/plugin-sdk/response-limit-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.response_limit",
+      description: "Use OpenClaw response-limit-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const ok = await readResponseWithLimit(new Response("hello"), 10);
+        let overflowMessage = null;
+        try {
+          await readResponseWithLimit(new Response("abcdef"), 4, {
+            onOverflow: ({ size, maxBytes }) => new Error(`custom: ${size} > ${maxBytes}`)
+          });
+        } catch (error) {
+          overflowMessage = error && error.message;
+        }
+        return {
+          okText: ok.toString("utf8"),
+          okIsBuffer: Buffer.isBuffer(ok),
+          overflowMessage
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-response-limit-plugin",
+                    "name": "Runtime Response Limit Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-response-limit-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.response_limit"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.response_limit"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "okText": "hello",
+        "okIsBuffer": True,
+        "overflowMessage": "custom: 6 > 4",
     }
 
 

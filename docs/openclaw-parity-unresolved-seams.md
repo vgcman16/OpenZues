@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~73.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~74.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6843,9 +6843,149 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   mapping through `tools.invoke`. Repo-wide parity is now estimated at ~73.2%.
   Verified with focused target-resolver-runtime pytest, adjacent plugin invoke
   proof, `ruff check`, and `mypy`; source/test checkpointed in `4ea6901b`.
+- Closed the imported OpenClaw plugin SDK response-limit-runtime seam from
+  `src/plugin-sdk/response-limit-runtime.ts` and
+  `src/media/read-response-with-limit.ts`: native runtime entries can now
+  import `readResponseWithLimit` and execute bounded Response buffer reads,
+  stream prefix limiting, default/custom overflow errors, and idle-timeout
+  hooks through `tools.invoke`. Repo-wide parity is now estimated at ~73.3%.
+  Verified with focused response-limit-runtime pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `7c0035bf`.
+- Closed the imported OpenClaw plugin SDK text-autolink-runtime seam from
+  `src/plugin-sdk/text-autolink-runtime.ts` and
+  `src/shared/text/auto-linked-file-ref.ts`: native runtime entries can now
+  import `isAutoLinkedFileRef` and execute upstream protocol stripping,
+  allowed-extension matching, dotted parent-segment rejection, `text-runtime`
+  reexport, and generic SDK fallback behavior through `tools.invoke`.
+  Repo-wide parity is now estimated at ~73.4%. Verified with focused
+  text-autolink-runtime pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `bcce41be`.
+- Closed the imported OpenClaw plugin SDK dedupe-runtime seam from
+  `src/plugin-sdk/dedupe-runtime.ts` and `src/infra/dedupe.ts`: native runtime
+  entries can now import `createDedupeCache` and
+  `resolveGlobalDedupeCache`, preserving blank-key ignores, ttl/indefinite
+  retention, touch-on-read pruning, floor-to-zero clearing, explicit reset,
+  process-global singleton resolution, and generic SDK fallback behavior
+  through `tools.invoke`. Repo-wide parity is now estimated at ~73.5%.
+  Verified with focused dedupe-runtime pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `865c9df0`.
+- Closed the imported OpenClaw plugin SDK retry-runtime seam from
+  `src/plugin-sdk/retry-runtime.ts`, `src/infra/retry.ts`, and
+  `src/infra/retry-policy.ts`: native runtime entries can now import
+  `resolveRetryConfig`, `retryAsync`, `createRateLimitRetryRunner`,
+  `createTelegramRetryRunner`, and `TELEGRAM_RETRY_DEFAULTS`, preserving retry
+  config clamping, numeric/options retry modes, retry-after handling,
+  should-retry short-circuiting, channel API retry heuristics, Telegram
+  defaults, and generic SDK fallback behavior through `tools.invoke`.
+  Repo-wide parity is now estimated at ~73.6%. Verified with focused
+  retry-runtime pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `4608fbc7`.
+- Closed the imported OpenClaw plugin SDK keyed-async-queue seam from
+  `src/plugin-sdk/keyed-async-queue.ts`: native runtime entries can now import
+  `enqueueKeyedTask` and `KeyedAsyncQueue`, preserving per-key serialization,
+  unrelated-key concurrency, task-failure recovery, enqueue/settle hooks, tail
+  cleanup, testing observability, and generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~73.7%. Verified with
+  focused keyed-async-queue pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `4307d460`.
+- Closed the imported OpenClaw plugin SDK lazy-value seam from
+  `src/plugin-sdk/lazy-value.ts`: native runtime entries can now import
+  `createCachedLazyValueGetter`, preserving one-shot factory memoization,
+  literal value wrapping, nullish fallback resolution, and generic SDK fallback
+  behavior through `tools.invoke`. Repo-wide parity is now estimated at
+  ~73.8%. Verified with focused lazy-value pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `ef545716`.
+- Closed the imported OpenClaw plugin SDK command-primitives-runtime seam from
+  `src/plugin-sdk/command-primitives-runtime.ts`,
+  `src/auto-reply/reply/abort-primitives.ts`, and
+  `src/auto-reply/reply/btw-command.ts`: native runtime entries can now import
+  `isAbortRequestText` and `isBtwRequestText`, preserving slash/colon command
+  normalization, bot mention stripping, abort trigger/punctuation handling,
+  BTW detection, and generic SDK fallback behavior through `tools.invoke`.
+  Repo-wide parity is now estimated at ~73.9%. Verified with focused
+  command-primitives-runtime pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `a39876b1`.
+- Closed the imported OpenClaw plugin SDK media-mime seam from
+  `src/plugin-sdk/media-mime.ts`, `src/media/mime.ts`, and
+  `src/media/constants.ts`: native runtime entries can now import `detectMime`,
+  `extensionForMime`, `getFileExtension`, `normalizeMimeType`, and
+  `mediaKindFromMime`, preserving MIME/header normalization, URL/path extension
+  parsing, extension/MIME maps, CAF/PDF/image/ZIP sniffing, generic
+  ZIP/octet-stream precedence, media-kind classification, and generic SDK plus
+  `media-runtime` fallback behavior through `tools.invoke`. Repo-wide parity is
+  now estimated at ~74.0%. Verified with focused media-mime pytest, adjacent
+  plugin invoke proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `ad1d6cee`.
+- Closed the imported OpenClaw plugin SDK command-detection seam from
+  `src/plugin-sdk/command-detection.ts`,
+  `src/auto-reply/command-detection.ts`,
+  `src/auto-reply/commands-registry-list.ts`, and
+  `src/auto-reply/commands-registry-normalize.ts`: native runtime entries can
+  now import `hasControlCommand`, `isControlCommandMessage`,
+  `hasInlineCommandTokens`, and `shouldComputeCommandAuthorized`, preserving
+  bot-addressed slash normalization, full-message control-command matching,
+  argument-aware aliases, command feature gates, inbound metadata stripping,
+  abort-trigger fallback, inline token detection, and generic SDK fallback
+  behavior through `tools.invoke`. Repo-wide parity is now estimated at ~74.1%.
+  Verified with focused command-detection pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `c0c5e8fa`.
+- Closed the imported OpenClaw plugin SDK global-singleton seam from
+  `src/plugin-sdk/global-singleton.ts`, `src/shared/global-singleton.ts`, and
+  `src/shared/scoped-expiring-id-cache.ts`: native runtime entries can now
+  import `resolveGlobalSingleton`, `resolveGlobalMap`, and
+  `createScopedExpiringIdCache`, preserving symbol-keyed process-global
+  singleton reuse, global map resolution, scoped/id string coercion, ttl
+  cleanup, cleanup-threshold pruning, clear behavior, and generic SDK fallback
+  behavior through `tools.invoke`. Repo-wide parity is now estimated at ~74.2%.
+  Verified with focused global-singleton pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `d773e608`.
+- Closed the imported OpenClaw plugin SDK concurrency-runtime seam from
+  `src/plugin-sdk/concurrency-runtime.ts` and
+  `src/utils/run-with-concurrency.ts`: native runtime entries can now import
+  `runTasksWithConcurrency`, preserving empty-task completion, bounded worker
+  count, result ordering, stop/continue error modes, first-error tracking,
+  task-error callbacks, and generic SDK fallback behavior through
+  `tools.invoke`. Repo-wide parity is now estimated at ~74.3%. Verified with
+  focused concurrency-runtime pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `e6bd981e`.
+- Closed the imported OpenClaw plugin SDK channel-inbound-debounce seam from
+  `src/plugin-sdk/channel-inbound-debounce.ts` and
+  `src/auto-reply/inbound-debounce.ts`: native runtime entries can now import
+  `resolveInboundDebounceMs` and `createInboundDebouncer`, preserving
+  override/by-channel/base debounce resolution, finite/truncated/clamped
+  milliseconds, keyed timer-backed buffering, forced `flushKey`, same-key
+  immediate ordering, saturated-key fallback, non-throwing `onError`
+  reporting, and generic SDK fallback behavior through `tools.invoke`.
+  Repo-wide parity is now estimated at ~74.4%. Verified with focused
+  channel-inbound-debounce pytest, adjacent plugin invoke proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `9ac09500`.
+- Closed the imported OpenClaw plugin SDK markdown-table-runtime seam from
+  `src/plugin-sdk/markdown-table-runtime.ts`, `src/config/markdown-tables.ts`,
+  and `src/markdown/tables.ts`: native runtime entries can now import
+  `resolveMarkdownTableMode` and `convertMarkdownTables`, preserving
+  channel/account markdown-table config precedence, `block` fallback to code
+  mode, default code mode, table pass-through for `off`/non-table text,
+  code-fenced table rendering, bullet table rendering with empty-cell skips,
+  and generic SDK fallback behavior through `tools.invoke`. Repo-wide parity is
+  now estimated at ~74.5%. Verified with focused markdown-table-runtime pytest,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `6e51b8a9`.
+- Closed the imported OpenClaw plugin SDK reply-history seam from
+  `src/plugin-sdk/reply-history.ts` and `src/auto-reply/reply/history.ts`:
+  native runtime entries can now import `recordPendingHistoryEntry`,
+  `recordPendingHistoryEntryIfEnabled`, `buildHistoryContext`,
+  `buildHistoryContextFromEntries`, `buildHistoryContextFromMap`,
+  `buildPendingHistoryContextFromMap`, `clearHistoryEntries`,
+  `clearHistoryEntriesIfEnabled`, and `evictOldHistoryKeys`, preserving
+  bounded history arrays, mutable returned history references, LRU key
+  eviction, disabled limit/null-entry no-ops, pending/current message markers,
+  exclude-last defaults, clear behavior, and generic SDK fallback behavior
+  through `tools.invoke`. Repo-wide parity is now estimated at ~74.6%.
+  Verified with focused reply-history pytest, adjacent plugin invoke proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `738186ae`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/markdown-table-runtime/reply-history/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution

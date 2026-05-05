@@ -18037,6 +18037,124 @@ const Module = require("module");
 
 const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+const FILE_REF_EXTENSIONS_WITH_TLD = new Set([
+  "md",
+  "go",
+  "py",
+  "pl",
+  "sh",
+  "am",
+  "at",
+  "be",
+  "cc",
+]);
+const EXT_BY_MIME = {
+  "image/heic": ".heic",
+  "image/heif": ".heif",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "audio/ogg": ".ogg",
+  "audio/mpeg": ".mp3",
+  "audio/wav": ".wav",
+  "audio/flac": ".flac",
+  "audio/aac": ".aac",
+  "audio/opus": ".opus",
+  "audio/x-m4a": ".m4a",
+  "audio/mp4": ".m4a",
+  "audio/x-caf": ".caf",
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "application/pdf": ".pdf",
+  "application/json": ".json",
+  "application/zip": ".zip",
+  "application/gzip": ".gz",
+  "application/x-tar": ".tar",
+  "application/x-7z-compressed": ".7z",
+  "application/vnd.rar": ".rar",
+  "application/msword": ".doc",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.ms-powerpoint": ".ppt",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+  "text/csv": ".csv",
+  "text/plain": ".txt",
+  "text/markdown": ".md",
+  "text/html": ".html",
+  "text/xml": ".xml",
+  "text/css": ".css",
+  "application/xml": ".xml",
+};
+const MIME_BY_EXT = Object.fromEntries(
+  Object.entries(EXT_BY_MIME).map(([mime, ext]) => [ext, mime]),
+);
+Object.assign(MIME_BY_EXT, {
+  ".jpeg": "image/jpeg",
+  ".js": "text/javascript",
+  ".htm": "text/html",
+  ".xml": "text/xml",
+});
+const CHAT_COMMANDS = [
+  { key: "help", aliases: ["/help"], acceptsArgs: false },
+  { key: "commands", aliases: ["/commands"], acceptsArgs: false },
+  { key: "tools", aliases: ["/tools"], acceptsArgs: true },
+  { key: "skill", aliases: ["/skill"], acceptsArgs: true },
+  { key: "status", aliases: ["/status"], acceptsArgs: false },
+  { key: "diagnostics", aliases: ["/diagnostics"], acceptsArgs: true },
+  { key: "crestodian", aliases: ["/crestodian"], acceptsArgs: true },
+  { key: "tasks", aliases: ["/tasks"], acceptsArgs: false },
+  { key: "allowlist", aliases: ["/allowlist"], acceptsArgs: true },
+  { key: "approve", aliases: ["/approve"], acceptsArgs: true },
+  { key: "context", aliases: ["/context"], acceptsArgs: true },
+  { key: "btw", aliases: ["/btw"], acceptsArgs: true },
+  { key: "export-session", aliases: ["/export-session", "/export"], acceptsArgs: true },
+  { key: "export-trajectory", aliases: ["/export-trajectory", "/trajectory"], acceptsArgs: true },
+  { key: "tts", aliases: ["/tts"], acceptsArgs: true },
+  { key: "whoami", aliases: ["/whoami", "/id"], acceptsArgs: false },
+  { key: "session", aliases: ["/session"], acceptsArgs: true },
+  { key: "subagents", aliases: ["/subagents"], acceptsArgs: true },
+  { key: "acp", aliases: ["/acp"], acceptsArgs: true },
+  { key: "focus", aliases: ["/focus"], acceptsArgs: true },
+  { key: "unfocus", aliases: ["/unfocus"], acceptsArgs: false },
+  { key: "agents", aliases: ["/agents"], acceptsArgs: false },
+  { key: "kill", aliases: ["/kill"], acceptsArgs: true },
+  { key: "steer", aliases: ["/steer", "/tell"], acceptsArgs: true },
+  { key: "config", aliases: ["/config"], acceptsArgs: true, flag: "config" },
+  { key: "mcp", aliases: ["/mcp"], acceptsArgs: true, flag: "mcp" },
+  { key: "plugins", aliases: ["/plugins", "/plugin"], acceptsArgs: true, flag: "plugins" },
+  { key: "debug", aliases: ["/debug"], acceptsArgs: true, flag: "debug" },
+  { key: "usage", aliases: ["/usage"], acceptsArgs: true },
+  { key: "stop", aliases: ["/stop"], acceptsArgs: false },
+  { key: "restart", aliases: ["/restart"], acceptsArgs: false },
+  { key: "activation", aliases: ["/activation"], acceptsArgs: true },
+  { key: "send", aliases: ["/send"], acceptsArgs: true },
+  { key: "reset", aliases: ["/reset"], acceptsArgs: true },
+  { key: "new", aliases: ["/new"], acceptsArgs: true },
+  { key: "compact", aliases: ["/compact"], acceptsArgs: true },
+  { key: "think", aliases: ["/think", "/thinking", "/t"], acceptsArgs: true },
+  { key: "verbose", aliases: ["/verbose", "/v"], acceptsArgs: true },
+  { key: "trace", aliases: ["/trace"], acceptsArgs: true },
+  { key: "fast", aliases: ["/fast"], acceptsArgs: true },
+  { key: "reasoning", aliases: ["/reasoning", "/reason"], acceptsArgs: true },
+  { key: "elevated", aliases: ["/elevated", "/elev"], acceptsArgs: true },
+  { key: "exec", aliases: ["/exec"], acceptsArgs: true, flag: "bash" },
+  { key: "model", aliases: ["/model"], acceptsArgs: true },
+  { key: "models", aliases: ["/models"], acceptsArgs: true },
+  { key: "queue", aliases: ["/queue"], acceptsArgs: true },
+  { key: "bash", aliases: ["/bash"], acceptsArgs: true, flag: "bash" },
+];
+const INBOUND_META_SENTINELS = [
+  "Conversation info (untrusted metadata):",
+  "Sender (untrusted metadata):",
+  "Thread starter (untrusted, for context):",
+  "Replied message (untrusted, for context):",
+  "Forwarded message context (untrusted metadata):",
+  "Chat history since last reply (untrusted, for context):",
+];
+const INBOUND_META_SENTINEL_SET = new Set(INBOUND_META_SENTINELS);
+const LEADING_TIMESTAMP_PREFIX_RE = /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]]*\] */;
 
 function normalizeLowercaseStringOrEmpty(value) {
   return normalizeOptionalLowercaseString(value) || "";
@@ -18068,6 +18186,427 @@ function normalizeStringifiedOptionalString(value) {
     typeof value === "bigint"
   ) {
     return normalizeOptionalString(String(value));
+  }
+  return undefined;
+}
+
+function isAutoLinkedFileRef(href, label) {
+  const stripped = href.replace(/^https?:\/\//i, "");
+  if (stripped !== label) {
+    return false;
+  }
+  const dotIndex = label.lastIndexOf(".");
+  if (dotIndex < 1) {
+    return false;
+  }
+  const ext = normalizeLowercaseStringOrEmpty(label.slice(dotIndex + 1));
+  if (!FILE_REF_EXTENSIONS_WITH_TLD.has(ext)) {
+    return false;
+  }
+  const segments = label.split("/");
+  if (segments.length > 1) {
+    for (let i = 0; i < segments.length - 1; i += 1) {
+      if (segments[i] && segments[i].includes(".")) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function createCachedLazyValueGetter(value, fallback) {
+  let resolved = false;
+  let cached;
+
+  return () => {
+    if (!resolved) {
+      const nextValue = typeof value === "function" ? value() : value;
+      cached = nextValue ?? fallback;
+      resolved = true;
+    }
+    return cached;
+  };
+}
+
+const ABORT_TRIGGERS = new Set([
+  "stop",
+  "esc",
+  "abort",
+  "wait",
+  "exit",
+  "interrupt",
+  "halt",
+  "stopp",
+  "pare",
+  "stop openclaw",
+  "openclaw stop",
+  "stop action",
+  "stop current action",
+  "stop run",
+  "stop current run",
+  "stop agent",
+  "stop the agent",
+  "stop don't do anything",
+  "stop dont do anything",
+  "stop do not do anything",
+  "stop doing anything",
+  "do not do that",
+  "please stop",
+  "stop please",
+]);
+const TRAILING_ABORT_PUNCTUATION_RE = /[.!?…,，。;；:：'"’”)\]}]+$/u;
+
+function normalizeCommandBody(raw, options) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  const newline = trimmed.indexOf("\n");
+  const singleLine = newline === -1 ? trimmed : trimmed.slice(0, newline).trim();
+  const colonMatch = singleLine.match(/^\/([^\s:]+)\s*:(.*)$/);
+  const normalized = colonMatch
+    ? (() => {
+        const command = colonMatch[1];
+        const rest = colonMatch[2].trimStart();
+        return rest ? `/${command} ${rest}` : `/${command}`;
+      })()
+    : singleLine;
+  const normalizedBotUsername = normalizeOptionalLowercaseString(
+    options && options.botUsername,
+  );
+  const mentionMatch = normalizedBotUsername
+    ? normalized.match(/^\/([^\s@]+)@([^\s]+)(.*)$/)
+    : null;
+  return mentionMatch &&
+    normalizeLowercaseStringOrEmpty(mentionMatch[2]) === normalizedBotUsername
+    ? `/${mentionMatch[1]}${mentionMatch[3] || ""}`
+    : normalized;
+}
+
+function normalizeAbortTriggerText(text) {
+  return normalizeLowercaseStringOrEmpty(text)
+    .replace(/[’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(TRAILING_ABORT_PUNCTUATION_RE, "")
+    .trim();
+}
+
+function isAbortTrigger(text) {
+  if (!text) {
+    return false;
+  }
+  return ABORT_TRIGGERS.has(normalizeAbortTriggerText(text));
+}
+
+function isAbortRequestText(text, options) {
+  if (!text) {
+    return false;
+  }
+  const normalized = normalizeCommandBody(text, options).trim();
+  if (!normalized) {
+    return false;
+  }
+  const normalizedLower = normalizeLowercaseStringOrEmpty(normalized);
+  return (
+    normalizedLower === "/stop" ||
+    normalizeAbortTriggerText(normalizedLower) === "/stop" ||
+    isAbortTrigger(normalizedLower)
+  );
+}
+
+const BTW_COMMAND_RE = /^\/btw(?::|\s|$)/i;
+
+function isBtwRequestText(text, options) {
+  if (!text) {
+    return false;
+  }
+  const normalized = normalizeCommandBody(text, options).trim();
+  return BTW_COMMAND_RE.test(normalized);
+}
+
+function stripInboundMetadata(text) {
+  if (!text) {
+    return text;
+  }
+  const withoutTimestamp = String(text).replace(LEADING_TIMESTAMP_PREFIX_RE, "").trimStart();
+  const lines = withoutTimestamp.split("\n");
+  const result = [];
+  let inMetaBlock = false;
+  let inJsonFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!inMetaBlock && INBOUND_META_SENTINEL_SET.has(trimmed)) {
+      const next = lines[index + 1] || "";
+      if (next.trim() === "```json") {
+        inMetaBlock = true;
+        inJsonFence = false;
+        continue;
+      }
+    }
+    if (inMetaBlock) {
+      if (!inJsonFence && trimmed === "```json") {
+        inJsonFence = true;
+        continue;
+      }
+      if (inJsonFence && trimmed === "```") {
+        inMetaBlock = false;
+        inJsonFence = false;
+      }
+      continue;
+    }
+    result.push(line);
+  }
+  return result.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
+}
+
+function isCommandEnabled(command, cfg) {
+  if (!command.flag || !cfg) {
+    return true;
+  }
+  const commands = cfg && typeof cfg === "object" ? cfg.commands : undefined;
+  return Boolean(commands && commands[command.flag] === true);
+}
+
+function listEnabledChatCommands(cfg) {
+  if (!cfg) {
+    return CHAT_COMMANDS;
+  }
+  return CHAT_COMMANDS.filter((command) => isCommandEnabled(command, cfg));
+}
+
+function hasControlCommand(text, cfg, options) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = String(text).trim();
+  if (!trimmed) {
+    return false;
+  }
+  const stripped = stripInboundMetadata(trimmed);
+  if (!stripped) {
+    return false;
+  }
+  const normalizedBody = normalizeCommandBody(stripped, options);
+  if (!normalizedBody) {
+    return false;
+  }
+  const lowered = normalizeLowercaseStringOrEmpty(normalizedBody);
+  for (const command of listEnabledChatCommands(cfg)) {
+    for (const alias of command.aliases) {
+      const normalized = normalizeOptionalLowercaseString(alias);
+      if (!normalized) {
+        continue;
+      }
+      if (lowered === normalized) {
+        return true;
+      }
+      if (command.acceptsArgs && lowered.startsWith(normalized)) {
+        const nextChar = normalizedBody.charAt(normalized.length);
+        if (nextChar && /\s/.test(nextChar)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function isControlCommandMessage(text, cfg, options) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = String(text).trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (hasControlCommand(trimmed, cfg, options)) {
+    return true;
+  }
+  const stripped = stripInboundMetadata(trimmed);
+  const normalized =
+    normalizeOptionalLowercaseString(normalizeCommandBody(stripped, options)) || "";
+  return isAbortTrigger(normalized);
+}
+
+function hasInlineCommandTokens(text) {
+  const body = text || "";
+  if (!String(body).trim()) {
+    return false;
+  }
+  return /(?:^|\s)[/!][a-z]/i.test(String(body));
+}
+
+function shouldComputeCommandAuthorized(text, cfg, options) {
+  return isControlCommandMessage(text, cfg, options) || hasInlineCommandTokens(text);
+}
+
+function normalizeMimeType(mime) {
+  if (!mime) {
+    return undefined;
+  }
+  const cleaned = String(mime).split(";")[0].trim().toLowerCase();
+  return cleaned || undefined;
+}
+
+function getFileExtension(filePath) {
+  if (!filePath) {
+    return undefined;
+  }
+  const raw = String(filePath);
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const url = new URL(raw);
+      return path.extname(url.pathname).toLowerCase() || undefined;
+    }
+  } catch (_error) {
+    // Fall back to plain path parsing.
+  }
+  return path.extname(raw).toLowerCase() || undefined;
+}
+
+function extensionForMime(mime) {
+  const normalized = normalizeMimeType(mime);
+  return normalized ? EXT_BY_MIME[normalized] : undefined;
+}
+
+function mediaKindFromMime(mime) {
+  if (!mime) {
+    return undefined;
+  }
+  const raw = String(mime);
+  if (raw.startsWith("image/")) {
+    return "image";
+  }
+  if (raw.startsWith("audio/")) {
+    return "audio";
+  }
+  if (raw.startsWith("video/")) {
+    return "video";
+  }
+  if (raw === "application/pdf") {
+    return "document";
+  }
+  if (raw.startsWith("text/")) {
+    return "document";
+  }
+  if (raw.startsWith("application/")) {
+    return "document";
+  }
+  return undefined;
+}
+
+function isGenericMime(mime) {
+  if (!mime) {
+    return true;
+  }
+  const normalized = String(mime).toLowerCase();
+  return normalized === "application/octet-stream" || normalized === "application/zip";
+}
+
+function normalizeSniffBuffer(buffer) {
+  if (!buffer) {
+    return undefined;
+  }
+  if (Buffer.isBuffer(buffer)) {
+    return buffer;
+  }
+  if (ArrayBuffer.isView(buffer)) {
+    return Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  }
+  if (buffer instanceof ArrayBuffer) {
+    return Buffer.from(buffer);
+  }
+  return undefined;
+}
+
+function sniffZipContainer(buffer) {
+  const header = buffer.toString("utf8", 0, Math.min(buffer.length, 16384));
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ) ||
+    header.includes("/word/document.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ) ||
+    header.includes("/xl/workbook.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  }
+  if (
+    header.includes(
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ) ||
+    header.includes("/ppt/presentation.xml")
+  ) {
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  }
+  return "application/zip";
+}
+
+function sniffMime(bufferLike) {
+  const buffer = normalizeSniffBuffer(bufferLike);
+  if (!buffer || buffer.length < 4) {
+    return undefined;
+  }
+  if (buffer.toString("ascii", 0, 4) === "caff") {
+    return "audio/x-caf";
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer.toString("ascii", 1, 4) === "PNG"
+  ) {
+    return "image/png";
+  }
+  if (buffer.toString("ascii", 0, 4) === "GIF8") {
+    return "image/gif";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (buffer.toString("ascii", 0, 4) === "%PDF") {
+    return "application/pdf";
+  }
+  if (buffer[0] === 0x50 && buffer[1] === 0x4b) {
+    return sniffZipContainer(buffer);
+  }
+  return undefined;
+}
+
+async function detectMime(opts) {
+  const params = opts || {};
+  const ext = getFileExtension(params.filePath);
+  const extMime = ext ? MIME_BY_EXT[ext] : undefined;
+  const headerMime = normalizeMimeType(params.headerMime);
+  const sniffed = sniffMime(params.buffer);
+
+  if (sniffed && (!isGenericMime(sniffed) || !extMime)) {
+    return sniffed;
+  }
+  if (extMime) {
+    return extMime;
+  }
+  if (headerMime && !isGenericMime(headerMime)) {
+    return headerMime;
+  }
+  if (sniffed) {
+    return sniffed;
+  }
+  if (headerMime) {
+    return headerMime;
   }
   return undefined;
 }
@@ -18105,6 +18644,707 @@ function pruneMapToMaxSize(map, maxSize) {
       break;
     }
     map.delete(oldest.value);
+  }
+}
+
+function resolveGlobalSingleton(key, create) {
+  const globalStore = globalThis;
+  if (Object.prototype.hasOwnProperty.call(globalStore, key)) {
+    return globalStore[key];
+  }
+  const created = create();
+  globalStore[key] = created;
+  return created;
+}
+
+function resolveGlobalMap(key) {
+  return resolveGlobalSingleton(key, () => new Map());
+}
+
+function createScopedExpiringIdCache(options) {
+  const ttlMs = Math.max(0, options.ttlMs);
+  const cleanupThreshold = Math.max(1, Math.floor(options.cleanupThreshold));
+
+  const cleanupExpired = (scopeKey, entry, now) => {
+    for (const [id, timestamp] of entry) {
+      if (now - timestamp > ttlMs) {
+        entry.delete(id);
+      }
+    }
+    if (entry.size === 0) {
+      options.store.delete(scopeKey);
+    }
+  };
+
+  return {
+    record(scope, id, now = Date.now()) {
+      const scopeKey = String(scope);
+      const idKey = String(id);
+      let entry = options.store.get(scopeKey);
+      if (!entry) {
+        entry = new Map();
+        options.store.set(scopeKey, entry);
+      }
+      entry.set(idKey, now);
+      if (entry.size > cleanupThreshold) {
+        cleanupExpired(scopeKey, entry, now);
+      }
+    },
+    has(scope, id, now = Date.now()) {
+      const scopeKey = String(scope);
+      const idKey = String(id);
+      const entry = options.store.get(scopeKey);
+      if (!entry) {
+        return false;
+      }
+      cleanupExpired(scopeKey, entry, now);
+      return entry.has(idKey);
+    },
+    clear() {
+      options.store.clear();
+    },
+  };
+}
+
+async function runTasksWithConcurrency(params) {
+  const { tasks, limit, onTaskError } = params;
+  const errorMode = params.errorMode || "continue";
+  if (tasks.length === 0) {
+    return { results: [], firstError: undefined, hasError: false };
+  }
+
+  const resolvedLimit = Math.max(1, Math.min(limit, tasks.length));
+  const results = Array.from({ length: tasks.length });
+  let next = 0;
+  let firstError = undefined;
+  let hasError = false;
+
+  const workers = Array.from({ length: resolvedLimit }, async () => {
+    while (true) {
+      if (errorMode === "stop" && hasError) {
+        return;
+      }
+      const index = next;
+      next += 1;
+      if (index >= tasks.length) {
+        return;
+      }
+      try {
+        results[index] = await tasks[index]();
+      } catch (error) {
+        if (!hasError) {
+          firstError = error;
+          hasError = true;
+        }
+        if (typeof onTaskError === "function") {
+          onTaskError(error, index);
+        }
+        if (errorMode === "stop") {
+          return;
+        }
+      }
+    }
+  });
+
+  await Promise.allSettled(workers);
+  return { results, firstError, hasError };
+}
+
+function resolveInboundDebounceNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.max(0, Math.trunc(value));
+}
+
+function resolveInboundDebounceMs(params) {
+  const inbound =
+    params && params.cfg && params.cfg.messages && params.cfg.messages.inbound;
+  const override = resolveInboundDebounceNumber(params && params.overrideMs);
+  const byChannel =
+    inbound && inbound.byChannel
+      ? resolveInboundDebounceNumber(inbound.byChannel[params.channel])
+      : undefined;
+  const base = resolveInboundDebounceNumber(inbound && inbound.debounceMs);
+  return override ?? byChannel ?? base ?? 0;
+}
+
+function createInboundDebouncer(params) {
+  const buffers = new Map();
+  const keyChains = new Map();
+  const defaultDebounceMs = Math.max(0, Math.trunc(params.debounceMs));
+  const maxTrackedKeys = Math.max(
+    1,
+    Math.trunc(params.maxTrackedKeys ?? 2048),
+  );
+
+  const resolveDebounceMs = (item) => {
+    const resolved =
+      typeof params.resolveDebounceMs === "function"
+        ? params.resolveDebounceMs(item)
+        : undefined;
+    if (typeof resolved !== "number" || !Number.isFinite(resolved)) {
+      return defaultDebounceMs;
+    }
+    return Math.max(0, Math.trunc(resolved));
+  };
+
+  const runFlush = async (items) => {
+    try {
+      await params.onFlush(items);
+    } catch (err) {
+      try {
+        if (typeof params.onError === "function") {
+          params.onError(err, items);
+        }
+      } catch {
+        // Keep the keyed chain non-throwing even if the reporter fails.
+      }
+    }
+  };
+
+  const enqueueKeyTask = (key, task) => {
+    const previous = keyChains.get(key) || Promise.resolve();
+    const next = previous.catch(() => undefined).then(task);
+    const settled = next.catch(() => undefined);
+    keyChains.set(key, settled);
+    const cleanup = () => {
+      if (keyChains.get(key) === settled) {
+        keyChains.delete(key);
+      }
+    };
+    settled.then(cleanup, cleanup);
+    return next;
+  };
+
+  const enqueueReservedKeyTask = (key, task) => {
+    let readyReleased = false;
+    let releaseReady;
+    const ready = new Promise((resolve) => {
+      releaseReady = resolve;
+    });
+    return {
+      task: enqueueKeyTask(key, async () => {
+        await ready;
+        await task();
+      }),
+      release() {
+        if (readyReleased) {
+          return;
+        }
+        readyReleased = true;
+        releaseReady();
+      },
+    };
+  };
+
+  const releaseBuffer = (buffer) => {
+    if (buffer.readyReleased) {
+      return;
+    }
+    buffer.readyReleased = true;
+    buffer.releaseReady();
+  };
+
+  const flushBuffer = async (key, buffer) => {
+    if (buffers.get(key) === buffer) {
+      buffers.delete(key);
+    }
+    if (buffer.timeout) {
+      clearTimeout(buffer.timeout);
+      buffer.timeout = null;
+    }
+    releaseBuffer(buffer);
+    await buffer.task;
+  };
+
+  const flushKey = async (key) => {
+    const buffer = buffers.get(key);
+    if (!buffer) {
+      return;
+    }
+    await flushBuffer(key, buffer);
+  };
+
+  const scheduleFlush = (key, buffer) => {
+    if (buffer.timeout) {
+      clearTimeout(buffer.timeout);
+    }
+    buffer.timeout = setTimeout(async () => {
+      await flushBuffer(key, buffer);
+    }, buffer.debounceMs);
+    if (buffer.timeout && typeof buffer.timeout.unref === "function") {
+      buffer.timeout.unref();
+    }
+  };
+
+  const canTrackKey = (key) => {
+    if (buffers.has(key) || keyChains.has(key)) {
+      return true;
+    }
+    return new Set([...buffers.keys(), ...keyChains.keys()]).size < maxTrackedKeys;
+  };
+
+  const enqueue = async (item) => {
+    const key = params.buildKey(item);
+    const debounceMs = resolveDebounceMs(item);
+    const canDebounce =
+      debounceMs > 0 &&
+      (typeof params.shouldDebounce === "function"
+        ? params.shouldDebounce(item)
+        : true);
+
+    if (!canDebounce || !key) {
+      if (key) {
+        if (buffers.has(key)) {
+          const reservedTask = enqueueReservedKeyTask(key, async () => {
+            await runFlush([item]);
+          });
+          try {
+            await flushKey(key);
+          } finally {
+            reservedTask.release();
+          }
+          await reservedTask.task;
+          return;
+        }
+        if (keyChains.has(key)) {
+          await enqueueKeyTask(key, async () => {
+            await runFlush([item]);
+          });
+          return;
+        }
+      }
+      await runFlush([item]);
+      return;
+    }
+
+    const existing = buffers.get(key);
+    if (existing) {
+      existing.items.push(item);
+      existing.debounceMs = debounceMs;
+      scheduleFlush(key, existing);
+      return;
+    }
+    if (!canTrackKey(key)) {
+      await enqueueKeyTask(key, async () => {
+        await runFlush([item]);
+      });
+      return;
+    }
+
+    let buffer;
+    const reservedTask = enqueueReservedKeyTask(key, async () => {
+      if (buffer.items.length === 0) {
+        return;
+      }
+      await runFlush(buffer.items);
+    });
+    buffer = {
+      items: [item],
+      timeout: null,
+      debounceMs,
+      releaseReady: reservedTask.release,
+      readyReleased: false,
+      task: reservedTask.task,
+    };
+    buffers.set(key, buffer);
+    scheduleFlush(key, buffer);
+  };
+
+  return { enqueue, flushKey };
+}
+
+function normalizeMarkdownChannelId(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function isMarkdownTableMode(value) {
+  return value === "off" || value === "bullets" || value === "code" || value === "block";
+}
+
+function resolveMarkdownModeFromSection(section, accountId) {
+  if (!section || typeof section !== "object") {
+    return undefined;
+  }
+  const accounts = section.accounts;
+  if (accounts && typeof accounts === "object") {
+    const match = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    const matchMode = match && match.markdown && match.markdown.tables;
+    if (isMarkdownTableMode(matchMode)) {
+      return matchMode;
+    }
+  }
+  const sectionMode = section.markdown && section.markdown.tables;
+  return isMarkdownTableMode(sectionMode) ? sectionMode : undefined;
+}
+
+function resolveMarkdownTableMode(params) {
+  const channel = normalizeMarkdownChannelId(params && params.channel);
+  const defaultMode = "code";
+  if (!channel || !params || !params.cfg) {
+    return defaultMode;
+  }
+  const channelsConfig = params.cfg.channels;
+  const section =
+    (channelsConfig && channelsConfig[channel]) ||
+    params.cfg[channel] ||
+    undefined;
+  const resolved =
+    resolveMarkdownModeFromSection(section, params.accountId) || defaultMode;
+  return resolved === "block" ? "code" : resolved;
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed.includes("|")) {
+    return null;
+  }
+  let body = trimmed;
+  if (body.startsWith("|")) {
+    body = body.slice(1);
+  }
+  if (body.endsWith("|")) {
+    body = body.slice(0, -1);
+  }
+  const cells = body.split("|").map((cell) => cell.trim());
+  return cells.length >= 2 ? cells : null;
+}
+
+function isMarkdownTableSeparator(line) {
+  const cells = splitMarkdownTableRow(line);
+  if (!cells || cells.length === 0) {
+    return false;
+  }
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function isMarkdownTableRow(line, expectedCells) {
+  const cells = splitMarkdownTableRow(line);
+  return !!cells && (!expectedCells || cells.length === expectedCells);
+}
+
+function renderMarkdownTableAsBullets(headers, rows) {
+  const lines = [];
+  rows.forEach((row, rowIndex) => {
+    const label = row[0] || "";
+    if (label) {
+      lines.push(label);
+    }
+    for (let index = 1; index < Math.max(headers.length, row.length); index += 1) {
+      const value = row[index] || "";
+      if (!value) {
+        continue;
+      }
+      const header = headers[index] || `Column ${index + 1}`;
+      lines.push(`\u2022 ${header}: ${value}`);
+    }
+    if (rowIndex < rows.length - 1) {
+      lines.push("");
+    }
+  });
+  return lines.join("\n");
+}
+
+function convertMarkdownTables(markdown, mode) {
+  if (!markdown || mode === "off") {
+    return markdown;
+  }
+  const effectiveMode = mode === "block" ? "code" : mode;
+  if (effectiveMode !== "code" && effectiveMode !== "bullets") {
+    return markdown;
+  }
+
+  const lines = String(markdown).split(/\r?\n/);
+  const output = [];
+  let changed = false;
+  let index = 0;
+  while (index < lines.length) {
+    const header = splitMarkdownTableRow(lines[index]);
+    if (
+      !header ||
+      index + 1 >= lines.length ||
+      !isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      output.push(lines[index]);
+      index += 1;
+      continue;
+    }
+
+    const tableLines = [lines[index], lines[index + 1]];
+    const rows = [];
+    index += 2;
+    while (index < lines.length && isMarkdownTableRow(lines[index])) {
+      const cells = splitMarkdownTableRow(lines[index]);
+      if (!cells) {
+        break;
+      }
+      rows.push(cells);
+      tableLines.push(lines[index]);
+      index += 1;
+    }
+    if (rows.length === 0) {
+      output.push(...tableLines);
+      continue;
+    }
+
+    changed = true;
+    if (effectiveMode === "code") {
+      output.push("```", tableLines.join("\n"), "```");
+    } else {
+      output.push(renderMarkdownTableAsBullets(header, rows));
+    }
+  }
+
+  return changed ? output.join("\n") : markdown;
+}
+
+const HISTORY_CONTEXT_MARKER = "[Chat messages since your last reply - for context]";
+const CURRENT_MESSAGE_MARKER = "[Current message - respond to this]";
+const DEFAULT_GROUP_HISTORY_LIMIT = 50;
+
+function evictOldHistoryKeys(historyMap, maxKeys = 1000) {
+  if (historyMap.size <= maxKeys) {
+    return;
+  }
+  const keysToDelete = historyMap.size - maxKeys;
+  const iterator = historyMap.keys();
+  for (let index = 0; index < keysToDelete; index += 1) {
+    const key = iterator.next().value;
+    if (key !== undefined) {
+      historyMap.delete(key);
+    }
+  }
+}
+
+function buildHistoryContext(params) {
+  const lineBreak = params.lineBreak ?? "\n";
+  if (!String(params.historyText || "").trim()) {
+    return params.currentMessage;
+  }
+  return [
+    HISTORY_CONTEXT_MARKER,
+    params.historyText,
+    "",
+    CURRENT_MESSAGE_MARKER,
+    params.currentMessage,
+  ].join(lineBreak);
+}
+
+function appendHistoryEntry(params) {
+  if (params.limit <= 0) {
+    return [];
+  }
+  const history = params.historyMap.get(params.historyKey) || [];
+  history.push(params.entry);
+  while (history.length > params.limit) {
+    history.shift();
+  }
+  if (params.historyMap.has(params.historyKey)) {
+    params.historyMap.delete(params.historyKey);
+  }
+  params.historyMap.set(params.historyKey, history);
+  evictOldHistoryKeys(params.historyMap);
+  return history;
+}
+
+function recordPendingHistoryEntry(params) {
+  return appendHistoryEntry(params);
+}
+
+function recordPendingHistoryEntryIfEnabled(params) {
+  if (!params.entry || params.limit <= 0) {
+    return [];
+  }
+  return recordPendingHistoryEntry({
+    historyMap: params.historyMap,
+    historyKey: params.historyKey,
+    entry: params.entry,
+    limit: params.limit,
+  });
+}
+
+function buildHistoryContextFromEntries(params) {
+  const lineBreak = params.lineBreak ?? "\n";
+  const entries =
+    params.excludeLast === false ? params.entries : params.entries.slice(0, -1);
+  if (entries.length === 0) {
+    return params.currentMessage;
+  }
+  return buildHistoryContext({
+    historyText: entries.map(params.formatEntry).join(lineBreak),
+    currentMessage: params.currentMessage,
+    lineBreak,
+  });
+}
+
+function buildPendingHistoryContextFromMap(params) {
+  if (params.limit <= 0) {
+    return params.currentMessage;
+  }
+  return buildHistoryContextFromEntries({
+    entries: params.historyMap.get(params.historyKey) || [],
+    currentMessage: params.currentMessage,
+    formatEntry: params.formatEntry,
+    lineBreak: params.lineBreak,
+    excludeLast: false,
+  });
+}
+
+function buildHistoryContextFromMap(params) {
+  if (params.limit <= 0) {
+    return params.currentMessage;
+  }
+  const entries = params.entry
+    ? appendHistoryEntry({
+        historyMap: params.historyMap,
+        historyKey: params.historyKey,
+        entry: params.entry,
+        limit: params.limit,
+      })
+    : params.historyMap.get(params.historyKey) || [];
+  return buildHistoryContextFromEntries({
+    entries,
+    currentMessage: params.currentMessage,
+    formatEntry: params.formatEntry,
+    lineBreak: params.lineBreak,
+    excludeLast: params.excludeLast,
+  });
+}
+
+function clearHistoryEntries(params) {
+  params.historyMap.set(params.historyKey, []);
+}
+
+function clearHistoryEntriesIfEnabled(params) {
+  if (params.limit <= 0) {
+    return;
+  }
+  clearHistoryEntries({
+    historyMap: params.historyMap,
+    historyKey: params.historyKey,
+  });
+}
+
+function createDedupeCache(options) {
+  const ttlMs = Math.max(0, options.ttlMs);
+  const maxSize = Math.max(0, Math.floor(options.maxSize));
+  const cache = new Map();
+
+  const touch = (key, now) => {
+    cache.delete(key);
+    cache.set(key, now);
+  };
+
+  const prune = (now) => {
+    const cutoff = ttlMs > 0 ? now - ttlMs : undefined;
+    if (cutoff !== undefined) {
+      for (const [entryKey, entryTs] of cache) {
+        if (entryTs < cutoff) {
+          cache.delete(entryKey);
+        }
+      }
+    }
+    if (maxSize <= 0) {
+      cache.clear();
+      return;
+    }
+    pruneMapToMaxSize(cache, maxSize);
+  };
+
+  const hasUnexpired = (key, now, touchOnRead) => {
+    const existing = cache.get(key);
+    if (existing === undefined) {
+      return false;
+    }
+    if (ttlMs > 0 && now - existing >= ttlMs) {
+      cache.delete(key);
+      return false;
+    }
+    if (touchOnRead) {
+      touch(key, now);
+    }
+    return true;
+  };
+
+  return {
+    check: (key, now = Date.now()) => {
+      if (!key) {
+        return false;
+      }
+      if (hasUnexpired(key, now, true)) {
+        return true;
+      }
+      touch(key, now);
+      prune(now);
+      return false;
+    },
+    peek: (key, now = Date.now()) => {
+      if (!key) {
+        return false;
+      }
+      return hasUnexpired(key, now, false);
+    },
+    delete: (key) => {
+      if (!key) {
+        return;
+      }
+      cache.delete(key);
+    },
+    clear: () => {
+      cache.clear();
+    },
+    size: () => cache.size,
+  };
+}
+
+function resolveGlobalDedupeCache(key, options) {
+  return resolveGlobalSingleton(key, () => createDedupeCache(options));
+}
+
+function enqueueKeyedTask(params) {
+  if (params.hooks && typeof params.hooks.onEnqueue === "function") {
+    params.hooks.onEnqueue();
+  }
+  const previous = params.tails.get(params.key) || Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(params.task)
+    .finally(() => {
+      if (params.hooks && typeof params.hooks.onSettle === "function") {
+        params.hooks.onSettle();
+      }
+    });
+  const tail = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  params.tails.set(params.key, tail);
+  const cleanup = () => {
+    if (params.tails.get(params.key) === tail) {
+      params.tails.delete(params.key);
+    }
+  };
+  tail.then(cleanup, cleanup);
+  return current;
+}
+
+class KeyedAsyncQueue {
+  constructor() {
+    this.tails = new Map();
+  }
+
+  getTailMapForTesting() {
+    return this.tails;
+  }
+
+  enqueue(key, task, hooks) {
+    return enqueueKeyedTask({
+      tails: this.tails,
+      key,
+      task,
+      ...(hooks ? { hooks } : {}),
+    });
   }
 }
 
@@ -18225,6 +19465,337 @@ async function resolveTargetsWithOptionalToken(params) {
   });
   return resolved.map(params.mapResolved);
 }
+
+async function readResponseChunkWithIdleTimeout(reader, chunkTimeoutMs, onIdleTimeout) {
+  let timeoutId;
+  let timedOut = false;
+  return await new Promise((resolve, reject) => {
+    const clear = () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+        timeoutId = undefined;
+      }
+    };
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      clear();
+      void reader.cancel().catch(() => undefined);
+      reject(
+        onIdleTimeout
+          ? onIdleTimeout({ chunkTimeoutMs })
+          : new Error(`Media download stalled: no data received for ${chunkTimeoutMs}ms`),
+      );
+    }, chunkTimeoutMs);
+    void reader.read().then(
+      (result) => {
+        clear();
+        if (!timedOut) {
+          resolve(result);
+        }
+      },
+      (error) => {
+        clear();
+        if (!timedOut) {
+          reject(error);
+        }
+      },
+    );
+  });
+}
+
+async function readResponsePrefix(res, maxBytes, opts = {}) {
+  const body = res.body;
+  if (!body || typeof body.getReader !== "function") {
+    const fallback = Buffer.from(await res.arrayBuffer());
+    if (fallback.length > maxBytes) {
+      return {
+        buffer: fallback.subarray(0, maxBytes),
+        size: fallback.length,
+        truncated: true,
+      };
+    }
+    return { buffer: fallback, size: fallback.length, truncated: false };
+  }
+
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  let size = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const result = opts.chunkTimeoutMs
+        ? await readResponseChunkWithIdleTimeout(
+            reader,
+            opts.chunkTimeoutMs,
+            opts.onIdleTimeout,
+          )
+        : await reader.read();
+      if (result.done) {
+        size = total;
+        break;
+      }
+      const value = result.value;
+      if (!value || !value.length) {
+        continue;
+      }
+      const nextTotal = total + value.length;
+      if (nextTotal > maxBytes) {
+        const remaining = maxBytes - total;
+        if (remaining > 0) {
+          chunks.push(value.subarray(0, remaining));
+          total += remaining;
+        }
+        size = nextTotal;
+        truncated = true;
+        try {
+          await reader.cancel();
+        } catch {}
+        break;
+      }
+      chunks.push(value);
+      total = nextTotal;
+      size = total;
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+  return {
+    buffer: Buffer.concat(
+      chunks.map((chunk) => Buffer.from(chunk)),
+      total,
+    ),
+    size,
+    truncated,
+  };
+}
+
+async function readResponseWithLimit(res, maxBytes, opts = {}) {
+  const onOverflow =
+    opts.onOverflow ||
+    ((params) =>
+      new Error(`Content too large: ${params.size} bytes (limit: ${params.maxBytes} bytes)`));
+  const prefix = await readResponsePrefix(res, maxBytes, {
+    chunkTimeoutMs: opts.chunkTimeoutMs,
+    onIdleTimeout: opts.onIdleTimeout,
+  });
+  if (prefix.truncated) {
+    throw onOverflow({ size: prefix.size, maxBytes, res });
+  }
+  return prefix.buffer;
+}
+
+const DEFAULT_RETRY_CONFIG = {
+  attempts: 3,
+  minDelayMs: 300,
+  maxDelayMs: 30000,
+  jitter: 0,
+};
+
+const TELEGRAM_RETRY_DEFAULTS = {
+  attempts: 3,
+  minDelayMs: 400,
+  maxDelayMs: 30000,
+  jitter: 0.1,
+};
+
+const CHANNEL_API_RETRY_RE = /429|timeout|connect|reset|closed|unavailable|temporarily/i;
+
+function asFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function clampRetryNumber(value, fallback, min, max) {
+  const next = asFiniteNumber(value);
+  if (next === undefined) {
+    return fallback;
+  }
+  const floor = typeof min === "number" ? min : Number.NEGATIVE_INFINITY;
+  const ceiling = typeof max === "number" ? max : Number.POSITIVE_INFINITY;
+  return Math.min(Math.max(next, floor), ceiling);
+}
+
+function resolveRetryConfig(defaults = DEFAULT_RETRY_CONFIG, overrides) {
+  const base = defaults || DEFAULT_RETRY_CONFIG;
+  const attempts = Math.max(
+    1,
+    Math.round(clampRetryNumber(overrides && overrides.attempts, base.attempts, 1)),
+  );
+  const minDelayMs = Math.max(
+    0,
+    Math.round(clampRetryNumber(overrides && overrides.minDelayMs, base.minDelayMs, 0)),
+  );
+  const maxDelayMs = Math.max(
+    minDelayMs,
+    Math.round(clampRetryNumber(overrides && overrides.maxDelayMs, base.maxDelayMs, 0)),
+  );
+  const jitter = clampRetryNumber(overrides && overrides.jitter, base.jitter, 0, 1);
+  return { attempts, minDelayMs, maxDelayMs, jitter };
+}
+
+function generateSecureFraction() {
+  return crypto.randomBytes(6).readUIntBE(0, 6) / 0x1000000000000;
+}
+
+function applyRetryJitter(delayMs, jitter) {
+  if (jitter <= 0) {
+    return delayMs;
+  }
+  const offset = (generateSecureFraction() * 2 - 1) * jitter;
+  return Math.max(0, Math.round(delayMs * (1 + offset)));
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryAsync(fn, attemptsOrOptions = 3, initialDelayMs = 300) {
+  if (typeof attemptsOrOptions === "number") {
+    const attempts = Math.max(1, Math.round(attemptsOrOptions));
+    let lastErr;
+    for (let index = 0; index < attempts; index += 1) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (index === attempts - 1) {
+          break;
+        }
+        const delay = initialDelayMs * 2 ** index;
+        if (delay > 0) {
+          await sleepMs(delay);
+        }
+      }
+    }
+    throw lastErr || new Error("Retry failed");
+  }
+
+  const options = attemptsOrOptions || {};
+  const resolved = resolveRetryConfig(DEFAULT_RETRY_CONFIG, options);
+  const maxAttempts = resolved.attempts;
+  const minDelayMs = resolved.minDelayMs;
+  const maxDelayMs =
+    Number.isFinite(resolved.maxDelayMs) && resolved.maxDelayMs > 0
+      ? resolved.maxDelayMs
+      : Number.POSITIVE_INFINITY;
+  const shouldRetry = options.shouldRetry || (() => true);
+  let lastErr;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts || !shouldRetry(err, attempt)) {
+        break;
+      }
+
+      const retryAfterMs =
+        typeof options.retryAfterMs === "function" ? options.retryAfterMs(err) : undefined;
+      const hasRetryAfter = typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs);
+      const baseDelay = hasRetryAfter
+        ? Math.max(retryAfterMs, minDelayMs)
+        : minDelayMs * 2 ** (attempt - 1);
+      let delay = Math.min(baseDelay, maxDelayMs);
+      delay = applyRetryJitter(delay, resolved.jitter);
+      delay = Math.min(Math.max(delay, minDelayMs), maxDelayMs);
+
+      if (typeof options.onRetry === "function") {
+        options.onRetry({
+          attempt,
+          maxAttempts,
+          delayMs: delay,
+          err,
+          label: options.label,
+        });
+      }
+      if (delay > 0) {
+        await sleepMs(delay);
+      }
+    }
+  }
+
+  throw lastErr || new Error("Retry failed");
+}
+
+function resolveChannelApiShouldRetry(params) {
+  if (!params.shouldRetry) {
+    return (err) => CHANNEL_API_RETRY_RE.test(formatErrorMessage(err));
+  }
+  if (params.strictShouldRetry) {
+    return params.shouldRetry;
+  }
+  return (err) => params.shouldRetry(err) || CHANNEL_API_RETRY_RE.test(formatErrorMessage(err));
+}
+
+function getChannelApiRetryAfterMs(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate =
+    err.parameters && typeof err.parameters === "object"
+      ? err.parameters.retry_after
+      : err.response && typeof err.response === "object" && err.response.parameters
+        ? err.response.parameters.retry_after
+        : err.error && typeof err.error === "object" && err.error.parameters
+          ? err.error.parameters.retry_after
+          : undefined;
+  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate * 1000 : undefined;
+}
+
+function createRateLimitRetryRunner(params) {
+  const retryConfig = resolveRetryConfig(params.defaults, {
+    ...(params.configRetry || {}),
+    ...(params.retry || {}),
+  });
+  return (fn, label) =>
+    retryAsync(fn, {
+      ...retryConfig,
+      label,
+      shouldRetry: params.shouldRetry,
+      retryAfterMs: params.retryAfterMs,
+      onRetry: params.verbose
+        ? (info) => {
+            const labelText = info.label || "request";
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            console.warn(
+              `${params.logLabel} ${labelText} rate limited, retry ` +
+                `${info.attempt}/${maxRetries} in ${info.delayMs}ms`,
+            );
+          }
+        : undefined,
+    });
+}
+
+function createChannelApiRetryRunner(params = {}) {
+  const retryConfig = resolveRetryConfig(TELEGRAM_RETRY_DEFAULTS, {
+    ...(params.configRetry || {}),
+    ...(params.retry || {}),
+  });
+  const shouldRetry = resolveChannelApiShouldRetry(params);
+
+  return (fn, label) =>
+    retryAsync(fn, {
+      ...retryConfig,
+      label,
+      shouldRetry,
+      retryAfterMs: getChannelApiRetryAfterMs,
+      onRetry: params.verbose
+        ? (info) => {
+            const maxRetries = Math.max(1, info.maxAttempts - 1);
+            console.warn(
+              `channel send retry ${info.attempt}/${maxRetries} for ${
+                info.label || label || "request"
+              } in ${info.delayMs}ms: ${formatErrorMessage(info.err)}`,
+            );
+          }
+        : undefined,
+    });
+}
+
+const createTelegramRetryRunner = createChannelApiRetryRunner;
 
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
@@ -20989,6 +22560,7 @@ function passthrough(value) {
 
 const textRuntime = {
   hasNonEmptyString,
+  isAutoLinkedFileRef,
   localeLowercasePreservingWhitespace,
   lowercasePreservingWhitespace,
   normalizeAtHashSlug,
@@ -21001,6 +22573,34 @@ const textRuntime = {
   normalizeStringEntriesLower,
   normalizeStringifiedOptionalString,
   readStringValue,
+};
+
+const textAutolinkRuntime = {
+  isAutoLinkedFileRef,
+};
+
+const lazyValueRuntime = {
+  createCachedLazyValueGetter,
+};
+
+const commandPrimitivesRuntime = {
+  isAbortRequestText,
+  isBtwRequestText,
+};
+
+const commandDetectionRuntime = {
+  hasControlCommand,
+  hasInlineCommandTokens,
+  isControlCommandMessage,
+  shouldComputeCommandAuthorized,
+};
+
+const mediaMimeRuntime = {
+  detectMime,
+  extensionForMime,
+  getFileExtension,
+  mediaKindFromMime,
+  normalizeMimeType,
 };
 
 const stringNormalizationRuntime = {
@@ -21040,6 +22640,50 @@ const collectionRuntime = {
   pruneMapToMaxSize,
 };
 
+const dedupeRuntime = {
+  createDedupeCache,
+  resolveGlobalDedupeCache,
+};
+
+const globalSingletonRuntime = {
+  createScopedExpiringIdCache,
+  resolveGlobalMap,
+  resolveGlobalSingleton,
+};
+
+const concurrencyRuntime = {
+  runTasksWithConcurrency,
+};
+
+const channelInboundDebounceRuntime = {
+  createInboundDebouncer,
+  resolveInboundDebounceMs,
+};
+
+const markdownTableRuntime = {
+  convertMarkdownTables,
+  resolveMarkdownTableMode,
+};
+
+const replyHistoryRuntime = {
+  DEFAULT_GROUP_HISTORY_LIMIT,
+  HISTORY_CONTEXT_MARKER,
+  buildHistoryContext,
+  buildHistoryContextFromEntries,
+  buildHistoryContextFromMap,
+  buildPendingHistoryContextFromMap,
+  clearHistoryEntries,
+  clearHistoryEntriesIfEnabled,
+  evictOldHistoryKeys,
+  recordPendingHistoryEntry,
+  recordPendingHistoryEntryIfEnabled,
+};
+
+const keyedAsyncQueueRuntime = {
+  KeyedAsyncQueue,
+  enqueueKeyedTask,
+};
+
 const asyncLockRuntime = {
   createAsyncLock,
 };
@@ -21051,6 +22695,18 @@ const transportReadyRuntime = {
 const targetResolverRuntime = {
   buildUnresolvedTargetResults,
   resolveTargetsWithOptionalToken,
+};
+
+const responseLimitRuntime = {
+  readResponseWithLimit,
+};
+
+const retryRuntime = {
+  TELEGRAM_RETRY_DEFAULTS,
+  createRateLimitRetryRunner,
+  createTelegramRetryRunner,
+  resolveRetryConfig,
+  retryAsync,
 };
 
 const errorRuntime = {
@@ -21260,6 +22916,7 @@ const replyPayloadRuntime = {
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
+    DEFAULT_GROUP_HISTORY_LIMIT,
     DEFAULT_MAIN_KEY,
     PAIRING_APPROVED_MESSAGE,
     SILENT_REPLY_TOKEN,
@@ -21279,6 +22936,10 @@ const genericSdk = new Proxy(
     buildRuntimeAccountStatusSnapshot,
     buildTokenChannelStatusSummary,
     buildWebhookChannelStatusSummary,
+    buildHistoryContext,
+    buildHistoryContextFromEntries,
+    buildHistoryContextFromMap,
+    buildPendingHistoryContextFromMap,
     coerceSecretRef,
     collectErrorGraphCandidates,
     collectIssuesForEnabledAccounts,
@@ -21287,8 +22948,14 @@ const genericSdk = new Proxy(
     createAccountActionGate,
     createActionGate,
     createAccountListHelpers,
+    createCachedLazyValueGetter,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createDedupeCache,
+    createInboundDebouncer,
+    createScopedExpiringIdCache,
+    createRateLimitRetryRunner,
+    createTelegramRetryRunner,
     createAsyncLock,
     createAsyncComputedAccountStatusAdapter,
     createComputedAccountStatusAdapter,
@@ -21297,15 +22964,22 @@ const genericSdk = new Proxy(
     createTempDownloadTarget,
     createNormalizedOutboundDeliverer,
     createUnionActionGate,
+    clearHistoryEntries,
+    clearHistoryEntriesIfEnabled,
     chunkMarkdownTextWithMode,
     chunkText,
     chunkTextForOutbound,
     chunkTextWithMode,
+    convertMarkdownTables,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
+    detectMime,
     deliverFormattedTextWithAttachments,
     deliverTextOrMediaReply,
     deriveLastRoutePolicy,
+    enqueueKeyedTask,
+    evictOldHistoryKeys,
+    extensionForMime,
     extractErrorCode,
     extractToolPayload,
     formatUtcTimestamp,
@@ -21319,12 +22993,21 @@ const genericSdk = new Proxy(
     generateSecureToken,
     generateSecureUuid,
     getSubagentDepth,
+    getFileExtension,
     hasNonEmptyString,
     hasConfiguredSecretInput,
+    hasControlCommand,
+    hasInlineCommandTokens,
+    HISTORY_CONTEXT_MARKER,
+    KeyedAsyncQueue,
     hasOutboundMedia,
     hasOutboundReplyContent,
     hasOutboundText,
     isAcpSessionKey,
+    isAbortRequestText,
+    isAutoLinkedFileRef,
+    isBtwRequestText,
+    isControlCommandMessage,
     isCronSessionKey,
     isDangerousNameMatchingEnabled,
     isNumericTargetId,
@@ -21343,6 +23026,7 @@ const genericSdk = new Proxy(
     logInboundDrop,
     logTypingFailure,
     lowercasePreservingWhitespace,
+    mediaKindFromMime,
     mergeAccountConfig,
     normalizeAtHashSlug,
     normalizeAccountId,
@@ -21352,6 +23036,7 @@ const genericSdk = new Proxy(
     normalizeHyphenSlug,
     normalizeLowercaseStringOrEmpty,
     normalizeMainKey,
+    normalizeMimeType,
     normalizeMessageChannel,
     normalizeNullableString,
     normalizeOptionalAccountId,
@@ -21378,7 +23063,14 @@ const genericSdk = new Proxy(
     readBooleanParam,
     readErrorName,
     readNumberParam,
+    readResponseWithLimit,
     readReactionParams,
+    resolveInboundDebounceMs,
+    resolveMarkdownTableMode,
+    resolveRetryConfig,
+    runTasksWithConcurrency,
+    recordPendingHistoryEntry,
+    recordPendingHistoryEntryIfEnabled,
     readStringValue,
     readStringArrayParam,
     readStringOrNumberParam,
@@ -21387,6 +23079,9 @@ const genericSdk = new Proxy(
     resolveAccountWithDefaultFallback,
     resolveConfiguredFromCredentialStatuses,
     resolveConfiguredFromRequiredCredentialStatuses,
+    resolveGlobalDedupeCache,
+    resolveGlobalMap,
+    resolveGlobalSingleton,
     resolveListedDefaultAccountId,
     resolveMergedAccountConfig,
     resolveNormalizedAccountEntry,
@@ -21419,11 +23114,14 @@ const genericSdk = new Proxy(
     sendPayloadMediaSequenceOrFallback,
     sendPayloadWithChunkedTextAndMedia,
     sendTextMediaPayload,
+    shouldComputeCommandAuthorized,
     stringEnum,
     stringifyToolPayload,
     stripPlainTextToolCallBlocks,
     textResult,
     ToolAuthorizationError,
+    retryAsync,
+    TELEGRAM_RETRY_DEFAULTS,
     waitForTransportReady,
     withTempDownloadPath,
     withNormalizedTimestamp,
@@ -21448,6 +23146,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-runtime"
   ) {
     return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/text-autolink-runtime" ||
+    request === "@openclaw/plugin-sdk/text-autolink-runtime"
+  ) {
+    return textAutolinkRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lazy-value" ||
+    request === "@openclaw/plugin-sdk/lazy-value"
+  ) {
+    return lazyValueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-primitives-runtime" ||
+    request === "@openclaw/plugin-sdk/command-primitives-runtime"
+  ) {
+    return commandPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-detection" ||
+    request === "@openclaw/plugin-sdk/command-detection"
+  ) {
+    return commandDetectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-mime" ||
+    request === "@openclaw/plugin-sdk/media-mime"
+  ) {
+    return mediaMimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
@@ -21498,6 +23226,48 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return collectionRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/dedupe-runtime" ||
+    request === "@openclaw/plugin-sdk/dedupe-runtime"
+  ) {
+    return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/global-singleton" ||
+    request === "@openclaw/plugin-sdk/global-singleton"
+  ) {
+    return globalSingletonRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/concurrency-runtime" ||
+    request === "@openclaw/plugin-sdk/concurrency-runtime"
+  ) {
+    return concurrencyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-inbound-debounce" ||
+    request === "@openclaw/plugin-sdk/channel-inbound-debounce"
+  ) {
+    return channelInboundDebounceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/markdown-table-runtime" ||
+    request === "@openclaw/plugin-sdk/markdown-table-runtime"
+  ) {
+    return markdownTableRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-history" ||
+    request === "@openclaw/plugin-sdk/reply-history"
+  ) {
+    return replyHistoryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/keyed-async-queue" ||
+    request === "@openclaw/plugin-sdk/keyed-async-queue"
+  ) {
+    return keyedAsyncQueueRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/async-lock-runtime" ||
     request === "@openclaw/plugin-sdk/async-lock-runtime"
   ) {
@@ -21514,6 +23284,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/target-resolver-runtime"
   ) {
     return targetResolverRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/response-limit-runtime" ||
+    request === "@openclaw/plugin-sdk/response-limit-runtime"
+  ) {
+    return responseLimitRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/retry-runtime" ||
+    request === "@openclaw/plugin-sdk/retry-runtime"
+  ) {
+    return retryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
