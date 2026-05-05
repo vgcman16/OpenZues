@@ -7775,6 +7775,25 @@ def test_notification_route_create_accepts_nextcloud_talk_native_route_kind() ->
     assert route.conversation_target.channel == "nextcloud-talk"
 
 
+def test_notification_route_create_accepts_synology_chat_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Synology Chat Native Provider",
+        kind="synology-chat",
+        target="https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="synology-chat",
+            account_id="default",
+            peer_kind="direct",
+            peer_id="42",
+        ),
+    )
+
+    assert route.kind == "synology-chat"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "synology-chat"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -17014,6 +17033,89 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_nextcloud_talk_
         )
     ]
 
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_synology_chat_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-synology-chat"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Synology Chat Native Provider",
+        kind="synology-chat",
+        target="https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "synology-chat",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "42",
+        },
+    )
+    synology_posts: list[tuple[str, str, dict[str, str], dict[str, str] | None]] = []
+
+    def fake_request_form_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert payload is not None
+        synology_posts.append((method, target, payload, extra_headers))
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_form_provider_url",
+        fake_request_form_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="synology-chat",
+        to="42",
+        message="Synology **native** parity.",
+        account_id="default",
+        idempotency_key="idem-native-synology-chat-send",
+    )
+
+    assert result["messageId"].startswith("synology-chat:")
+    assert result["chatId"] == "42"
+    assert synology_posts == [
+        (
+            "POST",
+            "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+            {
+                "payload": json.dumps(
+                    {
+                        "text": "Synology **native** parity.",
+                        "user_ids": [42],
+                    },
+                    separators=(",", ":"),
+                )
+            },
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    ]
 
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_splits_zalo_media(

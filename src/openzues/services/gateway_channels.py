@@ -49,6 +49,11 @@ _CHANNEL_META = (
         "detailLabel": "Nextcloud Talk",
     },
     {
+        "id": "synology-chat",
+        "label": "Synology Chat",
+        "detailLabel": "Synology Chat",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",

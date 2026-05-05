@@ -4814,6 +4814,7 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "feishu",
         "googlechat",
         "nextcloud-talk",
+        "synology-chat",
         "line",
         "matrix",
     ]
@@ -5017,9 +5018,47 @@ def test_gateway_channels_endpoint_classifies_nextcloud_talk_native_route(tmp_pa
     assert payload["channelDefaultAccountId"]["nextcloud-talk"] == "default"
 
 
+def test_gateway_channels_endpoint_classifies_synology_chat_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Synology Chat Native Gateway",
+                "kind": "synology-chat",
+                "target": (
+                    "https://nas.example.com/webapi/entry.cgi?"
+                    "api=SYNO.Chat.External&method=chatbot"
+                ),
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "synology-chat",
+                    "account_id": "default",
+                    "peer_kind": "direct",
+                    "peer_id": "42",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "synology-chat" in payload["channelOrder"]
+    assert payload["channelLabels"]["synology-chat"] == "Synology Chat"
+    assert payload["channelDetailLabels"]["synology-chat"] == "Synology Chat"
+    assert payload["channels"]["synology-chat"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["synology-chat"] == "default"
+
+
 NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
     '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
-    '"nextcloud-talk", "line", "matrix"].includes(routeKind)'
+    '"nextcloud-talk", "synology-chat", "line", "matrix"].includes(routeKind)'
 )
 
 
@@ -5080,6 +5119,18 @@ def test_notification_route_operator_form_offers_nextcloud_talk_native_routes() 
     )
 
     assert '<option value="nextcloud-talk">Nextcloud Talk native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_synology_chat_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="synology-chat">Synology Chat native route</option>' in template
     assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 

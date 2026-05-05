@@ -254,6 +254,7 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "feishu",
     "googlechat",
     "nextcloud-talk",
+    "synology-chat",
     "line",
     "matrix",
 }
@@ -3167,6 +3168,43 @@ def _nextcloud_talk_timestamp(result: object) -> int | None:
     return timestamp if isinstance(timestamp, int) else None
 
 
+def _synology_chat_incoming_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Synology Chat route target must be an http(s) incoming webhook URL.")
+    return target
+
+
+def _synology_chat_recipient_id(raw_target: str | None) -> int | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    try:
+        return int(target, 10)
+    except ValueError:
+        return None
+
+
+def _synology_chat_payload(
+    *,
+    text: str | None = None,
+    media_url: str | None = None,
+    recipient_id: int | None = None,
+) -> dict[str, str]:
+    body: dict[str, object] = {}
+    normalized_text = str(text or "").strip()
+    if normalized_text:
+        body["text"] = normalized_text
+    normalized_media_url = str(media_url or "").strip()
+    if normalized_media_url:
+        body["file_url"] = normalized_media_url
+    if recipient_id is not None:
+        body["user_ids"] = [recipient_id]
+    if "text" not in body and "file_url" not in body:
+        raise RuntimeError("Message must be non-empty for Synology Chat sends.")
+    return {"payload": json.dumps(body, separators=(",", ":"))}
+
+
 FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
 
@@ -5254,7 +5292,13 @@ def _conversation_target_route_match(
         return None
 
     if route_peer_kind not in {"", "*"} and route_peer_kind != event_peer_kind:
-        return None
+        if not (
+            route_channel == "synology-chat"
+            and route_peer_kind == "direct"
+            and route_peer_id
+            and route_peer_id == event_peer_id
+        ):
+            return None
     if route_peer_id not in {"", "*"} and not _conversation_target_peer_id_matches(
         channel=route_channel,
         route_peer_id=route_peer_id,
@@ -10099,6 +10143,8 @@ class OpsMeshService:
             return self._post_googlechat_provider_event
         if route_kind == "nextcloud-talk":
             return self._post_nextcloud_talk_provider_event
+        if route_kind == "synology-chat":
+            return self._post_synology_chat_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -17904,6 +17950,41 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_form_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {"Content-Type": "application/x-www-form-urlencoded"}
+        if extra_headers:
+            headers.update({str(key): str(value) for key, value in extra_headers.items()})
+        body = urlencode(payload or {}).encode("utf-8")
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method=str(method or "POST").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_bluebubbles_multipart_provider_url(
         self,
         target: str,
@@ -19849,6 +19930,63 @@ class OpsMeshService:
             native_result["timestamp"] = timestamp
         if reply_to_id:
             native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_synology_chat_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del secret_token
+        if event_type != "gateway/send":
+            raise RuntimeError("Synology Chat native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        recipient = str(event.get("to") or (conversation_target or {}).get("peer_id") or "").strip()
+        recipient_id = _synology_chat_recipient_id(recipient)
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        incoming_url = _synology_chat_incoming_url(str(route.get("target") or ""))
+        delivered_payloads = 0
+        if text:
+            self._request_form_provider_url(
+                incoming_url,
+                method="POST",
+                payload=_synology_chat_payload(text=text, recipient_id=recipient_id),
+                extra_headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            delivered_payloads += 1
+        for media_url in media_urls:
+            self._request_form_provider_url(
+                incoming_url,
+                method="POST",
+                payload=_synology_chat_payload(
+                    media_url=media_url,
+                    recipient_id=recipient_id,
+                ),
+                extra_headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            delivered_payloads += 1
+        if delivered_payloads == 0:
+            raise RuntimeError("Message must be non-empty for Synology Chat sends.")
+        message_id = f"synology-chat:{uuid.uuid4().hex}"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": recipient or "synology-chat",
+            "channelId": recipient or "synology-chat",
+        }
         if media_urls:
             native_result["mediaUrls"] = media_urls
         return native_result

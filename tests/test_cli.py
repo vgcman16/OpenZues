@@ -19635,6 +19635,61 @@ def test_routes_create_command_accepts_nextcloud_talk_native_route(
     assert routes[0]["conversation_target"]["channel"] == "nextcloud-talk"
 
 
+def test_routes_create_command_accepts_synology_chat_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Synology Chat Native Gateway",
+            "--kind",
+            "synology-chat",
+            "--target",
+            "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+            "--conversation-channel",
+            "synology-chat",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "42",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Synology Chat Native Gateway"
+    assert payload["kind"] == "synology-chat"
+    assert (
+        payload["target"]
+        == "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot"
+    )
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "synology-chat"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "42"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "synology-chat"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "synology-chat"
+
+
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
