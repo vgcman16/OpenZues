@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.7% overall, with a reasonable
   band of ~50-62%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5671,6 +5671,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   is now estimated at ~61.6%. Verified with focused ESM runtime import pytest,
   adjacent plugin activation/import proof, gateway plugin runtime tests,
   `ruff check`, and `mypy`; checkpointed in `eb11e22f`.
+- Closed the companion setup-code bootstrap handoff seam from OpenClaw
+  `src/cli/qr-cli.ts`, `src/pairing/setup-code.ts`, and
+  `src/infra/device-bootstrap.ts`: native `openzues qr --setup-code-only
+  --url ...` now emits OpenClaw base64url JSON setup codes with `{url,
+  bootstrapToken}`, issues file-backed bootstrap tokens with the default
+  node/operator handoff profile and expiry metadata, and keeps raw gateway
+  token/password overrides out of the encoded payload. Repo-wide parity is now
+  estimated at ~61.7%. Verified with focused QR setup-code pytest, adjacent
+  setup/bootstrap CLI proof, `ruff check`, and `mypy`; checkpointed in
+  `5262359f`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

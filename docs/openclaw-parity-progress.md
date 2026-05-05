@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.6% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~61.7% overall, with a reasonable band of ~50-62%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -44,6 +44,11 @@ These are complete within the bounded OpenZues-local parity contract verified in
   pairing-scoped removal boundary that revokes paired nodes, returns
   `{nodeId}`, and publishes the OpenClaw-shaped `node.pair.resolved` removal
   event.
+- Companion setup-code handoff parity now includes `openzues qr
+  --setup-code-only --url ...`, emitting OpenClaw base64url JSON setup codes
+  with `{url, bootstrapToken}` and issuing file-backed node/operator bootstrap
+  tokens under the default handoff profile without leaking gateway
+  token/password overrides.
 - Provider-native Slack route parity now validates Slack `thread_ts` values
   before setting `thread_ts`, falls back from internal reply ids to valid Slack
   thread ids, and leaves invalid internal ids out of Slack API payloads.
@@ -10025,6 +10030,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
   Checkpointed in `eb11e22f`.
+
+- OpenZues now has a native companion setup-code bootstrap handoff surface:
+  `openzues qr --setup-code-only --url ...` emits the same base64url JSON
+  payload shape as OpenClaw `qr --setup-code-only`, carrying only `{url,
+  bootstrapToken}`. The token is issued into a local `devices/bootstrap.json`
+  state file with the default node/operator handoff profile and expiry
+  metadata, while raw gateway token/password overrides are accepted for CLI
+  compatibility but not embedded in the setup code. This closes
+  `OZ-COMP-001C`; repo-wide parity is now estimated at ~61.7%.
+- Verified the QR setup-code bootstrap handoff slice with `python -m pytest
+  tests\test_cli.py::test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_setup_code_only or setup_bootstrap_cli_persists_default_device_bootstrap_profile
+  or setup_bootstrap_can_stage_mempalace_from_cli"` (`3 passed, 494
+  deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `5262359f`.
 
 ## References
 

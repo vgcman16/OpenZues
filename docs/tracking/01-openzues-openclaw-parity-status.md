@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -230,6 +230,11 @@ may lag behind this tracker.
   `system.which`/`system.run command -v` probe, paired-node `bins`
   persistence, and node-pair metadata exposure.
   - Status: checkpointed in `7dcce35d`
+
+- [x] Companion QR setup-code bootstrap handoff, preserving OpenClaw's
+  base64url `{url, bootstrapToken}` payload and file-backed node/operator
+  bootstrap token profile for `qr --setup-code-only --url ...`.
+  - Status: checkpointed in `5262359f`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -883,6 +888,20 @@ may lag behind this tracker.
     (`1 passed`), adjacent node method proof (`5 passed`), adjacent node API
     proof (`4 passed`), pairing refresh proof (`5 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Companion QR setup-code bootstrap handoff.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/infra/device-bootstrap.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/device_bootstrap_tokens.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5262359f`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload
+    -q` (`1 passed`), adjacent setup/bootstrap CLI proof (`3 passed, 494
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
