@@ -8909,6 +8909,191 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_send_result_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-send-result.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  attachChannelToResult,
+  attachChannelToResults,
+  buildChannelSendResult,
+  createAttachedChannelResultAdapter,
+  createEmptyChannelResult,
+  createRawChannelSendResultAdapter
+} = require("openclaw/plugin-sdk/channel-send-result");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_send_result",
+      description: "Use OpenClaw channel send-result SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const seen = [];
+        const attachedAdapter = createAttachedChannelResultAdapter({
+          channel: "discord",
+          sendText: async (ctx) => {
+            seen.push(`text:${ctx.to}:${ctx.text}`);
+            return { messageId: "m1", channelId: "c1" };
+          },
+          sendMedia: async (ctx) => {
+            seen.push(`media:${ctx.to}:${ctx.text}`);
+            return { messageId: "m2" };
+          },
+          sendPoll: async (ctx) => {
+            seen.push(`poll:${ctx.to}:${ctx.poll.question}`);
+            return { messageId: "m3", pollId: "p1" };
+          }
+        });
+        const rawAdapter = createRawChannelSendResultAdapter({
+          channel: "zalo",
+          sendText: async (ctx) => ({ ok: true, messageId: `raw:${ctx.to}` }),
+          sendMedia: async () => ({ ok: false, messageId: null, error: "boom" })
+        });
+        const rawFailure = buildChannelSendResult("zalo", {
+          ok: false,
+          messageId: null,
+          error: "kapow"
+        });
+        const rawText = await rawAdapter.sendText({ cfg: {}, to: "u1", text: "hi" });
+        const rawMedia = await rawAdapter.sendMedia({ cfg: {}, to: "u2", text: "photo" });
+        return {
+          stamped: attachChannelToResult("discord", {
+            messageId: "m1",
+            ok: true,
+            extra: "value"
+          }),
+          batch: attachChannelToResults("signal", [
+            { messageId: "m1", timestamp: 1 },
+            { messageId: "m2", timestamp: 2 }
+          ]),
+          empty: createEmptyChannelResult("line", { chatId: "u1" }),
+          attached: [
+            await attachedAdapter.sendText({ cfg: {}, to: "x", text: "hi" }),
+            await attachedAdapter.sendMedia({ cfg: {}, to: "x", text: "photo" }),
+            await attachedAdapter.sendPoll({
+              cfg: {},
+              to: "x",
+              poll: { question: "choose", options: ["a", "b"] }
+            })
+          ],
+          rawText,
+          rawMedia: {
+            channel: rawMedia.channel,
+            ok: rawMedia.ok,
+            messageId: rawMedia.messageId,
+            error: rawMedia.error.message
+          },
+          rawFailure: {
+            channel: rawFailure.channel,
+            ok: rawFailure.ok,
+            messageId: rawFailure.messageId,
+            error: rawFailure.error.message
+          },
+          seen,
+          exportTypes: [
+            typeof attachChannelToResult,
+            typeof genericSdk.attachChannelToResult,
+            typeof genericSdk.createRawChannelSendResultAdapter
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-send-result-plugin",
+                    "name": "Runtime Channel Send Result Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-send-result-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_send_result"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_send_result"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "stamped": {
+            "channel": "discord",
+            "messageId": "m1",
+            "ok": True,
+            "extra": "value",
+        },
+        "batch": [
+            {"channel": "signal", "messageId": "m1", "timestamp": 1},
+            {"channel": "signal", "messageId": "m2", "timestamp": 2},
+        ],
+        "empty": {"channel": "line", "messageId": "", "chatId": "u1"},
+        "attached": [
+            {"channel": "discord", "messageId": "m1", "channelId": "c1"},
+            {"channel": "discord", "messageId": "m2"},
+            {"channel": "discord", "messageId": "m3", "pollId": "p1"},
+        ],
+        "rawText": {
+            "channel": "zalo",
+            "ok": True,
+            "messageId": "raw:u1",
+        },
+        "rawMedia": {
+            "channel": "zalo",
+            "ok": False,
+            "messageId": "",
+            "error": "boom",
+        },
+        "rawFailure": {
+            "channel": "zalo",
+            "ok": False,
+            "messageId": "",
+            "error": "kapow",
+        },
+        "seen": ["text:x:hi", "media:x:photo", "poll:x:choose"],
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:

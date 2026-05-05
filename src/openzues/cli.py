@@ -24574,6 +24574,65 @@ async function dispatchInboundDirectDmWithRuntime(params) {
   return { route, storePath, ctxPayload };
 }
 
+function attachChannelToResult(channel, result) {
+  return {
+    channel,
+    ...(result || {}),
+  };
+}
+
+function attachChannelToResults(channel, results) {
+  return (Array.isArray(results) ? results : []).map((result) =>
+    attachChannelToResult(channel, result),
+  );
+}
+
+function createEmptyChannelResult(channel, result = {}) {
+  return attachChannelToResult(channel, {
+    messageId: "",
+    ...result,
+  });
+}
+
+function buildChannelSendResult(channel, result) {
+  return {
+    channel,
+    ok: Boolean(result && result.ok),
+    messageId: (result && result.messageId) ?? "",
+    error: result && result.error ? new Error(String(result.error)) : undefined,
+  };
+}
+
+function createAttachedChannelResultAdapter(params) {
+  return {
+    sendText:
+      typeof params.sendText === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendText(ctx))
+        : undefined,
+    sendMedia:
+      typeof params.sendMedia === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendMedia(ctx))
+        : undefined,
+    sendPoll:
+      typeof params.sendPoll === "function"
+        ? async (ctx) => attachChannelToResult(params.channel, await params.sendPoll(ctx))
+        : undefined,
+  };
+}
+
+function createRawChannelSendResultAdapter(params) {
+  return {
+    sendText:
+      typeof params.sendText === "function"
+        ? async (ctx) => buildChannelSendResult(params.channel, await params.sendText(ctx))
+        : undefined,
+    sendMedia:
+      typeof params.sendMedia === "function"
+        ? async (ctx) => buildChannelSendResult(params.channel, await params.sendMedia(ctx))
+        : undefined,
+  };
+}
+
 function buildOutboundBaseSessionKey(params) {
   const cfg = (params && params.cfg) || {};
   return buildAgentSessionKey({
@@ -25583,6 +25642,15 @@ const directDmRuntime = {
   dispatchInboundDirectDmWithRuntime,
 };
 
+const channelSendResultRuntime = {
+  attachChannelToResult,
+  attachChannelToResults,
+  buildChannelSendResult,
+  createAttachedChannelResultAdapter,
+  createEmptyChannelResult,
+  createRawChannelSendResultAdapter,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -25856,6 +25924,7 @@ const genericSdk = new Proxy(
     ...allowFromRuntime,
     ...accessGroupsRuntime,
     ...directDmRuntime,
+    ...channelSendResultRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26297,6 +26366,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/direct-dm"
   ) {
     return directDmRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-send-result" ||
+    request === "@openclaw/plugin-sdk/channel-send-result"
+  ) {
+    return channelSendResultRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
