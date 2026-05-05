@@ -251,6 +251,7 @@ MSTEAMS_DEFAULT_DELEGATED_SCOPES: tuple[str, ...] = (
     "offline_access",
 )
 MSTEAMS_DELEGATED_EXPIRY_BUFFER_SECONDS = 300
+MSTEAMS_LIST_PINS_MAX_PAGES = 10
 MSTEAMS_IMAGE_EXT_RE = re.compile(r"\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$", re.I)
 MSTEAMS_DEFAULT_MEDIA_MAX_BYTES = 8 * 1024 * 1024
 MSTEAMS_DEFAULT_MEDIA_HOST_ALLOWLIST: tuple[str, ...] = (
@@ -5549,6 +5550,35 @@ def _msteams_message_summary(result: object, *, fallback_message_id: str) -> dic
     if isinstance(created_at, str):
         message["createdAt"] = created_at
     return message
+
+
+def _msteams_pin_page(result: object) -> tuple[list[dict[str, object]], str | None]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    pins: list[dict[str, object]] = []
+    raw_pins = result.get("value")
+    if isinstance(raw_pins, list):
+        for raw_pin in raw_pins:
+            if not isinstance(raw_pin, dict):
+                continue
+            pin_id = str(raw_pin.get("id") or "").strip()
+            pin: dict[str, object] = {
+                "id": pin_id,
+                "pinnedMessageId": pin_id,
+            }
+            message = raw_pin.get("message")
+            if isinstance(message, dict):
+                message_id = str(message.get("id") or "").strip()
+                if message_id:
+                    pin["messageId"] = message_id
+                body = message.get("body")
+                if isinstance(body, dict):
+                    content = body.get("content")
+                    if isinstance(content, str):
+                        pin["text"] = content
+            pins.append(pin)
+    next_link = str(result.get("@odata.nextLink") or "").strip() or None
+    return pins, next_link
 
 
 def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
@@ -14775,6 +14805,29 @@ class OpsMeshService:
             )
             return await asyncio.to_thread(
                 self._dispatch_msteams_unpin_message_action,
+                route,
+                request,
+                graph_secret_token,
+            )
+        if channel == "msteams" and action == "list-pins":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action list-pins."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            graph_secret_token = (
+                await self._msteams_stored_delegated_graph_secret_token(
+                    account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+                    user_id=request.requester_sender_id,
+                )
+                or secret_token
+            )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_list_pins_message_action,
                 route,
                 request,
                 graph_secret_token,
@@ -25587,6 +25640,43 @@ class OpsMeshService:
             ),
         )
         return {"ok": True, "channel": "msteams", "action": "unpin"}
+
+    def _dispatch_msteams_list_pins_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        endpoint, _conversation_id = _msteams_graph_pinned_messages_endpoint_for_route(
+            route_config=route_config,
+            target=target,
+        )
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        pins: list[dict[str, object]] = []
+        next_url: str | None = f"{endpoint}?$expand=message"
+        pages = 0
+        while next_url is not None and pages < MSTEAMS_LIST_PINS_MAX_PAGES:
+            result = self._request_json_provider_url(
+                next_url,
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            page_pins, next_link = _msteams_pin_page(result)
+            pins.extend(page_pins)
+            next_url = next_link
+            pages += 1
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "list-pins",
+            "pins": pins,
+        }
 
     def _dispatch_msteams_react_message_action(
         self,
