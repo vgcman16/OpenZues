@@ -5927,6 +5927,34 @@ def _feishu_reaction_views(data: object) -> list[dict[str, object]]:
     return reactions
 
 
+def _feishu_media_filename(media_url: str, content_type: str | None) -> str:
+    if media_url.strip().lower().startswith("data:"):
+        extension = mimetypes.guess_extension(content_type or "") or ""
+        return f"media{extension or ''}"
+    parsed = urlparse(media_url)
+    raw_name = Path(unquote(parsed.path)).name if parsed.path else ""
+    if raw_name:
+        return raw_name.replace('"', "_").replace("\r", "_").replace("\n", "_")
+    extension = mimetypes.guess_extension(content_type or "") or ""
+    return f"media{extension or ''}"
+
+
+def _feishu_media_is_image(filename: str, content_type: str | None) -> bool:
+    normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+    if normalized_content_type.startswith("image/"):
+        return True
+    return Path(filename).suffix.lower() in {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".ico",
+        ".tiff",
+    }
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -23832,6 +23860,64 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _request_feishu_multipart_provider_url(
+        self,
+        target: str,
+        *,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        secret_token: str | None,
+        timeout_seconds: float = 60.0,
+    ) -> object | None:
+        del self
+        boundary = f"----OpenZuesFeishuFormBoundary{uuid.uuid4().hex}"
+        body = bytearray()
+        for name, value in fields.items():
+            body.extend(f"--{boundary}\r\n".encode("ascii"))
+            body.extend(
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii")
+            )
+            body.extend(str(value).encode("utf-8"))
+            body.extend(b"\r\n")
+        safe_filename = filename.replace('"', "_").replace("\r", "_").replace("\n", "_")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        disposition = (
+            f'Content-Disposition: form-data; name="{file_field}"; '
+            f'filename="{safe_filename or "media"}"\r\n'
+        )
+        body.extend(disposition.encode("utf-8"))
+        body.extend(
+            f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode(
+                "ascii"
+            )
+        )
+        body.extend(content)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("ascii"))
+        headers = {
+            "Authorization": _feishu_bearer_token(secret_token),
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        }
+        request = Request(target, data=bytes(body), headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
     def _request_discord_message_upload(
         self,
         *,
@@ -27261,6 +27347,137 @@ class OpsMeshService:
             "channelId": delivered_chat,
         }
 
+    def _load_feishu_media(
+        self,
+        media_url: str,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str, str]:
+        media_bytes, content_type = self._load_discord_media(media_url, max_bytes=max_bytes)
+        normalized_content_type = str(content_type or "").split(";", 1)[0].strip().lower()
+        filename = _feishu_media_filename(media_url, normalized_content_type)
+        return media_bytes, normalized_content_type, filename
+
+    def _post_feishu_media_message_payload(
+        self,
+        route: dict[str, Any],
+        event: dict[str, Any],
+        *,
+        content: str,
+        msg_type: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        receive_target = str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        parsed_target = _feishu_target(receive_target)
+        if parsed_target is None:
+            raise RuntimeError("Feishu action requires a chat/user target.")
+        receive_id, receive_id_type = parsed_target
+        message_payload: dict[str, object] = {
+            "content": content,
+            "msg_type": msg_type,
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        bearer_token = _feishu_bearer_token(secret_token)
+        result: object
+        if reply_to_id:
+            result = self._post_json_webhook(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    f"im/v1/messages/{quote(reply_to_id, safe='')}/reply",
+                ),
+                {
+                    **message_payload,
+                    **({"reply_in_thread": True} if thread_id else {}),
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if _feishu_reply_target_unavailable(result):
+                if thread_id:
+                    raise RuntimeError(
+                        "Feishu thread reply failed: reply target is unavailable and "
+                        "cannot safely fall back to a top-level send."
+                    )
+            else:
+                _feishu_assert_success(result, "Feishu media reply failed")
+                message_id = _feishu_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Feishu API response did not include a message id.")
+                delivered_chat = _feishu_chat_from_result(result, receive_id)
+                return {
+                    "runtime": "native-provider-backed",
+                    "messageId": message_id,
+                    "chatId": delivered_chat,
+                    "channelId": delivered_chat,
+                    "replyToId": reply_to_id,
+                }
+        result = self._post_json_webhook(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "im/v1/messages",
+                query={"receive_id_type": receive_id_type},
+            ),
+            {
+                "receive_id": receive_id,
+                **message_payload,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        _feishu_assert_success(result, "Feishu media send failed")
+        message_id = _feishu_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Feishu API response did not include a message id.")
+        delivered_chat = _feishu_chat_from_result(result, receive_id)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
+
+    def _post_feishu_media_provider_event(
+        self,
+        route: dict[str, Any],
+        event: dict[str, Any],
+        media_url: str,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        bearer_token = _feishu_bearer_token(secret_token)
+        media_bytes, content_type, filename = self._load_feishu_media(
+            media_url,
+            max_bytes=30 * 1024 * 1024,
+        )
+        if _feishu_media_is_image(filename, content_type):
+            upload = self._request_feishu_multipart_provider_url(
+                _feishu_api_endpoint(str(route.get("target") or ""), "im/v1/images"),
+                fields={"image_type": "message"},
+                file_field="image",
+                filename=filename,
+                content=media_bytes,
+                content_type=content_type or "application/octet-stream",
+                secret_token=bearer_token,
+            )
+            if isinstance(upload, Mapping) and upload.get("code") not in (None, 0, "0"):
+                raise RuntimeError(
+                    "Feishu image upload failed: "
+                    f"{upload.get('msg') or upload.get('message') or upload.get('code')}"
+                )
+            data = upload.get("data") if isinstance(upload, Mapping) else None
+            image_key = data.get("image_key") if isinstance(data, Mapping) else None
+            if not isinstance(image_key, str) or not image_key.strip():
+                raise RuntimeError("Feishu image upload failed: no image_key returned")
+            return self._post_feishu_media_message_payload(
+                route,
+                event,
+                content=json.dumps({"image_key": image_key.strip()}, separators=(",", ":")),
+                msg_type="image",
+                secret_token=bearer_token,
+            )
+        raise RuntimeError("Feishu file media sending is not available yet.")
+
     def _dispatch_feishu_send_message_action(
         self,
         route: dict[str, Any],
@@ -27286,6 +27503,24 @@ class OpsMeshService:
                 route,
                 card_event,
                 card,
+                secret_token,
+            )
+            return {
+                "ok": True,
+                "channel": "feishu",
+                "action": action,
+                **native_result,
+            }
+        if media_url is not None:
+            media_event: dict[str, Any] = {"to": target}
+            if action == "thread-reply":
+                reply_to_id = _feishu_action_message_id(request.params, action=action)
+                media_event["replyToId"] = reply_to_id
+                media_event["threadId"] = reply_to_id
+            native_result = self._post_feishu_media_provider_event(
+                route,
+                media_event,
+                media_url,
                 secret_token,
             )
             return {
