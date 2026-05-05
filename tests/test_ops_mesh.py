@@ -20838,6 +20838,122 @@ async def test_ops_mesh_service_blocks_msteams_signin_verify_for_group_sender_al
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_edit_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-edit"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Edit Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    updates: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        updates.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "activity-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="edit",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "activity-123",
+                "content": "Updated message text",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-edit-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "conversationId": conversation_id,
+    }
+    assert updates == [
+        (
+            "PUT",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities/activity-123"
+            ),
+            {"type": "message", "id": "activity-123", "text": "Updated message text"},
+            "Authorization",
+            "Bearer bot-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_channel_info_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
