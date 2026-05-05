@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~66.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~66.8% overall, with a reasonable
   band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6216,10 +6216,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   when Azure omits a replacement. Repo-wide parity is now estimated at
   ~66.7%. Verified with focused runtime pytest, adjacent Teams reaction/probe
   proof, `ruff check`, and `mypy`; source/test checkpointed in `34a34a44`.
+- Closed the Microsoft Teams delegated OAuth setup bootstrap seam from
+  OpenClaw `extensions/msteams/src/oauth.flow.ts`,
+  `extensions/msteams/src/oauth.shared.ts`, and
+  `extensions/msteams/src/setup-surface.ts`: native OpenZues CLI setup now
+  resolves route-backed Teams app credentials, enables
+  `channels.msteams.delegatedAuth`, emits the upstream localhost redirect
+  URI/callback metadata, builds the Azure v2 authorization URL with state,
+  PKCE S256 challenge, default delegated scopes, and `prompt=consent`, and
+  returns the verifier without exposing the app password. Repo-wide parity is
+  now estimated at ~66.8%. Verified with focused CLI pytest, adjacent
+  Teams/setup CLI proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `6f368d37`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams delegated auth
-  setup/bootstrap breadth or another source-backed channel/provider route
-  action adapter.
+  send/poll/replay metadata gap, starting with Microsoft Teams delegated OAuth
+  callback parsing/token exchange persistence or another source-backed
+  channel/provider route action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
