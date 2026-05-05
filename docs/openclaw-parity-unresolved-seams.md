@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~67.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~67.8% overall, with a reasonable
   band of ~50-68%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6342,9 +6342,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   parity is now estimated at ~67.7%. Verified with focused runtime pytest,
   adjacent Teams action/provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `4e6fc71a`.
+- Closed the Microsoft Teams edit message action seam from OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/send.test.ts`: native OpenZues `message.action`
+  dispatch now supports `channel="msteams"`, `action="edit"`, resolves Teams
+  conversation targets, accepts `text`/`content`/`message` content fallback
+  plus `messageId`, uses route-backed Bot Framework auth, PUTs a message
+  activity update to `/activities/{messageId}`, and projects OpenClaw-shaped
+  `{ok, channel, conversationId}` results. Repo-wide parity is now estimated
+  at ~67.8%. Verified with focused runtime pytest, adjacent Teams
+  action/provider proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `df3f4f0d`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams Bot Framework
-  action adapters: upload-file, edit, and delete.
+  action adapters: delete and upload-file.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
