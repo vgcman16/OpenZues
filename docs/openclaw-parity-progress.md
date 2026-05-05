@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~60.9% overall, with a reasonable band of ~50-61%.
+- Estimated repo-wide parity: ~61.0% overall, with a reasonable band of ~50-61%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -9876,6 +9876,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check src\openzues\services\ops_mesh.py
   tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
   Checkpointed in `b2bc7fb7`.
+
+- WhatsApp native split-media sends now expose OpenClaw-style per-part result
+  observability: multi-media sends keep `messageId` as the last provider
+  message id, add `primaryMessageId` for the first media message, and return
+  `messageIds` for the full split while preserving compatibility `mediaIds`,
+  media URLs, and persisted provider-result metadata. This closes
+  `OZ-PROV-001K`; repo-wide parity is now estimated at ~61.0%.
+- Verified the WhatsApp split-media result metadata slice with `python -m
+  pytest
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "whatsapp_reply_document or whatsapp_gif_video or whatsapp_audio_voice or
+  send_direct_channel_message_splits_whatsapp_media"` (`4 passed, 275
+  deselected`), `ruff check src\openzues\services\ops_mesh.py
+  tests\test_ops_mesh.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpoint pending.
 
 ## References
 

@@ -18903,6 +18903,8 @@ class OpsMeshService:
                     return {
                         "runtime": "native-provider-backed",
                         "messageId": message_ids[-1],
+                        "primaryMessageId": message_ids[0],
+                        "messageIds": message_ids,
                         "chatId": delivered_contact,
                         "channelId": delivered_contact,
                         "mediaIds": message_ids,

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~60.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~61.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Telegram raw media-caption slice is checkpointed in `b2bc7fb7`.
+The WhatsApp split-media result metadata slice is verified locally and awaiting
+its checkpoint hash.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -51,9 +52,27 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram raw media-caption metadata checkpointed in `b2bc7fb7` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp split-media result metadata verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001K` WhatsApp split-media result metadata
+  - Source: `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/gateway/server-methods/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `tests/test_ops_mesh.py`
+  - Contract: WhatsApp native multi-media sends retain last-message
+    `messageId`, expose first-message `primaryMessageId`, include all split
+    provider ids in `messageIds`, and persist those fields alongside
+    compatibility `mediaIds` and `mediaUrls`.
+  - Evidence required: focused WhatsApp split-media test, adjacent WhatsApp
+    media/reply/audio tests, ruff, mypy
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused WhatsApp split-media test (`1 passed`),
+    adjacent WhatsApp media/reply/audio proof (`4 passed, 275 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001J` Telegram raw media-caption metadata
   - Source: `openclaw-main/extensions/telegram/src/outbound-adapter.ts`,

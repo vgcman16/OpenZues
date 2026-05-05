@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~60.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~61.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -234,6 +234,10 @@ may lag behind this tracker.
   media behavior by sending Cloud API `type="audio"` payloads and splitting
   visible text into a follow-up text message.
   - Status: checkpointed in `c27d3439`
+
+- [x] WhatsApp split-media result metadata, preserving OpenClaw-style
+  first/last/all message id observability for multi-media sends.
+  - Status: verified; checkpoint pending
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -1309,7 +1313,8 @@ may lag behind this tracker.
     projection checkpointed in `05c4f0fc`; Discord media iteration
     checkpointed in `b5371fd9`; native provider result metadata passthrough
     checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
-    `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`
+    `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
+    WhatsApp split-media result metadata verified with checkpoint pending
   - Weight: 3
 
 - [x] WhatsApp audio/voice media send payload.
@@ -1324,6 +1329,19 @@ may lag behind this tracker.
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_whatsapp_audio_voice_payload
     -q` (`1 passed`), adjacent WhatsApp native media/reply/gif/poll proof (`5
     passed`), `ruff check`, and `mypy`.
+
+- [x] WhatsApp split-media result metadata.
+  - Source: `openclaw-main/src/infra/outbound/message-plan.ts`,
+    `openclaw-main/src/infra/outbound/deliver.ts`,
+    `openclaw-main/src/gateway/server-methods/send.ts`
+  - Target: `src/openzues/services/ops_mesh.py`
+  - Test: `tests/test_ops_mesh.py`
+  - Status: verified; checkpoint pending
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media
+    -q` (`1 passed`), adjacent WhatsApp media/reply/audio proof (`4 passed,
+    275 deselected`), `ruff check`, and `mypy`.
 
 - [x] Telegram GIF media send animation routing.
   - Source: `openclaw-main/extensions/telegram/src/send.ts`,

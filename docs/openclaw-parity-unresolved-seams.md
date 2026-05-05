@@ -4,7 +4,7 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~60.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~61.0% overall, with a reasonable
   band of ~50-61%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5606,6 +5606,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   metadata. Repo-wide parity is now estimated at ~60.9%. Verified with
   focused Telegram media-group pytest, adjacent Telegram native-options proof,
   `ruff check`, and `mypy`; checkpointed in `b2bc7fb7`.
+- Closed the WhatsApp split-media result metadata seam from OpenClaw
+  `src/infra/outbound/message-plan.ts`, `src/infra/outbound/deliver.ts`, and
+  `src/gateway/server-methods/send.ts`: native route-backed WhatsApp
+  multi-media sends now keep the last provider message as `messageId`, expose
+  the first media message as `primaryMessageId`, include all split provider
+  ids in `messageIds`, and persist those fields alongside compatibility
+  `mediaIds` and `mediaUrls`. Repo-wide parity is now estimated at ~61.0%.
+  Verified with focused WhatsApp split-media pytest, adjacent WhatsApp media
+  proof, `ruff check`, and `mypy`; checkpoint pending.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
