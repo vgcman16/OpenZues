@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.2% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -131,6 +131,19 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+
+Provider-native Microsoft Teams outbound text delivery is now landed for the
+first OpenClaw Bot Framework proactive-send slice: native `kind="msteams"`
+routes accept service URLs carrying `appId`/`tenantId`, normalize
+`msteams:`/`teams:`/`conversation:` conversation targets, strip
+`;messageid=...`, obtain Bot Framework bearer auth from the route secret when
+needed, post AI-generated top-level text activities, and preserve
+message/conversation result metadata. Verified on 2026-05-05 with focused
+schema/service/CLI/app proofs, adjacent native-route proof, `ruff check`, and
+`mypy`; checkpointed in `79258ec2`. Remaining Teams seams are stored
+conversation-reference lookup for `user:` targets, live threaded replies,
+FileConsentCard/Graph media upload, polls, reactions/actions, monitor/inbound
+breadth, and route readiness/doctor depth.
 
 Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
 session extension mutation path: admin-scoped callers can patch only registered
@@ -5812,9 +5825,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~63.1%. Verified with focused Signal reaction pytest, adjacent
   provider/action proof, `ruff check`, and `mypy`; checkpointed in
   `c9b45ffb`.
+- Closed the Microsoft Teams native outbound route seam from OpenClaw
+  `extensions/msteams/src/outbound.ts`, `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/messenger.ts`, `extensions/msteams/src/token.ts`,
+  and `extensions/msteams/src/session-route.ts`: native `kind="msteams"`
+  routes now accept Bot Framework service URLs with `appId`/`tenantId`,
+  authenticate with app passwords or bearer tokens, normalize
+  `msteams:`/`teams:`/`conversation:` targets, strip `;messageid=...`, send
+  top-level proactive text activities with AI generated-content entity
+  metadata, and persist message/conversation result metadata. Repo-wide parity
+  is now estimated at ~63.2%. Verified with focused schema/service/CLI/app
+  pytest, adjacent provider route proof, `ruff check`, and `mypy`;
+  checkpointed in `79258ec2`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with another source-backed
-  channel/provider route or action adapter, or packaging/plugin breadth seam if
+  send/poll/replay metadata gap, starting with Microsoft Teams stored
+  conversation-reference, media/thread/action breadth or another source-backed
+  channel/provider route/action adapter, or packaging/plugin breadth seam if
   provider discovery proves no smaller route slice.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

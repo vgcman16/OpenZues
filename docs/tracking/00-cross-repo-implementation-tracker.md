@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~63.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~63.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,11 +29,18 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Signal native reaction action slice is checkpointed in `c9b45ffb`.
+The Microsoft Teams native outbound route slice is checkpointed in `79258ec2`.
 Any follow-up changes should target the next queue head only:
 
+- `src/openzues/schemas.py`
 - `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/gateway_channels.py`
+- `src/openzues/cli.py`
+- `src/openzues/web/templates/index.html`
+- `src/openzues/web/static/app.js`
 - `tests/test_ops_mesh.py`
+- `tests/test_cli.py`
+- `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
@@ -52,9 +59,39 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Signal native reaction action checkpointed in `c9b45ffb` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams native route checkpointed in `79258ec2` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams stored conversation/media/thread breadth or next provider-specific send/poll/replay gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001X` Microsoft Teams native outbound route
+  - Source: `openclaw-main/extensions/msteams/src/outbound.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send-context.ts`,
+    `openclaw-main/extensions/msteams/src/messenger.ts`,
+    `openclaw-main/extensions/msteams/src/token.ts`,
+    `openclaw-main/extensions/msteams/src/session-route.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="msteams"` sends Bot Framework proactive
+    top-level text activities to explicit conversation ids, accepts service
+    URLs carrying `appId`/`tenantId`, uses route secrets as app passwords or
+    bearer tokens, normalizes `msteams:`/`teams:`/`conversation:` targets,
+    strips `;messageid=...`, stamps OpenClaw-shaped AI generated-content
+    entity metadata, and persists provider `messageId`, chat/channel ids, and
+    conversation metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider route tests, ruff, mypy
+  - Status: checkpointed in `79258ec2`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams route proof (`2
+    passed`), focused CLI proof (`1 passed`), focused app proof (`3 passed`),
+    adjacent provider route proof (`10 passed, 292 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] `OZ-PROV-001W` Signal native reaction action
   - Source: `openclaw-main/extensions/signal/src/message-actions.ts`,

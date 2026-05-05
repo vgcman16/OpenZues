@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~63.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~63.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -188,6 +188,14 @@ may lag behind this tracker.
   fallback and required group-author behavior, `remove=true`, and
   `toolContext.currentMessageId` fallback.
   - Status: checkpointed in `c9b45ffb`
+
+- [x] Microsoft Teams native outbound route support, preserving OpenClaw Bot
+  Framework proactive text delivery for explicit conversation ids, route
+  `appId`/`tenantId` service URL metadata, app-password or bearer-token auth,
+  `msteams:`/`teams:`/`conversation:` target normalization, `;messageid=...`
+  stripping, AI-generated entity metadata, and message/conversation result
+  metadata.
+  - Status: checkpointed in `79258ec2`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for

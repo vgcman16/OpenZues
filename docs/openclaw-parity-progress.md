@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.1% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.2% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10333,6 +10333,40 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 292 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `c9b45ffb`.
+
+- Microsoft Teams native outbound route support now mirrors the first
+  OpenClaw Bot Framework proactive-send slice from
+  `extensions/msteams/src/outbound.ts`, `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/messenger.ts`,
+  `extensions/msteams/src/token.ts`, and
+  `extensions/msteams/src/session-route.ts`: native `kind="msteams"` routes
+  accept Bot Framework service URLs with `appId` and `tenantId` query
+  metadata, use route secrets as app passwords or bearer tokens, normalize
+  `msteams:` / `teams:` / `conversation:` targets while stripping
+  `;messageid=...`, post top-level text activities with OpenClaw-shaped AI
+  generated-content entity metadata to
+  `/v3/conversations/{conversationId}/activities`, and preserve message,
+  chat/channel, and conversation result metadata. This closes
+  `OZ-PROV-001X`; repo-wide parity is now estimated at ~63.2%. Stored
+  conversation-reference lookup, live threaded replies, FileConsentCard/Graph
+  media upload, polls, reactions/actions, and inbound monitor breadth remain
+  follow-up Microsoft Teams seams.
+- Verified the Microsoft Teams native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_msteams_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_route -q`
+  (`2 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_routes_create_command_accepts_msteams_native_route -q`
+  (`1 passed`), focused app proof
+  `python -m pytest tests\test_app.py::test_gateway_channels_endpoint_returns_notification_route_inventory tests\test_app.py::test_gateway_channels_endpoint_classifies_msteams_native_route tests\test_app.py::test_notification_route_operator_form_offers_msteams_native_routes -q`
+  (`3 passed`), adjacent provider route proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or twitch_native_route or irc_native_route or signal_native_route or mattermost_native_route"`
+  (`10 passed, 292 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `79258ec2`.
 
 ## References
 
