@@ -237,7 +237,7 @@ may lag behind this tracker.
 
 - [x] WhatsApp split-media result metadata, preserving OpenClaw-style
   first/last/all message id observability for multi-media sends.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `7e549c1e`
 
 - [x] Plugin doctor failure-phase projection for loader error records,
   preserving OpenClaw's `validation`/`load`/`register` failure phases in JSON
@@ -1314,7 +1314,7 @@ may lag behind this tracker.
     checkpointed in `b5371fd9`; native provider result metadata passthrough
     checkpointed in `fb9c9763`; Telegram GIF media send checkpointed in
     `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
-    WhatsApp split-media result metadata verified with checkpoint pending
+    WhatsApp split-media result metadata checkpointed in `7e549c1e`
   - Weight: 3
 
 - [x] WhatsApp audio/voice media send payload.
@@ -1336,7 +1336,7 @@ may lag behind this tracker.
     `openclaw-main/src/gateway/server-methods/send.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `7e549c1e`
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_splits_whatsapp_media

@@ -5614,7 +5614,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ids in `messageIds`, and persist those fields alongside compatibility
   `mediaIds` and `mediaUrls`. Repo-wide parity is now estimated at ~61.0%.
   Verified with focused WhatsApp split-media pytest, adjacent WhatsApp media
-  proof, `ruff check`, and `mypy`; checkpoint pending.
+  proof, `ruff check`, and `mypy`; checkpointed in `7e549c1e`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
