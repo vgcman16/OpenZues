@@ -21109,6 +21109,67 @@ async function approveDevicePairing() {
   return null;
 }
 
+const pluginRuntimeStoreRegistryKey = Symbol.for("openclaw.plugin-sdk.runtime-store-registry");
+
+function getPluginRuntimeStoreRegistry() {
+  globalThis[pluginRuntimeStoreRegistryKey] ||= new Map();
+  return globalThis[pluginRuntimeStoreRegistryKey];
+}
+
+function pluginRuntimeStoreKeyForPluginId(pluginId) {
+  const normalizedPluginId = String(pluginId || "").trim();
+  if (!normalizedPluginId) {
+    throw new Error("createPluginRuntimeStore: pluginId must not be empty");
+  }
+  return `plugin-runtime:${normalizedPluginId}`;
+}
+
+function resolvePluginRuntimeStoreOptions(options) {
+  if (typeof options === "string") {
+    return { key: options, errorMessage: options };
+  }
+  if (options && Object.prototype.hasOwnProperty.call(options, "pluginId")) {
+    return {
+      key: pluginRuntimeStoreKeyForPluginId(options.pluginId),
+      errorMessage: options.errorMessage,
+    };
+  }
+  return options;
+}
+
+function createPluginRuntimeStore(options) {
+  const resolved = resolvePluginRuntimeStoreOptions(options);
+  const slot =
+    typeof options === "string"
+      ? { runtime: null }
+      : (() => {
+          const registry = getPluginRuntimeStoreRegistry();
+          let existingSlot = registry.get(resolved.key);
+          if (!existingSlot) {
+            existingSlot = { runtime: null };
+            registry.set(resolved.key, existingSlot);
+          }
+          return existingSlot;
+        })();
+  return {
+    setRuntime(next) {
+      slot.runtime = next;
+    },
+    clearRuntime() {
+      slot.runtime = null;
+    },
+    tryGetRuntime() {
+      return slot.runtime ?? null;
+    },
+    getRuntime() {
+      if (slot.runtime === null) {
+        throw new Error(resolved.errorMessage);
+      }
+      return slot.runtime;
+    },
+  };
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -30534,6 +30595,10 @@ const deviceBootstrapRuntime = {
   revokeDeviceBootstrapToken,
 };
 
+const runtimeStoreRuntime = {
+  createPluginRuntimeStore,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -31237,6 +31302,7 @@ const genericSdk = new Proxy(
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
+    ...runtimeStoreRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31707,6 +31773,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/device-bootstrap"
   ) {
     return deviceBootstrapRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-store" ||
+    request === "@openclaw/plugin-sdk/runtime-store"
+  ) {
+    return runtimeStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

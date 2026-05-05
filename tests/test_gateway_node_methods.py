@@ -13485,6 +13485,170 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_store_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-store.cjs"
+    runtime_entry.write_text(
+        """
+const runtimeStore = require("openclaw/plugin-sdk/runtime-store");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function captureError(fn) {
+  try {
+    fn();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error && error.message };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_store",
+      description: "Use OpenClaw runtime-store SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const firstShared = runtimeStore.createPluginRuntimeStore({
+          pluginId: "shared-plugin",
+          errorMessage: "shared plugin runtime not initialized"
+        });
+        const secondShared = runtimeStore.createPluginRuntimeStore({
+          pluginId: "shared-plugin",
+          errorMessage: "shared plugin runtime not initialized"
+        });
+        firstShared.clearRuntime();
+        firstShared.setRuntime({ value: "ok" });
+
+        const legacyOne = runtimeStore.createPluginRuntimeStore(
+          "legacy runtime not initialized"
+        );
+        const legacyTwo = runtimeStore.createPluginRuntimeStore(
+          "legacy runtime not initialized"
+        );
+        legacyOne.clearRuntime();
+        legacyOne.setRuntime({ value: "legacy" });
+
+        const customOne = runtimeStore.createPluginRuntimeStore({
+          key: "custom-runtime-key",
+          errorMessage: "custom runtime not initialized"
+        });
+        const customTwo = runtimeStore.createPluginRuntimeStore({
+          key: "custom-runtime-key",
+          errorMessage: "custom runtime not initialized"
+        });
+        customOne.clearRuntime();
+        customOne.setRuntime(0);
+
+        const emptyPlugin = captureError(() =>
+          runtimeStore.createPluginRuntimeStore({
+            pluginId: "   ",
+            errorMessage: "runtime not initialized"
+          })
+        );
+        const missingCustom = runtimeStore.createPluginRuntimeStore({
+          key: "missing-custom-runtime",
+          errorMessage: "missing custom runtime"
+        });
+
+        return {
+          exportTypes: [
+            typeof runtimeStore.createPluginRuntimeStore,
+            typeof genericSdk.createPluginRuntimeStore
+          ],
+          shared: {
+            second: secondShared.getRuntime(),
+            beforeClear: firstShared.tryGetRuntime()
+          },
+          legacy: {
+            first: legacyOne.getRuntime(),
+            second: legacyTwo.tryGetRuntime()
+          },
+          custom: {
+            first: customOne.getRuntime(),
+            second: customTwo.getRuntime()
+          },
+          emptyPlugin,
+          missingCustom: captureError(() => missingCustom.getRuntime())
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-store-plugin",
+                    "name": "Runtime Store Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-store.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_store"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.runtime_store"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function"],
+        "shared": {
+            "second": {"value": "ok"},
+            "beforeClear": {"value": "ok"},
+        },
+        "legacy": {
+            "first": {"value": "legacy"},
+            "second": None,
+        },
+        "custom": {
+            "first": 0,
+            "second": 0,
+        },
+        "emptyPlugin": {
+            "ok": False,
+            "message": "createPluginRuntimeStore: pluginId must not be empty",
+        },
+        "missingCustom": {"ok": False, "message": "missing custom runtime"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
