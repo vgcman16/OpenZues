@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~67.9% overall, with a reasonable band of ~50-68%.
+- Estimated repo-wide parity: ~68.0% overall, with a reasonable band of ~50-69%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -11294,6 +11294,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`19 passed, 327 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `fd98306a`.
+- Microsoft Teams upload-file actions now mirror OpenClaw
+  `extensions/msteams/src/actions.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/send.test.ts`: native `message.action` dispatch for
+  `channel="msteams"`, `action="upload-file"` resolves Teams conversation
+  targets, accepts upstream `filePath` / `path` / `media` sources, preserves
+  `text` / `content` / `message` plus `filename` / `title` metadata, routes
+  through the native Bot Framework send path with FileConsent/Graph upload
+  metadata, and returns OpenClaw-shaped `{ok, channel, action, messageId,
+  conversationId}` plus `pendingUploadId` when Teams returns one. This closes
+  `OZ-PROV-001BT`; repo-wide parity is now estimated at ~68.0%. Remaining
+  Teams action breadth is adaptive-card `send` with a `card` payload.
+- Verified the Microsoft Teams upload-file action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_upload_file_route -q`
+  (`1 passed`), adjacent Teams action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams and message_action"`
+  (`15 passed, 332 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `86be3a2c`.
 
 ## References
 
