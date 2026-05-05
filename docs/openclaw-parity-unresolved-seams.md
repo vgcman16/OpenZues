@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~63.9% overall, with a reasonable
   band of ~50-64%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5920,9 +5920,21 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~63.8%. Verified with focused runtime
   pytest, adjacent Teams send/action/provider proof, `ruff check`, and `mypy`;
   checkpointed in `927d5787`.
+- Closed the Microsoft Teams file info card media seam from OpenClaw
+  `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/graph-chat.ts`, and
+  `extensions/msteams/src/graph-upload.ts`: native Teams sends with media can
+  now consume provider-ready DriveItem metadata, build Bot Framework
+  `application/vnd.microsoft.teams.card.file.info` attachments with
+  eTag-derived `uniqueId` and filename-derived `fileType`, keep the caller text
+  as the file-card caption without synthetic media inventory text, and persist
+  `mediaUrls`, `filenames`, and `fileIds` result metadata. Repo-wide parity is
+  now estimated at ~63.9%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `eb663838`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  media/vote-invoke breadth or
+  Graph/FileConsent upload, vote-invoke breadth, or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.

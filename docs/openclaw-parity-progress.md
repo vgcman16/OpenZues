@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~63.8% overall, with a reasonable band of ~50-64%.
+- Estimated repo-wide parity: ~63.9% overall, with a reasonable band of ~50-64%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10499,6 +10499,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`8 passed, 300 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `927d5787`.
+
+- Microsoft Teams file info card media delivery now mirrors OpenClaw's
+  `extensions/msteams/src/send.ts` / `graph-chat.ts` native file-card
+  projection for provider-ready Graph DriveItem metadata: native Teams sends
+  can build Bot Framework
+  `application/vnd.microsoft.teams.card.file.info` attachments with
+  eTag-derived `uniqueId` and filename-derived `fileType`, keep caller text as
+  the attachment caption without synthetic media inventory text, and persist
+  `mediaUrls`, `filenames`, and `fileIds` provider result metadata. This
+  closes `OZ-PROV-001AE`; repo-wide parity is now estimated at ~63.9%.
+  Remaining Microsoft Teams breadth is Graph upload/FileConsent accept flows,
+  vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams file-card media slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_info_card_media -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_file_info_card_media or msteams_thread_reply or msteams_user_reference_route or msteams_native_route or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`9 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `eb663838`.
 
 ## References
 
