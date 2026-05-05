@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~71.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.4% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6674,10 +6674,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `tools.invoke`. Repo-wide parity is now estimated at ~71.3%. Verified with
   focused reply-chunking helper pytest, adjacent plugin invoke proof, `ruff
   check`, and `mypy`; source/test checkpointed in `b000f51c`.
+- Closed the imported OpenClaw plugin SDK reply-payload helper seam from
+  `src/plugin-sdk/reply-payload.ts` and
+  `src/channels/plugins/media-payload.ts`: native runtime entries can now
+  import outbound payload normalization, media URL extraction/counting,
+  sendable content projection, reasoning payload detection, attachment-link
+  formatting, and source-shaped media/text send helper exports from
+  `openclaw/plugin-sdk/reply-payload` and execute them through `tools.invoke`.
+  Repo-wide parity is now estimated at ~71.4%. Verified with focused
+  reply-payload helper pytest, adjacent plugin invoke proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `5d628f16`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking
-  helper path,
+  text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  reply-payload helper path,
   starting with the next source-backed SDK subpath or deeper route-resolution
   binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
