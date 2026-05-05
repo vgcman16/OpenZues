@@ -8358,6 +8358,218 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_access_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm-access.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createPreCryptoDirectDmAuthorizer,
+  resolveInboundDirectDmAccessWithRuntime
+} = require("openclaw/plugin-sdk/direct-dm-access");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm_access",
+      description: "Use OpenClaw direct-DM access SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const baseCfg = { commands: { useAccessGroups: true } };
+        const runtime = {
+          shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+          resolveCommandAuthorizedFromAuthorizers: ({ authorizers }) =>
+            authorizers.some((entry) => entry.configured && entry.allowed)
+        };
+        const isSenderAllowed = (senderId, allowFrom) => allowFrom.includes(senderId);
+        const paired = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: baseCfg,
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "pairing",
+          allowFrom: [],
+          senderId: "paired-user",
+          rawBody: "/status",
+          isSenderAllowed,
+          readStoreAllowFrom: async () => ["paired-user"],
+          runtime,
+          modeWhenAccessGroupsOff: "configured"
+        });
+        const openBlocked = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: baseCfg,
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "open",
+          allowFrom: [],
+          senderId: "random-user",
+          rawBody: "hello",
+          isSenderAllowed,
+          readStoreAllowFrom: async () => ["random-user"],
+          runtime
+        });
+        const grouped = await resolveInboundDirectDmAccessWithRuntime({
+          cfg: {
+            ...baseCfg,
+            accessGroups: {
+              owners: {
+                type: "message.senders",
+                members: { nostr: ["owner-pubkey"], telegram: ["12345"] }
+              }
+            }
+          },
+          channel: "nostr",
+          accountId: "default",
+          dmPolicy: "allowlist",
+          allowFrom: ["accessGroup:owners"],
+          senderId: "owner-pubkey",
+          rawBody: "/status",
+          isSenderAllowed,
+          runtime
+        });
+        const events = [];
+        const authorizer = createPreCryptoDirectDmAuthorizer({
+          resolveAccess: async (senderId) => ({
+            access:
+              senderId === "pair-me"
+                ? {
+                    decision: "pairing",
+                    reasonCode: "dm_policy_pairing_required",
+                    reason: "dmPolicy=pairing (not allowlisted)",
+                    effectiveAllowFrom: []
+                  }
+                : {
+                    decision: "block",
+                    reasonCode: "dm_policy_disabled",
+                    reason: "dmPolicy=disabled",
+                    effectiveAllowFrom: []
+                  }
+          }),
+          issuePairingChallenge: async ({ senderId }) => {
+            events.push(`pair:${senderId}`);
+          },
+          onBlocked: ({ senderId, reasonCode }) => {
+            events.push(`block:${senderId}:${reasonCode}`);
+          }
+        });
+        const decisions = await Promise.all([
+          authorizer({ senderId: "pair-me", reply: async () => {} }),
+          authorizer({ senderId: "blocked", reply: async () => {} })
+        ]);
+        return {
+          paired,
+          openBlocked: {
+            access: openBlocked.access,
+            shouldComputeAuth: openBlocked.shouldComputeAuth,
+            senderAllowedForCommands: openBlocked.senderAllowedForCommands,
+            commandAuthorized: openBlocked.commandAuthorized ?? null
+          },
+          grouped,
+          authorizer: { decisions, events },
+          exportTypes: [
+            typeof resolveInboundDirectDmAccessWithRuntime,
+            typeof createPreCryptoDirectDmAuthorizer,
+            typeof genericSdk.resolveInboundDirectDmAccessWithRuntime
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-access-plugin",
+                    "name": "Runtime Direct DM Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-access-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "paired": {
+            "access": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_allowlisted",
+                "reason": "dmPolicy=pairing (allowlisted)",
+                "effectiveAllowFrom": ["paired-user"],
+            },
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "openBlocked": {
+            "access": {
+                "decision": "block",
+                "reasonCode": "dm_policy_not_allowlisted",
+                "reason": "dmPolicy=open (not allowlisted)",
+                "effectiveAllowFrom": [],
+            },
+            "shouldComputeAuth": False,
+            "senderAllowedForCommands": False,
+            "commandAuthorized": None,
+        },
+        "grouped": {
+            "access": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_allowlisted",
+                "reason": "dmPolicy=allowlist (allowlisted)",
+                "effectiveAllowFrom": ["accessGroup:owners", "owner-pubkey"],
+            },
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "authorizer": {
+            "decisions": ["pairing", "block"],
+            "events": ["pair:pair-me", "block:blocked:dm_policy_disabled"],
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
