@@ -4138,6 +4138,85 @@ def _msteams_inbound_optional_string(value: object) -> str | None:
     return normalized or None
 
 
+@dataclass(frozen=True, slots=True)
+class _MSTeamsInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    thread_id: str | None
+
+
+def _msteams_inbound_session_context(
+    activity: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsInboundSessionContext:
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    sender_id = (
+        _msteams_inbound_optional_string(sender.get("aadObjectId"))
+        or _msteams_inbound_optional_string(sender.get("id"))
+    )
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Microsoft Teams inbound activity is missing sender id."
+        )
+    sender_name = _msteams_inbound_optional_string(sender.get("name"))
+    raw_conversation_id = conversation.get("id")
+    conversation_id = _msteams_normalize_inbound_conversation_id(raw_conversation_id)
+    if conversation_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Microsoft Teams inbound activity is missing conversation id."
+        )
+    conversation_type = str(
+        conversation.get("conversationType") or "personal"
+    ).strip().lower() or "personal"
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    if conversation_type == "personal":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = f"msteams:user:{sender_id}"
+        thread_id = None
+    else:
+        peer_kind = "channel" if conversation_type == "channel" else "group"
+        peer_id = f"msteams:conversation:{conversation_id}"
+        thread_id = (
+            _msteams_inbound_conversation_message_id(raw_conversation_id)
+            or _msteams_inbound_optional_string(activity.get("replyToId"))
+            if conversation_type == "channel"
+            else None
+        )
+    conversation_target = ConversationTargetView(
+        channel="msteams",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=base_session_key,
+        thread_id=thread_id,
+    ).session_key
+    return _MSTeamsInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+        thread_id=thread_id,
+    )
+
+
 def _msteams_normalize_poll_selections(
     *,
     options: list[str],
@@ -8777,12 +8856,99 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
+    async def _handle_msteams_feedback_invoke(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if (
+            str(activity.get("type") or "").strip().lower() != "invoke"
+            or str(activity.get("name") or "").strip() != "message/submitAction"
+        ):
+            return None
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if str(value.get("actionName") or "").strip() != "feedback":
+            return None
+        action_value = _msteams_inbound_mapping(value.get("actionValue"))
+        reaction = str(action_value.get("reaction") or "").strip().lower()
+        if reaction not in {"like", "dislike"}:
+            return None
+        feedback_value = "negative" if reaction == "dislike" else "positive"
+        user_comment: str | None = None
+        raw_feedback = action_value.get("feedback")
+        if isinstance(raw_feedback, str) and raw_feedback.strip():
+            try:
+                parsed_feedback = json.loads(raw_feedback)
+            except json.JSONDecodeError:
+                parsed_feedback = None
+            if isinstance(parsed_feedback, Mapping):
+                user_comment = _msteams_inbound_optional_string(
+                    parsed_feedback.get("feedbackText")
+                )
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
+        feedback_message_id = (
+            _msteams_inbound_optional_string(value.get("replyToId"))
+            or _msteams_inbound_optional_string(activity.get("replyToId"))
+            or "unknown"
+        )
+        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
+        if user_comment is not None:
+            content = f"{content}\nComment: {user_comment}"
+        feedback_payload: dict[str, object] = {
+            "messageId": feedback_message_id,
+            "value": feedback_value,
+        }
+        if user_comment is not None:
+            feedback_payload["comment"] = user_comment
+        await self.database.append_control_chat_message(
+            role="system",
+            content=content,
+            session_key=context.session_key,
+            metadata={
+                "event": "msteams.feedback",
+                "activityId": _msteams_inbound_optional_string(activity.get("id")),
+                "feedback": feedback_payload,
+                "channel": "msteams",
+                "senderId": context.sender_id,
+                "senderName": context.sender_name,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+                "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            },
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "invoke",
+            "name": "message/submitAction",
+            "action": "feedback",
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "feedback": feedback_payload,
+            "recorded": True,
+        }
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        if context.sender_name is not None:
+            result["senderName"] = context.sender_name
+        return result
+
     async def handle_msteams_inbound_activity(
         self,
         activity: Mapping[str, Any],
         *,
         account_id: str | None = None,
     ) -> dict[str, object]:
+        feedback_result = await self._handle_msteams_feedback_invoke(
+            activity,
+            account_id=account_id,
+        )
+        if feedback_result is not None:
+            return feedback_result
         text = _msteams_inbound_activity_text(activity)
         if text is None:
             return {
@@ -8793,83 +8959,32 @@ class OpsMeshService:
                 "skipped": True,
                 "reason": "msteams_inbound_activity_without_message_text",
             }
-        sender = _msteams_inbound_mapping(activity.get("from"))
-        conversation = _msteams_inbound_mapping(activity.get("conversation"))
-        sender_id = (
-            _msteams_inbound_optional_string(sender.get("aadObjectId"))
-            or _msteams_inbound_optional_string(sender.get("id"))
-        )
-        if sender_id is None:
-            raise GatewayOutboundRuntimeUnavailableError(
-                "Microsoft Teams inbound activity is missing sender id."
-            )
-        sender_name = _msteams_inbound_optional_string(sender.get("name"))
-        raw_conversation_id = conversation.get("id")
-        conversation_id = _msteams_normalize_inbound_conversation_id(raw_conversation_id)
-        if conversation_id is None:
-            raise GatewayOutboundRuntimeUnavailableError(
-                "Microsoft Teams inbound activity is missing conversation id."
-            )
-        conversation_type = str(
-            conversation.get("conversationType") or "personal"
-        ).strip().lower() or "personal"
-        normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
-        if conversation_type == "personal":
-            peer_kind: ConversationTargetPeerKind = "direct"
-            peer_id = f"msteams:user:{sender_id}"
-            thread_id = None
-        else:
-            peer_kind = "channel" if conversation_type == "channel" else "group"
-            peer_id = f"msteams:conversation:{conversation_id}"
-            thread_id = (
-                _msteams_inbound_conversation_message_id(raw_conversation_id)
-                or _msteams_inbound_optional_string(activity.get("replyToId"))
-                if conversation_type == "channel"
-                else None
-            )
-        conversation_target = ConversationTargetView(
-            channel="msteams",
-            account_id=normalized_account_id,
-            peer_kind=peer_kind,
-            peer_id=peer_id,
-        )
-        base_session_key = build_launch_session_key(
-            mode="workspace_affinity",
-            preferred_instance_id=None,
-            task_id=None,
-            project_id=None,
-            operator_id=None,
-            conversation_target=conversation_target,
-        )
-        session_key = resolve_thread_session_keys(
-            base_session_key=base_session_key,
-            thread_id=thread_id,
-        ).session_key
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
         if self.session_delivery_service is None:
             raise GatewayOutboundRuntimeUnavailableError(
                 "Microsoft Teams inbound session delivery is unavailable."
             )
-        delivery_result = await self.session_delivery_service(session_key, text)
+        delivery_result = await self.session_delivery_service(context.session_key, text)
         message_id = _session_delivery_message_id(delivery_result)
         result: dict[str, object] = {
             "ok": True,
             "channel": "msteams",
             "activityType": str(activity.get("type") or "").strip() or None,
             "name": str(activity.get("name") or "").strip() or None,
-            "sessionKey": session_key,
+            "sessionKey": context.session_key,
             "text": text,
-            "senderId": sender_id,
-            "conversationId": conversation_id,
-            "conversationType": conversation_type,
-            "conversationTarget": conversation_target.model_dump(mode="json"),
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
             "delivery": {"runtime": "session-backed"},
         }
         if message_id is not None:
             result["messageId"] = message_id
-        if thread_id is not None:
-            result["threadId"] = thread_id
-        if sender_name is not None:
-            result["senderName"] = sender_name
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        if context.sender_name is not None:
+            result["senderName"] = context.sender_name
         return result
 
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:

@@ -18999,6 +18999,108 @@ async def test_ops_mesh_service_routes_msteams_html_attachment_text_fallback() -
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-invoke-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": f"{conversation_id};messageid=thread-root-123",
+                "conversationType": "channel",
+            },
+            "replyToId": "nested-reply-999",
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Needs a clearer source link."}),
+                },
+                "replyToId": "bot-message-777",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="thread-root-123",
+    ).session_key
+    messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=expected_session_key,
+    )
+    metadata = json.loads(messages[0]["metadata_json"])
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "message/submitAction",
+        "action": "feedback",
+        "sessionKey": expected_session_key,
+        "threadId": "thread-root-123",
+        "senderId": "user-aad",
+        "senderName": "User",
+        "conversationId": conversation_id,
+        "conversationType": "channel",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "feedback": {
+            "messageId": "bot-message-777",
+            "value": "negative",
+            "comment": "Needs a clearer source link.",
+        },
+        "recorded": True,
+    }
+    assert len(messages) == 1
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == (
+        "Teams feedback: negative for bot-message-777\n"
+        "Comment: Needs a clearer source link."
+    )
+    assert metadata["event"] == "msteams.feedback"
+    assert metadata["feedback"]["value"] == "negative"
+    assert metadata["feedback"]["messageId"] == "bot-message-777"
+    assert metadata["feedback"]["comment"] == "Needs a clearer source link."
+    assert metadata["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
