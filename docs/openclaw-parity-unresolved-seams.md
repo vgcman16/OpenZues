@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~71.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.1% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6646,10 +6646,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~71.0%. Verified with focused
   temp-path helper pytest, adjacent plugin invoke proof, `ruff check`, and
   `mypy`; source/test checkpointed in `d6a73b21`.
+- Closed the imported OpenClaw plugin SDK secret-input helper seam from
+  `src/plugin-sdk/secret-input.ts` and `src/config/types.secrets.ts`: native
+  runtime entries can now import literal-secret normalization, SecretRef
+  coercion, inspect-mode resolution, and configured-secret detection helpers
+  from `openclaw/plugin-sdk/secret-input` and execute them through
+  `tools.invoke`. Repo-wide parity is now estimated at ~71.1%. Verified with
+  focused secret-input helper pytest, adjacent plugin invoke proof, `ruff
+  check`, and `mypy`; source/test checkpointed in `76e3c638`.
 - Next repo-wide queue head: rotate to the next provider-specific
   runtime/plugin gap, continuing broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/error-runtime/temp-path helper path.
+  text-runtime/error-runtime/temp-path/secret-input helper path.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
