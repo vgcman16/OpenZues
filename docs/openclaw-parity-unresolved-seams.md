@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~62.7% overall, with a reasonable
   band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -5762,6 +5762,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   metadata. Repo-wide parity is now estimated at ~62.6%. Verified with focused
   schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
   check`, and `mypy`; checkpointed in `b69d5489`.
+- Closed the Mattermost native outbound route seam from OpenClaw
+  `extensions/mattermost/src/mattermost/send.ts` and
+  `extensions/mattermost/src/mattermost/client.ts`: native
+  `kind="mattermost"` routes now accept Mattermost base URLs, send
+  `/api/v4/posts` JSON payloads with `channel_id`, `message`, and optional
+  `root_id`, attach bearer bot auth, and persist message/channel/reply
+  metadata. Repo-wide parity is now estimated at ~62.7%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `44541ef9`.
 - Next repo-wide queue head: rotate to the next provider-specific
   provider-specific send/poll/replay metadata gap, starting with another
   source-backed channel/provider route or action adapter, or packaging/plugin

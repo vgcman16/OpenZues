@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~62.6% overall, with a reasonable band of ~50-63%.
+- Estimated repo-wide parity: ~62.7% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -129,6 +129,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   projects message/chat/channel/media metadata through the direct-send result
   envelope. This slice is checkpointed in `b69d5489`.
 - Verified the Synology Chat native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Mattermost direct text/reply parity now accepts native
+  `kind="mattermost"` routes, normalizes channel-id targets, posts
+  OpenClaw-shaped `/api/v4/posts` payloads with bearer bot auth, forwards
+  `replyToId` as Mattermost `root_id`, and preserves provider message,
+  chat/channel, reply, and media-fallback metadata through the direct-send
+  result envelope. This slice is checkpointed in `44541ef9`.
+- Verified the Mattermost native route slice with focused schema, service,
   CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
   touched source/test files, and `mypy` on touched source modules.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
@@ -10215,6 +10224,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   src\openzues\schemas.py src\openzues\services\ops_mesh.py
   src\openzues\services\gateway_channels.py src\openzues\cli.py`.
   Checkpointed in `b69d5489`.
+
+- Mattermost native outbound route support now mirrors the direct channel-id
+  send/reply path from OpenClaw `extensions/mattermost/src/mattermost/send.ts`
+  and `extensions/mattermost/src/mattermost/client.ts`: native
+  `kind="mattermost"` routes accept Mattermost base URLs, send
+  `/api/v4/posts` JSON payloads with `channel_id`, `message`, and optional
+  `root_id`, attach bearer bot auth, and preserve message/channel/reply result
+  metadata. This closes `OZ-PROV-001S`; repo-wide parity is now estimated at
+  ~62.7%.
+- Verified the Mattermost native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_mattermost_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_mattermost_native_route tests\test_cli.py::test_routes_create_command_accepts_mattermost_native_route tests\test_app.py -q -k "mattermost_native_route"`
+  (`5 passed, 201 deselected`), adjacent provider route proof (`15 passed, 276
+  deselected`), adjacent CLI route proof (`6 passed, 499 deselected`),
+  adjacent app route proof (`15 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `44541ef9`.
 
 ## References
 
