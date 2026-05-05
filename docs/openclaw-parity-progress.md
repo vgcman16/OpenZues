@@ -9907,7 +9907,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
   send_direct_channel_message_uses_discord_native_route or
   send_direct_channel_poll_uses_discord"` (`4 passed, 275 deselected`),
   `ruff check src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and
-  `mypy src\openzues\services\ops_mesh.py`. Checkpoint pending.
+  `mypy src\openzues\services\ops_mesh.py`. Checkpointed in `e47324f4`.
 
 ## References
 

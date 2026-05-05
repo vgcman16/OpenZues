@@ -29,8 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Discord thread result fallback slice is verified locally and awaiting its
-checkpoint hash.
+The Discord thread result fallback slice is checkpointed in `e47324f4`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -52,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord thread result fallback verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Discord thread result fallback checkpointed in `e47324f4` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -67,7 +66,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     Discord returns a message id without `channel_id`.
   - Evidence required: focused Discord thread-query test, adjacent Discord
     native send/reply/poll tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `e47324f4`
   - Weight: 1
   - Last verified: 2026-05-04, focused Discord thread-query test (`1
     passed`), adjacent Discord native route proof (`4 passed, 275

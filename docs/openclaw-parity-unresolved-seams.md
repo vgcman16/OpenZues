@@ -5623,7 +5623,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `chatId`/`channelId` to the requested thread id when Discord returns a
   message id without `channel_id`. Repo-wide parity is now estimated at
   ~61.1%. Verified with focused Discord thread-query pytest, adjacent Discord
-  native route proof, `ruff check`, and `mypy`; checkpoint pending.
+  native route proof, `ruff check`, and `mypy`; checkpointed in `e47324f4`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
