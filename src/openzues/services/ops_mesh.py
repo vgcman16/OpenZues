@@ -5735,6 +5735,78 @@ def _feishu_chat_member_view(member: object) -> dict[str, object] | None:
     return view
 
 
+def _feishu_directory_query_matches(identifier: str, name: str, query: str | None) -> bool:
+    normalized = str(query or "").strip().lower()
+    if not normalized:
+        return True
+    return normalized in identifier.lower() or normalized in name.lower()
+
+
+def _feishu_directory_limit(params: dict[str, Any]) -> int:
+    limit = _message_action_param_integer(params, "limit")
+    return limit if limit is not None else 50
+
+
+def _feishu_directory_page_size(limit: int, maximum: int) -> int:
+    return max(1, min(maximum, limit))
+
+
+def _feishu_directory_group_views(
+    data: object,
+    *,
+    query: str | None,
+    limit: int,
+) -> list[dict[str, object]]:
+    if not isinstance(data, Mapping):
+        return []
+    items = data.get("items")
+    groups: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        chat_id = str(item.get("chat_id") or "").strip()
+        if not chat_id:
+            continue
+        name = str(item.get("name") or "")
+        if not _feishu_directory_query_matches(chat_id, name, query):
+            continue
+        group: dict[str, object] = {"kind": "group", "id": chat_id}
+        if name:
+            group["name"] = name
+        groups.append(group)
+        if len(groups) >= limit:
+            break
+    return groups
+
+
+def _feishu_directory_peer_views(
+    data: object,
+    *,
+    query: str | None,
+    limit: int,
+) -> list[dict[str, object]]:
+    if not isinstance(data, Mapping):
+        return []
+    items = data.get("items")
+    peers: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, Mapping):
+            continue
+        open_id = str(item.get("open_id") or "").strip()
+        if not open_id:
+            continue
+        name = str(item.get("name") or "")
+        if not _feishu_directory_query_matches(open_id, name, query):
+            continue
+        peer: dict[str, object] = {"kind": "user", "id": open_id}
+        if name:
+            peer["name"] = name
+        peers.append(peer)
+        if len(peers) >= limit:
+            break
+    return peers
+
+
 def _msteams_action_content(params: dict[str, Any]) -> str:
     for key in ("text", "content", "message"):
         value = params.get(key)
@@ -15689,6 +15761,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_feishu_member_info_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel in {"feishu", "lark"} and action == "channel-list":
+            route = await self._provider_route_for_channel_account(
+                channel="feishu",
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Feishu route is configured for message.action channel-list."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_feishu_channel_list_message_action,
                 route,
                 request,
                 secret_token,
@@ -27278,6 +27366,81 @@ class OpsMeshService:
         if isinstance(page_token_result, str) and page_token_result.strip():
             response["page_token"] = page_token_result.strip()
         return response
+
+    def _dispatch_feishu_channel_list_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        query = _message_action_param_string(request.params, "query")
+        limit = _feishu_directory_limit(request.params)
+        raw_scope = (
+            _message_action_param_string(request.params, "scope")
+            or _message_action_param_string(request.params, "kind")
+            or "all"
+        )
+        scope = raw_scope.lower()
+
+        def list_groups() -> list[dict[str, object]]:
+            result = self._request_json_provider_url(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    "im/v1/chats",
+                    query={"page_size": _feishu_directory_page_size(limit, 100)},
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_feishu_bearer_token(secret_token),
+            )
+            if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+                raise RuntimeError(
+                    "Feishu live group lookup failed: "
+                    f"{result.get('msg') or result.get('message') or result.get('code')}"
+                )
+            data = result.get("data") if isinstance(result, Mapping) else None
+            return _feishu_directory_group_views(data, query=query, limit=limit)
+
+        def list_peers() -> list[dict[str, object]]:
+            result = self._request_json_provider_url(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    "contact/v3/users",
+                    query={"page_size": _feishu_directory_page_size(limit, 50)},
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_feishu_bearer_token(secret_token),
+            )
+            if isinstance(result, Mapping) and result.get("code") not in (None, 0, "0"):
+                raise RuntimeError(
+                    "Feishu live peer lookup failed: "
+                    f"{result.get('msg') or result.get('message') or result.get('code')}"
+                )
+            data = result.get("data") if isinstance(result, Mapping) else None
+            return _feishu_directory_peer_views(data, query=query, limit=limit)
+
+        if scope in {"groups", "group", "channels", "channel"}:
+            return {
+                "ok": True,
+                "channel": "feishu",
+                "action": "channel-list",
+                "groups": list_groups(),
+            }
+        if scope in {"peers", "peer", "members", "member", "users", "user"}:
+            return {
+                "ok": True,
+                "channel": "feishu",
+                "action": "channel-list",
+                "peers": list_peers(),
+            }
+        return {
+            "ok": True,
+            "channel": "feishu",
+            "action": "channel-list",
+            "groups": list_groups(),
+            "peers": list_peers(),
+        }
 
     def _post_msteams_provider_event(
         self,
