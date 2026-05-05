@@ -4145,6 +4145,34 @@ def _msteams_attachment_is_likely_image(attachment: Mapping[str, Any]) -> bool:
     return bool(file_type and MSTEAMS_IMAGE_EXT_RE.search(f"x.{file_type}"))
 
 
+def _msteams_attachment_media_url(attachment: Mapping[str, Any]) -> str | None:
+    content = _msteams_inbound_mapping(attachment.get("content"))
+    for candidate in (
+        content.get("downloadUrl"),
+        content.get("download_url"),
+        attachment.get("contentUrl"),
+        attachment.get("content_url"),
+    ):
+        media_url = _msteams_inbound_optional_string(candidate)
+        if media_url is not None:
+            return media_url
+    return None
+
+
+def _msteams_attachment_media_urls(activity: Mapping[str, Any]) -> list[str]:
+    raw_attachments = activity.get("attachments")
+    if not isinstance(raw_attachments, list):
+        return []
+    media_urls: list[str] = []
+    for attachment in raw_attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        media_url = _msteams_attachment_media_url(attachment)
+        if media_url is not None and media_url not in media_urls:
+            media_urls.append(media_url)
+    return media_urls
+
+
 def _msteams_attachment_placeholder(activity: Mapping[str, Any]) -> str | None:
     raw_attachments = activity.get("attachments")
     if not isinstance(raw_attachments, list):
@@ -10060,6 +10088,7 @@ class OpsMeshService:
             raise GatewayOutboundRuntimeUnavailableError(
                 "Microsoft Teams inbound session delivery is unavailable."
             )
+        media_urls = _msteams_attachment_media_urls(activity)
         delivery_result = await self.session_delivery_service(context.session_key, text)
         message_id = _session_delivery_message_id(delivery_result)
         result: dict[str, object] = {
@@ -10077,6 +10106,8 @@ class OpsMeshService:
         }
         if message_id is not None:
             result["messageId"] = message_id
+        if media_urls:
+            result["mediaUrls"] = media_urls
         if context.thread_id is not None:
             result["threadId"] = context.thread_id
         if context.sender_name is not None:

@@ -19067,6 +19067,84 @@ async def test_ops_mesh_service_routes_msteams_attachment_only_media_placeholder
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_preserves_msteams_downloadable_attachment_urls() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-attachment-urls"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def deliver_to_session(session_key: str, text: str) -> dict[str, object]:
+        session_deliveries.append((session_key, text))
+        return {"messageId": "inbound-media-url-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=deliver_to_session,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "inbound-media-url-activity-1",
+            "type": "message",
+            "text": "",
+            "from": {"id": "user-bf", "aadObjectId": "user-aad", "name": "User"},
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "channel",
+            },
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.file.download.info",
+                    "name": "photo.png",
+                    "content": {
+                        "downloadUrl": "https://tenant.sharepoint.com/download/photo.png",
+                        "fileType": "png",
+                    },
+                },
+                {
+                    "contentType": "application/pdf",
+                    "name": "brief.pdf",
+                    "contentUrl": "https://files.example.com/brief.pdf",
+                },
+            ],
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "<media:image>")]
+    assert result["mediaUrls"] == [
+        "https://tenant.sharepoint.com/download/photo.png",
+        "https://files.example.com/brief.pdf",
+    ]
+    assert result["text"] == "<media:image>"
+    assert result["messageId"] == "inbound-media-url-1"
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_sends_msteams_personal_welcome_card_on_bot_added(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
