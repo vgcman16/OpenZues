@@ -18127,6 +18127,84 @@ function createAsyncLock() {
   };
 }
 
+function sleepWithAbort(ms, signal) {
+  if (signal && signal.aborted) {
+    return Promise.reject(new Error("aborted"));
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      reject(new Error("aborted"));
+    }
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+}
+
+async function waitForTransportReady(params) {
+  const started = Date.now();
+  const timeoutMs = Math.max(0, params.timeoutMs);
+  const deadline = started + timeoutMs;
+  const logAfterMs = Math.max(0, params.logAfterMs ?? timeoutMs);
+  const logIntervalMs = Math.max(1000, params.logIntervalMs ?? 30000);
+  const pollIntervalMs = Math.max(50, params.pollIntervalMs ?? 150);
+  let nextLogAt = started + logAfterMs;
+  let lastError = null;
+
+  while (true) {
+    if (params.abortSignal && params.abortSignal.aborted) {
+      return;
+    }
+    const res = await params.check();
+    if (res && res.ok) {
+      return;
+    }
+    lastError = res && res.error != null ? res.error : null;
+
+    const now = Date.now();
+    if (now >= deadline) {
+      break;
+    }
+    if (now >= nextLogAt) {
+      const elapsedMs = now - started;
+      const message = `${params.label} not ready after ${elapsedMs}ms (${
+        lastError ?? "unknown error"
+      })`;
+      if (params.runtime && typeof params.runtime.error === "function") {
+        params.runtime.error(message);
+      }
+      nextLogAt = now + logIntervalMs;
+    }
+
+    try {
+      await sleepWithAbort(pollIntervalMs, params.abortSignal);
+    } catch (error) {
+      if (params.abortSignal && params.abortSignal.aborted) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  const message = `${params.label} not ready after ${timeoutMs}ms (${
+    lastError ?? "unknown error"
+  })`;
+  if (params.runtime && typeof params.runtime.error === "function") {
+    params.runtime.error(message);
+  }
+  throw new Error(`${params.label} not ready (${lastError ?? "unknown error"})`);
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -20945,6 +21023,10 @@ const asyncLockRuntime = {
   createAsyncLock,
 };
 
+const transportReadyRuntime = {
+  waitForTransportReady,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21314,6 +21396,7 @@ const genericSdk = new Proxy(
     stripPlainTextToolCallBlocks,
     textResult,
     ToolAuthorizationError,
+    waitForTransportReady,
     withTempDownloadPath,
     withNormalizedTimestamp,
   },
@@ -21391,6 +21474,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/async-lock-runtime"
   ) {
     return asyncLockRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/transport-ready-runtime" ||
+    request === "@openclaw/plugin-sdk/transport-ready-runtime"
+  ) {
+    return transportReadyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||

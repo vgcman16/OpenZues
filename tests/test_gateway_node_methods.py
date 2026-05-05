@@ -7756,6 +7756,109 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_transport_ready_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-transport-ready-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { waitForTransportReady } = require(
+  "openclaw/plugin-sdk/transport-ready-runtime"
+);
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.transport_ready",
+      description: "Use OpenClaw transport-ready-runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const logs = [];
+        let successChecks = 0;
+        await waitForTransportReady({
+          label: "test transport",
+          timeoutMs: 100,
+          pollIntervalMs: 50,
+          runtime: { error: (message) => logs.push(String(message)) },
+          check: async () => {
+            successChecks += 1;
+            return { ok: true };
+          }
+        });
+        let timeoutMessage = null;
+        try {
+          await waitForTransportReady({
+            label: "timeout transport",
+            timeoutMs: 0,
+            runtime: { error: (message) => logs.push(String(message)) },
+            check: async () => ({ ok: false, error: "still down" })
+          });
+        } catch (error) {
+          timeoutMessage = error && error.message;
+        }
+        return { successChecks, timeoutMessage, logs };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-transport-ready-plugin",
+                    "name": "Runtime Transport Ready Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-transport-ready-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.transport_ready"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.transport_ready"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "successChecks": 1,
+        "timeoutMessage": "timeout transport not ready (still down)",
+        "logs": ["timeout transport not ready after 0ms (still down)"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_async_lock_runtime_helpers(
     tmp_path,
 ) -> None:
