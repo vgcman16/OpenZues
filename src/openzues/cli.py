@@ -18847,6 +18847,243 @@ function resolveAgentRoute(input) {
   };
 }
 
+const DEFAULT_CHUNK_LIMIT = 4000;
+const DEFAULT_CHUNK_MODE = "length";
+const SILENT_REPLY_TOKEN = "NO_REPLY";
+
+function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    const window = remaining.slice(0, limit);
+    const candidateBreak = resolveBreakIndex(window);
+    const breakIdx =
+      Number.isFinite(candidateBreak) && candidateBreak > 0 && candidateBreak <= limit
+        ? candidateBreak
+        : limit;
+    const rawChunk = remaining.slice(0, breakIdx);
+    const chunk = rawChunk.trimEnd();
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
+    const brokeOnSeparator = breakIdx < remaining.length && /\s/.test(remaining[breakIdx]);
+    const nextStart = Math.min(remaining.length, breakIdx + (brokeOnSeparator ? 1 : 0));
+    remaining = remaining.slice(nextStart).trimStart();
+  }
+  if (remaining.length) {
+    chunks.push(remaining);
+  }
+  return chunks;
+}
+
+function scanParenAwareBreakpoints(text, start, end) {
+  let lastNewline = -1;
+  let lastWhitespace = -1;
+  let depth = 0;
+  for (let i = start; i < end; i++) {
+    const char = text[i];
+    if (char === "(") {
+      depth += 1;
+      continue;
+    }
+    if (char === ")" && depth > 0) {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 0) {
+      continue;
+    }
+    if (char === "\n") {
+      lastNewline = i;
+    } else if (/\s/.test(char)) {
+      lastWhitespace = i;
+    }
+  }
+  return { lastNewline, lastWhitespace };
+}
+
+function chunkText(text, limit) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0 || text.length <= limit) {
+    return [text];
+  }
+  return chunkTextByBreakResolver(text, limit, (window) => {
+    const { lastNewline, lastWhitespace } = scanParenAwareBreakpoints(
+      window,
+      0,
+      window.length,
+    );
+    return lastNewline > 0 ? lastNewline : lastWhitespace;
+  });
+}
+
+function chunkByParagraph(text, limit, opts) {
+  if (!text) {
+    return [];
+  }
+  if (limit <= 0) {
+    return [text];
+  }
+  const splitLongParagraphs = !(opts && opts.splitLongParagraphs === false);
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const paragraphRe = /\n[\t ]*\n+/;
+  if (!paragraphRe.test(normalized)) {
+    if (normalized.length <= limit) {
+      return [normalized];
+    }
+    return splitLongParagraphs ? chunkText(normalized, limit) : [normalized];
+  }
+  const chunks = [];
+  const parts = normalized.split(/\n[\t ]*\n+/g);
+  for (const part of parts) {
+    const paragraph = part.replace(/\s+$/g, "");
+    if (!paragraph.trim()) {
+      continue;
+    }
+    if (paragraph.length <= limit || !splitLongParagraphs) {
+      chunks.push(paragraph);
+    } else {
+      chunks.push(...chunkText(paragraph, limit));
+    }
+  }
+  return chunks;
+}
+
+function chunkTextWithMode(text, limit, mode) {
+  return mode === "newline" ? chunkByParagraph(text, limit) : chunkText(text, limit);
+}
+
+function chunkMarkdownTextWithMode(text, limit, mode) {
+  return chunkTextWithMode(text, limit, mode);
+}
+
+function resolveProviderChunkConfig(cfg, provider) {
+  if (!cfg || !provider || provider === INTERNAL_MESSAGE_CHANNEL) {
+    return undefined;
+  }
+  const channelsConfig = cfg.channels && typeof cfg.channels === "object" ? cfg.channels : {};
+  return channelsConfig[provider] || cfg[provider];
+}
+
+function resolveChunkLimitForProvider(cfgSection, accountId) {
+  if (!cfgSection || typeof cfgSection !== "object") {
+    return undefined;
+  }
+  const accounts = cfgSection.accounts;
+  if (accounts && typeof accounts === "object") {
+    const direct = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    if (direct && typeof direct.textChunkLimit === "number") {
+      return direct.textChunkLimit;
+    }
+  }
+  return typeof cfgSection.textChunkLimit === "number" ? cfgSection.textChunkLimit : undefined;
+}
+
+function resolveTextChunkLimit(cfg, provider, accountId, opts) {
+  const fallback =
+    opts && typeof opts.fallbackLimit === "number" && opts.fallbackLimit > 0
+      ? opts.fallbackLimit
+      : DEFAULT_CHUNK_LIMIT;
+  const providerOverride = resolveChunkLimitForProvider(
+    resolveProviderChunkConfig(cfg, provider),
+    accountId,
+  );
+  return typeof providerOverride === "number" && providerOverride > 0
+    ? providerOverride
+    : fallback;
+}
+
+function resolveChannelStreamingChunkMode(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const streaming = entry.streaming;
+  if (
+    streaming &&
+    typeof streaming === "object" &&
+    (streaming.chunkMode === "length" || streaming.chunkMode === "newline")
+  ) {
+    return streaming.chunkMode;
+  }
+  return entry.chunkMode === "length" || entry.chunkMode === "newline"
+    ? entry.chunkMode
+    : undefined;
+}
+
+function resolveChunkModeForProvider(cfgSection, accountId) {
+  if (!cfgSection || typeof cfgSection !== "object") {
+    return undefined;
+  }
+  const accounts = cfgSection.accounts;
+  if (accounts && typeof accounts === "object") {
+    const direct = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    const directMode = resolveChannelStreamingChunkMode(direct);
+    if (directMode) {
+      return directMode;
+    }
+  }
+  return resolveChannelStreamingChunkMode(cfgSection) || cfgSection.chunkMode;
+}
+
+function resolveChunkMode(cfg, provider, accountId) {
+  if (!provider || provider === INTERNAL_MESSAGE_CHANNEL) {
+    return DEFAULT_CHUNK_MODE;
+  }
+  return resolveChunkModeForProvider(resolveProviderChunkConfig(cfg, provider), accountId) ||
+    DEFAULT_CHUNK_MODE;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getSilentExactRegex(token) {
+  return new RegExp(`^\\s*${escapeRegExp(token)}\\s*$`, "i");
+}
+
+function isSilentReplyText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  return getSilentExactRegex(token).test(text);
+}
+
+function isSilentReplyEnvelopeText(text, token = SILENT_REPLY_TOKEN) {
+  if (!text) {
+    return false;
+  }
+  const trimmed = text.trim();
+  if (!trimmed || !trimmed.startsWith("{") || !trimmed.endsWith("}") || !trimmed.includes(token)) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    const keys = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.keys(parsed)
+      : [];
+    return (
+      keys.length === 1 &&
+      keys[0] === "action" &&
+      typeof parsed.action === "string" &&
+      parsed.action.trim() === token
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isSilentReplyPayloadText(text, token = SILENT_REPLY_TOKEN) {
+  return isSilentReplyText(text, token) || isSilentReplyEnvelopeText(text, token);
+}
+
 function passthrough(value) {
   return value;
 }
@@ -18924,10 +19161,22 @@ const routingRuntime = {
   sanitizeAgentId,
 };
 
+const replyChunkingRuntime = {
+  SILENT_REPLY_TOKEN,
+  chunkMarkdownTextWithMode,
+  chunkText,
+  chunkTextWithMode,
+  isSilentReplyPayloadText,
+  isSilentReplyText,
+  resolveChunkMode,
+  resolveTextChunkLimit,
+};
+
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
     DEFAULT_MAIN_KEY,
+    SILENT_REPLY_TOKEN,
     buildRandomTempFilePath,
     buildAgentMainSessionKey,
     buildAgentSessionKey,
@@ -18936,6 +19185,9 @@ const genericSdk = new Proxy(
     coerceSecretRef,
     collectErrorGraphCandidates,
     createTempDownloadTarget,
+    chunkMarkdownTextWithMode,
+    chunkText,
+    chunkTextWithMode,
     deriveLastRoutePolicy,
     extractErrorCode,
     formatSetExplicitDefaultInstruction,
@@ -18947,6 +19199,8 @@ const genericSdk = new Proxy(
     hasConfiguredSecretInput,
     isAcpSessionKey,
     isCronSessionKey,
+    isSilentReplyPayloadText,
+    isSilentReplyText,
     isSecretRef,
     isSubagentSessionKey,
     listBoundAccountIds,
@@ -18974,12 +19228,14 @@ const genericSdk = new Proxy(
     readStringValue,
     resolveAccountEntry,
     resolveAgentIdFromSessionKey,
+    resolveChunkMode,
     resolveAgentRoute,
     resolveDefaultAgentBoundAccountId,
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
     resolvePreferredOpenClawTmpDir,
     resolveSecretInputString,
+    resolveTextChunkLimit,
     resolveThreadSessionKeys,
     sanitizeTempFileName,
     sanitizeAgentId,
@@ -19029,6 +19285,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/routing"
   ) {
     return routingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-chunking" ||
+    request === "@openclaw/plugin-sdk/reply-chunking"
+  ) {
+    return replyChunkingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

@@ -6678,6 +6678,130 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_chunking_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-chunking.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  SILENT_REPLY_TOKEN,
+  chunkText,
+  chunkTextWithMode,
+  isSilentReplyPayloadText,
+  isSilentReplyText,
+  resolveChunkMode,
+  resolveTextChunkLimit
+} = require("openclaw/plugin-sdk/reply-chunking");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_chunking",
+      description: "Use OpenClaw reply-chunking helpers",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              textChunkLimit: 1234,
+              chunkMode: "length",
+              accounts: {
+                Primary: {
+                  textChunkLimit: 777,
+                  streaming: { chunkMode: "newline" }
+                }
+              }
+            }
+          }
+        };
+        return {
+          token: SILENT_REPLY_TOKEN,
+          hardBreak: chunkText("Supercalifragilisticexpialidocious", 10),
+          parenthetical: chunkText("Heads up now (Though now I'm curious)ok", 35),
+          newlineMode: chunkTextWithMode("Para one\\n\\nPara two", 1000, "newline"),
+          fallbackLimit: resolveTextChunkLimit(undefined, "telegram", undefined, {
+            fallbackLimit: 2000
+          }),
+          providerLimit: resolveTextChunkLimit(cfg, "telegram"),
+          accountLimit: resolveTextChunkLimit(cfg, "telegram", "primary"),
+          providerMode: resolveChunkMode(cfg, "telegram"),
+          accountMode: resolveChunkMode(cfg, "telegram", "primary"),
+          silentExact: isSilentReplyText(" NO_REPLY "),
+          silentPayload: isSilentReplyPayloadText('{"action":"NO_REPLY"}'),
+          visibleText: isSilentReplyText("hello NO_REPLY")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-chunking-plugin",
+                    "name": "Runtime Reply Chunking Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-chunking-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_chunking"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_chunking"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "token": "NO_REPLY",
+        "hardBreak": ["Supercalif", "ragilistic", "expialidoc", "ious"],
+        "parenthetical": ["Heads up now", "(Though now I'm curious)ok"],
+        "newlineMode": ["Para one", "Para two"],
+        "fallbackLimit": 2000,
+        "providerLimit": 1234,
+        "accountLimit": 777,
+        "providerMode": "length",
+        "accountMode": "newline",
+        "silentExact": True,
+        "silentPayload": True,
+        "visibleText": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
