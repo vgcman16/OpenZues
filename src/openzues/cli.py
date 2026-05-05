@@ -9345,6 +9345,7 @@ def _emit_update_status(payload: dict[str, object], *, json_output: bool) -> Non
 
 
 _OPENCLAW_UPDATE_CHANNELS = {"stable", "beta", "dev"}
+_OPENCLAW_UPDATE_PACKAGE_MANAGERS = {"pnpm", "bun", "npm"}
 
 
 def _openclaw_update_config_channel(config_snapshot: object) -> str | None:
@@ -9363,6 +9364,72 @@ def _openclaw_update_install_kind(root: Path) -> str:
     if _doctor_path_exists(root):
         return "package"
     return "unknown"
+
+
+def _openclaw_update_package_manager(root: Path) -> str:
+    package_json = root / "package.json"
+    if _doctor_path_exists(package_json):
+        try:
+            parsed = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, Mapping):
+            raw_manager = str(parsed.get("packageManager") or "").strip()
+            manager = raw_manager.split("@", maxsplit=1)[0].strip().lower()
+            if manager in _OPENCLAW_UPDATE_PACKAGE_MANAGERS:
+                return manager
+
+    lockfile_managers = (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+        ("package-lock.json", "npm"),
+    )
+    for filename, manager in lockfile_managers:
+        if _doctor_path_exists(root / filename):
+            return manager
+    return "unknown"
+
+
+def _openclaw_update_deps_marker(root: Path, manager: str) -> tuple[Path | None, Path | None]:
+    if manager == "pnpm":
+        return root / "pnpm-lock.yaml", root / "node_modules" / ".modules.yaml"
+    if manager == "bun":
+        return root / "bun.lockb", root / "node_modules"
+    if manager == "npm":
+        return root / "package-lock.json", root / "node_modules"
+    return None, None
+
+
+def _openclaw_update_deps_status(root: Path, manager: str) -> dict[str, object]:
+    lockfile_path, marker_path = _openclaw_update_deps_marker(root, manager)
+    payload: dict[str, object] = {
+        "manager": manager,
+        "status": "unknown",
+        "lockfilePath": str(lockfile_path) if lockfile_path is not None else None,
+        "markerPath": str(marker_path) if marker_path is not None else None,
+    }
+    if lockfile_path is None or marker_path is None:
+        payload["reason"] = "unknown package manager"
+        return payload
+    if not _doctor_path_exists(lockfile_path):
+        payload["reason"] = "lockfile missing"
+        return payload
+    if not _doctor_path_exists(marker_path):
+        payload["status"] = "missing"
+        payload["reason"] = "node_modules marker missing"
+        return payload
+    try:
+        lock_mtime_ms = lockfile_path.stat().st_mtime * 1000
+        marker_mtime_ms = marker_path.stat().st_mtime * 1000
+    except OSError:
+        return payload
+    if lock_mtime_ms > marker_mtime_ms + 1000:
+        payload["status"] = "stale"
+        payload["reason"] = "lockfile newer than install marker"
+        return payload
+    payload["status"] = "ok"
+    return payload
 
 
 def _openclaw_update_git_branch(root: Path) -> str | None:
@@ -9421,12 +9488,18 @@ def _with_openclaw_update_status_projection(
     install_kind = _openclaw_update_install_kind(root)
     git_branch = _openclaw_update_git_branch(root) if install_kind == "git" else None
     config_channel = _openclaw_update_config_channel(config_snapshot)
+    package_manager = (
+        _openclaw_update_package_manager(root) if install_kind != "unknown" else "unknown"
+    )
     next_payload = dict(payload)
-    next_payload["update"] = {
+    update_payload: dict[str, object] = {
         "root": str(root),
         "installKind": install_kind,
-        "packageManager": "unknown",
+        "packageManager": package_manager,
     }
+    if install_kind != "unknown":
+        update_payload["deps"] = _openclaw_update_deps_status(root, package_manager)
+    next_payload["update"] = update_payload
     next_payload["channel"] = _openclaw_update_channel_payload(
         config_channel=config_channel,
         install_kind=install_kind,
