@@ -29,8 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The canvas shortcode normalization slice is verified and awaiting checkpoint
-commit.
+The canvas shortcode normalization slice is checkpointed in `c34e4a77`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/gateway_canvas_render.py`
@@ -52,7 +51,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Package distribution doctor diagnostics checkpointed in `47d73351` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
-| OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization verified; checkpoint pending | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
+| OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | WhatsApp audio/voice media send checkpointed in `c27d3439` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps or return to installed plugin contract enforcement |
 
@@ -69,7 +68,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     shortcodes and invalid targets remain visible.
   - Evidence required: focused canvas-render test, adjacent control-chat canvas
     preview test, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `c34e4a77`
   - Weight: 1
   - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
     full canvas-render tests (`4 passed`), adjacent control-chat canvas preview

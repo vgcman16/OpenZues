@@ -183,7 +183,7 @@ may lag behind this tracker.
 
 - [x] Canvas shortcode text normalization, preserving OpenClaw's visible
   assistant-message cleanup after valid `[embed ...]` removals.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `c34e4a77`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -651,7 +651,7 @@ may lag behind this tracker.
   - Source: `openclaw-main/src/chat/canvas-render.ts`
   - Target: `src/openzues/services/gateway_canvas_render.py`
   - Test: `tests/test_gateway_canvas_render.py`, `tests/test_app.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `c34e4a77`.
   - Weight: 1
   - Last verified: 2026-05-04, focused canvas normalization test (`1 passed`),
     full canvas-render tests (`4 passed`), adjacent control-chat canvas preview

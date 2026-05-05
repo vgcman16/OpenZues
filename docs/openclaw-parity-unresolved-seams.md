@@ -5542,7 +5542,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~60.2%; browser/canvas/nodes/voice
   bounded command family remains ~99%. Verified with focused canvas-render
   pytest, adjacent control-chat canvas preview proof, `ruff check`, and
-  `mypy`; checkpoint pending commit.
+  `mypy`; checkpointed in `c34e4a77`.
 - Next repo-wide queue head: rotate to packaging distribution inventory
   validity, Telegram audio/voice routing, or companion remote-bin discovery
   based on the strongest source-backed seam.
