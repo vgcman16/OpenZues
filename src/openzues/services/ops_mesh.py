@@ -341,6 +341,8 @@ class _MSTeamsRouteConfig:
     service_url: str
     app_id: str | None
     tenant_id: str | None
+    conversation_id: str | None
+    conversation_type: str | None
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -1527,6 +1529,8 @@ def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPee
             "gchat:users/",
             "matrix:user:",
             "matrix:@",
+            "msteams:user:",
+            "teams:user:",
             "@",
         )
     ):
@@ -3313,23 +3317,52 @@ def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
     if path.lower().endswith("/v3"):
         path = path[:-3].rstrip("/")
     service_url = parsed._replace(path=path, query="", fragment="").geturl().rstrip("/")
+    conversation_id = (
+        str(
+            query.get("conversationid")
+            or query.get("conversation_id")
+            or query.get("conversation")
+            or ""
+        ).strip()
+        or None
+    )
+    if conversation_id is not None:
+        conversation_id = _msteams_conversation_id(conversation_id)
+    conversation_type = (
+        str(query.get("conversationtype") or query.get("conversation_type") or "").strip()
+        or None
+    )
     return _MSTeamsRouteConfig(
         service_url=service_url,
         app_id=query.get("appid") or None,
         tenant_id=query.get("tenantid") or None,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
     )
 
 
-def _msteams_conversation_id(raw_target: str | None) -> str:
+def _msteams_strip_channel_target_prefix(raw_target: str | None) -> str:
     target = str(raw_target or "").strip()
-    if not target:
-        raise RuntimeError("Microsoft Teams conversation target is required.")
     normalized_target = target.lower()
     for prefix in ("msteams:", "teams:"):
         if normalized_target.startswith(prefix):
-            target = target[len(prefix) :].strip()
-            normalized_target = target.lower()
-            break
+            return target[len(prefix) :].strip()
+    return target
+
+
+def _msteams_user_target_id(raw_target: str | None) -> str | None:
+    target = _msteams_strip_channel_target_prefix(raw_target)
+    if not target.lower().startswith("user:"):
+        return None
+    user_id = target[len("user:") :].strip()
+    user_id = re.split(r";messageid=", user_id, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    return user_id or None
+
+
+def _msteams_conversation_id(raw_target: str | None) -> str:
+    target = _msteams_strip_channel_target_prefix(raw_target)
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
     if target.lower().startswith("conversation:"):
         target = target[len("conversation:") :].strip()
     if not target:
@@ -3343,6 +3376,30 @@ def _msteams_conversation_id(raw_target: str | None) -> str:
     if not target:
         raise RuntimeError("Microsoft Teams conversation target is required.")
     return target
+
+
+def _msteams_resolve_route_conversation_id(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    raw_target: str | None,
+) -> str:
+    user_id = _msteams_user_target_id(raw_target)
+    if user_id is None:
+        return _msteams_conversation_id(raw_target)
+    conversation_id = route_config.conversation_id
+    if not conversation_id:
+        raise RuntimeError(
+            f"No conversation reference found for user:{user_id}. "
+            "The bot must receive a DM from this user before it can send proactively."
+        )
+    conversation_type = str(route_config.conversation_type or "").strip().lower()
+    if conversation_type and conversation_type != "personal":
+        raise RuntimeError(
+            f"Conversation reference for user:{user_id} resolved to a {conversation_type} "
+            f"conversation ({conversation_id}) instead of a personal DM. "
+            "The bot must receive a DM from this user before it can send proactively."
+        )
+    return conversation_id
 
 
 def _msteams_activity_endpoint(
@@ -5917,6 +5974,14 @@ def _conversation_target_peer_id_matches(
         event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
         return bool(route_twitch_target and route_twitch_target == event_twitch_target)
     if channel == "msteams":
+        route_msteams_user = _msteams_user_target_id(route_peer_id)
+        event_msteams_user = _msteams_user_target_id(event_peer_id)
+        if route_msteams_user is not None or event_msteams_user is not None:
+            return bool(
+                route_msteams_user
+                and event_msteams_user
+                and route_msteams_user.strip().lower() == event_msteams_user.strip().lower()
+            )
         try:
             route_msteams_target = _msteams_conversation_id(route_peer_id).strip().lower()
             event_msteams_target = _msteams_conversation_id(event_peer_id).strip().lower()
@@ -21065,10 +21130,12 @@ class OpsMeshService:
         secret_token: str | None,
     ) -> dict[str, object]:
         conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
-        conversation_id = _msteams_conversation_id(
-            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
-        )
+        raw_target = str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
         route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=raw_target,
+        )
         poll_id: str | None = None
         if event_type == "gateway/poll":
             question = str(event.get("question") or event.get("summary") or "").strip()

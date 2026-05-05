@@ -17431,6 +17431,126 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_user_reference_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "a:personal-dm-conversation"
+    user_id = "alice-aad-id"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams-user"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native User Reference",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=personal"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": f"user:{user_id}",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-dm-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:user:{user_id}",
+        message="Microsoft Teams DM reference parity.",
+        account_id="default",
+        idempotency_key="idem-native-msteams-user-send",
+    )
+
+    assert result["messageId"] == "teams-dm-message-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "a%3Apersonal-dm-conversation/activities"
+            ),
+            {
+                "type": "message",
+                "text": "Microsoft Teams DM reference parity.",
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
