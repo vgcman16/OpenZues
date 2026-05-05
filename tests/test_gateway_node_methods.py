@@ -7756,6 +7756,98 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_collection_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-collection-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const { pruneMapToMaxSize } = require("openclaw/plugin-sdk/collection-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.collection",
+      description: "Use OpenClaw collection-runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const newest = new Map([["a", 1], ["b", 2], ["c", 3]]);
+        pruneMapToMaxSize(newest, 2.9);
+        const zero = new Map([["a", 1], ["b", 2]]);
+        pruneMapToMaxSize(zero, 0);
+        const negative = new Map([["a", 1], ["b", 2]]);
+        pruneMapToMaxSize(negative, -4);
+        const oversized = new Map([["a", 1]]);
+        pruneMapToMaxSize(oversized, 5);
+        return {
+          newest: Array.from(newest.entries()),
+          zero: Array.from(zero.entries()),
+          negative: Array.from(negative.entries()),
+          oversized: Array.from(oversized.entries())
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-collection-plugin",
+                    "name": "Runtime Collection Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-collection-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.collection"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.collection"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "newest": [["b", 2], ["c", 3]],
+        "zero": [],
+        "negative": [],
+        "oversized": [["a", 1]],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secure_random_runtime_helpers(
     tmp_path,
 ) -> None:

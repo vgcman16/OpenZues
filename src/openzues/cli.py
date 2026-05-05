@@ -18093,6 +18093,21 @@ function generateSecureToken(bytes = 16) {
   return crypto.randomBytes(bytes).toString("base64url");
 }
 
+function pruneMapToMaxSize(map, maxSize) {
+  const limit = Math.max(0, Math.floor(maxSize));
+  if (limit <= 0) {
+    map.clear();
+    return;
+  }
+  while (map.size > limit) {
+    const oldest = map.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    map.delete(oldest.value);
+  }
+}
+
 function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
@@ -20903,6 +20918,10 @@ const secureRandomRuntime = {
   generateSecureUuid,
 };
 
+const collectionRuntime = {
+  pruneMapToMaxSize,
+};
+
 const errorRuntime = {
   collectErrorGraphCandidates,
   extractErrorCode,
@@ -21220,6 +21239,7 @@ const genericSdk = new Proxy(
     parseStandalonePlainTextToolCallBlocks,
     parseThreadSessionSuffix,
     pathExists,
+    pruneMapToMaxSize,
     parseAvailableTags,
     projectCredentialSnapshotFields,
     readBooleanParam,
@@ -21335,6 +21355,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secure-random-runtime"
   ) {
     return secureRandomRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/collection-runtime" ||
+    request === "@openclaw/plugin-sdk/collection-runtime"
+  ) {
+    return collectionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/temp-path" ||
