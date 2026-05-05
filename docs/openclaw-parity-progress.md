@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-04.
-- Estimated repo-wide parity: ~62.0% overall, with a reasonable band of ~50-62%.
+- Estimated repo-wide parity: ~62.1% overall, with a reasonable band of ~50-63%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -73,6 +73,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - ESM-style bundled plugin runtime entries now use the same native import path
   through a temporary CommonJS transform for common OpenClaw
   `import ... from "openclaw/plugin-sdk/*"` and `export default` syntax.
+- Plugin manifest provider metadata now preserves OpenClaw provider endpoint
+  suffix/Vertex fields plus provider-scoped `modelIdNormalization` and
+  `providerRequest` contracts in `plugins list --json`.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -10098,6 +10101,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_cli.py`, and `mypy src\openzues\cli.py
   src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
   `b79b87c3`.
+
+- Plugin manifest provider metadata now mirrors OpenClaw manifest registry
+  breadth for provider-owned rows: endpoint `hostSuffixes`,
+  `googleVertexRegion`, `googleVertexRegionHostSuffix`,
+  `modelIdNormalization.providers`, and `providerRequest.providers` are
+  normalized and projected from `plugins list --json`, with provider-scoped
+  entries filtered to manifest-owned providers. This closes `OZ-PLUGIN-001BM`;
+  repo-wide parity is now estimated at ~62.1%.
+- Verified the plugin provider metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "manifest_auth_and_env_metadata or manifest_model_support or
+  manifest_config_contracts or manifest_runtime_extension_contracts or
+  manifest_document_extractor_contracts or manifest_web_content_extractor_contracts"`
+  (`6 passed, 494 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `9b2bf4fc`.
 
 ## References
 

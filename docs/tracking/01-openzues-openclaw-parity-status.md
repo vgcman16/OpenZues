@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~62.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~62.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -129,6 +129,11 @@ may lag behind this tracker.
   "openclaw/plugin-sdk/*"` and `export default` syntax to a temporary CommonJS
   module while preserving SDK alias shims and registered tool collection.
   - Status: checkpointed in `eb11e22f`
+
+- [x] Plugin provider metadata projection, preserving OpenClaw
+  `providerEndpoints` suffix/Vertex metadata plus provider-scoped
+  `modelIdNormalization` and `providerRequest` rows.
+  - Status: checkpointed in `9b2bf4fc`
 
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
@@ -950,6 +955,19 @@ may lag behind this tracker.
     tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
     -q` (`1 passed`), adjacent QR proof (`4 passed, 496 deselected`), `ruff
     check`, and `mypy`.
+
+- [x] Plugin provider metadata projection.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest-registry.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `9b2bf4fc`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+    -q` (`1 passed`), adjacent manifest metadata proof (`6 passed, 494
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,

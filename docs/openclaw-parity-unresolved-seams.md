@@ -4,8 +4,8 @@ Updated: 2026-05-04
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~62.0% overall, with a reasonable
-  band of ~50-62%.
+- Repo-wide OpenClaw parity is estimated at ~62.1% overall, with a reasonable
+  band of ~50-63%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -5701,6 +5701,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   payload limited to `{url, bootstrapToken}`. Repo-wide parity is now
   estimated at ~62.0%. Verified with focused QR JSON pytest, adjacent QR
   proof, `ruff check`, and `mypy`; checkpointed in `b79b87c3`.
+- Closed the plugin provider metadata projection seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/manifest-registry.ts`, and
+  `src/plugins/manifest-registry.test.ts`: native plugin list rows now
+  preserve endpoint `hostSuffixes`, Google Vertex region metadata,
+  provider-scoped `modelIdNormalization`, and provider-scoped
+  `providerRequest` metadata for manifest-owned providers. Repo-wide parity is
+  now estimated at ~62.1%. Verified with focused manifest auth/env/provider
+  metadata pytest, adjacent manifest metadata proof, `ruff check`, and
+  `mypy`; checkpointed in `9b2bf4fc`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
