@@ -1499,6 +1499,97 @@ def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     }
 
 
+def test_channels_status_json_reports_msteams_native_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams Probe Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    def fake_msteams_fetch_bot_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["msteams"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "msteams",
+        "runtime": "native-provider-backed",
+        "accountId": "default",
+        "appId": "teams-app-id",
+        "graph": {"ok": True},
+        "timeoutMs": 2500,
+    }
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

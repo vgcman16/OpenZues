@@ -293,6 +293,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "discord",
     "line",
     "matrix",
+    "msteams",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -3542,6 +3543,40 @@ def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
         if isinstance(users, list):
             users.append(user_entry)
     return list(grouped.values())
+
+
+def _msteams_decode_jwt_payload(token: str) -> dict[str, object] | None:
+    parts = str(token or "").split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if not payload:
+        return None
+    padded = payload + "=" * ((4 - len(payload) % 4) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        parsed = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _msteams_graph_probe_metadata(token: str) -> dict[str, object]:
+    metadata: dict[str, object] = {"ok": True}
+    payload = _msteams_decode_jwt_payload(token)
+    if payload is None:
+        return metadata
+    roles = payload.get("roles")
+    if isinstance(roles, list):
+        normalized_roles = [str(role).strip() for role in roles if str(role).strip()]
+        if normalized_roles:
+            metadata["roles"] = normalized_roles
+    scopes = payload.get("scp")
+    if isinstance(scopes, str):
+        normalized_scopes = [scope.strip() for scope in scopes.split() if scope.strip()]
+        if normalized_scopes:
+            metadata["scopes"] = normalized_scopes
+    return metadata
 
 
 def _signal_base_url(raw_target: str | None) -> str:
@@ -9788,6 +9823,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "msteams":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_msteams_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
@@ -9841,6 +9894,46 @@ class OpsMeshService:
             "userId": str(result.get("user_id") or ""),
             "timeoutMs": timeout_ms,
         }
+
+    def _probe_msteams_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        graph: dict[str, object]
+        try:
+            graph_token = self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            )
+            graph = _msteams_graph_probe_metadata(
+                graph_token.removeprefix("Bearer ").strip()
+            )
+        except Exception as exc:
+            graph = {"ok": False, "error": str(exc).strip() or type(exc).__name__}
+        result: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "graph": graph,
+            "timeoutMs": timeout_ms,
+        }
+        if route_config.app_id:
+            result["appId"] = route_config.app_id
+        return result
 
     def _probe_telegram_provider_route(
         self,

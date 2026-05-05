@@ -17771,6 +17771,99 @@ async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list
 
 
 @pytest.mark.asyncio
+async def test_ops_mesh_service_probe_channel_account_uses_msteams_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-probe-msteams-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Probe Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    token_calls: list[tuple[str, str, str, str]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("bot", tenant_id, app_id, app_password))
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("graph", tenant_id, app_id, app_password))
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.probe_channel_account(
+        channel="msteams",
+        account_id="default",
+        timeout_ms=2500,
+    )
+
+    assert result == {
+        "ok": True,
+        "status": "ok",
+        "provider": "msteams",
+        "runtime": "native-provider-backed",
+        "accountId": "default",
+        "appId": "teams-app-id",
+        "graph": {"ok": True},
+        "timeoutMs": 2500,
+    }
+    assert token_calls == [
+        ("bot", "tenant-id", "teams-app-id", "teams-app-password"),
+        ("graph", "tenant-id", "teams-app-id", "teams-app-password"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
