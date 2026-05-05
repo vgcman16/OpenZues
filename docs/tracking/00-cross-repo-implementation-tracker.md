@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~77.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~77.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin provider web-search contract shim slice is checkpointed in `3dadf0fb`.
+The imported plugin provider web facade shim slice is checkpointed in `0ba91657`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +61,39 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Provider web-search contract shim checkpointed in `3dadf0fb` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Provider web facade shim checkpointed in `0ba91657` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001UP` Imported provider web facade helper shim
+  - Source: `openclaw-main/src/plugin-sdk/provider-web-search.ts`,
+    `openclaw-main/src/plugin-sdk/provider-web-fetch.ts`,
+    `openclaw-main/src/agents/tools/web-search-provider-common.ts`,
+    `openclaw-main/src/agents/tools/web-shared.ts`,
+    `openclaw-main/src/agents/tools/web-fetch-utils.ts`,
+    `openclaw-main/src/security/external-content.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`,
+    `openclaw-main/src/plugins/contracts/web-search-provider.*.contract.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `openclaw/plugin-sdk/provider-web-search` and
+    `openclaw/plugin-sdk/provider-web-fetch`, use common web provider
+    parameter/result helpers, markdown/text utilities, cache/timing helpers,
+    search filter/date/freshness helpers, web-search cache helpers, endpoint
+    wrapper stubs, external-content wrappers, and the deprecated
+    plugin-backed web-search provider error boundary through scoped and
+    generic SDK aliases during `tools.invoke`.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0ba91657`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused provider web facade proof
+    (`1 passed`), adjacent provider-helper proof (`7 passed, 880 deselected`),
+    adjacent imported-plugin/runtime proof (`84 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PLUGIN-001UO` Imported provider web-search contract helper shim
   - Source: `openclaw-main/src/plugin-sdk/provider-web-search-contract-fields.ts`,
