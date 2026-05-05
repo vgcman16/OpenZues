@@ -7325,6 +7325,170 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_reference_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-reference.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createReplyReferencePlanner,
+  isSingleUseReplyToMode,
+  resolveBatchedReplyThreadingPolicy
+} = require("openclaw/plugin-sdk/reply-reference");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const nullable = (value) => value === undefined ? null : value;
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_reference",
+      description: "Use OpenClaw reply reference SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const first = createReplyReferencePlanner({
+          replyToMode: "first",
+          startId: "parent"
+        });
+        const firstFlow = [
+          nullable(first.peek()),
+          first.hasReplied(),
+          nullable(first.use()),
+          first.hasReplied(),
+          nullable(first.peek()),
+          nullable(first.use())
+        ];
+
+        const all = createReplyReferencePlanner({
+          replyToMode: "all",
+          startId: "parent"
+        });
+        const allFlow = [
+          nullable(all.peek()),
+          all.hasReplied(),
+          nullable(all.use()),
+          all.hasReplied(),
+          nullable(all.use())
+        ];
+
+        const existing = createReplyReferencePlanner({
+          replyToMode: "first",
+          existingId: "thread-1",
+          startId: "parent"
+        });
+        const off = createReplyReferencePlanner({
+          replyToMode: "off",
+          startId: "parent"
+        });
+        const denied = createReplyReferencePlanner({
+          replyToMode: "all",
+          startId: "parent",
+          allowReference: false
+        });
+        const seeded = createReplyReferencePlanner({
+          replyToMode: "batched",
+          startId: "parent",
+          hasReplied: true
+        });
+
+        denied.markSent();
+
+        return {
+          singleUse: [
+            isSingleUseReplyToMode("off"),
+            isSingleUseReplyToMode("all"),
+            isSingleUseReplyToMode("first"),
+            isSingleUseReplyToMode("batched")
+          ],
+          firstFlow,
+          allFlow,
+          existing: [nullable(existing.use()), nullable(existing.use())],
+          off: [nullable(off.use()), off.hasReplied()],
+          denied: [nullable(denied.use()), denied.hasReplied()],
+          seeded: [seeded.hasReplied(), nullable(seeded.use())],
+          policy: [
+            nullable(resolveBatchedReplyThreadingPolicy("first", true)),
+            resolveBatchedReplyThreadingPolicy("batched", true),
+            resolveBatchedReplyThreadingPolicy("batched", false)
+          ],
+          generic: nullable(genericSdk.createReplyReferencePlanner({
+            replyToMode: "first",
+            startId: "parent"
+          }).use())
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-reference-plugin",
+                    "name": "Runtime Reply Reference Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-reference-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_reference"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_reference"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "singleUse": [False, False, True, True],
+        "firstFlow": ["parent", False, "parent", True, None, None],
+        "allFlow": ["parent", False, "parent", True, "parent"],
+        "existing": ["thread-1", None],
+        "off": [None, False],
+        "denied": [None, True],
+        "seeded": [True, None],
+        "policy": [
+            None,
+            {"implicitCurrentMessage": "allow"},
+            {"implicitCurrentMessage": "deny"},
+        ],
+        "generic": "parent",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

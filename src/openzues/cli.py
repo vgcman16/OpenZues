@@ -22417,6 +22417,53 @@ function isSingleUseReplyToMode(mode) {
   return mode === "first" || mode === "batched";
 }
 
+function createReplyReferencePlanner(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  let hasReplied = opts.hasReplied ?? false;
+  const allowReference = opts.allowReference !== false;
+  const existingId = normalizeOptionalString(opts.existingId);
+  const startId = normalizeOptionalString(opts.startId);
+  const resolve = () => {
+    if (!allowReference || opts.replyToMode === "off") {
+      return undefined;
+    }
+    const id = existingId ?? startId;
+    if (!id) {
+      return undefined;
+    }
+    if (opts.replyToMode === "all") {
+      return id;
+    }
+    if (isSingleUseReplyToMode(opts.replyToMode) && hasReplied) {
+      return undefined;
+    }
+    return id;
+  };
+  const use = () => {
+    const id = resolve();
+    if (!id) {
+      return undefined;
+    }
+    hasReplied = true;
+    return id;
+  };
+  return {
+    peek: resolve,
+    use,
+    markSent: () => {
+      hasReplied = true;
+    },
+    hasReplied: () => hasReplied,
+  };
+}
+
+function resolveBatchedReplyThreadingPolicy(mode, isBatched) {
+  if (mode !== "batched") {
+    return undefined;
+  }
+  return { implicitCurrentMessage: isBatched ? "allow" : "deny" };
+}
+
 function createReplyToFanout(params) {
   const replyToId = (params && params.replyToId) || undefined;
   if (!replyToId) {
@@ -22677,6 +22724,12 @@ const replyHistoryRuntime = {
   evictOldHistoryKeys,
   recordPendingHistoryEntry,
   recordPendingHistoryEntryIfEnabled,
+};
+
+const replyReferenceRuntime = {
+  createReplyReferencePlanner,
+  isSingleUseReplyToMode,
+  resolveBatchedReplyThreadingPolicy,
 };
 
 const keyedAsyncQueueRuntime = {
@@ -22954,6 +23007,7 @@ const genericSdk = new Proxy(
     createDedupeCache,
     createInboundDebouncer,
     createScopedExpiringIdCache,
+    createReplyReferencePlanner,
     createRateLimitRetryRunner,
     createTelegramRetryRunner,
     createAsyncLock,
@@ -23013,6 +23067,7 @@ const genericSdk = new Proxy(
     isNumericTargetId,
     isRecord,
     isReasoningReplyPayload,
+    isSingleUseReplyToMode,
     isSilentReplyPayloadText,
     isSilentReplyText,
     isSecretRef,
@@ -23098,6 +23153,7 @@ const genericSdk = new Proxy(
     resolvePreferredOpenClawTmpDir,
     resolvePollMaxSelections,
     resolveReactionMessageId,
+    resolveBatchedReplyThreadingPolicy,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
     resolveTextChunkLimit,
@@ -23260,6 +23316,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-history"
   ) {
     return replyHistoryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-reference" ||
+    request === "@openclaw/plugin-sdk/reply-reference"
+  ) {
+    return replyReferenceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||
