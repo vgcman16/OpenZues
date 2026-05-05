@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~71.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~71.9% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6718,10 +6718,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   and execute it through `tools.invoke`. Repo-wide parity is now estimated at
   ~71.8%. Verified with focused boolean-param pytest, adjacent plugin invoke
   proof, `ruff check`, and `mypy`; source/test checkpointed in `65bd842f`.
+- Closed the imported OpenClaw plugin SDK channel-actions seam from
+  `src/plugin-sdk/channel-actions.ts`, `src/agents/tools/common.ts`,
+  `src/channels/plugins/actions/shared.ts`,
+  `src/channels/plugins/actions/reaction-message-id.ts`,
+  `src/agents/date-time.ts`, `src/agents/sandbox-paths.ts`, `src/polls.ts`,
+  and `src/agents/schema/typebox.ts`: native runtime entries can now import
+  common action gates, parameter readers, reaction id fallback, result/schema
+  helpers, timestamp normalization, media URL guards, poll selection limits,
+  and available-tag parsing from `openclaw/plugin-sdk/channel-actions` and
+  execute them through `tools.invoke`. Repo-wide parity is now estimated at
+  ~71.9%. Verified with focused channel-actions pytest, adjacent plugin invoke
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `447d15ff`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
-  reply-payload/account-helper/account-core/tool-payload/boolean-param path,
+  reply-payload/account-helper/account-core/tool-payload/boolean-param/
+  channel-actions path,
   starting with the next source-backed SDK subpath or deeper route-resolution
   binding behavior.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

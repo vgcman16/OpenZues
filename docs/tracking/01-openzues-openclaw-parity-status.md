@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~71.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~71.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -199,6 +199,12 @@ may lag behind this tracker.
 - [x] Imported plugin SDK boolean-param shim for loose boolean tool parameter
   reading.
   - Status: checkpointed in `65bd842f`
+
+- [x] Imported plugin SDK channel-actions shim for action gates, parameter
+  readers, reaction id fallback, result/schema helpers, timestamp
+  normalization, media guards, poll selection limits, and available-tag
+  parsing.
+  - Status: checkpointed in `447d15ff`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1175,9 +1181,26 @@ may lag behind this tracker.
     reply-payload helper shim checkpointed in `5d628f16`, account-helper
     shim checkpointed in `6d2cf33b`, account-core/account-resolution shim
     checkpointed in `47fa2f39`, tool-payload shim checkpointed in
-    `387717ed`, and boolean-param shim checkpointed in `65bd842f`, but
-    broader plugin SDK helper/runtime surface breadth remains.
+    `387717ed`, boolean-param shim checkpointed in `65bd842f`, and
+    channel-actions shim checkpointed in `447d15ff`, but broader plugin SDK
+    helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK channel-actions shim.
+  - Source: `openclaw-main/src/plugin-sdk/channel-actions.ts`,
+    `openclaw-main/src/agents/tools/common.ts`,
+    `openclaw-main/src/channels/plugins/actions/shared.ts`,
+    `openclaw-main/src/channels/plugins/actions/reaction-message-id.ts`,
+    `openclaw-main/src/agents/date-time.ts`,
+    `openclaw-main/src/agents/sandbox-paths.ts`, `openclaw-main/src/polls.ts`,
+    and `openclaw-main/src/agents/schema/typebox.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `447d15ff`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused channel-actions proof (`1 passed`),
+    adjacent plugin invoke proof (`24 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK boolean-param shim.
   - Source: `openclaw-main/src/plugin-sdk/boolean-param.ts`
