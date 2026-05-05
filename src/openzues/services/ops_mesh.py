@@ -5392,6 +5392,19 @@ def _msteams_action_content(params: dict[str, Any]) -> str:
     return ""
 
 
+def _msteams_action_card(params: dict[str, Any]) -> dict[str, object]:
+    value = params.get("card")
+    parsed: object = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("card must be a JSON object.") from exc
+    if not isinstance(parsed, Mapping):
+        raise RuntimeError("Microsoft Teams card send requires card.")
+    return dict(parsed)
+
+
 def _msteams_action_upload_file_path(params: dict[str, Any]) -> str:
     for key in ("filePath", "path", "media"):
         value = _message_action_param_raw_string(params, key)
@@ -14935,6 +14948,22 @@ class OpsMeshService:
             secret_token = await self._notification_route_secret_token(route)
             return await asyncio.to_thread(
                 self._dispatch_msteams_delete_message_action,
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action == "send" and request.params.get("card") is not None:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action send."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await asyncio.to_thread(
+                self._dispatch_msteams_send_card_message_action,
                 route,
                 request,
                 secret_token,
@@ -25911,6 +25940,49 @@ class OpsMeshService:
         return {
             "ok": True,
             "channel": "msteams",
+            "conversationId": conversation_id,
+        }
+
+    def _dispatch_msteams_send_card_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        card = _msteams_action_card(request.params)
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=target,
+        )
+        result = self._request_json_provider_url(
+            _msteams_activity_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=conversation_id,
+            ),
+            method="POST",
+            payload={
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card,
+                    }
+                ],
+            },
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams API returned a non-JSON response.")
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "messageId": _msteams_message_id(result) or "unknown",
             "conversationId": conversation_id,
         }
 
