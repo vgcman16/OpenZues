@@ -6952,6 +6952,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-markdown-table-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  convertMarkdownTables,
+  resolveMarkdownTableMode
+} = require("openclaw/plugin-sdk/markdown-table-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.markdown_table",
+      description: "Use OpenClaw markdown table runtime SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const table = "Intro\\n\\n| Name | Value |\\n|---|---|\\n| A | 1 |\\n| B | 2 |\\n\\nDone";
+        const code = convertMarkdownTables(table, "code");
+        const block = convertMarkdownTables("| A | B |\\n|---|---|\\n| 1 | 2 |", "block");
+        const bullets = convertMarkdownTables(
+          "| Name | Value | Extra |\\n|---|---|---|\\n| A | 1 | x |\\n| B | | y |",
+          "bullets"
+        );
+        const offInput = "| A | B |\\n|---|---|\\n| 1 | 2 |";
+        const noTable = "hello | no table";
+        const cfg = {
+          channels: {
+            telegram: {
+              markdown: { tables: "bullets" },
+              accounts: {
+                Work: { markdown: { tables: "off" } },
+                default: { markdown: { tables: "code" } }
+              }
+            },
+            slack: { markdown: { tables: "block" } }
+          }
+        };
+        const modes = [
+          resolveMarkdownTableMode({ cfg, channel: "telegram", accountId: "work" }),
+          resolveMarkdownTableMode({ cfg, channel: "telegram" }),
+          resolveMarkdownTableMode({ cfg, channel: "slack" }),
+          resolveMarkdownTableMode({
+            cfg: { telegram: { markdown: { tables: "off" } } },
+            channel: "telegram"
+          }),
+          resolveMarkdownTableMode({ cfg: null, channel: "unknown" }),
+          genericSdk.resolveMarkdownTableMode({ cfg, channel: "discord" })
+        ];
+
+        return {
+          code: [
+            code.includes("```"),
+            code.includes("| Name | Value |"),
+            code.includes("Intro"),
+            code.includes("Done")
+          ],
+          block: [
+            block.includes("```"),
+            block.includes("| 1 | 2 |")
+          ],
+          bullets: [
+            bullets.includes("A"),
+            bullets.includes("\\u2022 Value: 1"),
+            bullets.includes("\\u2022 Extra: y"),
+            (bullets.match(/\\u2022 Value:/g) || []).length,
+            bullets.includes("|---|---|---|")
+          ],
+          passthrough: [
+            convertMarkdownTables(offInput, "off") === offInput,
+            convertMarkdownTables(noTable, "bullets") === noTable
+          ],
+          modes,
+          genericConvert: genericSdk.convertMarkdownTables(offInput, "code").includes("```")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-markdown-table-plugin",
+                    "name": "Runtime Markdown Table Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-markdown-table-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.markdown_table"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.markdown_table"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "code": [True, True, True, True],
+        "block": [True, True],
+        "bullets": [True, True, True, 1, False],
+        "passthrough": [True, True],
+        "modes": ["off", "code", "code", "off", "code", "code"],
+        "genericConvert": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

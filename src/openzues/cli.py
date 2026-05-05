@@ -18955,6 +18955,150 @@ function createInboundDebouncer(params) {
   return { enqueue, flushKey };
 }
 
+function normalizeMarkdownChannelId(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function isMarkdownTableMode(value) {
+  return value === "off" || value === "bullets" || value === "code" || value === "block";
+}
+
+function resolveMarkdownModeFromSection(section, accountId) {
+  if (!section || typeof section !== "object") {
+    return undefined;
+  }
+  const accounts = section.accounts;
+  if (accounts && typeof accounts === "object") {
+    const match = resolveAccountEntry(accounts, normalizeAccountId(accountId));
+    const matchMode = match && match.markdown && match.markdown.tables;
+    if (isMarkdownTableMode(matchMode)) {
+      return matchMode;
+    }
+  }
+  const sectionMode = section.markdown && section.markdown.tables;
+  return isMarkdownTableMode(sectionMode) ? sectionMode : undefined;
+}
+
+function resolveMarkdownTableMode(params) {
+  const channel = normalizeMarkdownChannelId(params && params.channel);
+  const defaultMode = "code";
+  if (!channel || !params || !params.cfg) {
+    return defaultMode;
+  }
+  const channelsConfig = params.cfg.channels;
+  const section =
+    (channelsConfig && channelsConfig[channel]) ||
+    params.cfg[channel] ||
+    undefined;
+  const resolved =
+    resolveMarkdownModeFromSection(section, params.accountId) || defaultMode;
+  return resolved === "block" ? "code" : resolved;
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed.includes("|")) {
+    return null;
+  }
+  let body = trimmed;
+  if (body.startsWith("|")) {
+    body = body.slice(1);
+  }
+  if (body.endsWith("|")) {
+    body = body.slice(0, -1);
+  }
+  const cells = body.split("|").map((cell) => cell.trim());
+  return cells.length >= 2 ? cells : null;
+}
+
+function isMarkdownTableSeparator(line) {
+  const cells = splitMarkdownTableRow(line);
+  if (!cells || cells.length === 0) {
+    return false;
+  }
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function isMarkdownTableRow(line, expectedCells) {
+  const cells = splitMarkdownTableRow(line);
+  return !!cells && (!expectedCells || cells.length === expectedCells);
+}
+
+function renderMarkdownTableAsBullets(headers, rows) {
+  const lines = [];
+  rows.forEach((row, rowIndex) => {
+    const label = row[0] || "";
+    if (label) {
+      lines.push(label);
+    }
+    for (let index = 1; index < Math.max(headers.length, row.length); index += 1) {
+      const value = row[index] || "";
+      if (!value) {
+        continue;
+      }
+      const header = headers[index] || `Column ${index + 1}`;
+      lines.push(`\u2022 ${header}: ${value}`);
+    }
+    if (rowIndex < rows.length - 1) {
+      lines.push("");
+    }
+  });
+  return lines.join("\n");
+}
+
+function convertMarkdownTables(markdown, mode) {
+  if (!markdown || mode === "off") {
+    return markdown;
+  }
+  const effectiveMode = mode === "block" ? "code" : mode;
+  if (effectiveMode !== "code" && effectiveMode !== "bullets") {
+    return markdown;
+  }
+
+  const lines = String(markdown).split(/\r?\n/);
+  const output = [];
+  let changed = false;
+  let index = 0;
+  while (index < lines.length) {
+    const header = splitMarkdownTableRow(lines[index]);
+    if (
+      !header ||
+      index + 1 >= lines.length ||
+      !isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      output.push(lines[index]);
+      index += 1;
+      continue;
+    }
+
+    const tableLines = [lines[index], lines[index + 1]];
+    const rows = [];
+    index += 2;
+    while (index < lines.length && isMarkdownTableRow(lines[index])) {
+      const cells = splitMarkdownTableRow(lines[index]);
+      if (!cells) {
+        break;
+      }
+      rows.push(cells);
+      tableLines.push(lines[index]);
+      index += 1;
+    }
+    if (rows.length === 0) {
+      output.push(...tableLines);
+      continue;
+    }
+
+    changed = true;
+    if (effectiveMode === "code") {
+      output.push("```", tableLines.join("\n"), "```");
+    } else {
+      output.push(renderMarkdownTableAsBullets(header, rows));
+    }
+  }
+
+  return changed ? output.join("\n") : markdown;
+}
+
 function createDedupeCache(options) {
   const ttlMs = Math.max(0, options.ttlMs);
   const maxSize = Math.max(0, Math.floor(options.maxSize));
@@ -22389,6 +22533,11 @@ const channelInboundDebounceRuntime = {
   resolveInboundDebounceMs,
 };
 
+const markdownTableRuntime = {
+  convertMarkdownTables,
+  resolveMarkdownTableMode,
+};
+
 const keyedAsyncQueueRuntime = {
   KeyedAsyncQueue,
   enqueueKeyedTask,
@@ -22673,6 +22822,7 @@ const genericSdk = new Proxy(
     chunkText,
     chunkTextForOutbound,
     chunkTextWithMode,
+    convertMarkdownTables,
     describeAccountSnapshot,
     describeWebhookAccountSnapshot,
     detectMime,
@@ -22766,6 +22916,7 @@ const genericSdk = new Proxy(
     readResponseWithLimit,
     readReactionParams,
     resolveInboundDebounceMs,
+    resolveMarkdownTableMode,
     resolveRetryConfig,
     runTasksWithConcurrency,
     readStringValue,
@@ -22945,6 +23096,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound-debounce"
   ) {
     return channelInboundDebounceRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/markdown-table-runtime" ||
+    request === "@openclaw/plugin-sdk/markdown-table-runtime"
+  ) {
+    return markdownTableRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/keyed-async-queue" ||
