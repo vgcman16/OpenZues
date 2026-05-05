@@ -6851,6 +6851,104 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lazy_value_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lazy-value.cjs"
+    runtime_entry.write_text(
+        """
+const { createCachedLazyValueGetter } = require("openclaw/plugin-sdk/lazy-value");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lazy_value",
+      description: "Use OpenClaw lazy-value SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        let calls = 0;
+        const getSchema = createCachedLazyValueGetter(() => {
+          calls += 1;
+          return { type: "object" };
+        });
+        const first = getSchema();
+        const second = getSchema();
+        const fallback = { type: "object", properties: {} };
+        const getFallback = createCachedLazyValueGetter(() => undefined, fallback);
+        const getLiteral = createCachedLazyValueGetter("literal");
+        return {
+          calls,
+          first,
+          sameObject: first === second,
+          fallbackSame: getFallback() === fallback,
+          fallbackValue: getFallback(),
+          literal: getLiteral()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-lazy-value-plugin",
+                    "name": "Runtime Lazy Value Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lazy-value-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lazy_value"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.lazy_value"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "calls": 1,
+        "first": {"type": "object"},
+        "sameObject": True,
+        "fallbackSame": True,
+        "fallbackValue": {"type": "object", "properties": {}},
+        "literal": "literal",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_error_runtime_helpers(
     tmp_path,
 ) -> None:

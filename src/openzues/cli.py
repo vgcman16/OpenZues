@@ -18107,6 +18107,20 @@ function isAutoLinkedFileRef(href, label) {
   return true;
 }
 
+function createCachedLazyValueGetter(value, fallback) {
+  let resolved = false;
+  let cached;
+
+  return () => {
+    if (!resolved) {
+      const nextValue = typeof value === "function" ? value() : value;
+      cached = nextValue ?? fallback;
+      resolved = true;
+    }
+    return cached;
+  };
+}
+
 function parseFiniteNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -21506,6 +21520,10 @@ const textAutolinkRuntime = {
   isAutoLinkedFileRef,
 };
 
+const lazyValueRuntime = {
+  createCachedLazyValueGetter,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -21812,6 +21830,7 @@ const genericSdk = new Proxy(
     createAccountActionGate,
     createActionGate,
     createAccountListHelpers,
+    createCachedLazyValueGetter,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
     createDedupeCache,
@@ -21990,6 +22009,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-autolink-runtime"
   ) {
     return textAutolinkRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lazy-value" ||
+    request === "@openclaw/plugin-sdk/lazy-value"
+  ) {
+    return lazyValueRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
