@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~68.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~68.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -784,6 +784,12 @@ may lag behind this tracker.
   message-create payloads, target normalization, bearer auth, and provider
   message/chat metadata persistence.
   - Status: checkpointed in `d1515da1`
+
+- [x] Feishu/Lark send message action support, preserving OpenClaw `to` /
+  `target`, `text` / `message`, `toolContext.currentChannelId` fallback,
+  route-backed Feishu sender reuse, bearer auth, and message/chat result
+  projection.
+  - Status: checkpointed in `249f3dbf`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1817,8 +1823,9 @@ may lag behind this tracker.
     checkpointed in `a6732846`; Synology Chat native route checkpointed in
     `b69d5489`; Mattermost native route checkpointed in `44541ef9`; Signal
     native route checkpointed in `81491ab7`; IRC native route checkpointed in
-    `8726ab49`; Twitch native route checkpointed in `6185301b`; Signal native
-    reaction action checkpointed in `c9b45ffb`
+    `8726ab49`; Twitch native route checkpointed in `6185301b`; Twitch send
+    action checkpointed in `9baee646`; Feishu/Lark send action checkpointed
+    in `249f3dbf`; Signal native reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 
 - [x] Feishu/Lark native outbound route.

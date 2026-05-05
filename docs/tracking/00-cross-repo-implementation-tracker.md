@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~68.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~68.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Twitch send message action slice is checkpointed in `9baee646`.
+The Feishu/Lark send message action slice is checkpointed in `249f3dbf`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Twitch send message action checkpointed in `9baee646` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark message-action contract breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark send message action checkpointed in `249f3dbf` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark `thread-reply` message action |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001BW` Feishu/Lark send message action
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/message-action-contract.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"`, `action="send"` accepts upstream `to` / `target` plus
+    `text` / `message`, falls back to `toolContext.currentChannelId`, reuses
+    the route-backed Feishu post sender, preserves bearer auth and target
+    normalization, and returns OpenClaw-shaped `{ok, channel, action,
+    messageId, chatId, channelId}`.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `249f3dbf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu send action proof (`1 passed`),
+    adjacent Feishu provider proof (`3 passed, 347 deselected`), `ruff
+    check`, and `mypy`.
 
 - [x] `OZ-PROV-001BV` Twitch send message action
   - Source: `openclaw-main/extensions/twitch/src/actions.ts`,
