@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~69.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~69.4% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Feishu/Lark reaction message action slice is checkpointed in `1c6b44af`.
+The Feishu/Lark presentation-card send slice is checkpointed in `75edc136`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -63,9 +63,28 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark reaction message actions checkpointed in `1c6b44af` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark media/card message actions |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark presentation-card sends checkpointed in `75edc136` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Feishu/Lark native media message actions |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001CH` Feishu/Lark presentation-card sends
+  - Source: `openclaw-main/extensions/feishu/src/channel.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="feishu"` or
+    `channel="lark"` accepts `presentation` blocks on `send`/`thread-reply`,
+    renders a Feishu interactive card, sends `msg_type="interactive"` through
+    the route-backed message API, and preserves reply-in-thread/fallback
+    behavior.
+  - Evidence required: focused runtime test, adjacent Feishu provider tests,
+    ruff, mypy
+  - Status: checkpointed in `75edc136`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Feishu presentation-card send proof (`1
+    passed`), adjacent Feishu provider proof (`17 passed, 347 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PROV-001CG` Feishu/Lark reaction message actions
   - Source: `openclaw-main/extensions/feishu/src/channel.ts`,

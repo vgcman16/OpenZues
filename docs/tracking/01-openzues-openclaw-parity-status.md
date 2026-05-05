@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~69.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~69.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -838,6 +838,11 @@ may lag behind this tracker.
 - [x] Feishu/Lark reaction message action support, preserving OpenClaw
   add/remove-own/clear-all reaction behavior and reaction listing projection.
   - Status: checkpointed in `1c6b44af`
+
+- [x] Feishu/Lark presentation-card send support, preserving OpenClaw
+  presentation fallback rendering, Feishu interactive-card payloads, and
+  reply-in-thread/fallback routing.
+  - Status: checkpointed in `75edc136`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1881,7 +1886,8 @@ may lag behind this tracker.
     Feishu/Lark channel-info action checkpointed in `f0bd7837`; Feishu/Lark
     member-info action checkpointed in `ff50511d`; Feishu/Lark channel-list
     action checkpointed in `dd915f30`; Feishu/Lark reaction actions
-    checkpointed in `1c6b44af`; Signal native
+    checkpointed in `1c6b44af`; Feishu/Lark presentation-card sends
+    checkpointed in `75edc136`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 

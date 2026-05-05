@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~69.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~69.4% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6503,8 +6503,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~69.3%. Verified with focused runtime
   pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`;
   source/test checkpointed in `1c6b44af`.
+- Closed the Feishu/Lark presentation-card send seam from OpenClaw
+  `extensions/feishu/src/channel.ts` and `extensions/feishu/src/send.ts`:
+  native OpenZues `message.action` dispatch now accepts `presentation`
+  blocks for `send`/`thread-reply`, renders Feishu interactive cards, sends
+  `msg_type="interactive"` through the route-backed message API, and preserves
+  reply-in-thread/fallback behavior. Repo-wide parity is now estimated at
+  ~69.4%. Verified with focused runtime pytest, adjacent Feishu provider
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `75edc136`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, continuing Feishu/Lark media/card action breadth
+  send/poll/replay metadata gap, continuing Feishu/Lark native media send breadth
   from `extensions/feishu/src/channel.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
