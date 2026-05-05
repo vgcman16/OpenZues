@@ -18389,6 +18389,464 @@ function normalizeResolvedSecretInputString(params) {
   return resolved.status === "available" ? resolved.value : undefined;
 }
 
+const DEFAULT_ACCOUNT_ID = "default";
+const DEFAULT_AGENT_ID = "main";
+const DEFAULT_MAIN_KEY = "main";
+const INTERNAL_MESSAGE_CHANNEL = "webchat";
+const ROUTING_VALID_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const ROUTING_INVALID_CHARS_RE = /[^a-z0-9_-]+/g;
+const ROUTING_BLOCKED_OBJECT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const ROUTING_CHANNEL_ALIASES = {
+  googlechat: "google-chat",
+  "google chat": "google-chat",
+  tg: "telegram",
+  wa: "whatsapp",
+};
+const ROUTING_KNOWN_GATEWAY_CHANNELS = new Set([
+  "discord",
+  "google-chat",
+  "line",
+  "matrix",
+  "mattermost",
+  "signal",
+  "slack",
+  "telegram",
+  "webchat",
+  "whatsapp",
+  "zalo",
+  "zulip",
+]);
+
+function canonicalizeRoutingId(value) {
+  const trimmed = String(value ?? "").trim();
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
+  if (ROUTING_VALID_ID_RE.test(trimmed)) {
+    return normalized;
+  }
+  return normalized
+    .replace(ROUTING_INVALID_CHARS_RE, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 64);
+}
+
+function normalizeAgentId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return DEFAULT_AGENT_ID;
+  }
+  return canonicalizeRoutingId(trimmed) || DEFAULT_AGENT_ID;
+}
+
+function sanitizeAgentId(value) {
+  return normalizeAgentId(value);
+}
+
+function normalizeAccountId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const normalized = canonicalizeRoutingId(trimmed);
+  if (!normalized || ROUTING_BLOCKED_OBJECT_KEYS.has(normalized)) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return normalized;
+}
+
+function normalizeOptionalAccountId(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const normalized = canonicalizeRoutingId(trimmed);
+  if (!normalized || ROUTING_BLOCKED_OBJECT_KEYS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function normalizeMainKey(value) {
+  return normalizeLowercaseStringOrEmpty(value) || DEFAULT_MAIN_KEY;
+}
+
+function parseAgentSessionKey(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const agentId = normalizeOptionalString(parts[1]);
+  const rest = parts.slice(2).join(":");
+  if (!agentId || !rest) {
+    return null;
+  }
+  return { agentId, rest };
+}
+
+function isCronSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("cron:"));
+}
+
+function isAcpSessionKey(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return false;
+  }
+  if (normalizeLowercaseStringOrEmpty(raw).startsWith("acp:")) {
+    return true;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("acp:"));
+}
+
+function isSubagentSessionKey(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return false;
+  }
+  if (normalizeOptionalLowercaseString(raw)?.startsWith("subagent:")) {
+    return true;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  return Boolean(parsed && normalizeOptionalLowercaseString(parsed.rest)?.startsWith("subagent:"));
+}
+
+function getSubagentDepth(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  return raw ? raw.split(":subagent:").length - 1 : 0;
+}
+
+function parseThreadSessionSuffix(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return { baseSessionKey: undefined, threadId: undefined };
+  }
+  const marker = ":thread:";
+  const markerIndex = normalizeLowercaseStringOrEmpty(raw).lastIndexOf(marker);
+  const baseSessionKey = markerIndex === -1 ? raw : raw.slice(0, markerIndex);
+  const threadIdRaw = markerIndex === -1 ? undefined : raw.slice(markerIndex + marker.length);
+  return { baseSessionKey, threadId: normalizeOptionalString(threadIdRaw) };
+}
+
+function buildAgentMainSessionKey(params) {
+  return `agent:${normalizeAgentId(params && params.agentId)}:${normalizeMainKey(
+    params && params.mainKey,
+  )}`;
+}
+
+function resolveLinkedPeerId(params) {
+  const identityLinks = params && params.identityLinks;
+  if (!identityLinks || typeof identityLinks !== "object") {
+    return null;
+  }
+  const peerId = String((params && params.peerId) || "").trim();
+  if (!peerId) {
+    return null;
+  }
+  const candidates = new Set();
+  const rawCandidate = normalizeLowercaseStringOrEmpty(peerId);
+  if (rawCandidate) {
+    candidates.add(rawCandidate);
+  }
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  if (channel) {
+    candidates.add(normalizeLowercaseStringOrEmpty(`${channel}:${peerId}`));
+  }
+  for (const [canonical, ids] of Object.entries(identityLinks)) {
+    const canonicalName = String(canonical || "").trim();
+    if (!canonicalName || !Array.isArray(ids)) {
+      continue;
+    }
+    for (const id of ids) {
+      const normalized = normalizeLowercaseStringOrEmpty(id);
+      if (normalized && candidates.has(normalized)) {
+        return canonicalName;
+      }
+    }
+  }
+  return null;
+}
+
+function buildAgentPeerSessionKey(params) {
+  const peerKind = (params && params.peerKind) || "direct";
+  if (peerKind === "direct") {
+    const dmScope = (params && params.dmScope) || "main";
+    let peerId = String((params && params.peerId) || "").trim();
+    const linkedPeerId =
+      dmScope === "main"
+        ? null
+        : resolveLinkedPeerId({
+            identityLinks: params && params.identityLinks,
+            channel: params && params.channel,
+            peerId,
+          });
+    if (linkedPeerId) {
+      peerId = linkedPeerId;
+    }
+    peerId = normalizeLowercaseStringOrEmpty(peerId);
+    if (dmScope === "per-account-channel-peer" && peerId) {
+      const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+      return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:${normalizeAccountId(
+        params && params.accountId,
+      )}:direct:${peerId}`;
+    }
+    if (dmScope === "per-channel-peer" && peerId) {
+      const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+      return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:direct:${peerId}`;
+    }
+    if (dmScope === "per-peer" && peerId) {
+      return `agent:${normalizeAgentId(params && params.agentId)}:direct:${peerId}`;
+    }
+    return buildAgentMainSessionKey({
+      agentId: params && params.agentId,
+      mainKey: params && params.mainKey,
+    });
+  }
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const peerId = normalizeLowercaseStringOrEmpty(params && params.peerId) || "unknown";
+  return `agent:${normalizeAgentId(params && params.agentId)}:${channel}:${peerKind}:${peerId}`;
+}
+
+function normalizeRouteBindingId(value) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value).trim();
+  }
+  return "";
+}
+
+function buildAgentSessionKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const peer = params && params.peer;
+  return buildAgentPeerSessionKey({
+    agentId: params && params.agentId,
+    mainKey: DEFAULT_MAIN_KEY,
+    channel,
+    accountId: params && params.accountId,
+    peerKind: (peer && peer.kind) || "direct",
+    peerId: peer ? normalizeRouteBindingId(peer.id) || "unknown" : null,
+    dmScope: params && params.dmScope,
+    identityLinks: params && params.identityLinks,
+  });
+}
+
+function buildGroupHistoryKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel) || "unknown";
+  const accountId = normalizeAccountId(params && params.accountId);
+  const peerId = normalizeLowercaseStringOrEmpty(params && params.peerId) || "unknown";
+  return `${channel}:${accountId}:${params && params.peerKind}:${peerId}`;
+}
+
+function resolveThreadSessionKeys(params) {
+  const threadId = normalizeOptionalString(params && params.threadId);
+  if (!threadId) {
+    return { sessionKey: params && params.baseSessionKey, parentSessionKey: undefined };
+  }
+  const normalizedThread =
+    params && typeof params.normalizeThreadId === "function"
+      ? params.normalizeThreadId(threadId)
+      : normalizeLowercaseStringOrEmpty(threadId);
+  const useSuffix = params && Object.prototype.hasOwnProperty.call(params, "useSuffix")
+    ? params.useSuffix
+    : true;
+  const sessionKey = useSuffix
+    ? `${params && params.baseSessionKey}:thread:${normalizedThread}`
+    : params && params.baseSessionKey;
+  return { sessionKey, parentSessionKey: params && params.parentSessionKey };
+}
+
+function resolveAgentIdFromSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return normalizeAgentId((parsed && parsed.agentId) || DEFAULT_AGENT_ID);
+}
+
+function resolveAccountEntry(accounts, accountId) {
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(accounts, accountId)) {
+    return accounts[accountId];
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(accountId);
+  const matchKey = Object.keys(accounts).find(
+    (key) => normalizeLowercaseStringOrEmpty(key) === normalized,
+  );
+  return matchKey ? accounts[matchKey] : undefined;
+}
+
+function normalizeMessageChannel(raw) {
+  const normalized = normalizeOptionalLowercaseString(raw);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === INTERNAL_MESSAGE_CHANNEL) {
+    return INTERNAL_MESSAGE_CHANNEL;
+  }
+  return ROUTING_CHANNEL_ALIASES[normalized] || normalized;
+}
+
+function resolveGatewayMessageChannel(raw) {
+  const normalized = normalizeMessageChannel(raw);
+  if (!normalized) {
+    return undefined;
+  }
+  return ROUTING_KNOWN_GATEWAY_CHANNELS.has(normalized) ? normalized : undefined;
+}
+
+function normalizeOptionalThreadValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.trunc(value) : undefined;
+  }
+  return normalizeOptionalString(value);
+}
+
+function normalizeOptionalStringifiedId(value) {
+  const normalized = normalizeOptionalThreadValue(value);
+  return normalized == null ? undefined : String(normalized);
+}
+
+function normalizeOutboundThreadId(value) {
+  return normalizeOptionalStringifiedId(value);
+}
+
+function buildOutboundBaseSessionKey(params) {
+  const cfg = (params && params.cfg) || {};
+  return buildAgentSessionKey({
+    agentId: params && params.agentId,
+    channel: params && params.channel,
+    accountId: params && params.accountId,
+    peer: params && params.peer,
+    dmScope: (cfg.session && cfg.session.dmScope) || "main",
+    identityLinks: cfg.session && cfg.session.identityLinks,
+  });
+}
+
+function deriveLastRoutePolicy(params) {
+  return params && params.sessionKey === params.mainSessionKey ? "main" : "session";
+}
+
+function resolveInboundLastRouteSessionKey(params) {
+  return params && params.route && params.route.lastRoutePolicy === "main"
+    ? params.route.mainSessionKey
+    : params && params.sessionKey;
+}
+
+function formatSetExplicitDefaultInstruction(channelKey) {
+  return `Set channels.${channelKey}.defaultAccount or add channels.${channelKey}.accounts.default`;
+}
+
+function formatSetExplicitDefaultToConfiguredInstruction(params) {
+  const channelKey = params && params.channelKey;
+  return (
+    `Set channels.${channelKey}.defaultAccount to one of these accounts, ` +
+    `or add channels.${channelKey}.accounts.default`
+  );
+}
+
+function listBindings(cfg) {
+  const bindings = cfg && Array.isArray(cfg.bindings) ? cfg.bindings : [];
+  return bindings.filter((binding) => (binding && binding.type) !== "acp");
+}
+
+function normalizeRouteBindingChannelId(raw) {
+  return normalizeMessageChannel(raw) || normalizeLowercaseStringOrEmpty(raw) || null;
+}
+
+function resolveNormalizedRouteBindingMatch(binding) {
+  if (!binding || typeof binding !== "object") {
+    return null;
+  }
+  const match = binding.match;
+  if (!match || typeof match !== "object") {
+    return null;
+  }
+  const channelId = normalizeRouteBindingChannelId(match.channel);
+  const accountId = typeof match.accountId === "string" ? match.accountId.trim() : "";
+  if (!channelId || !accountId || accountId === "*") {
+    return null;
+  }
+  return {
+    agentId: normalizeAgentId(binding.agentId),
+    accountId: normalizeAccountId(accountId),
+    channelId,
+  };
+}
+
+function listBoundAccountIds(cfg, channelId) {
+  const normalizedChannel = normalizeRouteBindingChannelId(channelId);
+  if (!normalizedChannel) {
+    return [];
+  }
+  const ids = new Set();
+  for (const binding of listBindings(cfg)) {
+    const resolved = resolveNormalizedRouteBindingMatch(binding);
+    if (resolved && resolved.channelId === normalizedChannel) {
+      ids.add(resolved.accountId);
+    }
+  }
+  return Array.from(ids).sort((left, right) => left.localeCompare(right));
+}
+
+function resolveDefaultAgentId(cfg) {
+  const agents = cfg && cfg.agents && Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+  const chosen = agents.find((agent) => agent && agent.default) || agents[0];
+  return normalizeAgentId((chosen && chosen.id) || DEFAULT_AGENT_ID);
+}
+
+function resolveDefaultAgentBoundAccountId(cfg, channelId) {
+  const normalizedChannel = normalizeRouteBindingChannelId(channelId);
+  if (!normalizedChannel) {
+    return null;
+  }
+  const defaultAgentId = normalizeAgentId(resolveDefaultAgentId(cfg || {}));
+  for (const binding of listBindings(cfg)) {
+    const resolved = resolveNormalizedRouteBindingMatch(binding);
+    if (
+      resolved &&
+      resolved.channelId === normalizedChannel &&
+      resolved.agentId === defaultAgentId
+    ) {
+      return resolved.accountId;
+    }
+  }
+  return null;
+}
+
+function resolveAgentRoute(input) {
+  const cfg = (input && input.cfg) || {};
+  const channel =
+    normalizeMessageChannel(input && input.channel) ||
+    normalizeLowercaseStringOrEmpty(input && input.channel) ||
+    "unknown";
+  const accountId = normalizeAccountId(input && input.accountId);
+  const agentId = resolveDefaultAgentId(cfg);
+  const mainSessionKey = buildAgentMainSessionKey({ agentId });
+  const sessionKey = buildAgentSessionKey({
+    agentId,
+    channel,
+    accountId,
+    peer: input && input.peer,
+    dmScope: cfg.session && cfg.session.dmScope,
+    identityLinks: cfg.session && cfg.session.identityLinks,
+  });
+  return {
+    agentId,
+    channel,
+    accountId,
+    sessionKey,
+    mainSessionKey,
+    lastRoutePolicy: deriveLastRoutePolicy({ sessionKey, mainSessionKey }),
+    matchedBy: "default",
+  };
+}
+
 function passthrough(value) {
   return value;
 }
@@ -18433,35 +18891,98 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const routingRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_MAIN_KEY,
+  buildAgentMainSessionKey,
+  buildAgentSessionKey,
+  buildGroupHistoryKey,
+  buildOutboundBaseSessionKey,
+  deriveLastRoutePolicy,
+  formatSetExplicitDefaultInstruction,
+  formatSetExplicitDefaultToConfiguredInstruction,
+  getSubagentDepth,
+  isAcpSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+  listBoundAccountIds,
+  normalizeAccountId,
+  normalizeAgentId,
+  normalizeMainKey,
+  normalizeMessageChannel,
+  normalizeOptionalAccountId,
+  normalizeOutboundThreadId,
+  parseAgentSessionKey,
+  parseThreadSessionSuffix,
+  resolveAccountEntry,
+  resolveAgentIdFromSessionKey,
+  resolveAgentRoute,
+  resolveDefaultAgentBoundAccountId,
+  resolveGatewayMessageChannel,
+  resolveInboundLastRouteSessionKey,
+  resolveThreadSessionKeys,
+  sanitizeAgentId,
+};
+
 const genericSdk = new Proxy(
   {
+    DEFAULT_ACCOUNT_ID,
+    DEFAULT_MAIN_KEY,
     buildRandomTempFilePath,
+    buildAgentMainSessionKey,
+    buildAgentSessionKey,
+    buildGroupHistoryKey,
+    buildOutboundBaseSessionKey,
     coerceSecretRef,
     collectErrorGraphCandidates,
     createTempDownloadTarget,
+    deriveLastRoutePolicy,
     extractErrorCode,
+    formatSetExplicitDefaultInstruction,
+    formatSetExplicitDefaultToConfiguredInstruction,
     formatErrorMessage,
     formatUncaughtError,
+    getSubagentDepth,
     hasNonEmptyString,
     hasConfiguredSecretInput,
+    isAcpSessionKey,
+    isCronSessionKey,
     isSecretRef,
+    isSubagentSessionKey,
+    listBoundAccountIds,
     localeLowercasePreservingWhitespace,
     lowercasePreservingWhitespace,
+    normalizeAccountId,
+    normalizeAgentId,
     normalizeLowercaseStringOrEmpty,
+    normalizeMainKey,
+    normalizeMessageChannel,
     normalizeNullableString,
+    normalizeOptionalAccountId,
     normalizeOptionalLowercaseString,
     normalizeOptionalString,
+    normalizeOutboundThreadId,
     normalizeResolvedSecretInputString,
     normalizeSecretInput,
     normalizeSecretInputString,
     normalizeStringifiedOptionalString,
+    parseAgentSessionKey,
     parseEnvTemplateSecretRef,
     parseLegacySecretRefEnvMarker,
+    parseThreadSessionSuffix,
     readErrorName,
     readStringValue,
+    resolveAccountEntry,
+    resolveAgentIdFromSessionKey,
+    resolveAgentRoute,
+    resolveDefaultAgentBoundAccountId,
+    resolveGatewayMessageChannel,
+    resolveInboundLastRouteSessionKey,
     resolvePreferredOpenClawTmpDir,
     resolveSecretInputString,
+    resolveThreadSessionKeys,
     sanitizeTempFileName,
+    sanitizeAgentId,
     withTempDownloadPath,
   },
   {
@@ -18502,6 +19023,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/routing" ||
+    request === "@openclaw/plugin-sdk/routing"
+  ) {
+    return routingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

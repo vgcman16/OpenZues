@@ -6528,6 +6528,156 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_routing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-routing.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  DEFAULT_ACCOUNT_ID,
+  DEFAULT_MAIN_KEY,
+  buildAgentMainSessionKey,
+  buildAgentSessionKey,
+  buildGroupHistoryKey,
+  normalizeAccountId,
+  normalizeAgentId,
+  normalizeMainKey,
+  normalizeMessageChannel,
+  normalizeOptionalAccountId,
+  normalizeOutboundThreadId,
+  parseAgentSessionKey,
+  parseThreadSessionSuffix,
+  resolveAccountEntry,
+  resolveAgentIdFromSessionKey,
+  resolveThreadSessionKeys,
+  sanitizeAgentId
+} = require("openclaw/plugin-sdk/routing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.routing",
+      description: "Use OpenClaw routing helpers",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          constants: [DEFAULT_ACCOUNT_ID, DEFAULT_MAIN_KEY],
+          agentId: normalizeAgentId(" Research Agent! "),
+          sanitizedAgentId: sanitizeAgentId("Research Agent!"),
+          accountId: normalizeAccountId(" Workspace One! "),
+          optionalAccountId: normalizeOptionalAccountId(" ") ?? null,
+          mainKey: normalizeMainKey(" Inbox "),
+          mainSession: buildAgentMainSessionKey({ agentId: "Research Agent!" }),
+          directSession: buildAgentSessionKey({
+            agentId: "Research Agent!",
+            channel: "Slack",
+            accountId: "Workspace One!",
+            peer: { kind: "direct", id: "U123" },
+            dmScope: "per-account-channel-peer"
+          }),
+          groupHistory: buildGroupHistoryKey({
+            channel: "Slack",
+            accountId: "Workspace One!",
+            peerKind: "channel",
+            peerId: "C123"
+          }),
+          parsed: parseAgentSessionKey(" Agent:Research-Agent:Slack:Workspace:Channel:ABC "),
+          parsedThread: parseThreadSessionSuffix(
+            "agent:main:Slack:Default:channel:C123:thread:166.001"
+          ),
+          agentFromSession: resolveAgentIdFromSessionKey("agent:Research:main"),
+          threadKeys: resolveThreadSessionKeys({
+            baseSessionKey: "agent:main:slack:default:channel:c123",
+            threadId: "166.001"
+          }),
+          accountEntry: resolveAccountEntry({ Default: { ok: true } }, "default"),
+          normalizedChannel: normalizeMessageChannel(" Slack "),
+          threadId: normalizeOutboundThreadId(166.001)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-routing-plugin",
+                    "name": "Runtime Routing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-routing-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.routing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.routing"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "constants": ["default", "main"],
+        "agentId": "research-agent",
+        "sanitizedAgentId": "research-agent",
+        "accountId": "workspace-one",
+        "optionalAccountId": None,
+        "mainKey": "inbox",
+        "mainSession": "agent:research-agent:main",
+        "directSession": "agent:research-agent:slack:workspace-one:direct:u123",
+        "groupHistory": "slack:workspace-one:channel:c123",
+        "parsed": {
+            "agentId": "research-agent",
+            "rest": "slack:workspace:channel:abc",
+        },
+        "parsedThread": {
+            "baseSessionKey": "agent:main:Slack:Default:channel:C123",
+            "threadId": "166.001",
+        },
+        "agentFromSession": "research",
+        "threadKeys": {
+            "sessionKey": "agent:main:slack:default:channel:c123:thread:166.001",
+        },
+        "accountEntry": {"ok": True},
+        "normalizedChannel": "slack",
+        "threadId": "166",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
