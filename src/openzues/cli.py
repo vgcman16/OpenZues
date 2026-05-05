@@ -24371,6 +24371,22 @@ async function expandAllowFromWithAccessGroups(params) {
   return Array.from(new Set([...allowFrom, senderEntry]));
 }
 
+function createDirectDmPreCryptoGuardPolicy(overrides = {}) {
+  const rateLimit = overrides.rateLimit || {};
+  return {
+    allowedKinds: overrides.allowedKinds ?? [4],
+    maxFutureSkewSec: overrides.maxFutureSkewSec ?? 120,
+    maxCiphertextBytes: overrides.maxCiphertextBytes ?? 16 * 1024,
+    maxPlaintextBytes: overrides.maxPlaintextBytes ?? 8 * 1024,
+    rateLimit: {
+      windowMs: rateLimit.windowMs ?? 60_000,
+      maxPerSenderPerWindow: rateLimit.maxPerSenderPerWindow ?? 20,
+      maxGlobalPerWindow: rateLimit.maxGlobalPerWindow ?? 200,
+      maxTrackedSenderKeys: rateLimit.maxTrackedSenderKeys ?? 4096,
+    },
+  };
+}
+
 async function resolveInboundDirectDmAccessWithRuntime(params) {
   const dmPolicy = params.dmPolicy ?? "pairing";
   const storeAllowFrom =
@@ -25367,6 +25383,7 @@ const channelInboundDebounceRuntime = {
 const channelInboundRuntime = {
   buildMentionRegexes,
   createChannelInboundDebouncer,
+  createDirectDmPreCryptoGuardPolicy,
   createInboundDebouncer,
   formatInboundEnvelope,
   formatInboundFromLabel,
@@ -25469,6 +25486,10 @@ const accessGroupsRuntime = {
 const directDmAccessRuntime = {
   createPreCryptoDirectDmAuthorizer,
   resolveInboundDirectDmAccessWithRuntime,
+};
+
+const directDmGuardPolicyRuntime = {
+  createDirectDmPreCryptoGuardPolicy,
 };
 
 const markdownTableRuntime = {
@@ -25744,6 +25765,7 @@ const genericSdk = new Proxy(
     ...allowFromRuntime,
     ...accessGroupsRuntime,
     ...directDmAccessRuntime,
+    ...directDmGuardPolicyRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -26173,6 +26195,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/direct-dm-access"
   ) {
     return directDmAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/direct-dm-guard-policy" ||
+    request === "@openclaw/plugin-sdk/direct-dm-guard-policy"
+  ) {
+    return directDmGuardPolicyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

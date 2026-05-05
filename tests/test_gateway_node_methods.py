@@ -8570,6 +8570,127 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_direct_dm_guard_policy_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-direct-dm-guard-policy.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createDirectDmPreCryptoGuardPolicy
+} = require("openclaw/plugin-sdk/direct-dm-guard-policy");
+const channelInbound = require("openclaw/plugin-sdk/channel-inbound");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.direct_dm_guard_policy",
+      description: "Use OpenClaw direct-DM guard policy SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const defaults = createDirectDmPreCryptoGuardPolicy();
+        const custom = createDirectDmPreCryptoGuardPolicy({
+          allowedKinds: [4, 1059],
+          maxFutureSkewSec: 30,
+          maxPlaintextBytes: 4096,
+          rateLimit: {
+            maxPerSenderPerWindow: 5
+          }
+        });
+        return {
+          defaults,
+          custom,
+          exportTypes: [
+            typeof createDirectDmPreCryptoGuardPolicy,
+            typeof channelInbound.createDirectDmPreCryptoGuardPolicy,
+            typeof genericSdk.createDirectDmPreCryptoGuardPolicy
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-direct-dm-guard-policy-plugin",
+                    "name": "Runtime Direct DM Guard Policy Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-direct-dm-guard-policy.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.direct_dm_guard_policy"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.direct_dm_guard_policy"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "defaults": {
+            "allowedKinds": [4],
+            "maxFutureSkewSec": 120,
+            "maxCiphertextBytes": 16 * 1024,
+            "maxPlaintextBytes": 8 * 1024,
+            "rateLimit": {
+                "windowMs": 60_000,
+                "maxPerSenderPerWindow": 20,
+                "maxGlobalPerWindow": 200,
+                "maxTrackedSenderKeys": 4096,
+            },
+        },
+        "custom": {
+            "allowedKinds": [4, 1059],
+            "maxFutureSkewSec": 30,
+            "maxCiphertextBytes": 16 * 1024,
+            "maxPlaintextBytes": 4096,
+            "rateLimit": {
+                "windowMs": 60_000,
+                "maxPerSenderPerWindow": 5,
+                "maxGlobalPerWindow": 200,
+                "maxTrackedSenderKeys": 4096,
+            },
+        },
+        "exportTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_markdown_table_runtime_helpers(
     tmp_path,
 ) -> None:
