@@ -17911,6 +17911,10 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
 
 async function loadRuntimeModule(entryPath) {
   const resolved = path.resolve(entryPath);
+  const source = fs.readFileSync(resolved, "utf8");
+  if (/^\s*import\s/m.test(source) || /^\s*export\s+default\s/m.test(source)) {
+    return requireTranspiledRuntimeModule(resolved, source);
+  }
   try {
     return require(resolved);
   } catch (error) {
@@ -17922,6 +17926,38 @@ async function loadRuntimeModule(entryPath) {
       return await import(pathToFileURL(resolved).href);
     }
     throw error;
+  }
+}
+
+function requireTranspiledRuntimeModule(entryPath, source) {
+  let transformed = source
+    .replace(
+      /import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["'];?/g,
+      (_match, imports, specifier) => `const {${imports}} = require("${specifier}");`,
+    )
+    .replace(
+      /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
+      (_match, localName, specifier) => `const ${localName} = require("${specifier}");`,
+    )
+    .replace(
+      /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
+      (_match, localName, specifier) =>
+        `const ${localName} = require("${specifier}").default || require("${specifier}");`,
+    )
+    .replace(/export\s+default\s+/g, "module.exports = ");
+  const tempPath = path.join(
+    path.dirname(entryPath),
+    `.openzues-runtime-${process.pid}-${Date.now()}.cjs`,
+  );
+  fs.writeFileSync(tempPath, transformed, "utf8");
+  try {
+    return require(tempPath);
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (_error) {
+      // best-effort cleanup only
+    }
   }
 }
 

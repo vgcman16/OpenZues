@@ -10952,6 +10952,83 @@ def test_plugins_doctor_json_imports_bundled_sdk_runtime_entry_without_fake_adap
     assert plugins["discord"]["imported"] is True
 
 
+def test_plugins_doctor_json_imports_bundled_esm_sdk_runtime_entry_without_fake_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    dist_root = package_root / "dist"
+    plugin_dir = dist_root / "extensions" / "discord"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "import { normalizeLowercaseStringOrEmpty } from "
+        '"openclaw/plugin-sdk/text-runtime";\n'
+        "export default {\n"
+        "  register(api) {\n"
+        "    api.registerTool({\n"
+        '      name: normalizeLowercaseStringOrEmpty("DISCORD.SEND"),\n'
+        '      description: "Send to Discord"\n'
+        "    });\n"
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(dist_root / "extensions"))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["discord"]["runtimeEntrySource"] == str(
+        entry_path.resolve(strict=False)
+    )
+    assert plugins["discord"]["imported"] is True
+
+
 def test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter(
     tmp_path,
     monkeypatch,
