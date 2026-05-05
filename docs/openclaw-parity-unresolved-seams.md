@@ -5567,8 +5567,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   adds `update`, `channel`, and conservative `availability` payloads while
   preserving existing OpenZues/Hermes update fields. Repo-wide parity is now
   estimated at ~60.5%. Verified with focused update-status pytest, adjacent
-  update/package doctor proof, `ruff check`, and `mypy`; checkpoint pending
-  commit.
+  update/package doctor proof, `ruff check`, and `mypy`; checkpointed in
+  `e32d4d47`.
 - Next repo-wide queue head: rotate to companion remote-bin discovery or the
   next provider-specific send/poll/replay metadata gap.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

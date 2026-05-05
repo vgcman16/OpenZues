@@ -195,7 +195,7 @@ may lag behind this tracker.
 
 - [x] Update status channel projection, preserving OpenClaw's `update`,
   `channel`, and conservative `availability` JSON fields.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `e32d4d47`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -699,7 +699,7 @@ may lag behind this tracker.
     `openclaw-main/src/commands/status.update.ts`
   - Target: `src/openzues/cli.py`
   - Test: `tests/test_cli.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `e32d4d47`.
   - Weight: 1
   - Last verified: 2026-05-04, focused update-status test (`1 passed`),
     adjacent update/package doctor proof (`3 passed`), `ruff check`, and

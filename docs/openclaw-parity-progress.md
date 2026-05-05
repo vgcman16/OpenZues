@@ -9797,8 +9797,8 @@ These are complete within the bounded OpenZues-local parity contract verified in
   "update_status_json_includes_openclaw_channel_projection or
   doctor_and_update_status_json_include_hermes_sections or
   package_distribution"` (`3 passed`), `ruff check src\openzues\cli.py
-  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpoint pending
-  commit.
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `e32d4d47`.
 
 ## References
 
