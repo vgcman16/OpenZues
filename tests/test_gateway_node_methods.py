@@ -7778,6 +7778,225 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_reply_pipeline_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-reply-pipeline.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  createChannelReplyPipeline,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+  resolveChannelSourceReplyDeliveryMode
+} = require("openclaw/plugin-sdk/channel-reply-pipeline");
+const genericSdk = require("openclaw/plugin-sdk");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_reply_pipeline",
+      description: "Use OpenClaw channel reply pipeline SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            list: [
+              { id: "assistant", identity: { name: "Zeus" } }
+            ]
+          },
+          messages: {
+            responsePrefix: "auto",
+            visibleReplies: "message_tool",
+            groupChat: { visibleReplies: "automatic" }
+          },
+          channels: {
+            line: {
+              accounts: {
+                work: { responsePrefix: "[work]" }
+              }
+            }
+          }
+        };
+        const explicitTyping = { marker: "provided" };
+        const pipeline = createChannelReplyPipeline({
+          cfg,
+          agentId: "assistant",
+          channel: "line",
+          accountId: "work",
+          typingCallbacks: explicitTyping,
+          transformReplyPayload: (payload) => ({
+            ...payload,
+            text: `${payload.text}!`
+          })
+        });
+        pipeline.onModelSelected({
+          provider: "openai",
+          model: "gpt-5.4-latest",
+          thinkLevel: "low"
+        });
+        const prefixContext = pipeline.responsePrefixContextProvider();
+        const transformed = pipeline.transformReplyPayload({ text: "hi" });
+
+        const typingEvents = [];
+        const typingPipeline = createChannelReplyPipeline({
+          cfg,
+          agentId: "assistant",
+          typing: {
+            start: async () => { typingEvents.push("start"); },
+            stop: async () => { typingEvents.push("stop"); },
+            keepaliveIntervalMs: 1000,
+            maxDurationMs: 0
+          }
+        });
+        await typingPipeline.typingCallbacks.onReplyStart();
+        typingPipeline.typingCallbacks.onCleanup();
+        await wait(0);
+
+        const modes = [
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "direct" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: { messages: { visibleReplies: "message_tool" } },
+            ctx: { ChatType: "dm" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {
+              messages: {
+                groupChat: { visibleReplies: "automatic" },
+                visibleReplies: "message_tool"
+              }
+            },
+            ctx: { ChatType: "channel" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { CommandSource: "native", ChatType: "group" }
+          }),
+          resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" },
+            requested: "message_tool_only",
+            messageToolAvailable: false
+          }),
+          genericSdk.resolveChannelSourceReplyDeliveryMode({
+            cfg: {},
+            ctx: { ChatType: "group" }
+          })
+        ];
+
+        return {
+          prefix: pipeline.responsePrefix,
+          context: [
+            prefixContext.identityName,
+            prefixContext.provider,
+            prefixContext.model,
+            prefixContext.modelFull,
+            prefixContext.thinkingLevel
+          ],
+          transformed,
+          typingSame: pipeline.typingCallbacks === explicitTyping,
+          typingEvents,
+          modes,
+          exportTypes: [
+            typeof createChannelReplyPipeline,
+            typeof createReplyPrefixContext,
+            typeof createReplyPrefixOptions,
+            typeof createTypingCallbacks,
+            typeof resolveChannelSourceReplyDeliveryMode,
+            typeof genericSdk.createChannelReplyPipeline
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-reply-pipeline-plugin",
+                    "name": "Runtime Channel Reply Pipeline Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-channel-reply-pipeline-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_reply_pipeline"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_reply_pipeline"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "prefix": "[work]",
+        "context": ["Zeus", "openai", "gpt-5.4", "openai/gpt-5.4-latest", "low"],
+        "transformed": {"text": "hi!"},
+        "typingSame": True,
+        "typingEvents": ["start", "stop"],
+        "modes": [
+            "message_tool_only",
+            "automatic",
+            "message_tool_only",
+            "automatic",
+            "automatic",
+            "automatic",
+            "message_tool_only",
+        ],
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_retry_runtime_helpers(
     tmp_path,
 ) -> None:

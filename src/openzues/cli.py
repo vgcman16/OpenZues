@@ -19508,6 +19508,65 @@ function createTypingCallbacks(params) {
   };
 }
 
+function resolveSourceReplyDeliveryMode(params) {
+  const cfg = (params && params.cfg) || {};
+  const ctx = (params && params.ctx) || {};
+  const requested = params && params.requested;
+  if (requested) {
+    return params.messageToolAvailable === false && requested === "message_tool_only"
+      ? "automatic"
+      : requested;
+  }
+  if (ctx.CommandSource === "native") {
+    return "automatic";
+  }
+  const messages = cfg.messages && typeof cfg.messages === "object" ? cfg.messages : {};
+  const chatType = normalizeChatType(ctx.ChatType);
+  let mode;
+  if (chatType === "group" || chatType === "channel") {
+    const groupChat = messages.groupChat && typeof messages.groupChat === "object"
+      ? messages.groupChat
+      : {};
+    const configuredMode = groupChat.visibleReplies ?? messages.visibleReplies;
+    mode = configuredMode === "automatic" ? "automatic" : "message_tool_only";
+  } else {
+    const configuredMode = messages.visibleReplies ?? (params && params.defaultVisibleReplies);
+    mode = configuredMode === "message_tool" ? "message_tool_only" : "automatic";
+  }
+  return mode === "message_tool_only" && params && params.messageToolAvailable === false
+    ? "automatic"
+    : mode;
+}
+
+function resolveChannelSourceReplyDeliveryMode(params) {
+  return resolveSourceReplyDeliveryMode(params);
+}
+
+function createChannelReplyPipeline(params) {
+  const options = params || {};
+  const channelId = options.channel
+    ? (normalizeMessageChannel(options.channel) || options.channel)
+    : undefined;
+  const prefixOptions = createReplyPrefixOptions({
+    cfg: options.cfg,
+    agentId: options.agentId,
+    channel: channelId,
+    accountId: options.accountId,
+  });
+  const pipeline = { ...prefixOptions };
+  if (typeof options.transformReplyPayload === "function") {
+    pipeline.transformReplyPayload = options.transformReplyPayload;
+  } else if (channelId) {
+    pipeline.transformReplyPayload = (payload) => payload;
+  }
+  if (options.typingCallbacks) {
+    pipeline.typingCallbacks = options.typingCallbacks;
+  } else if (options.typing) {
+    pipeline.typingCallbacks = createTypingCallbacks(options.typing);
+  }
+  return pipeline;
+}
+
 function enqueueKeyedTask(params) {
   if (params.hooks && typeof params.hooks.onEnqueue === "function") {
     params.hooks.onEnqueue();
@@ -22907,6 +22966,14 @@ const channelReplyOptionsRuntime = {
   createTypingCallbacks,
 };
 
+const channelReplyPipelineRuntime = {
+  createChannelReplyPipeline,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+  resolveChannelSourceReplyDeliveryMode,
+};
+
 const globalSingletonRuntime = {
   createScopedExpiringIdCache,
   resolveGlobalMap,
@@ -23219,8 +23286,10 @@ const genericSdk = new Proxy(
     createCachedLazyValueGetter,
     createMessageToolButtonsSchema,
     createMessageToolCardSchema,
+    createChannelReplyPipeline,
     createDedupeCache,
     createInboundDebouncer,
+    createReplyPrefixContext,
     createReplyPrefixOptions,
     createScopedExpiringIdCache,
     createReplyReferencePlanner,
@@ -23371,6 +23440,7 @@ const genericSdk = new Proxy(
     resolvePollMaxSelections,
     resolveReactionMessageId,
     resolveBatchedReplyThreadingPolicy,
+    resolveChannelSourceReplyDeliveryMode,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
     resolveTextChunkLimit,
@@ -23534,6 +23604,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-reply-options-runtime"
   ) {
     return channelReplyOptionsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-reply-pipeline" ||
+    request === "@openclaw/plugin-sdk/channel-reply-pipeline"
+  ) {
+    return channelReplyPipelineRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/markdown-table-runtime" ||
