@@ -5560,7 +5560,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `audioAsVoice=true`, preserving thread/reply/silent/caption/media metadata.
   Repo-wide parity is now estimated at ~60.4%. Verified with focused Telegram
   audio/voice pytest, adjacent Telegram native-route proof, `ruff check`, and
-  `mypy`; checkpoint pending commit.
+  `mypy`; checkpointed in `9e1743fb`.
 - Next repo-wide queue head: rotate to companion remote-bin discovery or
   update-status channel projection based on the strongest source-backed seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

@@ -29,8 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The Telegram audio/voice media routing slice is verified and awaiting
-checkpoint commit.
+The Telegram audio/voice media routing slice is checkpointed in `9e1743fb`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/services/ops_mesh.py`
@@ -53,7 +52,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-PLUGIN-001 | Real installed plugin module import/activation | External auth provider contract metadata checkpointed in `5fdfb23c` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | Node presence alive checkpointed in `caded84a` | Repo-wide +0.1%, gateway/session/tool +0.1% | Continue companion node/app lifecycle breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send verified; checkpoint pending | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Telegram audio/voice media send checkpointed in `9e1743fb` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
 
 ## Active Slice Detail
 
@@ -70,7 +69,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     caption/thread/reply/silent/media result metadata.
   - Evidence required: focused Telegram audio/voice test, adjacent Telegram
     native-route tests, ruff, mypy
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `9e1743fb`
   - Weight: 1
   - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
     adjacent Telegram native-route proof (`6 passed`), `ruff check`, and

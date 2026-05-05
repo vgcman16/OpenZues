@@ -191,7 +191,7 @@ may lag behind this tracker.
 
 - [x] Telegram audio/voice media send routing, preserving OpenClaw's
   `sendAudio`/`sendVoice` Bot API split for native provider routes.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `9e1743fb`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -683,7 +683,7 @@ may lag behind this tracker.
     `openclaw-main/src/media/audio.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint pending.
+  - Status: checkpointed in `9e1743fb`.
   - Weight: 1
   - Last verified: 2026-05-04, focused Telegram audio/voice test (`1 passed`),
     adjacent Telegram native-route proof (`6 passed`), `ruff check`, and
