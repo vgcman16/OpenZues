@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~72.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~72.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -231,6 +231,10 @@ may lag behind this tracker.
 - [x] Imported plugin SDK channel-logging shim for inbound-drop, typing
   failure, and ack-cleanup failure log message formatting.
   - Status: checkpointed in `c42b0d77`
+
+- [x] Imported plugin SDK time-runtime shim for timezone validation plus UTC
+  and zoned timestamp formatting.
+  - Status: checkpointed in `eb944ee1`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
@@ -1212,9 +1216,21 @@ may lag behind this tracker.
     checkpointed in `41323ea2`, channel-status shim checkpointed in
     `14ff20a1`, text-chunking shim checkpointed in `20267310`,
     string-normalization shim checkpointed in `06cd452d`, dangerous-name shim
-    checkpointed in `01473fb4`, and channel-logging shim checkpointed in
-    `c42b0d77`, but broader plugin SDK helper/runtime surface breadth remains.
+    checkpointed in `01473fb4`, channel-logging shim checkpointed in
+    `c42b0d77`, and time-runtime shim checkpointed in `eb944ee1`, but broader
+    plugin SDK helper/runtime surface breadth remains.
   - Weight: 5
+
+- [x] Imported plugin SDK time-runtime shim.
+  - Source: `openclaw-main/src/plugin-sdk/time-runtime.ts` and
+    `openclaw-main/src/infra/format-time/format-datetime.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `eb944ee1`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused time-runtime proof (`1 passed`),
+    adjacent plugin invoke proof (`31 passed, 803 deselected`), `ruff check`,
+    and `mypy`.
 
 - [x] Imported plugin SDK channel-logging shim.
   - Source: `openclaw-main/src/plugin-sdk/channel-logging.ts` and
