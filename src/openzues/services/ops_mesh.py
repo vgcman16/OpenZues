@@ -4310,6 +4310,33 @@ def _msteams_signin_route_allowed(
     return channel_matched
 
 
+def _msteams_signin_group_sender_allowed(
+    channel_config: Mapping[str, Any],
+    activity: Mapping[str, Any],
+) -> bool:
+    group_policy = (
+        _msteams_inbound_optional_string(channel_config.get("groupPolicy"))
+        or "allowlist"
+    ).lower()
+    if group_policy == "open":
+        return True
+    if group_policy == "disabled":
+        return False
+    group_allow_from = _msteams_inbound_string_list(channel_config.get("groupAllowFrom"))
+    if not group_allow_from:
+        group_allow_from = _msteams_inbound_string_list(channel_config.get("allowFrom"))
+    if not group_allow_from:
+        return False
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    sender_id, _channel_id = _msteams_signin_user(activity)
+    return _msteams_allowlist_allows_sender(
+        group_allow_from,
+        sender_id=sender_id,
+        sender_name=_msteams_inbound_optional_string(sender.get("name")),
+        allow_name_matching=bool(channel_config.get("dangerouslyAllowNameMatching")),
+    )
+
+
 def _msteams_allowlist_allows_sender(
     allow_from: list[str],
     *,
@@ -9213,22 +9240,35 @@ class OpsMeshService:
         if not channel_config:
             return None
         if not _msteams_signin_is_direct_message(activity):
-            if _msteams_signin_route_allowed(channel_config, activity):
+            if not _msteams_signin_route_allowed(channel_config, activity):
+                metadata = dict(base_metadata)
+                metadata.pop("code", None)
+                metadata.pop("message", None)
+                metadata["status"] = "blocked"
+                metadata["reason"] = "msteams_signin_route_not_allowlisted"
+                metadata["conversationType"] = (
+                    _msteams_signin_conversation_type(activity) or "unknown"
+                )
+                conversation_id = _msteams_signin_conversation_id(activity)
+                team_id = _msteams_signin_team_id(activity)
+                if conversation_id is not None:
+                    metadata["conversationId"] = conversation_id
+                if team_id is not None:
+                    metadata["teamId"] = team_id
+                return metadata
+            if _msteams_signin_group_sender_allowed(channel_config, activity):
                 return None
             metadata = dict(base_metadata)
             metadata.pop("code", None)
             metadata.pop("message", None)
             metadata["status"] = "blocked"
-            metadata["reason"] = "msteams_signin_route_not_allowlisted"
+            metadata["reason"] = "msteams_signin_group_sender_not_allowlisted"
             metadata["conversationType"] = (
                 _msteams_signin_conversation_type(activity) or "unknown"
             )
             conversation_id = _msteams_signin_conversation_id(activity)
-            team_id = _msteams_signin_team_id(activity)
             if conversation_id is not None:
                 metadata["conversationId"] = conversation_id
-            if team_id is not None:
-                metadata["teamId"] = team_id
             return metadata
         dm_policy = (
             _msteams_inbound_optional_string(channel_config.get("dmPolicy"))
