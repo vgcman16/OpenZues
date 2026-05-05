@@ -13138,6 +13138,205 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_web_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-web-facades.cjs"
+    runtime_entry.write_text(
+        """
+const search = require("openclaw/plugin-sdk/provider-web-search");
+const fetchSdk = require("openclaw/plugin-sdk/provider-web-fetch");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function captureUnsupportedCreateTool(provider) {
+  try {
+    provider.createTool();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: error && error.message };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_web_facades",
+      description: "Use OpenClaw web provider facade SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const cache = new Map();
+        search.writeCache(cache, "result", { value: 1 }, 1000);
+        const provider = search.createPluginBackedWebSearchProvider({
+          id: "demo-search",
+          label: "Demo Search",
+          createTool: () => ({ name: "old" })
+        });
+        return {
+          exportTypes: [
+            typeof search.createPluginBackedWebSearchProvider,
+            typeof search.buildSearchCacheKey,
+            typeof search.markdownToText,
+            typeof fetchSdk.markdownToText,
+            typeof genericSdk.createPluginBackedWebSearchProvider
+          ],
+          common: {
+            json: search.jsonResult({ answer: 42 }),
+            string: search.readStringParam({ q: "  hello  " }, "q"),
+            number: search.readNumberParam({ count: 4.7 }, "count"),
+            array: search.readStringArrayParam({ tags: [" a ", "", 7, "b"] }, "tags")
+          },
+          text: {
+            markdown: search.markdownToText("# Title\\n\\n- [Link](https://example.com)"),
+            truncated: fetchSdk.truncateText("abcdef", 4)
+          },
+          cache: {
+            timeout: search.resolveTimeoutSeconds(3.8, search.DEFAULT_TIMEOUT_SECONDS),
+            fallbackTimeout: fetchSdk.resolveTimeoutSeconds(
+              "bad",
+              fetchSdk.DEFAULT_TIMEOUT_SECONDS
+            ),
+            ttl: search.resolveCacheTtlMs(0.5, search.DEFAULT_CACHE_TTL_MINUTES),
+            key: search.normalizeCacheKey(" HTTPS://Example.COM/Path "),
+            searchKey: search.buildSearchCacheKey(["Brave", undefined, 2, true]),
+            read: search.readCache(cache, "result")
+          },
+          searchFilters: {
+            countHigh: search.resolveSearchCount(99, 5),
+            countLow: search.resolveSearchCount(0, 5),
+            freshnessBrave: search.normalizeFreshness("week", "brave"),
+            freshnessPerplexity: search.normalizeFreshness("pw", "perplexity"),
+            iso: search.normalizeToIsoDate("1/2/2026"),
+            perplexityDate: search.isoToPerplexityDate("2026-01-02"),
+            dateRange: search.parseIsoDateRange({
+              rawDateAfter: "2026-01-01",
+              rawDateBefore: "2026-01-02",
+              invalidDateAfterMessage: "bad after",
+              invalidDateBeforeMessage: "bad before",
+              invalidDateRangeMessage: "bad range"
+            }),
+            unsupported: search.buildUnsupportedSearchFilterResponse(
+              { language: "en" },
+              "demo"
+            ),
+            siteName: search.resolveSiteName("https://docs.example.com/path")
+          },
+          provider: {
+            id: provider.id,
+            label: provider.label,
+            createTool: captureUnsupportedCreateTool(provider)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-web-facades-plugin",
+                    "name": "Runtime Provider Web Facades Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-web-facades.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_web_facades"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_web_facades"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 5,
+        "common": {
+            "json": {
+                "content": [{"type": "text", "text": '{\n  "answer": 42\n}'}],
+                "details": {"answer": 42},
+            },
+            "string": "hello",
+            "number": 4.7,
+            "array": ["a", "b"],
+        },
+        "text": {
+            "markdown": "Title\nLink",
+            "truncated": {"text": "abcd", "truncated": True},
+        },
+        "cache": {
+            "timeout": 3,
+            "fallbackTimeout": 30,
+            "ttl": 30000,
+            "key": "https://example.com/path",
+            "searchKey": "brave:default:2:true",
+            "read": {"value": {"value": 1}, "cached": True},
+        },
+        "searchFilters": {
+            "countHigh": 10,
+            "countLow": 1,
+            "freshnessBrave": "pw",
+            "freshnessPerplexity": "week",
+            "iso": "2026-01-02",
+            "perplexityDate": "1/2/2026",
+            "dateRange": {"dateAfter": "2026-01-01", "dateBefore": "2026-01-02"},
+            "unsupported": {
+                "error": "unsupported_language",
+                "message": (
+                    "language filtering is not supported by the demo provider. "
+                    "Only Brave and Perplexity support language filtering."
+                ),
+                "docs": "https://docs.openclaw.ai/tools/web",
+            },
+            "siteName": "docs.example.com",
+        },
+        "provider": {
+            "id": "demo-search",
+            "label": "Demo Search",
+            "createTool": {
+                "ok": False,
+                "message": (
+                    "createPluginBackedWebSearchProvider(demo-search) is no longer "
+                    "supported. Define provider-owned createTool(...) directly in "
+                    "the extension's WebSearchProviderPlugin."
+                ),
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

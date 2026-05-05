@@ -20624,6 +20624,367 @@ function createWebSearchProviderContractFields(options) {
   };
 }
 
+function normalizeWhitespace(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function markdownToText(markdown) {
+  let text = String(markdown || "");
+  text = text.replace(/!\[[^\]]*]\([^)]+\)/g, "");
+  text = text.replace(/\[([^\]]+)]\([^)]+\)/g, "$1");
+  text = text.replace(/```[\s\S]*?```/g, (block) =>
+    block.replace(/```[^\n]*\n?/g, "").replace(/```/g, ""),
+  );
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/^#{1,6}\s+/gm, "");
+  text = text.replace(/^\s*[-*+]\s+/gm, "");
+  text = text.replace(/^\s*\d+\.\s+/gm, "");
+  return normalizeWhitespace(text);
+}
+
+function truncateText(value, maxChars) {
+  const text = String(value || "");
+  if (text.length <= maxChars) {
+    return { text, truncated: false };
+  }
+  return { text: text.slice(0, maxChars), truncated: true };
+}
+
+const DEFAULT_TIMEOUT_SECONDS = 30;
+const DEFAULT_CACHE_TTL_MINUTES = 15;
+const DEFAULT_CACHE_MAX_ENTRIES = 100;
+const DEFAULT_SEARCH_COUNT = 5;
+const MAX_SEARCH_COUNT = 10;
+const SEARCH_CACHE = new Map();
+const FRESHNESS_TO_RECENCY = {
+  pd: "day",
+  pw: "week",
+  pm: "month",
+  py: "year",
+};
+const RECENCY_TO_FRESHNESS = {
+  day: "pd",
+  week: "pw",
+  month: "pm",
+  year: "py",
+};
+
+function resolveTimeoutSeconds(value, fallback) {
+  const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function resolveCacheTtlMs(value, fallbackMinutes) {
+  const minutes =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : fallbackMinutes;
+  return Math.round(minutes * 60000);
+}
+
+function normalizeCacheKey(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function readCache(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) {
+    return null;
+  }
+  if (Date.now() > entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+  return { value: entry.value, cached: true };
+}
+
+function writeCache(cache, key, value, ttlMs) {
+  if (ttlMs <= 0) {
+    return;
+  }
+  if (cache.size >= DEFAULT_CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) {
+      cache.delete(oldest.value);
+    }
+  }
+  const now = Date.now();
+  cache.set(key, { value, expiresAt: now + ttlMs, insertedAt: now });
+}
+
+async function readResponseText(res, options = {}) {
+  const rawText = typeof res.text === "function" ? await res.text() : "";
+  const maxBytes = options.maxBytes;
+  if (typeof maxBytes === "number" && Number.isFinite(maxBytes) && maxBytes > 0) {
+    const text = rawText.slice(0, Math.floor(maxBytes));
+    return { text, truncated: text.length < rawText.length, bytesRead: text.length };
+  }
+  return { text: rawText, truncated: false, bytesRead: rawText.length };
+}
+
+function resolveSearchTimeoutSeconds(searchConfig = {}) {
+  return resolveTimeoutSeconds(searchConfig.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS);
+}
+
+function resolveSearchCacheTtlMs(searchConfig = {}) {
+  return resolveCacheTtlMs(searchConfig.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES);
+}
+
+function resolveSearchCount(value, fallback) {
+  const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(1, Math.min(MAX_SEARCH_COUNT, Math.floor(parsed)));
+}
+
+function readConfiguredSecretString(value) {
+  return normalizeSecretInputString(value) || undefined;
+}
+
+function readProviderEnvValue(envVars) {
+  for (const envVar of envVars || []) {
+    const value = normalizeSecretInputString(process.env[envVar]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+async function withTrustedWebToolsEndpoint(params, run) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  const response = await fetchImpl(params.url, params.init || {});
+  return await run({ response, finalUrl: params.url });
+}
+
+async function withSelfHostedWebToolsEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, run);
+}
+
+async function withStrictWebToolsEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, run);
+}
+
+async function withTrustedWebSearchEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, async ({ response }) => run(response));
+}
+
+async function withSelfHostedWebSearchEndpoint(params, run) {
+  return await withSelfHostedWebToolsEndpoint(params, async ({ response }) => run(response));
+}
+
+async function postTrustedWebToolsJson(params, parseResponse) {
+  return await withTrustedWebToolsEndpoint(
+    {
+      url: params.url,
+      timeoutSeconds: params.timeoutSeconds,
+      signal: params.signal,
+      init: {
+        method: "POST",
+        headers: {
+          ...(params.extraHeaders || {}),
+          Accept: "application/json",
+          Authorization: `Bearer ${params.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params.body || {}),
+      },
+      fetchImpl: params.fetchImpl,
+    },
+    async ({ response }) => {
+      if (!response.ok) {
+        const detail = await readResponseText(response, {
+          maxBytes: params.maxErrorBytes || 64000,
+        });
+        throw new Error(
+          `${params.errorLabel} API error (${response.status}): ${
+            detail.text || response.statusText
+          }`,
+        );
+      }
+      return await parseResponse(response);
+    },
+  );
+}
+
+async function throwWebSearchApiError(res, providerLabel) {
+  const detailResult = await readResponseText(res, { maxBytes: 64000 });
+  throw new Error(
+    `${providerLabel} API error (${res.status}): ${detailResult.text || res.statusText}`,
+  );
+}
+
+function resolveSiteName(url) {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isoToPerplexityDate(iso) {
+  const match = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return undefined;
+  }
+  const [, year, month, day] = match;
+  return `${Number.parseInt(month, 10)}/${Number.parseInt(day, 10)}/${year}`;
+}
+
+function normalizeToIsoDate(value) {
+  const trimmed = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return isValidIsoDate(trimmed) ? trimmed : undefined;
+  }
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) {
+    return undefined;
+  }
+  const [, month, day, year] = match;
+  const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  return isValidIsoDate(iso) ? iso : undefined;
+}
+
+function parseIsoDateRange(params) {
+  const docs = params.docs || "https://docs.openclaw.ai/tools/web";
+  const dateAfter = params.rawDateAfter ? normalizeToIsoDate(params.rawDateAfter) : undefined;
+  if (params.rawDateAfter && !dateAfter) {
+    return { error: "invalid_date", message: params.invalidDateAfterMessage, docs };
+  }
+  const dateBefore = params.rawDateBefore ? normalizeToIsoDate(params.rawDateBefore) : undefined;
+  if (params.rawDateBefore && !dateBefore) {
+    return { error: "invalid_date", message: params.invalidDateBeforeMessage, docs };
+  }
+  if (dateAfter && dateBefore && dateAfter > dateBefore) {
+    return { error: "invalid_date_range", message: params.invalidDateRangeMessage, docs };
+  }
+  return { ...(dateAfter ? { dateAfter } : {}), ...(dateBefore ? { dateBefore } : {}) };
+}
+
+function normalizeFreshness(value, provider) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const lower = normalizeOptionalLowercaseString(trimmed);
+  if (FRESHNESS_TO_RECENCY[lower]) {
+    return provider === "brave" ? lower : FRESHNESS_TO_RECENCY[lower];
+  }
+  if (RECENCY_TO_FRESHNESS[lower]) {
+    return provider === "perplexity" ? lower : RECENCY_TO_FRESHNESS[lower];
+  }
+  if (provider === "brave") {
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})to(\d{4}-\d{2}-\d{2})$/);
+    if (match && isValidIsoDate(match[1]) && isValidIsoDate(match[2]) && match[1] <= match[2]) {
+      return `${match[1]}to${match[2]}`;
+    }
+  }
+  return undefined;
+}
+
+function readCachedSearchPayload(cacheKey) {
+  const cached = readCache(SEARCH_CACHE, cacheKey);
+  return cached ? { ...cached.value, cached: true } : undefined;
+}
+
+function buildSearchCacheKey(parts) {
+  return normalizeCacheKey(
+    (parts || []).map((part) => (part === undefined ? "default" : String(part))).join(":"),
+  );
+}
+
+function writeCachedSearchPayload(cacheKey, payload, ttlMs) {
+  writeCache(SEARCH_CACHE, cacheKey, payload, ttlMs);
+}
+
+function buildUnsupportedSearchFilterResponse(
+  params,
+  provider,
+  docs = "https://docs.openclaw.ai/tools/web",
+) {
+  const unsupported = ["country", "language", "freshness", "date_after", "date_before"].find(
+    (name) => typeof params[name] === "string" && params[name].trim(),
+  );
+  if (!unsupported) {
+    return undefined;
+  }
+  const label =
+    unsupported === "country"
+      ? "country filtering"
+      : unsupported === "language"
+        ? "language filtering"
+        : unsupported === "freshness"
+          ? "freshness filtering"
+          : "date_after/date_before filtering";
+  const supportedLabel =
+    unsupported === "date_after" || unsupported === "date_before" ? "date filtering" : label;
+  return {
+    error: unsupported.startsWith("date_")
+      ? "unsupported_date_filter"
+      : `unsupported_${unsupported}`,
+    message:
+      `${label} is not supported by the ${provider} provider. ` +
+      `Only Brave and Perplexity support ${supportedLabel}.`,
+    docs,
+  };
+}
+
+function wrapExternalContent(content, options = {}) {
+  const source = options.source || "unknown";
+  const id = crypto.randomBytes(8).toString("hex");
+  const sourceLabel =
+    source === "web_search" ? "Web Search" : source === "web_fetch" ? "Web Fetch" : "External";
+  return [
+    `<<<EXTERNAL_UNTRUSTED_CONTENT id="${id}">>>`,
+    `Source: ${sourceLabel}`,
+    "---",
+    String(content || ""),
+    `<<<END_EXTERNAL_UNTRUSTED_CONTENT id="${id}">>>`,
+  ].join("\n");
+}
+
+function wrapWebContent(content, source = "web_search") {
+  return wrapExternalContent(content, { source, includeWarning: source === "web_fetch" });
+}
+
+function formatCliCommand(parts) {
+  return (parts || []).map((part) => String(part)).join(" ");
+}
+
+function resolveCitationRedirectUrl(url) {
+  return url;
+}
+
+function createPluginBackedWebSearchProvider(provider) {
+  return {
+    ...provider,
+    createTool: () => {
+      throw new Error(
+        `createPluginBackedWebSearchProvider(${provider.id}) is no longer supported. ` +
+          "Define provider-owned createTool(...) directly in the extension's " +
+          "WebSearchProviderPlugin.",
+      );
+    },
+  };
+}
+
 function buildAuthProfileId(params) {
   const profilePrefix = normalizeOptionalString(params.profilePrefix) || params.providerId;
   const profileName = normalizeOptionalString(params.profileName) || "default";
@@ -29977,6 +30338,68 @@ const providerWebSearchContractRuntime = {
   enablePluginInConfig: enableProviderPluginInConfig,
 };
 
+const providerWebSharedRuntime = {
+  DEFAULT_CACHE_TTL_MINUTES,
+  DEFAULT_TIMEOUT_SECONDS,
+  markdownToText,
+  normalizeCacheKey,
+  readCache,
+  readResponseText,
+  resolveCacheTtlMs,
+  resolveTimeoutSeconds,
+  truncateText,
+  withSelfHostedWebToolsEndpoint,
+  withStrictWebToolsEndpoint,
+  withTrustedWebToolsEndpoint,
+  writeCache,
+};
+
+const providerWebFetchRuntime = {
+  ...providerWebSharedRuntime,
+  enablePluginInConfig: enableProviderPluginInConfig,
+  jsonResult,
+  readNumberParam,
+  readStringParam,
+  wrapExternalContent,
+  wrapWebContent,
+};
+
+const providerWebSearchRuntime = {
+  ...providerWebSharedRuntime,
+  ...providerWebSearchConfigContractRuntime,
+  buildSearchCacheKey,
+  buildUnsupportedSearchFilterResponse,
+  createPluginBackedWebSearchProvider,
+  DEFAULT_SEARCH_COUNT,
+  enablePluginInConfig: enableProviderPluginInConfig,
+  formatCliCommand,
+  FRESHNESS_TO_RECENCY,
+  isoToPerplexityDate,
+  jsonResult,
+  MAX_SEARCH_COUNT,
+  normalizeFreshness,
+  normalizeToIsoDate,
+  parseIsoDateRange,
+  postTrustedWebToolsJson,
+  readCachedSearchPayload,
+  readConfiguredSecretString,
+  readNumberParam,
+  readProviderEnvValue,
+  readStringArrayParam,
+  readStringParam,
+  resolveCitationRedirectUrl,
+  resolveSearchCacheTtlMs,
+  resolveSearchCount,
+  resolveSearchTimeoutSeconds,
+  resolveSiteName,
+  SEARCH_CACHE,
+  throwWebSearchApiError,
+  withSelfHostedWebSearchEndpoint,
+  withTrustedWebSearchEndpoint,
+  wrapWebContent,
+  writeCachedSearchPayload,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -30677,6 +31100,8 @@ const genericSdk = new Proxy(
     ...providerWebSearchConfigContractRuntime,
     ...providerWebSearchContractFieldsRuntime,
     ...providerWebSearchContractRuntime,
+    ...providerWebFetchRuntime,
+    ...providerWebSearchRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31129,6 +31554,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-fetch-contract"
   ) {
     return providerWebFetchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-fetch" ||
+    request === "@openclaw/plugin-sdk/provider-web-fetch"
+  ) {
+    return providerWebFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search" ||
+    request === "@openclaw/plugin-sdk/provider-web-search"
+  ) {
+    return providerWebSearchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
