@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~75.5% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~75.6% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -56,7 +56,7 @@ Current percentage rollup:
   installed plugin runtime activation adapter,
   installed plugin disabled activation gate,
   active-registry executor projection, runtime activation doctor posture, and
-  imported plugin SDK allow-from helper slices.
+  imported plugin SDK allow-from plus access-groups helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7088,9 +7088,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   fallback behavior through `tools.invoke`. Repo-wide parity is now estimated
   at ~75.5%. Verified with focused allow-from pytest, adjacent plugin invoke
   proof, `ruff check`, and `mypy`; source/test checkpointed in `bc6e1344`.
+- Closed the imported OpenClaw plugin SDK access-groups seam from
+  `src/plugin-sdk/access-groups.ts`: native runtime entries can now import
+  access-group allowFrom prefix parsing, `message.senders` membership
+  resolution across wildcard and channel-specific members, async membership
+  resolver fallback with error swallowing, duplicate group-name dedupe, matched
+  access-group projection, allowFrom expansion with sender entries, and
+  generic SDK fallback behavior through `tools.invoke`. Repo-wide parity is
+  now estimated at ~75.6%. Verified with focused access-groups pytest,
+  adjacent plugin invoke proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `93a4347c`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/allow-from/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/allow-from/access-groups/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status path,
   starting with the next source-backed SDK subpath or deeper route-resolution
