@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~65.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~66.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -223,6 +223,11 @@ may lag behind this tracker.
   `setReaction` / `unsetReaction`, delegated token posture, legacy reaction
   type normalization, and `remove=true` result projection.
   - Status: checkpointed in `02ae95da`
+
+- [x] Microsoft Teams stored delegated-token reaction writes, preserving
+  OpenClaw's `preferDelegated` Graph token behavior for `react` / `unreact`
+  when a persisted SSO token exists for the requester.
+  - Status: checkpointed in `507c90ad`
 
 - [x] Microsoft Teams threaded replies, preserving OpenClaw Bot Framework
   channel thread routing via `<conversationId>;messageid=<thread-root>` and

@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~65.9% overall, with a reasonable band of ~50-66%.
+- Estimated repo-wide parity: ~66.0% overall, with a reasonable band of ~50-67%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10926,6 +10926,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`15 passed, 313 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `34346a60`.
+
+- Microsoft Teams reaction writes now consume stored SSO delegated Graph tokens
+  before falling back to app-only Graph credentials, matching OpenClaw's
+  `resolveGraphToken(..., { preferDelegated: true })` posture from
+  `extensions/msteams/src/graph.ts` and `graph-messages.ts`. Native `react` /
+  `unreact` dispatch looks up the configured SSO `connectionName` and
+  requester sender id in the persisted `(connectionName, userId)` token store,
+  uses that bearer for Graph beta `setReaction` / `unsetReaction`, and avoids
+  fetching an app-only token when a delegated token is available. This closes
+  `OZ-PROV-001AZ`; repo-wide parity is now estimated at ~66.0%.
+- Verified the Microsoft Teams delegated-token reaction slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_msteams_react_prefers_stored_delegated_token -q`
+  (`1 passed`), adjacent Teams SSO/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react or msteams_reactions or msteams_signin or msteams_user_reference_route or msteams_native_route or msteams_feedback"`
+  (`17 passed, 312 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `507c90ad`.
 
 ## References
 

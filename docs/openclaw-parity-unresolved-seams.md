@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~65.9% overall, with a reasonable
-  band of ~50-66%.
+- Repo-wide OpenClaw parity is estimated at ~66.0% overall, with a reasonable
+  band of ~50-67%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -6135,10 +6135,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   for the native gateway result. Repo-wide parity is now estimated at ~65.9%.
   Verified with focused runtime pytest, adjacent Teams invoke/inbound proof,
   `ruff check`, and `mypy`; source/test checkpointed in `34346a60`.
+- Closed the Microsoft Teams stored delegated-token consumer seam from
+  OpenClaw `extensions/msteams/src/graph.ts` and
+  `extensions/msteams/src/graph-messages.ts`: native `react` / `unreact`
+  dispatch now prefers persisted SSO delegated Graph tokens keyed by
+  `(connectionName, userId)` for the requester before falling back to app-only
+  Graph token acquisition. Repo-wide parity is now estimated at ~66.0%.
+  Verified with focused runtime pytest, adjacent Teams SSO/action proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `507c90ad`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams delegated-token
-  consumers, feedback reflection learning/follow-up generation, downloadable
-  inbound media staging, or another
+  send/poll/replay metadata gap, starting with Microsoft Teams feedback
+  reflection learning/follow-up generation, downloadable inbound media staging,
+  delegated auth probe/setup breadth, or another
   source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
