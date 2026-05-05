@@ -6319,6 +6319,104 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_temp_path_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-temp-path.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  buildRandomTempFilePath,
+  sanitizeTempFileName
+} = require("openclaw/plugin-sdk/temp-path");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.temp_path",
+      description: "Use OpenClaw temp-path helpers",
+      parameters: {
+        type: "object",
+        properties: { tmpDir: { type: "string" } }
+      },
+      execute(_toolCallId, args) {
+        return {
+          sanitized: sanitizeTempFileName("../bad name?.png"),
+          randomPath: buildRandomTempFilePath({
+            prefix: "bad prefix!",
+            extension: "txt",
+            tmpDir: args.tmpDir,
+            now: 123,
+            uuid: "fixed-id"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-temp-plugin",
+                    "name": "Runtime Temp Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-temp-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.temp_path"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.temp_path",
+            "args": {"tmpDir": str(tmp_path / "runtime-tmp")},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["sanitized"] == "bad-name-.png"
+    assert payload["result"]["randomPath"] == str(
+        tmp_path / "runtime-tmp" / "bad-prefix-123-fixed-id.txt"
+    )
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:

@@ -18029,6 +18029,8 @@ _NATIVE_PLUGIN_RUNTIME_LOADER_JS = r"""
 "use strict";
 
 const fs = require("fs");
+const crypto = require("crypto");
+const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const Module = require("module");
@@ -18178,6 +18180,79 @@ function formatUncaughtError(err) {
   return formatErrorMessage(err);
 }
 
+function sanitizePrefix(prefix) {
+  const normalized = String(prefix || "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "tmp";
+}
+
+function sanitizeExtension(extension) {
+  if (!extension) {
+    return "";
+  }
+  const normalized = String(extension).startsWith(".") ? String(extension) : `.${extension}`;
+  const suffix = (normalized.match(/[a-zA-Z0-9._-]+$/) || [""])[0];
+  const token = suffix.replace(/^[._-]+/, "");
+  return token ? `.${token}` : "";
+}
+
+function sanitizeTempFileName(fileName) {
+  const base = path.basename(String(fileName || "")).replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const normalized = base.replace(/^-+|-+$/g, "");
+  return normalized || "download.bin";
+}
+
+function resolvePreferredOpenClawTmpDir(options) {
+  const tmpdir =
+    options && typeof options.tmpdir === "function" ? options.tmpdir : () => os.tmpdir();
+  return path.join(tmpdir(), "openclaw");
+}
+
+function resolveTempRoot(tmpDir) {
+  return tmpDir || resolvePreferredOpenClawTmpDir();
+}
+
+function buildRandomTempFilePath(params) {
+  const prefix = sanitizePrefix(params && params.prefix);
+  const extension = sanitizeExtension(params && params.extension);
+  const nowCandidate = params && params.now;
+  const now =
+    typeof nowCandidate === "number" && Number.isFinite(nowCandidate)
+      ? Math.trunc(nowCandidate)
+      : Date.now();
+  const uuid =
+    params && typeof params.uuid === "string" && params.uuid.trim()
+      ? params.uuid.trim()
+      : crypto.randomUUID();
+  return path.join(
+    resolveTempRoot(params && params.tmpDir),
+    `${prefix}-${now}-${uuid}${extension}`,
+  );
+}
+
+async function createTempDownloadTarget(params) {
+  const tempRoot = resolveTempRoot(params && params.tmpDir);
+  const prefix = `${sanitizePrefix(params && params.prefix)}-`;
+  const dir = fs.mkdtempSync(path.join(tempRoot, prefix));
+  return {
+    dir,
+    path: path.join(dir, sanitizeTempFileName((params && params.fileName) || "download.bin")),
+    cleanup: async () => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function withTempDownloadPath(params, fn) {
+  const target = await createTempDownloadTarget(params || {});
+  try {
+    return await fn(target.path);
+  } finally {
+    await target.cleanup();
+  }
+}
+
 function passthrough(value) {
   return value;
 }
@@ -18202,9 +18277,19 @@ const errorRuntime = {
   readErrorName,
 };
 
+const tempPathRuntime = {
+  buildRandomTempFilePath,
+  createTempDownloadTarget,
+  resolvePreferredOpenClawTmpDir,
+  sanitizeTempFileName,
+  withTempDownloadPath,
+};
+
 const genericSdk = new Proxy(
   {
+    buildRandomTempFilePath,
     collectErrorGraphCandidates,
+    createTempDownloadTarget,
     extractErrorCode,
     formatErrorMessage,
     formatUncaughtError,
@@ -18218,6 +18303,9 @@ const genericSdk = new Proxy(
     normalizeStringifiedOptionalString,
     readErrorName,
     readStringValue,
+    resolvePreferredOpenClawTmpDir,
+    sanitizeTempFileName,
+    withTempDownloadPath,
   },
   {
     get(target, prop) {
@@ -18245,6 +18333,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/error-runtime"
   ) {
     return errorRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/temp-path" ||
+    request === "@openclaw/plugin-sdk/temp-path"
+  ) {
+    return tempPathRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||
