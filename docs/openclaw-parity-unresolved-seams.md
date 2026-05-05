@@ -1,11 +1,11 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-04
+Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~61.3% overall, with a reasonable
-  band of ~50-62%.
+- Repo-wide OpenClaw parity is estimated at ~65.1% overall, with a reasonable
+  band of ~50-66%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -131,6 +131,40 @@ default, missing targets return `errorCode="target_agent_required"`, and
 `errorCode="agent_forbidden"`. Accepted RuntimeManager ACP child sessions are
 now stamped under `agent:<targetAgentId>:acp:<runtimeId>` and persist the
 resolved target agent id in session metadata.
+
+Provider-native Microsoft Teams outbound text delivery is now landed for the
+first OpenClaw Bot Framework proactive-send slice: native `kind="msteams"`
+routes accept service URLs carrying `appId`/`tenantId`, normalize
+`msteams:`/`teams:`/`conversation:` conversation targets, strip
+`;messageid=...`, obtain Bot Framework bearer auth from the route secret when
+needed, post AI-generated top-level text activities, and preserve
+message/conversation result metadata. Verified on 2026-05-05 with focused
+schema/service/CLI/app proofs, adjacent native-route proof, `ruff check`, and
+`mypy`; checkpointed in `79258ec2`. Remaining Teams seams are stored
+conversation-reference lookup for `user:` targets, live threaded replies,
+FileConsentCard/Graph media upload, polls, reactions/actions, monitor/inbound
+breadth, and route readiness/doctor depth.
+
+Provider-native Microsoft Teams polls are now landed for the OpenClaw Adaptive
+Card outbound slice: native `kind="msteams"` `gateway/poll` routes validate
+question/options, build Adaptive Card 1.5 choice-set payloads with
+`openclawPollId` / `pollId` submit metadata and Teams `messageBack` action
+data, post through Bot Framework proactive activities, return poll/message/
+conversation metadata, and report `poll` in CLI channel capabilities. Verified
+on 2026-05-05 with focused runtime/CLI proofs, adjacent provider/CLI proofs,
+`ruff check`, and `mypy`; checkpointed in `b0ad5491`. Remaining poll breadth
+is invoke-based vote extraction/storage and inbound notification handling.
+
+Provider-native Microsoft Teams read-only reaction listing is now landed for
+the OpenClaw Graph message-action slice: native `message.action`
+`channel="msteams"`, `action="reactions"` resolves explicit or tool-context
+targets, fetches a Graph app token, reads the message resource, groups
+`reactions` by type while counting anonymous/deleted-user reactions, preserves
+known emoji labels, and returns OpenClaw-shaped `{ok, reactions}` summaries.
+Verified on 2026-05-05 with focused runtime proof, adjacent action/provider
+proof, `ruff check`, and `mypy`; checkpointed in `4996cf5c`. Remaining action
+breadth is delegated `react`/`unreact`, pins, reads/search, member/channel
+metadata, and inbound reaction event routing.
 
 Runtime-control `sessions.pluginPatch` now mirrors OpenClaw's registered plugin
 session extension mutation path: admin-scoped callers can patch only registered
@@ -5643,8 +5677,397 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~61.3%. Verified with focused
   update-status package-manager pytest, adjacent update/package doctor proof,
   `ruff check`, and `mypy`; checkpointed in `f1ac67da`.
+- Closed the Feishu/Lark native outbound route seam from OpenClaw
+  `extensions/feishu/src/send-target.ts`, `extensions/feishu/src/send.ts`,
+  `extensions/feishu/src/send-result.ts`, and
+  `extensions/feishu/src/outbound.ts`: native `kind="feishu"` routes now send
+  direct text through Feishu message-create semantics with normalized
+  chat/user/open-id targets, `msg_type="post"` markdown content under
+  `zh_cn.content`, bearer auth, and provider message/chat metadata persisted
+  through direct-send results. Repo-wide parity is now estimated at ~61.4%.
+  Verified with focused Feishu service/CLI pytest, adjacent provider route
+  proof, `ruff check`, and `mypy`; checkpointed in `d1515da1`.
+- Closed the bundled plugin runtime entry import seam from OpenClaw
+  `src/plugins/loader.ts`, `src/plugins/registry.ts`, and
+  `src/plugins/loader.test.ts`: native `plugins doctor --json` can now import
+  CommonJS bundled/package runtime entries without a fake activation adapter,
+  shim OpenClaw plugin-SDK aliases, call `register`/`activate`, collect
+  registered tools, satisfy manifest tool contracts, and mark plugin rows
+  imported. Repo-wide parity is now estimated at ~61.5%. Verified with focused
+  plugin runtime import pytest, adjacent activation/import proof, gateway
+  plugin runtime tests, `ruff check`, and `mypy`; checkpointed in `8cb314f4`.
+- Closed the ESM plugin runtime entry import seam from OpenClaw
+  `src/plugins/loader.ts`, `src/plugins/sdk-alias.ts`, and
+  `src/plugins/loader.test.ts`: native runtime import now supports common
+  `import ... from "openclaw/plugin-sdk/*"` plus `export default` syntax by
+  rewriting the entry to a temporary CommonJS module beside the source, while
+  preserving SDK alias shims and registered tool collection. Repo-wide parity
+  is now estimated at ~61.6%. Verified with focused ESM runtime import pytest,
+  adjacent plugin activation/import proof, gateway plugin runtime tests,
+  `ruff check`, and `mypy`; checkpointed in `eb11e22f`.
+- Closed the companion setup-code bootstrap handoff seam from OpenClaw
+  `src/cli/qr-cli.ts`, `src/pairing/setup-code.ts`, and
+  `src/infra/device-bootstrap.ts`: native `openzues qr --setup-code-only
+  --url ...` now emits OpenClaw base64url JSON setup codes with `{url,
+  bootstrapToken}`, issues file-backed bootstrap tokens with the default
+  node/operator handoff profile and expiry metadata, and keeps raw gateway
+  token/password overrides out of the encoded payload. Repo-wide parity is now
+  estimated at ~61.7%. Verified with focused QR setup-code pytest, adjacent
+  setup/bootstrap CLI proof, `ruff check`, and `mypy`; checkpointed in
+  `5262359f`.
+- Closed the companion QR invalid override preflight seam from OpenClaw
+  `src/cli/qr-cli.test.ts` and `src/pairing/setup-code.ts`: malformed
+  `--url` values now emit `Configured publicUrl is invalid.` and stop before
+  issuing a bootstrap token. Repo-wide parity is now estimated at ~61.8%.
+  Verified with focused QR invalid-url pytest, adjacent QR setup-code proof,
+  `ruff check`, and `mypy`; checkpointed in `f21c799c`.
+- Closed the companion QR remote fail-closed preflight seam from OpenClaw
+  `src/cli/qr-cli.ts` and `src/cli/qr-cli.test.ts`: `qr --remote` now refuses
+  to issue a setup-code bootstrap token unless a concrete remote URL source is
+  available, returning the upstream `qr --remote requires gateway.remote.url
+  (or gateway.tailscale.mode=serve/funnel).` diagnostic. Repo-wide parity is
+  now estimated at ~61.9%. Verified with focused QR remote-preflight pytest,
+  adjacent QR proof, `ruff check`, and `mypy`; checkpointed in `12dee789`.
+- Closed the companion QR JSON setup-code contract seam from OpenClaw
+  `src/cli/qr-cli.ts` and `src/cli/qr-cli.test.ts`: native `qr --json` output
+  now exposes only `setupCode`, `gatewayUrl`, `auth`, and `urlSource`, leaves
+  raw token/password overrides out of stdout, and keeps the encoded setup
+  payload limited to `{url, bootstrapToken}`. Repo-wide parity is now
+  estimated at ~62.0%. Verified with focused QR JSON pytest, adjacent QR
+  proof, `ruff check`, and `mypy`; checkpointed in `b79b87c3`.
+- Closed the plugin provider metadata projection seam from OpenClaw
+  `src/plugins/manifest.ts`, `src/plugins/manifest-registry.ts`, and
+  `src/plugins/manifest-registry.test.ts`: native plugin list rows now
+  preserve endpoint `hostSuffixes`, Google Vertex region metadata,
+  provider-scoped `modelIdNormalization`, and provider-scoped
+  `providerRequest` metadata for manifest-owned providers. Repo-wide parity is
+  now estimated at ~62.1%. Verified with focused manifest auth/env/provider
+  metadata pytest, adjacent manifest metadata proof, `ruff check`, and
+  `mypy`; checkpointed in `9b2bf4fc`.
+- Closed the persisted plugin registry provider metadata seam from OpenClaw
+  `src/plugins/manifest-registry.ts` and
+  `src/plugins/manifest-registry.test.ts`: registry refresh and inspect
+  payloads now preserve provider endpoints, `modelIdNormalization`, and
+  `providerRequest` metadata instead of reducing provider rows to
+  `pluginId`/`enabled`. Repo-wide parity is now estimated at ~62.2%. Verified
+  with focused registry provider-metadata pytest, adjacent registry proof,
+  `ruff check`, and `mypy`; checkpointed in `54c2fd49`.
+- Closed the Google Chat native outbound route seam from OpenClaw
+  `extensions/googlechat/src/api.ts`,
+  `extensions/googlechat/src/channel.adapters.ts`, and
+  `extensions/googlechat/src/targets.ts`: native `kind="googlechat"` routes
+  now accept Google Chat provider routes, normalize upstream
+  `googlechat:`/`google-chat:`/`gchat:` space targets, send `{text, thread}`
+  payloads through the Google Chat message-create endpoint with
+  `messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`, attach bearer
+  auth, and persist provider message/chat/thread/reply metadata through direct
+  send results. Repo-wide parity is now estimated at ~62.3%. Verified with
+  focused schema, service, and CLI pytest, adjacent provider/CLI/app route
+  proof, `ruff check`, and `mypy`; checkpointed in `edb67dfc`.
+- Closed the Google Chat media and DM-resolution seam from OpenClaw
+  `extensions/googlechat/src/api.ts`,
+  `extensions/googlechat/src/channel.adapters.ts`, and
+  `extensions/googlechat/src/targets.ts`: native Google Chat routes now
+  resolve `users/...` targets via `spaces:findDirectMessage`, upload outbound
+  media through the Chat attachment upload endpoint, send attachment refs in
+  message-create payloads, preserve the caller caption without appending
+  delivery-summary media inventories, and persist ordered media token, URL,
+  filename, message, and chat metadata. Repo-wide parity is now estimated at
+  ~62.4%. Verified with focused media/DM pytest, adjacent provider route proof,
+  `ruff check`, and `mypy`; checkpointed in `7086dcb3`.
+- Closed the Nextcloud Talk native outbound route seam from OpenClaw
+  `extensions/nextcloud-talk/src/send.ts`,
+  `extensions/nextcloud-talk/src/normalize.ts`, and
+  `extensions/nextcloud-talk/src/channel.ts`: native `kind="nextcloud-talk"`
+  routes now accept Nextcloud Talk base URLs, normalize upstream
+  `nextcloud-talk:`/`nc-talk:`/`nc:`/`room:` room tokens, post signed HMAC bot
+  messages to `/ocs/v2.php/apps/spreed/api/v1/bot/{room}/message`, forward
+  `replyTo`, append outbound media URLs as `Attachment: <url>` fallback text,
+  and persist provider message, room chat/channel, timestamp, reply, and media
+  URL metadata. Repo-wide parity is now estimated at ~62.5%. Verified with
+  focused schema/service/CLI/app pytest, adjacent provider/CLI/app route proof,
+  `ruff check`, and `mypy`; checkpointed in `a6732846`.
+- Closed the Synology Chat native outbound route seam from OpenClaw
+  `extensions/synology-chat/src/client.ts` and
+  `extensions/synology-chat/src/channel.ts`: native `kind="synology-chat"`
+  routes now accept incoming webhook URLs, send form-encoded `payload` JSON
+  with `text` and numeric `user_ids`, send media URL payloads as `file_url`,
+  and persist generated message, recipient chat/channel, and media URL
+  metadata. Repo-wide parity is now estimated at ~62.6%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `b69d5489`.
+- Closed the Mattermost native outbound route seam from OpenClaw
+  `extensions/mattermost/src/mattermost/send.ts` and
+  `extensions/mattermost/src/mattermost/client.ts`: native
+  `kind="mattermost"` routes now accept Mattermost base URLs, send
+  `/api/v4/posts` JSON payloads with `channel_id`, `message`, and optional
+  `root_id`, attach bearer bot auth, and persist message/channel/reply
+  metadata. Repo-wide parity is now estimated at ~62.7%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `44541ef9`.
+- Closed the Signal native outbound route seam from OpenClaw
+  `extensions/signal/src/send.ts` and `extensions/signal/src/client.ts`:
+  native `kind="signal"` routes now accept signal-cli REST base URLs, send
+  JSON-RPC `send` requests to `/api/v1/rpc`, normalize recipient/group/
+  username targets, forward media URLs as attachments, and persist timestamp,
+  chat/channel, and media URL result metadata. Repo-wide parity is now
+  estimated at ~62.8%. Verified with focused schema/service/CLI/app pytest,
+  adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
+  checkpointed in `81491ab7`.
+- Closed the IRC native outbound route seam from OpenClaw
+  `extensions/irc/src/send.ts`, `extensions/irc/src/normalize.ts`, and
+  `extensions/irc/src/client.ts`: native `kind="irc"` routes now accept
+  `irc://`/`ircs://` server URLs, normalize `irc:`, `channel:`, and `user:`
+  targets, append `replyToId` as `[reply:<id>]`, send native IRC `PRIVMSG`
+  payloads through the Python socket runtime, and persist generated message,
+  chat/channel, reply, and media URL fallback metadata. Repo-wide parity is now
+  estimated at ~62.9%. Verified with focused schema/service/CLI/app pytest,
+  adjacent provider/CLI/app route proof, `ruff check`, and `mypy`;
+  checkpointed in `8726ab49`.
+- Closed the Twitch native outbound route seam from OpenClaw
+  `extensions/twitch/src/send.ts`, `extensions/twitch/src/outbound.ts`,
+  `extensions/twitch/src/twitch-client.ts`, and Twitch utility tests: native
+  `kind="twitch"` routes now accept `twitch://` account targets, require
+  username/clientId/token posture, normalize channel targets, strip markdown,
+  append media URLs as chat text, send native Twitch IRC chat messages, and
+  persist generated message, chat/channel, timestamp, and media URL metadata.
+  Repo-wide parity is now estimated at ~63.0%. Verified with focused
+  schema/service/CLI/app pytest, adjacent provider/CLI/app route proof, `ruff
+  check`, and `mypy`; checkpointed in `6185301b`.
+- Closed the Signal native reaction action seam from OpenClaw
+  `extensions/signal/src/message-actions.ts`,
+  `extensions/signal/src/send-reactions.ts`, and
+  `src/channels/plugins/actions/reaction-message-id.ts`: native Signal
+  `message.action` dispatch now accepts `action="react"`, normalizes
+  direct/group targets, sends JSON-RPC `sendReaction` payloads, preserves
+  OpenClaw `targetAuthor` fallback and required group-author behavior,
+  supports `remove=true`, and falls back to `toolContext.currentMessageId`
+  when the caller omits `messageId`. Repo-wide parity is now estimated at
+  ~63.1%. Verified with focused Signal reaction pytest, adjacent
+  provider/action proof, `ruff check`, and `mypy`; checkpointed in
+  `c9b45ffb`.
+- Closed the Microsoft Teams native outbound route seam from OpenClaw
+  `extensions/msteams/src/outbound.ts`, `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/messenger.ts`, `extensions/msteams/src/token.ts`,
+  and `extensions/msteams/src/session-route.ts`: native `kind="msteams"`
+  routes now accept Bot Framework service URLs with `appId`/`tenantId`,
+  authenticate with app passwords or bearer tokens, normalize
+  `msteams:`/`teams:`/`conversation:` targets, strip `;messageid=...`, send
+  top-level proactive text activities with AI generated-content entity
+  metadata, and persist message/conversation result metadata. Repo-wide parity
+  is now estimated at ~63.2%. Verified with focused schema/service/CLI/app
+  pytest, adjacent provider route proof, `ruff check`, and `mypy`;
+  checkpointed in `79258ec2`.
+- Closed the Microsoft Teams native poll seam from OpenClaw
+  `extensions/msteams/src/polls.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/outbound.ts`: native `kind="msteams"` routes now
+  accept `gateway/poll`, build Bot Framework Adaptive Card 1.5 choice-set
+  payloads with `openclawPollId` / `pollId` submit metadata, return provider
+  `pollId`, `messageId`, and conversation metadata, and advertise poll support
+  through the CLI channel capabilities surface. Repo-wide parity is now
+  estimated at ~63.3%. Verified with focused runtime/CLI pytest, adjacent
+  provider/CLI proof, `ruff check`, and `mypy`; checkpointed in `b0ad5491`.
+- Closed the Microsoft Teams read-only reaction listing action seam from
+  OpenClaw `extensions/msteams/src/actions.ts` and
+  `extensions/msteams/src/graph-messages.ts`: native `message.action`
+  dispatch now handles `channel="msteams"`, `action="reactions"` via Graph
+  app auth, resolves explicit/tool-context targets, reads message reactions,
+  groups by type, counts reactions without user ids, and returns OpenClaw-style
+  reaction summary objects. Repo-wide parity is now estimated at ~63.4%.
+  Verified with focused runtime pytest, adjacent action/provider proof, `ruff
+  check`, and `mypy`; checkpointed in `4996cf5c`.
+- Closed the Microsoft Teams native readiness probe seam from OpenClaw
+  `extensions/msteams/src/probe.ts`, `extensions/msteams/src/token.ts`,
+  `extensions/msteams/src/token-response.ts`, and
+  `extensions/msteams/src/sdk.ts`: native `kind="msteams"` routes now
+  participate in `channels status --probe`, validate Bot Framework app-token
+  posture from route `appId`/`tenantId` plus secret, attempt Graph app-token
+  posture discovery, project optional Graph token roles/scopes when JWT
+  payloads expose them, and return native-provider readiness metadata through
+  runtime and CLI probe envelopes. Repo-wide parity is now estimated at
+  ~63.5%. Verified with focused runtime/CLI pytest, adjacent runtime/CLI
+  proof, `ruff check`, and `mypy`; checkpointed in `50d05198`.
+- Closed the Microsoft Teams user-reference routing seam from OpenClaw
+  `extensions/msteams/src/session-route.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/conversation-store.ts`, and
+  `extensions/msteams/src/conversation-store-helpers.ts`: native
+  `msteams:user:<aad-id>` targets are now classified as direct peers, route
+  matching accepts stored `user:` references, route target metadata can carry
+  a stored Bot Framework `conversationId` and `conversationType`, user-targeted
+  sends resolve to the stored personal conversation id, and non-personal
+  stored references retain OpenClaw's DM leakage guard. Repo-wide parity is now
+  estimated at ~63.6%. Verified with focused runtime pytest, adjacent
+  Teams/provider proof, `ruff check`, and `mypy`; checkpointed in `b88c540d`.
+- Closed the Microsoft Teams delegated reaction write seam from OpenClaw
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts`: native
+  `message.action` now handles `channel="msteams"`, `action="react"`,
+  `emoji`/`reactionType`, `remove=true`, and `unreact`, normalizes legacy
+  Teams reaction type names to lowercase, posts Graph beta `setReaction` /
+  `unsetReaction` requests with delegated Graph token posture, supports chat
+  ids and team/channel Graph targets, and returns OpenClaw-shaped action
+  results. Repo-wide parity is now estimated at ~63.7%. Verified with focused
+  runtime pytest, adjacent Teams/action/provider proof, `ruff check`, and
+  `mypy`; checkpointed in `02ae95da`.
+- Closed the Microsoft Teams channel-thread reply seam from OpenClaw
+  `extensions/msteams/src/messenger.ts`: native Teams sends now preserve
+  `replyToId`, and channel-targeted direct sends reconstruct the Bot Framework
+  conversation id as `<conversationId>;messageid=<thread-root>` before posting
+  the activity, while keeping result metadata on the base conversation id.
+  Repo-wide parity is now estimated at ~63.8%. Verified with focused runtime
+  pytest, adjacent Teams send/action/provider proof, `ruff check`, and `mypy`;
+  checkpointed in `927d5787`.
+- Closed the Microsoft Teams file info card media seam from OpenClaw
+  `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/graph-chat.ts`, and
+  `extensions/msteams/src/graph-upload.ts`: native Teams sends with media can
+  now consume provider-ready DriveItem metadata, build Bot Framework
+  `application/vnd.microsoft.teams.card.file.info` attachments with
+  eTag-derived `uniqueId` and filename-derived `fileType`, keep the caller text
+  as the file-card caption without synthetic media inventory text, and persist
+  `mediaUrls`, `filenames`, and `fileIds` result metadata. Repo-wide parity is
+  now estimated at ~63.9%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `eb663838`.
+- Closed the Microsoft Teams poll vote storage seam from OpenClaw
+  `extensions/msteams/src/polls.ts`,
+  `extensions/msteams/src/monitor-handler/message-handler.ts`, and
+  `extensions/msteams/src/outbound.ts`: native Teams adaptive-card vote
+  payloads now extract `openclawPollId` / `pollId` plus `choices`, normalize
+  selected option indexes against saved poll options and `maxSelections`, map
+  sender ids to voters, consume unknown poll ids without error, and persist
+  known votes on the saved outbound poll delivery metadata. Repo-wide parity
+  is now estimated at ~64.0%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `b3726879`.
+- Closed the Microsoft Teams FileConsentCard outbound emission seam from
+  OpenClaw `extensions/msteams/src/file-consent.ts`,
+  `extensions/msteams/src/file-consent-helpers.ts`, and
+  `extensions/msteams/src/send.ts`: native Teams direct sends with media and
+  FileConsent metadata now emit Bot Framework
+  `application/vnd.microsoft.teams.card.file.consent` attachments with
+  `description`, `sizeInBytes`, `acceptContext`, and `declineContext`, omit
+  top-level text from the consent activity, and preserve `pendingUploadId`,
+  `mediaUrls`, and `filenames` through direct-send responses and saved
+  delivery metadata. Repo-wide parity is now estimated at ~64.1%. Verified
+  with focused runtime pytest, adjacent Teams send/action/provider proof,
+  `ruff check`, and `mypy`; checkpointed in `ad3c8a5c`.
+- Closed the Microsoft Teams FileConsent accept/upload seam from OpenClaw
+  `extensions/msteams/src/file-consent.ts` and
+  `extensions/msteams/src/file-consent-invoke.ts`: native
+  `message.action` now handles `fileConsent/invoke` accept payloads, locates
+  the saved pending upload by `uploadId`, rejects conversation mismatches
+  before upload, validates Teams-provided upload URLs against the
+  Microsoft/SharePoint allowlist, PUTs the pending media bytes with
+  `Content-Type` and `Content-Range`, replaces the consent card with a
+  FileInfoCard, and persists uploaded file metadata on the saved outbound
+  delivery. Repo-wide parity is now estimated at ~64.2%. Verified with
+  focused runtime pytest, adjacent Teams send/action/provider proof, `ruff
+  check`, and `mypy`; checkpointed in `709fcf4d`.
+- Closed the Microsoft Teams Graph media upload seam from OpenClaw
+  `extensions/msteams/src/graph-upload.ts`,
+  `extensions/msteams/src/graph-chat.ts`, and
+  `extensions/msteams/src/send.ts`: native Teams media sends now resolve
+  `sharePointSiteId`, upload media bytes to Graph
+  `/sites/{siteId}/drive/root:/OpenClawShared/...:/content`, create an
+  organization sharing link, read DriveItem `eTag` / `webDavUrl` / `name`,
+  build the native FileInfoCard, and persist Graph upload item/share metadata
+  alongside provider file-card metadata. Repo-wide parity is now estimated at
+  ~64.3%. Verified with focused runtime pytest, adjacent Teams
+  send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `a220db23`.
+- Closed the Microsoft Teams adaptive-card inbound monitor/session routing seam
+  from OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/message-handler.ts`,
+  `extensions/msteams/src/monitor-handler/thread-session.ts`, and
+  `extensions/msteams/src/inbound.ts`: native OpenZues now accepts the
+  service-level Teams inbound activity path for `adaptiveCard/action`,
+  serializes invoke values as compact JSON, strips `;messageid=...` from the
+  stored conversation target, prefers the thread-root `messageid` over nested
+  `replyToId`, and dispatches the inbound text to the thread-isolated session
+  key. Repo-wide parity is now estimated at ~64.4%. Verified with focused
+  runtime pytest, adjacent Teams send/action/provider proof, `ruff check`,
+  and `mypy`; checkpointed in `5462df49`.
+- Closed the Microsoft Teams inbound message text normalization seam from
+  OpenClaw `extensions/msteams/src/monitor-handler/message-handler.ts` and
+  `extensions/msteams/src/inbound.ts`: message activities now strip Teams
+  mention tags before session delivery, and text-less message activities can
+  derive bounded text from `text/html` attachments while preserving link URLs
+  and decoding entities. Repo-wide parity is now estimated at ~64.5%.
+  Verified with focused runtime pytest, adjacent Teams send/action/provider
+  proof, `ruff check`, and `mypy`; checkpointed in `65daf165`.
+- Closed the Microsoft Teams feedback invoke recording seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/feedback-reflection.ts`: `message/submitAction`
+  feedback invokes now normalize thumbs-up/thumbs-down reactions into
+  positive/negative feedback, parse optional feedback text, resolve the same
+  thread-aware session target as inbound messages, and persist session-scoped
+  feedback metadata. Repo-wide parity is now estimated at ~64.6%. Verified
+  with focused runtime pytest, adjacent Teams send/action/provider proof,
+  `ruff check`, and `mypy`; checkpointed in `7a545faf`.
+- Closed the Microsoft Teams SSO no-config invoke acknowledgement seam from
+  OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/sso.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: `signin/tokenExchange`
+  and `signin/verifyState` invokes now return a Bot Framework
+  `invokeResponse` status 200 before message routing, project a native
+  unavailable SSO posture when no SSO adapter is configured, and never persist
+  or return raw exchange tokens or verify-state magic codes. Repo-wide parity
+  is now estimated at ~64.7%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `49ebe481`.
+- Closed the Microsoft Teams configured SSO token-exchange/store seam from
+  OpenClaw `extensions/msteams/src/sso.ts`,
+  `extensions/msteams/src/sso-token-store.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: configured
+  `signin/tokenExchange` invokes now use native Teams route app credentials to
+  fetch a Bot Framework bearer, call `/api/usertoken/exchange`, persist the
+  delegated token keyed by `(connectionName, userId)`, and return only safe
+  stored/expiry metadata. Repo-wide parity is now estimated at ~64.8%.
+  Verified with focused runtime pytest, adjacent Teams send/action/provider
+  proof, `ruff check`, and `mypy`; checkpointed in `1bf6ab5b`.
+- Closed the Microsoft Teams configured SSO verify-state magic-code seam from
+  OpenClaw `extensions/msteams/src/sso.ts` and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: configured
+  `signin/verifyState` invokes now call `/api/usertoken/GetToken` with the
+  magic code, persist the delegated token keyed by `(connectionName, userId)`,
+  ACK Teams, and avoid returning the magic code or delegated token. Repo-wide
+  parity is now estimated at ~64.9%. Verified with focused runtime pytest,
+  adjacent Teams send/action/provider proof, `ruff check`, and `mypy`;
+  checkpointed in `0ecfab4c`.
+- Closed the Microsoft Teams SSO DM allowlist authorization/drop seam from
+  OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: configured
+  `signin/tokenExchange` invokes from non-allowlisted personal chat senders
+  now still ACK Teams with `invokeResponse` status 200, return safe blocked
+  SSO metadata, skip Bot Framework User Token service calls, avoid delegated
+  token persistence, and do not leak the exchange token. Repo-wide parity is
+  now estimated at ~65.0%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `b9f2f404`.
+- Closed the Microsoft Teams SSO route-level team/channel allowlist
+  authorization/drop seam from OpenClaw
+  `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `extensions/msteams/src/policy.ts`: configured `signin/tokenExchange`
+  invokes from channel/group contexts now check the nested
+  `channels.msteams.teams` route allowlist before SSO exchange, still ACK
+  Teams with `invokeResponse` status 200 on route misses, return safe blocked
+  metadata, skip Bot Framework User Token service calls, avoid delegated token
+  persistence, and do not leak the exchange token. Repo-wide parity is now
+  estimated at ~65.1%. Verified with focused runtime pytest, adjacent Teams
+  send/action/provider proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `5c54430c`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap or packaging/plugin breadth seam.
+  send/poll/replay metadata gap, starting with Microsoft Teams SSO
+  group sender allowlist drops, delegated-token consumers, full Bot Framework
+  HTTP inbound wiring, feedback reflection follow-up generation,
+  welcome/member lifecycle handling, richer inbound media staging, or another
+  source-backed channel/provider route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

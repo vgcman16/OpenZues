@@ -2,8 +2,8 @@
 
 ## Snapshot
 
-- Updated: 2026-05-04.
-- Estimated repo-wide parity: ~61.3% overall, with a reasonable band of ~50-62%.
+- Updated: 2026-05-05.
+- Estimated repo-wide parity: ~65.1% overall, with a reasonable band of ~50-66%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -44,6 +44,15 @@ These are complete within the bounded OpenZues-local parity contract verified in
   pairing-scoped removal boundary that revokes paired nodes, returns
   `{nodeId}`, and publishes the OpenClaw-shaped `node.pair.resolved` removal
   event.
+- Companion setup-code handoff parity now includes `openzues qr
+  --setup-code-only --url ...`, emitting OpenClaw base64url JSON setup codes
+  with `{url, bootstrapToken}` and issuing file-backed node/operator bootstrap
+  tokens under the default handoff profile without leaking gateway
+  token/password overrides; invalid URL overrides now fail before token issue
+  with the OpenClaw-shaped `Configured publicUrl is invalid.` diagnostic, and
+  `--remote` now fails closed until an explicit remote URL source is provided.
+  JSON output is narrowed to OpenClaw's `setupCode`, `gatewayUrl`, `auth`, and
+  `urlSource` contract.
 - Provider-native Slack route parity now validates Slack `thread_ts` values
   before setting `thread_ts`, falls back from internal reply ids to valid Slack
   thread ids, and leaves invalid internal ids out of Slack API payloads.
@@ -57,6 +66,17 @@ These are complete within the bounded OpenZues-local parity contract verified in
   package runtime check surface by detecting `packageManager` from
   `package.json`/lockfiles and projecting `deps` lockfile/install-marker state
   in `openzues update status --json`.
+- Bundled plugin runtime entries now have a native import/activation path for
+  CommonJS package entries: OpenZues shims OpenClaw plugin-SDK aliases, calls
+  `register`/`activate`, and records registered tools without requiring a fake
+  activation adapter.
+- ESM-style bundled plugin runtime entries now use the same native import path
+  through a temporary CommonJS transform for common OpenClaw
+  `import ... from "openclaw/plugin-sdk/*"` and `export default` syntax.
+- Plugin manifest provider metadata now preserves OpenClaw provider endpoint
+  suffix/Vertex fields plus provider-scoped `modelIdNormalization` and
+  `providerRequest` contracts in `plugins list --json` and persisted registry
+  refresh/inspect payloads.
 - Provider-native Discord webhook parity now sends `threadId` as the webhook
   execution query parameter `thread_id`, keeps `wait=true` in the URL, and
   leaves reply message references plus silent flags in the JSON body without a
@@ -73,6 +93,62 @@ These are complete within the bounded OpenZues-local parity contract verified in
 - Provider-native Telegram GIF media parity now routes URL/media-kind GIFs to
   Bot API `sendAnimation` when `forceDocument` is not set, preserving
   caption, reply, silent, thread, and animation `mediaIds` result metadata.
+- Provider-native Feishu/Lark direct text parity now accepts native Feishu
+  routes, resolves chat/user/open-id targets, sends OpenClaw-shaped `post`
+  markdown payloads through the Feishu message-create endpoint, and preserves
+  provider message/chat metadata.
+- Provider-native Google Chat direct text/thread parity now accepts native
+  Google Chat routes, normalizes upstream-style `googlechat:`/`gchat:` space
+  targets, sends OpenClaw-shaped `{text, thread}` message payloads through the
+  Google Chat message-create endpoint with reply fallback query semantics, and
+  preserves provider message, chat, thread, and reply metadata. This slice is
+  checkpointed in `edb67dfc`.
+- Verified the Google Chat native route slice with focused schema, service,
+  and CLI proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Google Chat media/DM parity now resolves `users/...` targets
+  with `spaces:findDirectMessage`, uploads media to the Google Chat attachment
+  upload endpoint, sends attachment refs through the message-create payload,
+  and preserves ordered media token, URL, filename, chat, and message metadata.
+  This slice is checkpointed in `7086dcb3`.
+- Provider-native Nextcloud Talk direct text/reply/media-link parity now accepts
+  native `kind="nextcloud-talk"` routes, normalizes upstream-style
+  `nextcloud-talk:`/`nc-talk:`/`nc:` room targets, signs bot messages with the
+  OpenClaw HMAC header contract, sends `{message, replyTo}` payloads through
+  the Spreed bot message endpoint, maps outbound media URLs to the upstream
+  `Attachment: <url>` fallback text shape, and preserves provider message,
+  chat/channel, timestamp, reply, and media URL metadata. This slice is
+  checkpointed in `a6732846`.
+- Verified the Nextcloud Talk native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Synology Chat direct text/media-link parity now accepts
+  native `kind="synology-chat"` routes, posts OpenClaw-shaped form-encoded
+  `payload` data to incoming webhook URLs, preserves numeric recipient
+  `user_ids`, supports media URL delivery through `file_url` payloads, and
+  projects message/chat/channel/media metadata through the direct-send result
+  envelope. This slice is checkpointed in `b69d5489`.
+- Verified the Synology Chat native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Mattermost direct text/reply parity now accepts native
+  `kind="mattermost"` routes, normalizes channel-id targets, posts
+  OpenClaw-shaped `/api/v4/posts` payloads with bearer bot auth, forwards
+  `replyToId` as Mattermost `root_id`, and preserves provider message,
+  chat/channel, reply, and media-fallback metadata through the direct-send
+  result envelope. This slice is checkpointed in `44541ef9`.
+- Verified the Mattermost native route slice with focused schema, service,
+  CLI, and app proofs, adjacent provider/CLI/app route proofs, `ruff check` on
+  touched source/test files, and `mypy` on touched source modules.
+- Provider-native Signal direct text/media parity now accepts native
+  `kind="signal"` routes, posts OpenClaw-shaped JSON-RPC `send` requests to
+  `/api/v1/rpc`, normalizes `signal:`, `group:`, and `username:` targets,
+  forwards media URLs as Signal attachments, and preserves timestamp-derived
+  message/chat/channel/media metadata through the direct-send result envelope.
+  This slice is checkpointed in `81491ab7`.
+- Verified the Signal native route slice with focused schema, service, CLI, and
+  app proofs, adjacent provider/CLI/app route proofs, `ruff check` on touched
+  source/test files, and `mypy` on touched source modules.
 - Sandboxed `chat.send` now stages managed path-backed inbound media that the
   app/API already persisted as `openzuesSavedPath`, copying the file into the
   child workspace's `media/inbound` directory and rewriting the runtime
@@ -9949,6 +10025,755 @@ These are complete within the bounded OpenZues-local parity contract verified in
   doctor_json_warns_on_invalid_package_dist_inventory"` (`5 passed, 488
   deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
   `mypy src\openzues\cli.py`. Checkpointed in `f1ac67da`.
+
+- Feishu/Lark is now a route-backed native outbound provider in OpenZues:
+  `kind="feishu"` routes are admitted through schema/CLI/channel metadata,
+  direct sends resolve OpenClaw-style `chat:`/`group:`/`channel:`/`user:`/`dm:`
+  / `open_id:` targets, call the Feishu message-create endpoint with
+  `receive_id_type`, `receive_id`, `msg_type="post"`, and JSON markdown
+  content under `zh_cn.content`, and persist provider `messageId` plus
+  chat/channel metadata through the shared direct-send envelope. This closes
+  `OZ-PROV-001N`; repo-wide parity is now estimated at ~61.4%.
+- Verified the Feishu/Lark native outbound route slice with `python -m pytest
+  tests\test_ops_mesh.py::test_notification_route_create_accepts_feishu_native_route_kind
+  tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route
+  -q` (`2 passed`), `python -m pytest
+  tests\test_cli.py::test_routes_create_command_accepts_feishu_native_route -q`
+  (`1 passed`), adjacent `python -m pytest tests\test_ops_mesh.py -q -k
+  "feishu_native_route or send_direct_channel_message_uses_zalo_native_route or
+  send_direct_channel_message_uses_line_native_route or
+  send_direct_channel_message_uses_slack_native_route or
+  send_direct_channel_message_uses_telegram_native_route"` (`6 passed, 275
+  deselected`), adjacent route-create CLI proof (`5 passed, 489 deselected`),
+  `ruff check`, and `mypy`. Checkpointed in `d1515da1`.
+
+- Bundled OpenClaw plugin runtime entries can now be imported by the native
+  CLI without an injected fake activation adapter. OpenZues writes a small
+  Node loader, shims `openclaw/plugin-sdk/*` and `@openclaw/plugin-sdk/*`
+  CommonJS aliases, unwraps default runtime exports, calls `register` or
+  `activate`, and turns registered tools into native runtime executor specs so
+  manifest tool contracts resolve to `runtimeActivation.status="ok"` and
+  plugin list marks the row as imported. This closes `OZ-PLUGIN-001BK`;
+  repo-wide parity is now estimated at ~61.5%.
+- Verified the bundled plugin runtime entry import slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_imports_bundled_sdk_runtime_entry_without_fake_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "imports_bundled_sdk_runtime_entry_without_fake_adapter or
+  plugin_sdk_alias_to_activation_adapter or source_plugin_sdk_subpath_aliases or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_reports_metadata_only_tool_activation or
+  rejects_installed_activation_adapter_tool_outside_manifest_contract or
+  activation_adapter_skips_disabled_manifest_plugins"` (`7 passed, 488
+  deselected`), `python -m pytest tests\test_gateway_plugin_runtime.py -q`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
+  Checkpointed in `8cb314f4`.
+
+- ESM-style bundled OpenClaw plugin runtime entries now follow the same native
+  import/activation path: when a runtime entry uses common
+  `import ... from "openclaw/plugin-sdk/*"` plus `export default` syntax,
+  OpenZues rewrites the entry to a temporary CommonJS module beside the source
+  file, preserving SDK alias shims, relative import posture, registered tool
+  collection, imported-state projection, and manifest contract satisfaction.
+  This closes `OZ-PLUGIN-001BL`; repo-wide parity is now estimated at ~61.6%.
+- Verified the ESM plugin runtime entry import slice with `python -m pytest
+  tests\test_cli.py::test_plugins_doctor_json_imports_bundled_esm_sdk_runtime_entry_without_fake_adapter
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "imports_bundled_esm_sdk_runtime_entry_without_fake_adapter or
+  imports_bundled_sdk_runtime_entry_without_fake_adapter or
+  plugin_sdk_alias_to_activation_adapter or source_plugin_sdk_subpath_aliases or
+  plugins_doctor_json_uses_installed_plugin_runtime_activation_adapter or
+  plugins_doctor_json_reports_metadata_only_tool_activation or
+  rejects_installed_activation_adapter_tool_outside_manifest_contract or
+  activation_adapter_skips_disabled_manifest_plugins"` (`8 passed, 488
+  deselected`), `python -m pytest tests\test_gateway_plugin_runtime.py -q`
+  (`3 passed`), `ruff check src\openzues\cli.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py src\openzues\services\gateway_plugin_runtime.py`.
+  Checkpointed in `eb11e22f`.
+
+- OpenZues now has a native companion setup-code bootstrap handoff surface:
+  `openzues qr --setup-code-only --url ...` emits the same base64url JSON
+  payload shape as OpenClaw `qr --setup-code-only`, carrying only `{url,
+  bootstrapToken}`. The token is issued into a local `devices/bootstrap.json`
+  state file with the default node/operator handoff profile and expiry
+  metadata, while raw gateway token/password overrides are accepted for CLI
+  compatibility but not embedded in the setup code. This closes
+  `OZ-COMP-001C`; repo-wide parity is now estimated at ~61.7%.
+- Verified the QR setup-code bootstrap handoff slice with `python -m pytest
+  tests\test_cli.py::test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_setup_code_only or setup_bootstrap_cli_persists_default_device_bootstrap_profile
+  or setup_bootstrap_can_stage_mempalace_from_cli"` (`3 passed, 494
+  deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `5262359f`.
+
+- QR setup-code URL preflight now matches OpenClaw's invalid-override guard:
+  malformed `--url` values such as `http://localhost:notaport` return
+  `Configured publicUrl is invalid.` before any bootstrap token is issued.
+  This closes `OZ-COMP-001D`; repo-wide parity is now estimated at ~61.8%.
+- Verified the QR invalid URL preflight slice with `python -m pytest
+  tests\test_cli.py::test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_setup_code_only"` (`2 passed, 496 deselected`), `ruff check
+  src\openzues\cli.py src\openzues\services\device_bootstrap_tokens.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `f21c799c`.
+
+- QR remote setup-code preflight now matches OpenClaw's fail-closed posture:
+  `openzues qr --setup-code-only --remote` refuses to mint a bootstrap token
+  unless a concrete remote URL source is supplied, returning the upstream
+  `qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel).`
+  diagnostic. This closes `OZ-COMP-001E`; repo-wide parity is now estimated at
+  ~61.9%.
+- Verified the QR remote preflight slice with `python -m pytest
+  tests\test_cli.py::test_qr_remote_requires_explicit_remote_url_before_token_issue
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_remote_requires_explicit_remote_url or qr_setup_code_only"` (`3 passed,
+  496 deselected`), `ruff check src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py tests\test_cli.py`, and
+  `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `12dee789`.
+
+- QR JSON setup-code output now matches OpenClaw's public contract exactly:
+  `openzues qr --json --url ... --token ...` returns `setupCode`,
+  `gatewayUrl`, `auth`, and `urlSource` only, keeps the raw token out of
+  stdout, and keeps the encoded setup payload limited to `{url,
+  bootstrapToken}`. This closes `OZ-COMP-001F`; repo-wide parity is now
+  estimated at ~62.0%.
+- Verified the QR JSON setup-code contract slice with `python -m pytest
+  tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "qr_json_output or qr_remote_requires_explicit_remote_url or
+  qr_setup_code_only"` (`4 passed, 496 deselected`), `ruff check
+  src\openzues\cli.py src\openzues\services\device_bootstrap_tokens.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py
+  src\openzues\services\device_bootstrap_tokens.py`. Checkpointed in
+  `b79b87c3`.
+
+- Plugin manifest provider metadata now mirrors OpenClaw manifest registry
+  breadth for provider-owned rows: endpoint `hostSuffixes`,
+  `googleVertexRegion`, `googleVertexRegionHostSuffix`,
+  `modelIdNormalization.providers`, and `providerRequest.providers` are
+  normalized and projected from `plugins list --json`, with provider-scoped
+  entries filtered to manifest-owned providers. This closes `OZ-PLUGIN-001BM`;
+  repo-wide parity is now estimated at ~62.1%.
+- Verified the plugin provider metadata slice with `python -m pytest
+  tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "manifest_auth_and_env_metadata or manifest_model_support or
+  manifest_config_contracts or manifest_runtime_extension_contracts or
+  manifest_document_extractor_contracts or manifest_web_content_extractor_contracts"`
+  (`6 passed, 494 deselected`), `ruff check src\openzues\cli.py
+  tests\test_cli.py`, and `mypy src\openzues\cli.py`. Checkpointed in
+  `9b2bf4fc`.
+
+- Persisted plugin registry refresh now carries the same provider metadata
+  fields as live plugin rows, so `plugins registry --refresh --json` and the
+  subsequent registry inspect preserve provider endpoints,
+  `modelIdNormalization`, and `providerRequest` data instead of collapsing
+  rows to `pluginId`/`enabled`. This closes `OZ-PLUGIN-001BN`; repo-wide
+  parity is now estimated at ~62.2%.
+- Verified the persisted registry provider metadata slice with `python -m
+  pytest
+  tests\test_cli.py::test_plugins_registry_refresh_json_persists_provider_metadata
+  -q` (`1 passed`), adjacent `python -m pytest tests\test_cli.py -q -k
+  "plugins_registry_refresh_json_persists_provider_metadata or
+  plugins_registry_refresh_json_persists_current_index or
+  plugins_registry_json_reports_missing_persisted_registry or
+  plugins_list_json_reports_persisted_registry_source_after_refresh"` (`4
+  passed, 497 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\cli.py`. Checkpointed in `54c2fd49`.
+
+- Nextcloud Talk native outbound route support now mirrors OpenClaw's
+  `extensions/nextcloud-talk/src/send.ts` and target normalization contract:
+  native `kind="nextcloud-talk"` routes accept Nextcloud Talk base URLs,
+  normalize `nextcloud-talk:`/`nc-talk:`/`nc:`/`room:` room tokens, post signed
+  bot messages to `/ocs/v2.php/apps/spreed/api/v1/bot/{room}/message`, forward
+  `replyTo`, append outbound media URLs as `Attachment: <url>` fallback lines,
+  and preserve provider `messageId`, room chat/channel ids, timestamp, reply,
+  and media URL metadata. This closes `OZ-PROV-001Q`; repo-wide parity is now
+  estimated at ~62.5%.
+- Verified the Nextcloud Talk native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_nextcloud_talk_native_route_kind -q`
+  (`1 passed`),
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_nextcloud_talk_native_route -q`
+  (`1 passed`),
+  `python -m pytest tests\test_cli.py::test_routes_create_command_accepts_nextcloud_talk_native_route -q`
+  (`1 passed`), `python -m pytest tests\test_app.py -q -k
+  "nextcloud_talk_native_route"` (`2 passed, 197 deselected`), adjacent
+  provider route proof (`11 passed, 276 deselected`), adjacent CLI route proof
+  (`4 passed, 499 deselected`), adjacent app route proof (`11 passed, 188
+  deselected`), `ruff check src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py tests\test_ops_mesh.py tests\test_cli.py
+  tests\test_app.py`, and `mypy src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py`. Checkpointed in `a6732846`.
+
+- Synology Chat native outbound route support now mirrors OpenClaw's
+  `extensions/synology-chat/src/client.ts` and `channel.ts` form-webhook
+  contract: native `kind="synology-chat"` routes accept incoming webhook URLs,
+  post form-encoded `payload` JSON with `text` and numeric `user_ids`, send
+  outbound media URLs as `file_url` payloads, and preserve generated message id,
+  chat/channel recipient ids, and media URL metadata. This closes
+  `OZ-PROV-001R`; repo-wide parity is now estimated at ~62.6%.
+- Verified the Synology Chat native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_synology_chat_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_synology_chat_native_route tests\test_cli.py::test_routes_create_command_accepts_synology_chat_native_route tests\test_app.py -q -k "synology_chat_native_route"`
+  (`5 passed, 199 deselected`), adjacent provider route proof
+  (`13 passed, 276 deselected`), adjacent CLI route proof (`5 passed, 499
+  deselected`), adjacent app route proof (`13 passed, 188 deselected`), `ruff
+  check src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `b69d5489`.
+
+- Mattermost native outbound route support now mirrors the direct channel-id
+  send/reply path from OpenClaw `extensions/mattermost/src/mattermost/send.ts`
+  and `extensions/mattermost/src/mattermost/client.ts`: native
+  `kind="mattermost"` routes accept Mattermost base URLs, send
+  `/api/v4/posts` JSON payloads with `channel_id`, `message`, and optional
+  `root_id`, attach bearer bot auth, and preserve message/channel/reply result
+  metadata. This closes `OZ-PROV-001S`; repo-wide parity is now estimated at
+  ~62.7%.
+- Verified the Mattermost native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_mattermost_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_mattermost_native_route tests\test_cli.py::test_routes_create_command_accepts_mattermost_native_route tests\test_app.py -q -k "mattermost_native_route"`
+  (`5 passed, 201 deselected`), adjacent provider route proof (`15 passed, 276
+  deselected`), adjacent CLI route proof (`6 passed, 499 deselected`),
+  adjacent app route proof (`15 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `44541ef9`.
+
+- Signal native outbound route support now mirrors OpenClaw's
+  `extensions/signal/src/send.ts` and `extensions/signal/src/client.ts`
+  JSON-RPC send path: native `kind="signal"` routes accept signal-cli REST
+  base URLs, send JSON-RPC `send` payloads to `/api/v1/rpc`, normalize
+  `signal:`, `group:`, `username:`, and `u:` targets into recipient/group/
+  username params, forward media URLs as attachments, and preserve timestamp,
+  chat/channel, and media URL result metadata. This closes `OZ-PROV-001T`;
+  repo-wide parity is now estimated at ~62.8%.
+- Verified the Signal native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_signal_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route tests\test_cli.py::test_routes_create_command_accepts_signal_native_route tests\test_app.py -q -k "signal_native_route"`
+  (`5 passed, 203 deselected`), adjacent provider route proof (`17 passed, 276
+  deselected`), adjacent CLI route proof (`7 passed, 499 deselected`),
+  adjacent app route proof (`17 passed, 188 deselected`), focused post-ruff app
+  proof (`2 passed, 203 deselected`), `ruff check src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py tests\test_ops_mesh.py tests\test_cli.py
+  tests\test_app.py`, and `mypy src\openzues\schemas.py
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_channels.py
+  src\openzues\cli.py`. Checkpointed in `81491ab7`.
+
+- IRC native outbound route support now mirrors OpenClaw's
+  `extensions/irc/src/send.ts`, `extensions/irc/src/normalize.ts`, and
+  `extensions/irc/src/client.ts` contract: native `kind="irc"` routes accept
+  `irc://`/`ircs://` server URLs, normalize `irc:`, `channel:`, and `user:`
+  targets, append `replyToId` as `[reply:<id>]`, send native IRC `PRIVMSG`
+  payloads through the Windows-first Python socket runtime, and preserve
+  generated message/chat/channel/reply result metadata. This closes
+  `OZ-PROV-001U`; repo-wide parity is now estimated at ~62.9%.
+- Verified the IRC native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_irc_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route tests\test_cli.py::test_routes_create_command_accepts_irc_native_route tests\test_app.py -q -k "irc_native_route"`
+  (`5 passed, 205 deselected`), adjacent provider route proof (`19 passed, 276
+  deselected`), adjacent CLI route proof (`8 passed, 499 deselected`),
+  adjacent app route proof (`19 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `8726ab49`.
+
+- Twitch native outbound route support now mirrors OpenClaw's
+  `extensions/twitch/src/send.ts`, `extensions/twitch/src/outbound.ts`,
+  `extensions/twitch/src/twitch-client.ts`, and Twitch markdown/target
+  utilities: native `kind="twitch"` routes accept `twitch://` account targets,
+  require username/clientId/token configuration, normalize channel targets,
+  strip markdown for chat, append media URLs as chat text, send native Twitch
+  IRC chat messages, and preserve generated message/chat/channel/media result
+  metadata. This closes `OZ-PROV-001V`; repo-wide parity is now estimated at
+  ~63.0%.
+- Verified the Twitch native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_twitch_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_route tests\test_cli.py::test_routes_create_command_accepts_twitch_native_route tests\test_app.py -q -k "twitch_native_route"`
+  (`5 passed, 207 deselected`), adjacent provider route proof (`21 passed, 276
+  deselected`), adjacent CLI route proof (`9 passed, 499 deselected`),
+  adjacent app route proof (`21 passed, 188 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `6185301b`.
+
+- Signal native reaction actions now mirror OpenClaw's
+  `extensions/signal/src/message-actions.ts`,
+  `extensions/signal/src/send-reactions.ts`, and shared
+  `src/channels/plugins/actions/reaction-message-id.ts` contract: native
+  `message.action` dispatch accepts `channel="signal"` and `action="react"`,
+  normalizes `signal:`/`uuid:` direct recipients and `signal:group:` targets,
+  requires target-author metadata for group reactions, falls back to
+  `toolContext.currentMessageId` when `messageId` is omitted, posts JSON-RPC
+  `sendReaction` payloads to `/api/v1/rpc`, and returns OpenClaw-shaped
+  `{ok, added}` / `{ok, removed}` results. This closes `OZ-PROV-001W`;
+  repo-wide parity is now estimated at ~63.1%.
+- Verified the Signal native reaction action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_react_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_group_react_remove_route tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_signal_react_current_message_context -q`
+  (`3 passed`), adjacent provider/action proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "signal_react or signal_native_route or send_direct_channel_message_uses_signal_native_route or irc_native_route or twitch_native_route"`
+  (`8 passed, 292 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `c9b45ffb`.
+
+- Microsoft Teams native outbound route support now mirrors the first
+  OpenClaw Bot Framework proactive-send slice from
+  `extensions/msteams/src/outbound.ts`, `extensions/msteams/src/send.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/messenger.ts`,
+  `extensions/msteams/src/token.ts`, and
+  `extensions/msteams/src/session-route.ts`: native `kind="msteams"` routes
+  accept Bot Framework service URLs with `appId` and `tenantId` query
+  metadata, use route secrets as app passwords or bearer tokens, normalize
+  `msteams:` / `teams:` / `conversation:` targets while stripping
+  `;messageid=...`, post top-level text activities with OpenClaw-shaped AI
+  generated-content entity metadata to
+  `/v3/conversations/{conversationId}/activities`, and preserve message,
+  chat/channel, and conversation result metadata. This closes
+  `OZ-PROV-001X`; repo-wide parity is now estimated at ~63.2%. Stored
+  conversation-reference lookup, live threaded replies, FileConsentCard/Graph
+  media upload, polls, reactions/actions, and inbound monitor breadth remain
+  follow-up Microsoft Teams seams.
+- Verified the Microsoft Teams native route slice with
+  `python -m pytest tests\test_ops_mesh.py::test_notification_route_create_accepts_msteams_native_route_kind tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_route -q`
+  (`2 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_routes_create_command_accepts_msteams_native_route -q`
+  (`1 passed`), focused app proof
+  `python -m pytest tests\test_app.py::test_gateway_channels_endpoint_returns_notification_route_inventory tests\test_app.py::test_gateway_channels_endpoint_classifies_msteams_native_route tests\test_app.py::test_notification_route_operator_form_offers_msteams_native_routes -q`
+  (`3 passed`), adjacent provider route proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or twitch_native_route or irc_native_route or signal_native_route or mattermost_native_route"`
+  (`10 passed, 292 deselected`), `ruff check
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py tests\test_app.py`, and `mypy
+  src\openzues\schemas.py src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_channels.py src\openzues\cli.py`.
+  Checkpointed in `79258ec2`.
+
+- Microsoft Teams native poll support now mirrors OpenClaw's
+  `extensions/msteams/src/polls.ts`, `extensions/msteams/src/send.ts`, and
+  `extensions/msteams/src/outbound.ts` Adaptive Card send contract: native
+  `kind="msteams"` routes accept `gateway/poll`, validate question/options
+  with the provider option limit, build an Adaptive Card 1.5 `Input.ChoiceSet`
+  with OpenClaw `openclawPollId` / `pollId` submit metadata and Teams
+  `messageBack` action data, post it through the Bot Framework conversation
+  activities endpoint, return `pollId`, `messageId`, and conversation
+  metadata, and advertise `poll` as a CLI channel capability. This closes
+  `OZ-PROV-001Y`; repo-wide parity is now estimated at ~63.3%. Poll vote
+  ingestion/storage through Teams invoke handling remains a follow-up inbound
+  seam.
+- Verified the Microsoft Teams native poll slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route -q`
+  (`1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_channels_capabilities_json_reports_msteams_poll_support -q`
+  (`1 passed`), adjacent provider route proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or twitch_native_route or irc_native_route or signal_native_route or mattermost_native_route"`
+  (`11 passed, 292 deselected`), adjacent CLI capability/route proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_poll_support or routes_create_command_accepts_msteams_native_route or channels_capabilities_json_reports_zalo_support"`
+  (`3 passed, 507 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\cli.py
+  tests\test_ops_mesh.py tests\test_cli.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\cli.py`. Checkpointed in
+  `b0ad5491`.
+
+- Microsoft Teams read-only reaction listing now mirrors OpenClaw's
+  `extensions/msteams/src/actions.ts` and
+  `extensions/msteams/src/graph-messages.ts` `message.action`
+  `reactions` contract: native Teams routes resolve action targets from
+  explicit `to` / `target` / conversation ids or Graph channel tool context,
+  obtain a Graph app token through the route `appId`/`tenantId` plus secret,
+  GET the Graph message resource, group `reactions` by `reactionType`, count
+  entries even when user ids are absent, preserve known emoji labels, and
+  return OpenClaw-shaped `{ok, reactions}` summaries. This closes
+  `OZ-PROV-001Z`; repo-wide parity is now estimated at ~63.4%. Delegated
+  write reactions, pin/read/search/member/channel actions, and inbound
+  reaction events remain follow-up Teams action seams.
+- Verified the Microsoft Teams reaction-list action slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route -q`
+  (`1 passed`), adjacent action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_reactions or msteams_native_route or signal_react or matrix_reactions_list_route or slack_reactions_list_route or discord_reactions_list_route"`
+  (`9 passed, 295 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `4996cf5c`.
+
+- Microsoft Teams native readiness probe support now mirrors OpenClaw's
+  `extensions/msteams/src/probe.ts`, `extensions/msteams/src/token.ts`,
+  `extensions/msteams/src/token-response.ts`, and
+  `extensions/msteams/src/sdk.ts` account-token posture: native
+  `kind="msteams"` routes participate in `channels status --probe`, validate
+  Bot Framework app credentials from route `appId`/`tenantId` plus secret,
+  attempt Graph app-token posture discovery, project optional roles/scopes
+  when token payloads expose them, and return OpenZues native-provider
+  readiness metadata through runtime and CLI probe envelopes. This closes
+  `OZ-PROV-001AA`; repo-wide parity is now estimated at ~63.5%. Remaining
+  Microsoft Teams breadth is stored conversation/user target lookup, live
+  threaded replies, FileConsentCard/Graph media upload, delegated write
+  actions, vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams readiness probe slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_probe_channel_account_uses_msteams_native_route -q`
+  (`1 passed`), focused CLI proof
+  `python -m pytest tests\test_cli.py::test_channels_status_json_reports_msteams_native_probe -q`
+  (`1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_native_route or msteams_reactions or probe_channel_account_uses_msteams_native_route or signal_react or matrix_reactions_list_route"`
+  (`8 passed, 297 deselected`), adjacent CLI proof
+  `python -m pytest tests\test_cli.py -q -k "msteams_native_probe or msteams_poll_support or channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded or line_native_probe"`
+  (`3 passed, 508 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py
+  tests\test_cli.py`, and `mypy src\openzues\services\ops_mesh.py`.
+  Checkpointed in `50d05198`.
+
+- Microsoft Teams user-reference route support now mirrors the OpenClaw
+  `extensions/msteams/src/session-route.ts`,
+  `extensions/msteams/src/send-context.ts`,
+  `extensions/msteams/src/conversation-store.ts`, and
+  `extensions/msteams/src/conversation-store-helpers.ts` personal-DM send
+  contract: native `msteams:user:<aad-id>` targets are classified as direct
+  peers, route matching accepts stored `user:` references, route target
+  metadata can carry the stored Bot Framework `conversationId` and
+  `conversationType`, user-targeted sends resolve to that stored personal
+  conversation id, and non-personal stored references retain OpenClaw's
+  leakage guard. This closes `OZ-PROV-001AB`; repo-wide parity is now
+  estimated at ~63.6%. Remaining Microsoft Teams breadth is live threaded
+  replies, FileConsentCard/Graph media upload, delegated write actions, vote
+  invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams user-reference routing slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_user_reference_route -q`
+  (`1 passed`), adjacent Teams/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_user_reference_route or msteams_native_route or msteams_reactions or msteams_native_probe"`
+  (`6 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `b88c540d`.
+
+- Microsoft Teams delegated reaction write actions now mirror OpenClaw's
+  `extensions/msteams/src/actions.ts`,
+  `extensions/msteams/src/graph-messages.ts`, and
+  `extensions/msteams/src/graph-messages.actions.test.ts` action contract:
+  native `message.action` dispatch accepts `channel="msteams"`,
+  `action="react"`, `emoji`/`reactionType`, and `remove=true` or `unreact`,
+  normalizes legacy Teams reaction type names to lowercase, posts Graph beta
+  `setReaction` / `unsetReaction` requests with delegated Graph token posture,
+  supports chat ids and team/channel Graph targets, and preserves OpenClaw
+  shaped `{ok, channel, action, reactionType, removed?}` results. This closes
+  `OZ-PROV-001AC`; repo-wide parity is now estimated at ~63.7%. Remaining
+  Microsoft Teams breadth is live threaded replies, FileConsentCard/Graph
+  media upload, vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams reaction write slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_dispatches_msteams_react_route -q`
+  (`1 passed`), adjacent Teams/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_react_route or msteams_reactions or msteams_user_reference_route or msteams_native_route or msteams_native_probe or signal_react or matrix_reactions_list_route"`
+  (`10 passed, 297 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `02ae95da`.
+
+- Microsoft Teams channel-thread reply delivery now mirrors OpenClaw's
+  `extensions/msteams/src/messenger.ts` proactive channel thread routing:
+  native Teams sends preserve `replyToId`, and channel-targeted sends
+  reconstruct the Bot Framework conversation id as
+  `<conversationId>;messageid=<thread-root>` before posting the activity,
+  while keeping result metadata on the base conversation id. This closes
+  `OZ-PROV-001AD`; repo-wide parity is now estimated at ~63.8%. Remaining
+  Microsoft Teams breadth is FileConsentCard/Graph media upload, vote invoke
+  storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams threaded-reply slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_thread_reply -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_thread_reply or msteams_user_reference_route or msteams_native_route or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`8 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `927d5787`.
+
+- Microsoft Teams file info card media delivery now mirrors OpenClaw's
+  `extensions/msteams/src/send.ts` / `graph-chat.ts` native file-card
+  projection for provider-ready Graph DriveItem metadata: native Teams sends
+  can build Bot Framework
+  `application/vnd.microsoft.teams.card.file.info` attachments with
+  eTag-derived `uniqueId` and filename-derived `fileType`, keep caller text as
+  the attachment caption without synthetic media inventory text, and persist
+  `mediaUrls`, `filenames`, and `fileIds` provider result metadata. This
+  closes `OZ-PROV-001AE`; repo-wide parity is now estimated at ~63.9%.
+  Remaining Microsoft Teams breadth is Graph upload/FileConsent accept flows,
+  vote invoke storage, and inbound monitor/session routing.
+- Verified the Microsoft Teams file-card media slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_info_card_media -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_file_info_card_media or msteams_thread_reply or msteams_user_reference_route or msteams_native_route or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`9 passed, 300 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `eb663838`.
+
+- Microsoft Teams poll vote storage now mirrors OpenClaw's
+  `extensions/msteams/src/polls.ts` and
+  `monitor-handler/message-handler.ts` adaptive-card vote path: vote payloads
+  carrying `openclawPollId` / `pollId` plus `choices` are extracted from
+  message action value shapes, sender ids are used as voters, selections are
+  normalized to saved options and `maxSelections`, unknown poll ids are
+  consumed without error, and known votes persist on the saved outbound poll
+  delivery metadata. This closes `OZ-PROV-001AF`; repo-wide parity is now
+  estimated at ~64.0%. Remaining Microsoft Teams breadth is Graph upload/
+  FileConsent accept flows and inbound monitor/session routing.
+- Verified the Microsoft Teams poll-vote storage slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_records_msteams_poll_vote -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_poll_vote or msteams_file_info_card_media or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`6 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `b3726879`.
+
+- Microsoft Teams FileConsentCard outbound emission now mirrors OpenClaw's
+  `extensions/msteams/src/file-consent.ts`,
+  `extensions/msteams/src/file-consent-helpers.ts`, and
+  `extensions/msteams/src/send.ts` card-preparation path: native Teams direct
+  sends with media and FileConsent metadata emit Bot Framework
+  `application/vnd.microsoft.teams.card.file.consent` attachments with
+  `description`, `sizeInBytes`, `acceptContext`, and `declineContext`, omit
+  top-level text from the consent activity, and preserve `pendingUploadId`,
+  `mediaUrls`, and `filenames` through direct-send responses and delivery
+  snapshots. This closes `OZ-PROV-001AG`; repo-wide parity is now estimated at
+  ~64.1%. Remaining Microsoft Teams breadth is FileConsent accept/upload,
+  Graph upload, and inbound monitor/session routing.
+- Verified the Microsoft Teams FileConsent card slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_consent_card -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`7 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\services\gateway_outbound_runtime.py tests\test_ops_mesh.py`,
+  and `mypy src\openzues\services\ops_mesh.py
+  src\openzues\services\gateway_outbound_runtime.py`. Checkpointed in
+  `ad3c8a5c`.
+
+- Microsoft Teams FileConsent accept/upload handling now mirrors OpenClaw's
+  `extensions/msteams/src/file-consent.ts` and
+  `extensions/msteams/src/file-consent-invoke.ts` invoke path: native
+  `message.action` accepts `fileConsent/invoke` payloads, locates the pending
+  upload by `uploadId`, guards conversation mismatches, validates the Teams
+  upload URL against the Microsoft/SharePoint allowlist, uploads the pending
+  media bytes with `Content-Type` and `Content-Range`, replaces the consent
+  card with a FileInfoCard, and persists completion metadata on the saved
+  delivery. This closes `OZ-PROV-001AH`; repo-wide parity is now estimated at
+  ~64.2%. Remaining Microsoft Teams breadth is Graph upload and inbound
+  monitor/session routing.
+- Verified the Microsoft Teams FileConsent accept/upload slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_message_action_accepts_msteams_file_consent_upload -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`8 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `709fcf4d`.
+
+- Microsoft Teams Graph media upload now mirrors OpenClaw's
+  `extensions/msteams/src/graph-upload.ts`, `graph-chat.ts`, and
+  `send.ts` SharePoint file-card branch: native Teams media sends can resolve
+  `sharePointSiteId`, upload pending media bytes to Graph
+  `/sites/{siteId}/drive/root:/OpenClawShared/...:/content`, create an
+  organization sharing link, fetch DriveItem `eTag` / `webDavUrl` / `name`,
+  build a native FileInfoCard, and preserve file-card metadata plus Graph
+  upload metadata in the delivery snapshot. This closes `OZ-PROV-001AI`;
+  repo-wide parity is now estimated at ~64.3%. Remaining Microsoft Teams
+  breadth is inbound monitor/session routing.
+- Verified the Microsoft Teams Graph upload slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_msteams_graph_upload -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`9 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `a220db23`.
+
+- Microsoft Teams adaptive-card inbound monitor/session routing now mirrors
+  OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `monitor-handler/message-handler.ts`, `monitor-handler/thread-session.ts`,
+  and `inbound.ts` behavior for the first inbound slice: Teams
+  `adaptiveCard/action` invokes are serialized with OpenClaw-compatible
+  compact JSON, `conversation.id` strips `;messageid=...` for the
+  conversation target, channel replies prefer the `messageid` thread root over
+  nested `replyToId`, and the native OpenZues session runtime receives the
+  inbound text on the thread-isolated session key. This closes
+  `OZ-PROV-001AJ`; repo-wide parity is now estimated at ~64.4%. Remaining
+  Microsoft Teams breadth is full Bot Framework HTTP inbound wiring, SSO
+  invoke/token exchange persistence, feedback reflection, richer inbound media
+  staging, and welcome/member lifecycle handling.
+- Verified the Microsoft Teams adaptive-card inbound routing slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`10 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `5462df49`.
+
+- Microsoft Teams inbound message text normalization now mirrors OpenClaw's
+  `extensions/msteams/src/monitor-handler/message-handler.ts` and
+  `extensions/msteams/src/inbound.ts` path for message activities: plain
+  message text strips Teams `<at>...</at>` mention tags before session
+  routing, and text-less activities can derive agent text from `text/html`
+  attachments while preserving link URLs and decoding entities. This closes
+  `OZ-PROV-001AK`; repo-wide parity is now estimated at ~64.5%. Remaining
+  Microsoft Teams breadth is full Bot Framework HTTP inbound wiring, SSO
+  invoke/token exchange persistence, feedback reflection, richer inbound media
+  staging, and welcome/member lifecycle handling.
+- Verified the Microsoft Teams inbound message normalization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_message_text_without_mentions tests\test_ops_mesh.py::test_ops_mesh_service_routes_msteams_html_attachment_text_fallback -q`
+  (`2 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`12 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `65daf165`.
+
+- Microsoft Teams feedback invoke recording now mirrors the first durable
+  part of OpenClaw's `extensions/msteams/src/monitor-handler.ts` and
+  `extensions/msteams/src/feedback-reflection.ts` path: Teams
+  `message/submitAction` invokes with `actionName="feedback"` normalize
+  `like` / `dislike` into positive/negative feedback, parse optional
+  `feedbackText`, resolve the same direct/channel/group thread-aware session
+  target as normal inbound messages, and persist a session-scoped feedback
+  event with conversation/sender metadata. This closes `OZ-PROV-001AL`;
+  repo-wide parity is now estimated at ~64.6%. Remaining Microsoft Teams
+  breadth is feedback reflection follow-up generation, full Bot Framework HTTP
+  inbound wiring, SSO invoke/token exchange persistence, richer inbound media
+  staging, and welcome/member lifecycle handling.
+- Verified the Microsoft Teams feedback invoke slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`13 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `7a545faf`.
+
+- Microsoft Teams SSO no-config invoke acknowledgement now mirrors the safe
+  boundary in OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/sso.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: Teams
+  `signin/tokenExchange` and `signin/verifyState` invokes are acknowledged
+  with a Bot Framework `invokeResponse` status 200 before normal message
+  routing, return an OpenZues-native unavailable SSO posture when
+  `msteams.sso` is not configured, and expose only safe metadata such as
+  connection name, exchange id, token/state presence, user id, and channel id
+  without persisting or leaking the exchange token or magic-code state. This
+  closes `OZ-PROV-001AM`; repo-wide parity is now estimated at ~64.7%.
+  Remaining Microsoft Teams breadth is configured SSO token exchange/store
+  handling, feedback reflection follow-up generation, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and welcome/member lifecycle
+  handling.
+- Verified the Microsoft Teams SSO no-config invoke slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_acks_msteams_signin_token_exchange_without_sso tests\test_ops_mesh.py::test_ops_mesh_service_acks_msteams_signin_verify_state_without_sso -q`
+  (`2 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`15 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `49ebe481`.
+
+- Microsoft Teams configured SSO token exchange now mirrors OpenClaw's
+  `extensions/msteams/src/sso.ts`,
+  `extensions/msteams/src/sso-token-store.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts` token-exchange path:
+  when `channels.msteams.sso.enabled` and `connectionName` are configured,
+  native inbound `signin/tokenExchange` invokes resolve an enabled native
+  Teams route with app credentials, fetch a Bot Framework service bearer
+  token, call `/api/usertoken/exchange` with `userId`, `connectionName`,
+  `channelId`, and the exchange token, persist the returned delegated user
+  token keyed by `(connectionName, userId)`, and return only safe status/
+  expiry metadata. This closes `OZ-PROV-001AN`; repo-wide parity is now
+  estimated at ~64.8%. Remaining Microsoft Teams SSO breadth is configured
+  `signin/verifyState` magic-code handling, authorization/drop policies,
+  delegated-token consumers, feedback reflection, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and member lifecycle handling.
+- Verified the Microsoft Teams configured SSO token-exchange slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_exchanges_msteams_signin_token_when_sso_configured -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`16 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `1bf6ab5b`.
+
+- Microsoft Teams configured SSO verify-state handling now mirrors OpenClaw's
+  `extensions/msteams/src/sso.ts` and
+  `extensions/msteams/src/monitor-handler.sso.test.ts` magic-code fallback:
+  when SSO is configured, native inbound `signin/verifyState` invokes fetch a
+  Bot Framework bearer from native Teams route credentials, call
+  `/api/usertoken/GetToken` with `userId`, configured `connectionName`,
+  `channelId`, and `code`, persist the delegated token keyed by
+  `(connectionName, userId)`, and ACK Teams without returning the magic code or
+  delegated token. This closes `OZ-PROV-001AO`; repo-wide parity is now
+  estimated at ~64.9%. Remaining Microsoft Teams SSO breadth is
+  authorization/drop policies, delegated-token consumers, feedback reflection,
+  full Bot Framework HTTP inbound wiring, richer inbound media staging, and
+  member lifecycle handling.
+- Verified the Microsoft Teams configured SSO verify-state slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_verifies_msteams_signin_state_when_sso_configured -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`17 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `0ecfab4c`.
+
+- Microsoft Teams SSO DM allowlist authorization now mirrors OpenClaw's
+  `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts` blocked sign-in
+  invoke path: when configured SSO receives `signin/tokenExchange` from a
+  personal Teams chat under `dmPolicy="allowlist"` and the sender is not in
+  `allowFrom`, OpenZues still returns the Bot Framework `invokeResponse`
+  status 200, reports safe `status="blocked"` metadata, does not call the Bot
+  Framework User Token service, does not persist a delegated token, and does
+  not leak the exchange token. This closes `OZ-PROV-001AP`; repo-wide parity
+  is now estimated at ~65.0%. Remaining Microsoft Teams SSO authorization
+  breadth is route-level team/channel allowlist drops and group sender
+  allowlist drops, followed by delegated-token consumers, feedback reflection,
+  full Bot Framework HTTP inbound wiring, richer inbound media staging, and
+  member lifecycle handling.
+- Verified the Microsoft Teams SSO DM allowlist authorization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_msteams_signin_exchange_for_dm_allowlist -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`18 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `b9f2f404`.
+
+- Microsoft Teams SSO route-level team/channel allowlist authorization now
+  mirrors OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/monitor-handler/access.ts`, and
+  `extensions/msteams/src/policy.ts` nested Teams route gate: when configured
+  SSO receives `signin/tokenExchange` from a channel/group context and
+  `channels.msteams.teams` is configured but the incoming team/channel does
+  not match the nested allowlist, OpenZues still ACKs the invoke with status
+  200, returns safe blocked metadata with conversation/team identifiers, skips
+  the Bot Framework User Token service, avoids delegated-token persistence,
+  and does not leak the exchange token. This closes `OZ-PROV-001AQ`;
+  repo-wide parity is now estimated at ~65.1%. Remaining Microsoft Teams SSO
+  authorization breadth is group sender allowlist drops, followed by
+  delegated-token consumers, feedback reflection, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and member lifecycle handling.
+- Verified the Microsoft Teams SSO route allowlist authorization slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_blocks_msteams_signin_exchange_for_channel_route_allowlist -q`
+  (`1 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`19 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py src\openzues\database.py
+  tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py src\openzues\database.py`. Checkpointed
+  in `5c54430c`.
 
 ## References
 

@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -16,7 +16,7 @@ repo-wide percentage.
 | [ ] | CLI, TUI, setup, onboarding | commands, setup/onboard/wizard, TUI, doctor/status/update | `src/cli`, `src/commands`, `src/tui`, `src/wizard` |
 | [ ] | Gateway control plane and APIs | gateway server, protocol, WebSocket/HTTP, Control UI serving, OpenAI/OpenResponses compatibility | `src/gateway`, `docs/gateway/protocol.md`, `docs.acp.md` |
 | [ ] | Agent runtime, sessions, harnesses | embedded agents, CLI backends, ACP/Codex/Pi harnesses, subagents, session stores, compaction | `src/agents`, `src/sessions`, `src/acp`, `docs/pi.md` |
-| [~] | Channels, routing, delivery | Telegram audio/voice route-backed send verified; channel registry, session routing, inbound/outbound delivery, typing/status/reactions, pairing, access groups remain | `src/channels`, `src/routing`, `docs/channels`, `extensions/telegram/openclaw.plugin.json` |
+| [~] | Channels, routing, delivery | Telegram audio/voice, Google Chat native text/thread/media/DM, Nextcloud Talk signed bot, Synology Chat incoming-webhook, Mattermost channel-id, Microsoft Teams Bot Framework proactive text/threaded replies, Adaptive Card polls, adaptive-card inbound session routing, inbound mention stripping/HTML fallback, feedback invoke recording, SSO no-config invoke acknowledgement, configured SSO token exchange/store, configured SSO verify-state magic-code flow, SSO DM allowlist sign-in drop handling, SSO route allowlist sign-in drop handling, Graph reaction listing/write actions, native readiness probe, user-reference routing, FileConsent, and Graph upload verified; Signal JSON-RPC send plus reaction actions, IRC PRIVMSG, and Twitch chat route-backed sends verified; channel registry, broader session routing, full inbound/outbound delivery, typing/status/reactions, pairing, access groups remain | `src/channels`, `src/routing`, `docs/channels`, `extensions/telegram/openclaw.plugin.json`, `extensions/googlechat/src`, `extensions/nextcloud-talk/src`, `extensions/synology-chat/src`, `extensions/mattermost/src`, `extensions/msteams/src`, `extensions/signal/src`, `extensions/irc/src`, `extensions/twitch/src` |
 | [ ] | Provider and model capability matrix | model catalogs, auth profiles, provider discovery, text/media/search/voice providers | `src/model-catalog`, `extensions/openai`, `extensions/anthropic`, `docs/providers` |
 | [~] | Plugin and extension system | SDK, manifests, bundled/installed plugins, lifecycle, hooks, ClawHub/npm packaging; document and web-content extractor contracts verified, deeper runtime/import contracts remain | `src/plugins`, `src/plugin-sdk`, `extensions`, `packages/plugin-sdk` |
 | [ ] | Tools, skills, MCP, ACPX | browser/exec/diffs/file tools, skills, MCP integration, ACPX runtime, plugin commands | `src/tools`, `src/mcp`, `extensions/browser`, `extensions/acpx` |

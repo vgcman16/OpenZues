@@ -1,6 +1,6 @@
 # Cross-Repo Implementation Tracker
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 Coordinator repo: `C:\Users\skull\OneDrive\Documents\OpenZues`
 
@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~61.3% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~65.1% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,16 +29,26 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The update status package-manager dependency posture slice is checkpointed in
-`f1ac67da`.
+The Microsoft Teams SSO route allowlist authorization slice is checkpointed in
+`5c54430c`.
 Any follow-up changes should target the next queue head only:
 
+- `src/openzues/schemas.py`
+- `src/openzues/database.py`
+- `src/openzues/services/gateway_outbound_runtime.py`
+- `src/openzues/services/ops_mesh.py`
+- `src/openzues/services/gateway_channels.py`
 - `src/openzues/cli.py`
+- `src/openzues/web/templates/index.html`
+- `src/openzues/web/static/app.js`
+- `tests/test_ops_mesh.py`
 - `tests/test_cli.py`
+- `tests/test_app.py`
 - `docs/openclaw-parity-progress.md`
 - `docs/openclaw-parity-unresolved-seams.md`
 - `docs/tracking/00-cross-repo-implementation-tracker.md`
 - `docs/tracking/01-openzues-openclaw-parity-status.md`
+- `docs/tracking/02-openclaw-source-domain-map.md`
 
 Known untracked temp/log artifacts are unrelated and must remain unstaged.
 
@@ -49,12 +59,820 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Runtime-extension contract metadata checkpointed in `cbd59d1d` | Repo-wide +0.1%, CLI/runtime +0.1% | Rotate to package/provider/canvas/companion seams |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Persisted provider metadata checkpointed in `54c2fd49` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue runtime executor invocation breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
-| OZ-COMP-001 | Companion apps/nodes parity | Remote macOS bin discovery checkpointed in `7dcce35d` | Repo-wide +0.1%, gateway/session/tool +0.1% | Rotate to provider/package/plugin breadth |
-| OZ-PROV-001 | Provider-native outbound/inbound breadth | Slack agent-request thread metadata checkpointed in `e3671d6f` | Repo-wide +0.1%, active gateway/method +0.1% | Continue provider-specific send/poll/replay metadata gaps |
+| OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
+| OZ-PROV-001 | Provider-native outbound/inbound breadth | Microsoft Teams SSO route allowlist authorization checkpointed in `5c54430c` | Repo-wide +0.1%, provider-native breadth +0.1% | Continue Teams SSO group sender allowlist drops, delegated-token consumers, full Bot Framework inbound wiring, feedback reflection, or next provider route/action gap |
 
 ## Active Slice Detail
+
+- [x] `OZ-PROV-001AQ` Microsoft Teams SSO route allowlist authorization/drop
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/access.ts`,
+    `openclaw-main/extensions/msteams/src/policy.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: when configured Microsoft Teams SSO receives
+    `signin/tokenExchange` from a channel/group context while
+    `channels.msteams.teams` is configured and the incoming team/channel does
+    not match, OpenZues still emits a Bot Framework `invokeResponse` status
+    200, returns safe blocked metadata with route context, skips Bot Framework
+    User Token service calls, avoids delegated-token persistence, and never
+    returns the exchange token.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `5c54430c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams SSO route allowlist
+    proof (`1 passed`), adjacent Teams send/action/provider proof (`19 passed,
+    304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AP` Microsoft Teams SSO DM allowlist authorization/drop
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/access.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: when configured Microsoft Teams SSO receives
+    `signin/tokenExchange` from a personal chat while `dmPolicy="allowlist"`
+    and the sender is not in `allowFrom`, OpenZues still emits a Bot
+    Framework `invokeResponse` status 200, returns safe blocked SSO metadata,
+    skips Bot Framework User Token service calls, avoids delegated-token
+    persistence, and never returns the exchange token.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `b9f2f404`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams SSO DM allowlist proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`18 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AO` Microsoft Teams configured SSO verify-state magic code
+  - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/database.py`, `tests/test_ops_mesh.py`
+  - Contract: when SSO is configured, `signin/verifyState` resolves native
+    Teams app credentials, obtains a Bot Framework bearer, calls
+    `/api/usertoken/GetToken` with the magic-code `state`, persists the
+    delegated user token keyed by `(connectionName, userId)`, and returns only
+    safe stored metadata without leaking the state code or delegated token.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `0ecfab4c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured
+    verify-state proof (`1 passed`), adjacent Teams send/action/provider proof
+    (`17 passed, 304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AN` Microsoft Teams configured SSO token exchange/store
+  - Source: `openclaw-main/extensions/msteams/src/sso.ts`,
+    `openclaw-main/extensions/msteams/src/sso-token-store.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/database.py`, `tests/test_ops_mesh.py`
+  - Contract: when `channels.msteams.sso.enabled` and `connectionName` are
+    configured, `signin/tokenExchange` resolves native Teams app credentials,
+    obtains a Bot Framework service bearer, calls `/api/usertoken/exchange`,
+    persists the delegated user token keyed by `(connectionName, userId)`, and
+    returns only safe stored/expiry metadata without leaking exchange or
+    delegated tokens.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `1bf6ab5b`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams configured
+    token-exchange proof (`1 passed`), adjacent Teams send/action/provider
+    proof (`16 passed, 304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AM` Microsoft Teams SSO no-config invoke acknowledgement
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/sso.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler.sso.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams `signin/tokenExchange` and `signin/verifyState` invoke
+    activities are acknowledged with a Bot Framework `invokeResponse` status
+    200 before normal message routing; when no SSO adapter is configured,
+    OpenZues returns a native unavailable SSO posture with only safe metadata
+    and no raw token or magic-code persistence/leakage.
+  - Evidence required: focused runtime tests, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `49ebe481`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams SSO no-config proofs
+    (`2 passed`), adjacent Teams send/action/provider proof (`15 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AL` Microsoft Teams feedback invoke recording
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/feedback-reflection.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams `message/submitAction` feedback invokes normalize
+    `like`/`dislike` reactions into positive/negative feedback, parse
+    optional `feedbackText`, resolve the same thread-aware session target as
+    inbound messages, and persist session-scoped feedback metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `7a545faf`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams feedback invoke proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`13 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AK` Microsoft Teams inbound message text normalization
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler/message-handler.ts`,
+    `openclaw-main/extensions/msteams/src/inbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams message activities strip `<at>...</at>` mention tags
+    before routing to the target session, and activities with no plain text
+    can derive inbound text from `text/html` attachments while preserving link
+    URLs and decoding HTML entities.
+  - Evidence required: focused runtime tests, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `65daf165`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams message normalization
+    proofs (`2 passed`), adjacent Teams send/action/provider proof (`12
+    passed, 304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AJ` Microsoft Teams adaptive-card inbound monitor/session routing
+  - Source: `openclaw-main/extensions/msteams/src/monitor-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/message-handler.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/thread-session.ts`,
+    `openclaw-main/extensions/msteams/src/inbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams `adaptiveCard/action` invoke payloads are serialized as
+    compact JSON and routed as inbound session text; `conversation.id` strips
+    `;messageid=...` for targeting; channel replies prefer the `messageid`
+    thread root over nested `replyToId`; the resulting session key is
+    thread-isolated and delivery remains session-backed rather than echoing
+    through native provider sends.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `5462df49`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams adaptive-card inbound
+    proof (`1 passed`), adjacent Teams send/action/provider proof (`10
+    passed, 304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AI` Microsoft Teams Graph media upload
+  - Source: `openclaw-main/extensions/msteams/src/graph-upload.ts`,
+    `openclaw-main/extensions/msteams/src/graph-chat.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams media sends with a SharePoint site id upload media bytes
+    to Graph, create an organization share link, fetch DriveItem properties,
+    emit a native FileInfoCard, and persist file-card plus Graph upload
+    metadata on the saved delivery.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `a220db23`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams Graph upload proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`9 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AH` Microsoft Teams FileConsent accept/upload
+  - Source: `openclaw-main/extensions/msteams/src/file-consent.ts`,
+    `openclaw-main/extensions/msteams/src/file-consent-invoke.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams `fileConsent/invoke` accept payloads locate the saved
+    pending upload by `uploadId`, guard conversation mismatches, validate the
+    Teams upload URL against the Microsoft/SharePoint allowlist, PUT pending
+    media bytes with `Content-Type` and `Content-Range`, replace the consent
+    card with a FileInfoCard, and persist uploaded file metadata on the saved
+    outbound delivery.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `709fcf4d`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams FileConsent upload
+    proof (`1 passed`), adjacent Teams send/action/provider proof (`8 passed,
+    304 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AG` Microsoft Teams FileConsent card emission
+  - Source: `openclaw-main/extensions/msteams/src/file-consent.ts`,
+    `openclaw-main/extensions/msteams/src/file-consent-helpers.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_outbound_runtime.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams direct sends with media and FileConsent metadata emit a
+    Bot Framework `application/vnd.microsoft.teams.card.file.consent`
+    attachment with `description`, `sizeInBytes`, `acceptContext`, and
+    `declineContext`, omit top-level text from the consent activity, and
+    preserve `pendingUploadId`, `mediaUrls`, and `filenames` through
+    direct-send responses and saved delivery metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `ad3c8a5c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams FileConsent card proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`7 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AF` Microsoft Teams poll vote storage
+  - Source: `openclaw-main/extensions/msteams/src/polls.ts`,
+    `openclaw-main/extensions/msteams/src/monitor-handler/message-handler.ts`,
+    `openclaw-main/extensions/msteams/src/outbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: Teams adaptive-card vote payloads carrying `openclawPollId` /
+    `pollId` plus `choices` are extracted from message action value shapes,
+    sender ids are used as voters, selection indexes are normalized to the
+    poll option range and `maxSelections`, unknown poll ids are consumed
+    without error, and known poll votes persist on the saved outbound poll
+    delivery metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `b3726879`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams poll-vote proof (`1
+    passed`), adjacent Teams send/action/provider proof (`6 passed, 304
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AE` Microsoft Teams file info card media
+  - Source: `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/graph-chat.ts`,
+    `openclaw-main/extensions/msteams/src/graph-upload.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: channel/group Teams sends with media can consume
+    provider-ready DriveItem metadata, build the native
+    `application/vnd.microsoft.teams.card.file.info` Bot Framework
+    attachment with eTag-derived `uniqueId` and filename-derived `fileType`,
+    keep caller text as the attachment caption without synthesized media
+    inventory text, and preserve `mediaUrls`, `filenames`, and `fileIds`
+    provider result metadata.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `eb663838`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams file-card media proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`9 passed, 300
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AD` Microsoft Teams threaded replies
+  - Source: `openclaw-main/extensions/msteams/src/messenger.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: channel-targeted Teams sends preserve `replyToId`, reconstruct
+    the outbound Bot Framework conversation id as
+    `<conversationId>;messageid=<thread-root>` when posting the activity, and
+    keep provider result metadata on the base conversation id with
+    `replyToId`.
+  - Evidence required: focused runtime test, adjacent Teams send/action/
+    provider tests, ruff, mypy
+  - Status: checkpointed in `927d5787`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams threaded-reply proof
+    (`1 passed`), adjacent Teams send/action/provider proof (`8 passed, 300
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AC` Microsoft Teams reaction write actions
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.actions.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch accepts
+    `channel="msteams"`, `action="react"`, `emoji`/`reactionType`,
+    `remove=true`, and `unreact`, normalizes well-known reaction types,
+    posts Graph beta `setReaction` / `unsetReaction` with delegated Graph
+    token posture, supports chat and team/channel Graph targets, and returns
+    OpenClaw-shaped action result metadata.
+  - Evidence required: focused runtime test, adjacent Teams/action/provider
+    tests, ruff, mypy
+  - Status: checkpointed in `02ae95da`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams react proof (`1
+    passed`), adjacent Teams/action/provider proof (`10 passed, 297
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AB` Microsoft Teams user-reference routing
+  - Source: `openclaw-main/extensions/msteams/src/session-route.ts`,
+    `openclaw-main/extensions/msteams/src/send-context.ts`,
+    `openclaw-main/extensions/msteams/src/conversation-store.ts`,
+    `openclaw-main/extensions/msteams/src/conversation-store-helpers.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `msteams:user:<aad-id>` targets are classified as direct
+    peers, matched against route-backed stored `user:` references, resolved to
+    stored Bot Framework `conversationId` metadata only when the reference is
+    personal or legacy-unknown, and guarded from routing private user sends
+    into group/channel conversations.
+  - Evidence required: focused runtime test, adjacent Teams/provider tests,
+    ruff, mypy
+  - Status: checkpointed in `b88c540d`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams user-reference proof
+    (`1 passed`), adjacent Teams/provider proof (`6 passed, 300 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001AA` Microsoft Teams native readiness probe
+  - Source: `openclaw-main/extensions/msteams/src/probe.ts`,
+    `openclaw-main/extensions/msteams/src/token.ts`,
+    `openclaw-main/extensions/msteams/src/token-response.ts`,
+    `openclaw-main/extensions/msteams/src/sdk.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Contract: native `kind="msteams"` routes participate in
+    `channels status --probe`, validate Bot Framework app-token posture from
+    route `appId`/`tenantId` plus secret, attempt Graph app-token posture
+    discovery, project optional roles/scopes when token payloads expose them,
+    and return native-provider readiness metadata through runtime and CLI probe
+    envelopes.
+  - Evidence required: focused runtime/CLI tests, adjacent runtime/CLI tests,
+    ruff, mypy
+  - Status: checkpointed in `50d05198`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams probe proof (`1
+    passed`), focused CLI probe proof (`1 passed`), adjacent runtime proof (`8
+    passed, 297 deselected`), adjacent CLI proof (`3 passed, 508
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001Z` Microsoft Teams reaction-list action
+  - Source: `openclaw-main/extensions/msteams/src/actions.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.ts`,
+    `openclaw-main/extensions/msteams/src/graph-messages.read.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for `channel="msteams"`,
+    `action="reactions"` resolves explicit `to` / `target` / conversation ids
+    or Graph-channel tool context, obtains a Graph app token from route
+    `appId`/`tenantId` plus secret, reads the Graph message resource, groups
+    reactions by `reactionType`, counts entries without user ids, preserves
+    known emoji labels, and returns OpenClaw-shaped `{ok, reactions}`.
+  - Evidence required: focused runtime test, adjacent provider/action tests,
+    ruff, mypy
+  - Status: checkpointed in `4996cf5c`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams reaction-list proof
+    (`1 passed`), adjacent action/provider proof (`9 passed, 295
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001Y` Microsoft Teams native polls
+  - Source: `openclaw-main/extensions/msteams/src/polls.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/outbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`, `src/openzues/cli.py`,
+    `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Contract: route-backed `kind="msteams"` accepts `gateway/poll`, validates
+    question/options/max selections, builds Adaptive Card 1.5 choice-set
+    payloads with OpenClaw `openclawPollId` / `pollId` submit metadata and
+    Teams `messageBack` action data, posts through Bot Framework proactive
+    activities, returns `pollId`, `messageId`, and conversation metadata, and
+    advertises `poll` through CLI channel capabilities.
+  - Evidence required: focused runtime/CLI tests, adjacent provider/CLI tests,
+    ruff, mypy
+  - Status: checkpointed in `b0ad5491`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams poll proof (`1
+    passed`), focused CLI capability proof (`1 passed`), adjacent provider
+    route proof (`11 passed, 292 deselected`), adjacent CLI proof (`3 passed,
+    507 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001X` Microsoft Teams native outbound route
+  - Source: `openclaw-main/extensions/msteams/src/outbound.ts`,
+    `openclaw-main/extensions/msteams/src/send.ts`,
+    `openclaw-main/extensions/msteams/src/send-context.ts`,
+    `openclaw-main/extensions/msteams/src/messenger.ts`,
+    `openclaw-main/extensions/msteams/src/token.ts`,
+    `openclaw-main/extensions/msteams/src/session-route.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="msteams"` sends Bot Framework proactive
+    top-level text activities to explicit conversation ids, accepts service
+    URLs carrying `appId`/`tenantId`, uses route secrets as app passwords or
+    bearer tokens, normalizes `msteams:`/`teams:`/`conversation:` targets,
+    strips `;messageid=...`, stamps OpenClaw-shaped AI generated-content
+    entity metadata, and persists provider `messageId`, chat/channel ids, and
+    conversation metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider route tests, ruff, mypy
+  - Status: checkpointed in `79258ec2`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Microsoft Teams route proof (`2
+    passed`), focused CLI proof (`1 passed`), focused app proof (`3 passed`),
+    adjacent provider route proof (`10 passed, 292 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PROV-001W` Signal native reaction action
+  - Source: `openclaw-main/extensions/signal/src/message-actions.ts`,
+    `openclaw-main/extensions/signal/src/send-reactions.ts`,
+    `openclaw-main/src/channels/plugins/actions/reaction-message-id.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: native `message.action` dispatch for
+    `channel="signal"`, `action="react"` normalizes direct `signal:` /
+    `uuid:` recipients and `signal:group:` targets, requires target-author
+    metadata for group reactions, falls back to
+    `toolContext.currentMessageId` when `messageId` is omitted, posts
+    JSON-RPC `sendReaction` payloads to `/api/v1/rpc`, and returns
+    OpenClaw-shaped `{ok, added}` / `{ok, removed}` results.
+  - Evidence required: focused Signal action tests, adjacent provider/action
+    tests, ruff, mypy
+  - Status: checkpointed in `c9b45ffb`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Signal reaction proof (`3 passed`),
+    adjacent provider/action proof (`8 passed, 292 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PROV-001V` Twitch native outbound route
+  - Source: `openclaw-main/extensions/twitch/src/send.ts`,
+    `openclaw-main/extensions/twitch/src/outbound.ts`,
+    `openclaw-main/extensions/twitch/src/twitch-client.ts`,
+    `openclaw-main/extensions/twitch/src/utils/markdown.ts`,
+    `openclaw-main/extensions/twitch/src/utils/twitch.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="twitch"` sends native Twitch IRC chat
+    messages after channel normalization, markdown stripping, and media URL
+    text fallback, while persisting generated message/chat/channel/timestamp
+    and media metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `6185301b`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Twitch route proof (`5 passed, 207
+    deselected`), adjacent provider route proof (`21 passed, 276 deselected`),
+    adjacent CLI route proof (`9 passed, 499 deselected`), adjacent app route
+    proof (`21 passed, 188 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001U` IRC native outbound route
+  - Source: `openclaw-main/extensions/irc/src/send.ts`,
+    `openclaw-main/extensions/irc/src/normalize.ts`,
+    `openclaw-main/extensions/irc/src/client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="irc"` sends native IRC `PRIVMSG`
+    payloads through `irc://`/`ircs://` server targets, normalizes
+    `irc:`/`channel:`/`user:` peers, appends `replyToId` as
+    `[reply:<id>]`, and persists generated `messageId`, chat/channel ids,
+    reply metadata, and media URL fallback metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `8726ab49`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused IRC route proof (`5 passed, 205
+    deselected`), adjacent provider route proof (`19 passed, 276 deselected`),
+    adjacent CLI route proof (`8 passed, 499 deselected`), adjacent app route
+    proof (`19 passed, 188 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001T` Signal native outbound route
+  - Source: `openclaw-main/extensions/signal/src/send.ts`,
+    `openclaw-main/extensions/signal/src/client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="signal"` sends post JSON-RPC `send`
+    payloads to `/api/v1/rpc`, normalize recipient/group/username targets,
+    forward media URLs as attachments, and persist timestamp-derived
+    `messageId`, chat/channel ids, and media URL metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `81491ab7`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Signal route proof (`5 passed, 203
+    deselected`), adjacent provider route proof (`17 passed, 276 deselected`),
+    adjacent CLI route proof (`7 passed, 499 deselected`), adjacent app route
+    proof (`17 passed, 188 deselected`), post-ruff app proof (`2 passed, 203
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001S` Mattermost native outbound route
+  - Source: `openclaw-main/extensions/mattermost/src/mattermost/send.ts`,
+    `openclaw-main/extensions/mattermost/src/mattermost/client.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="mattermost"` sends post `/api/v4/posts`
+    JSON payloads with `channel_id`, `message`, and optional `root_id`, attach
+    bearer bot auth, and persist provider `messageId`, chat/channel ids, and
+    reply metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `44541ef9`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Mattermost route proof (`5 passed, 201
+    deselected`), adjacent provider route proof (`15 passed, 276 deselected`),
+    adjacent CLI route proof (`6 passed, 499 deselected`), adjacent app route
+    proof (`15 passed, 188 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001R` Synology Chat native outbound route
+  - Source: `openclaw-main/extensions/synology-chat/src/client.ts`,
+    `openclaw-main/extensions/synology-chat/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="synology-chat"` sends post form-encoded
+    `payload` JSON to incoming webhook URLs, preserve numeric `user_ids`, send
+    media URLs through `file_url` payloads, and persist generated `messageId`,
+    recipient chat/channel ids, and media URL metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `b69d5489`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused Synology route proof (`5 passed, 199
+    deselected`), adjacent provider route proof (`13 passed, 276 deselected`),
+    adjacent CLI route proof (`5 passed, 499 deselected`), adjacent app route
+    proof (`13 passed, 188 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001Q` Nextcloud Talk native outbound route
+  - Source: `openclaw-main/extensions/nextcloud-talk/src/send.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/normalize.ts`,
+    `openclaw-main/extensions/nextcloud-talk/src/channel.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="nextcloud-talk"` sends normalize upstream
+    room token aliases, post HMAC-signed bot messages to the Spreed bot
+    message endpoint, forward `replyTo`, append media URLs as
+    `Attachment: <url>` fallback text, and persist provider `messageId`,
+    room chat/channel ids, timestamp, reply, and media URL metadata.
+  - Evidence required: focused schema/service/CLI/app tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `a6732846`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused schema proof (`1 passed`), focused
+    service proof (`1 passed`), focused CLI proof (`1 passed`), focused app
+    proof (`2 passed, 197 deselected`), adjacent provider route proof (`11
+    passed, 276 deselected`), adjacent CLI route proof (`4 passed, 499
+    deselected`), adjacent app route proof (`11 passed, 188 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001P` Google Chat media and DM-resolution delivery
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.adapters.ts`,
+    `openclaw-main/extensions/googlechat/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/services/ops_mesh.py`,
+    `tests/test_ops_mesh.py`
+  - Contract: route-backed Google Chat sends resolve `users/...` targets
+    through `spaces:findDirectMessage`, upload media bytes to the Google Chat
+    attachment upload endpoint, send attachment refs in the final message
+    create payload, preserve caller captions, and persist provider
+    `messageId`, chat, media token, media URL, and filename metadata.
+  - Evidence required: focused media/DM tests, adjacent provider route tests,
+    ruff, mypy
+  - Status: checkpointed in `7086dcb3`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused media and DM proofs (`1 passed` each),
+    adjacent provider route proof (`9 passed, 276 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-PROV-001O` Google Chat native outbound route
+  - Source: `openclaw-main/extensions/googlechat/src/api.ts`,
+    `openclaw-main/extensions/googlechat/src/channel.adapters.ts`,
+    `openclaw-main/extensions/googlechat/src/targets.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `src/openzues/web/templates/index.html`,
+    `src/openzues/web/static/app.js`, `tests/test_ops_mesh.py`,
+    `tests/test_cli.py`, `tests/test_app.py`
+  - Contract: route-backed `kind="googlechat"` sends dispatch through native
+    Google Chat message-create semantics, normalize upstream
+    `googlechat:`/`google-chat:`/`gchat:` space targets, send
+    `{text, thread}` payloads with reply fallback query semantics, attach
+    bearer auth, and persist provider `messageId`, chat, thread, and reply
+    metadata through the shared direct-send result envelope and route UI/CLI
+    surfaces.
+  - Evidence required: focused schema/service/CLI tests, adjacent
+    provider/CLI/app route tests, ruff, mypy
+  - Status: checkpointed in `edb67dfc`
+  - Weight: 1
+  - Last verified: 2026-05-05, focused schema/service/CLI proofs (`1 passed`
+    each), adjacent provider route proof (`7 passed, 276 deselected`),
+    adjacent route-create proof (`3 passed, 499 deselected`), adjacent app
+    route proof (`9 passed, 188 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BN` persisted plugin registry provider metadata
+  - Source: `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest-registry.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `plugins registry --refresh --json` and later registry inspect
+    payloads preserve provider endpoints, `modelIdNormalization`, and
+    `providerRequest` metadata when those fields are present on current plugin
+    rows, while minimal plugin rows remain unchanged.
+  - Evidence required: focused registry provider metadata CLI test, adjacent
+    registry tests, ruff, mypy
+  - Status: checkpointed in `54c2fd49`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused registry provider metadata proof (`1
+    passed`), adjacent registry proof (`4 passed, 497 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BM` plugin provider metadata projection
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest-registry.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: OpenClaw manifest provider metadata survives native
+    `plugins list --json`, including endpoint `hostSuffixes`,
+    `googleVertexRegion`, `googleVertexRegionHostSuffix`,
+    provider-scoped `modelIdNormalization`, and provider-scoped
+    `providerRequest`, with provider-specific maps filtered to manifest-owned
+    provider ids.
+  - Evidence required: focused manifest provider metadata CLI test, adjacent
+    manifest metadata tests, ruff, mypy
+  - Status: checkpointed in `9b2bf4fc`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused plugin provider metadata proof (`1
+    passed`), adjacent manifest metadata proof (`6 passed, 494 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-COMP-001F` QR JSON setup-code contract
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --json --url ... --token ...` returns only
+    `setupCode`, `gatewayUrl`, `auth`, and `urlSource`; raw token/password
+    overrides do not appear in stdout, and the encoded setup code remains
+    limited to `{url, bootstrapToken}`.
+  - Evidence required: focused QR JSON CLI test, adjacent QR tests, ruff, mypy
+  - Status: checkpointed in `b79b87c3`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused QR JSON proof (`1 passed`), adjacent
+    QR proof (`4 passed, 496 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-COMP-001E` QR remote fail-closed preflight
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --setup-code-only --remote` refuses to issue a
+    bootstrap token unless a concrete remote URL source is supplied, returning
+    the upstream `qr --remote requires gateway.remote.url (or
+    gateway.tailscale.mode=serve/funnel).` diagnostic.
+  - Evidence required: focused remote-preflight CLI test, adjacent QR tests,
+    ruff, mypy
+  - Status: checkpointed in `12dee789`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused remote-preflight QR proof (`1 passed`),
+    adjacent QR proof (`3 passed, 496 deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-COMP-001D` QR invalid URL preflight
+  - Source: `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: malformed QR setup-code override URLs fail with
+    `Configured publicUrl is invalid.` and return before any
+    `devices/bootstrap.json` token state is created.
+  - Evidence required: focused invalid-URL CLI test, adjacent QR setup-code
+    tests, ruff, mypy
+  - Status: checkpointed in `f21c799c`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused invalid-URL QR proof (`1 passed`),
+    adjacent QR setup-code proof (`2 passed, 496 deselected`), `ruff check`,
+    and `mypy`.
+
+- [x] `OZ-COMP-001C` QR setup-code bootstrap handoff
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/infra/device-bootstrap.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/device_bootstrap_tokens.py`, `tests/test_cli.py`
+  - Contract: `openzues qr --setup-code-only --url ...` emits exactly one
+    OpenClaw base64url JSON setup code containing `{url, bootstrapToken}`,
+    persists the issued bootstrap token under `devices/bootstrap.json` with the
+    default node/operator handoff profile plus expiry metadata, and never
+    embeds raw gateway token/password overrides in the setup payload.
+  - Evidence required: focused QR setup-code-only CLI test, adjacent
+    setup/bootstrap CLI tests, ruff, mypy
+  - Status: checkpointed in `5262359f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused QR setup-code proof (`1 passed`),
+    adjacent setup/bootstrap CLI proof (`3 passed, 494 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BL` ESM plugin runtime entry import
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/sdk-alias.ts`,
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: native plugin runtime import also supports common package ESM
+    syntax (`import ... from "openclaw/plugin-sdk/*"` plus `export default`)
+    by transforming it into a temporary CommonJS module beside the runtime
+    entry, preserving SDK alias shims, relative import posture, registered
+    tool collection, imported-state projection, and manifest contract
+    satisfaction.
+  - Evidence required: focused ESM no-fake-adapter plugin doctor test,
+    adjacent plugin import/activation tests, gateway plugin runtime tests,
+    ruff, mypy
+  - Status: checkpointed in `eb11e22f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused ESM plugin runtime import proof (`1
+    passed`), adjacent plugin activation proof (`8 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001BK` bundled plugin runtime entry import
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/registry.ts`,
+    `openclaw-main/src/plugins/loader.test.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/cli.py`, `tests/test_cli.py`
+  - Contract: enabled bundled/package OpenClaw plugin rows with
+    `runtimeEntrySource` can be evaluated by the native CLI runtime without a
+    fake activation adapter; the loader shims OpenClaw plugin-SDK aliases,
+    unwraps default exports, calls `register`/`activate`, records registered
+    tools as runtime executor specs, marks the plugin imported, and resolves
+    manifest tool contracts to `runtimeActivation.status="ok"`.
+  - Evidence required: focused no-fake-adapter plugin doctor test, adjacent
+    SDK alias/activation adapter tests, gateway plugin runtime tests, ruff,
+    mypy
+  - Status: checkpointed in `8cb314f4`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused plugin runtime import proof (`1
+    passed`), adjacent plugin activation proof (`7 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PROV-001N` Feishu/Lark native outbound route
+  - Source: `openclaw-main/extensions/feishu/src/send-target.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`,
+    `openclaw-main/extensions/feishu/src/send-result.ts`,
+    `openclaw-main/extensions/feishu/src/outbound.ts`
+  - References: Hermes/Warp `none`
+  - Target: `src/openzues/schemas.py`,
+    `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, `src/openzues/cli.py`,
+    `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Contract: route-backed `kind="feishu"` sends dispatch through native
+    Feishu/Lark message-create semantics, normalize chat/user/open-id targets,
+    send `msg_type="post"` with markdown content under `zh_cn.content`, attach
+    bearer auth, and persist provider `messageId`/chat metadata through the
+    shared direct-send result envelope.
+  - Evidence required: focused Feishu native route test, CLI route-create test,
+    adjacent provider route tests, ruff, mypy
+  - Status: checkpointed in `d1515da1`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Feishu service proof (`2 passed`),
+    focused CLI proof (`1 passed`), adjacent provider send proof (`6 passed,
+    275 deselected`), adjacent route-create proof (`5 passed, 489
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PKG-001E` update status package-manager dependency posture
   - Source: `openclaw-main/src/infra/detect-package-manager.ts`,

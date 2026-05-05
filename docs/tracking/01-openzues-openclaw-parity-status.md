@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-04
+Last updated: 2026-05-05
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~61.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~65.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -119,6 +119,189 @@ may lag behind this tracker.
   adapters.
   - Status: checkpointed in `4f732754`
 
+- [x] Bundled plugin runtime entry import without a fake activation adapter,
+  including CommonJS OpenClaw plugin-SDK alias shims and native
+  `register`/`activate` tool collection.
+  - Status: checkpointed in `8cb314f4`
+
+- [x] ESM bundled plugin runtime entry import without a fake activation
+  adapter, transforming common OpenClaw `import ... from
+  "openclaw/plugin-sdk/*"` and `export default` syntax to a temporary CommonJS
+  module while preserving SDK alias shims and registered tool collection.
+  - Status: checkpointed in `eb11e22f`
+
+- [x] Plugin provider metadata projection, preserving OpenClaw
+  `providerEndpoints` suffix/Vertex metadata plus provider-scoped
+  `modelIdNormalization` and `providerRequest` rows.
+  - Status: checkpointed in `9b2bf4fc`
+
+- [x] Persisted plugin registry provider metadata, preserving provider
+  metadata through `plugins registry --refresh --json` and later registry
+  inspect payloads.
+  - Status: checkpointed in `54c2fd49`
+
+- [x] Google Chat native outbound route support, preserving OpenClaw
+  target-normalization, text/thread message-create payloads, reply fallback
+  query semantics, bearer auth, provider result metadata, and CLI/app route
+  affordances.
+  - Status: checkpointed in `edb67dfc`
+
+- [x] Google Chat media and DM-resolution support, preserving OpenClaw
+  `spaces:findDirectMessage`, attachment upload, message attachment refs,
+  caption handling, and ordered media result metadata.
+  - Status: checkpointed in `7086dcb3`
+
+- [x] Nextcloud Talk native outbound route support, preserving OpenClaw
+  room-token normalization, HMAC bot signature headers, Spreed bot message
+  endpoint payloads, `replyTo`, media URL fallback text, and provider result
+  metadata.
+  - Status: checkpointed in `a6732846`
+
+- [x] Synology Chat native outbound route support, preserving OpenClaw
+  form-encoded incoming webhook payloads, numeric `user_ids`, media URL
+  `file_url` delivery, and direct-send result metadata.
+  - Status: checkpointed in `b69d5489`
+
+- [x] Mattermost native outbound route support, preserving OpenClaw
+  `/api/v4/posts` channel-id text/reply payloads, bearer bot auth, and provider
+  result metadata.
+  - Status: checkpointed in `44541ef9`
+
+- [x] Signal native outbound route support, preserving OpenClaw JSON-RPC
+  `send` payloads, recipient/group/username target params, media attachments,
+  and timestamp result metadata.
+  - Status: checkpointed in `81491ab7`
+
+- [x] IRC native outbound route support, preserving OpenClaw
+  `irc://`/`ircs://` server targets, `irc:`/`channel:`/`user:` target
+  normalization, `replyToId` text suffixes, native `PRIVMSG` delivery, and
+  generated result metadata.
+  - Status: checkpointed in `8726ab49`
+
+- [x] Twitch native outbound route support, preserving OpenClaw channel
+  normalization, markdown stripping, media URL text fallback, native Twitch
+  chat delivery, and result metadata.
+  - Status: checkpointed in `6185301b`
+
+- [x] Signal native reaction action support, preserving OpenClaw JSON-RPC
+  `sendReaction` payloads, direct/group target normalization, target-author
+  fallback and required group-author behavior, `remove=true`, and
+  `toolContext.currentMessageId` fallback.
+  - Status: checkpointed in `c9b45ffb`
+
+- [x] Microsoft Teams native outbound route support, preserving OpenClaw Bot
+  Framework proactive text delivery for explicit conversation ids, route
+  `appId`/`tenantId` service URL metadata, app-password or bearer-token auth,
+  `msteams:`/`teams:`/`conversation:` target normalization, `;messageid=...`
+  stripping, AI-generated entity metadata, and message/conversation result
+  metadata.
+  - Status: checkpointed in `79258ec2`
+
+- [x] Microsoft Teams native poll support, preserving OpenClaw Adaptive Card
+  choice-set polls, `openclawPollId` / `pollId` submit metadata, Teams
+  `messageBack` action data, provider `pollId` / `messageId` / conversation
+  metadata, and CLI poll capability projection.
+  - Status: checkpointed in `b0ad5491`
+
+- [x] Microsoft Teams reaction-list action support, preserving OpenClaw Graph
+  message-action target resolution, app-token auth, grouped reaction summaries,
+  known emoji labels, and anonymous/deleted-user reaction counts.
+  - Status: checkpointed in `4996cf5c`
+
+- [x] Microsoft Teams native readiness probe support, preserving OpenClaw Bot
+  Framework credential posture, Graph app-token posture metadata, optional
+  token roles/scopes projection, and `channels status --probe --json`
+  readiness output.
+  - Status: checkpointed in `50d05198`
+
+- [x] Microsoft Teams user-reference routing, preserving OpenClaw
+  `msteams:user:<aad-id>` session routing, stored personal conversation id
+  resolution, and the non-personal DM leakage guard.
+  - Status: checkpointed in `b88c540d`
+
+- [x] Microsoft Teams reaction write actions, preserving OpenClaw Graph beta
+  `setReaction` / `unsetReaction`, delegated token posture, legacy reaction
+  type normalization, and `remove=true` result projection.
+  - Status: checkpointed in `02ae95da`
+
+- [x] Microsoft Teams threaded replies, preserving OpenClaw Bot Framework
+  channel thread routing via `<conversationId>;messageid=<thread-root>` and
+  `replyToId` result metadata.
+  - Status: checkpointed in `927d5787`
+
+- [x] Microsoft Teams file info card media, preserving OpenClaw native Teams
+  file-card attachment projection from Graph DriveItem metadata, raw text
+  captions, eTag-derived `uniqueId`, filename-derived `fileType`, and
+  `mediaUrls` / `filenames` / `fileIds` result metadata.
+  - Status: checkpointed in `eb663838`
+
+- [x] Microsoft Teams poll vote storage, preserving OpenClaw adaptive-card
+  vote extraction from `openclawPollId` / `pollId` plus `choices`, sender-id
+  voter mapping, option/max-selection normalization, unknown-poll no-error
+  consumption, and persisted vote metadata on the saved outbound poll record.
+  - Status: checkpointed in `b3726879`
+
+- [x] Microsoft Teams FileConsent card emission, preserving OpenClaw Bot
+  Framework FileConsentCard payloads with `description`, `sizeInBytes`,
+  `acceptContext`, `declineContext`, no top-level consent text, and
+  `pendingUploadId` / `mediaUrls` / `filenames` result metadata.
+  - Status: checkpointed in `ad3c8a5c`
+
+- [x] Microsoft Teams FileConsent accept/upload handling, preserving OpenClaw
+  `fileConsent/invoke` accept parsing, pending upload lookup by `uploadId`,
+  conversation mismatch guard, upload URL validation, byte upload with
+  `Content-Range`, FileInfoCard replacement, and saved completion metadata.
+  - Status: checkpointed in `709fcf4d`
+
+- [x] Microsoft Teams Graph media upload, preserving OpenClaw SharePoint Graph
+  upload, organization sharing link creation, DriveItem `eTag` / `webDavUrl`
+  lookup, native FileInfoCard emission, and saved upload metadata.
+  - Status: checkpointed in `a220db23`
+
+- [x] Microsoft Teams adaptive-card inbound monitor/session routing,
+  preserving OpenClaw `adaptiveCard/action` invoke serialization,
+  `;messageid=...` conversation normalization, channel thread-root session
+  isolation, and session-backed inbound delivery.
+  - Status: checkpointed in `5462df49`
+
+- [x] Microsoft Teams inbound message text normalization, preserving
+  OpenClaw mention stripping and `text/html` attachment fallback before
+  session routing.
+  - Status: checkpointed in `65daf165`
+
+- [x] Microsoft Teams feedback invoke recording, preserving OpenClaw
+  thumbs-up/thumbs-down normalization, optional comment parsing, thread-aware
+  session routing, and durable feedback metadata.
+  - Status: checkpointed in `7a545faf`
+
+- [x] Microsoft Teams SSO no-config invoke acknowledgement, preserving
+  OpenClaw's immediate Bot Framework `invokeResponse` for
+  `signin/tokenExchange` and `signin/verifyState` while projecting native
+  unavailable SSO metadata without leaking tokens or magic-code state.
+  - Status: checkpointed in `49ebe481`
+
+- [x] Microsoft Teams configured SSO token exchange/store, preserving
+  OpenClaw's `/api/usertoken/exchange` Bot Framework call, route-backed app
+  credential bearer acquisition, `(connectionName, userId)` token persistence,
+  and safe no-token result metadata.
+  - Status: checkpointed in `1bf6ab5b`
+
+- [x] Microsoft Teams configured SSO verify-state magic-code flow, preserving
+  OpenClaw's `/api/usertoken/GetToken` Bot Framework call, persisted delegated
+  token, and safe no-state/no-token result metadata.
+  - Status: checkpointed in `0ecfab4c`
+
+- [x] Microsoft Teams SSO DM allowlist authorization/drop handling, preserving
+  OpenClaw's immediate `invokeResponse` ACK while blocking non-allowlisted
+  personal-chat sign-in token exchange before Bot Framework User Token service
+  calls or delegated-token persistence.
+  - Status: checkpointed in `b9f2f404`
+
+- [x] Microsoft Teams SSO route allowlist authorization/drop handling,
+  preserving OpenClaw's nested `channels.msteams.teams` team/channel gate
+  before configured sign-in token exchange.
+  - Status: checkpointed in `5c54430c`
+
 - [x] Bundled channel explicit activation, preserving OpenClaw's
   `channel enabled in config` activation reason and allowlist bypass for
   configured bundled channel plugins.
@@ -219,6 +402,23 @@ may lag behind this tracker.
   `system.which`/`system.run command -v` probe, paired-node `bins`
   persistence, and node-pair metadata exposure.
   - Status: checkpointed in `7dcce35d`
+
+- [x] Companion QR setup-code bootstrap handoff, preserving OpenClaw's
+  base64url `{url, bootstrapToken}` payload and file-backed node/operator
+  bootstrap token profile for `qr --setup-code-only --url ...`.
+  - Status: checkpointed in `5262359f`
+
+- [x] Companion QR invalid URL preflight, preserving OpenClaw's
+  `Configured publicUrl is invalid.` guard before bootstrap token issue.
+  - Status: checkpointed in `f21c799c`
+
+- [x] Companion QR remote fail-closed preflight, preserving OpenClaw's
+  `qr --remote requires gateway.remote.url` guard before bootstrap token issue.
+  - Status: checkpointed in `12dee789`
+
+- [x] Companion QR JSON setup-code contract, preserving OpenClaw's four-field
+  `setupCode` / `gatewayUrl` / `auth` / `urlSource` response shape.
+  - Status: checkpointed in `b79b87c3`
 
 - [x] Package distribution doctor diagnostics, preserving Windows-first
   package root, source-checkout, dist, and postinstall-inventory posture in
@@ -420,6 +620,11 @@ may lag behind this tracker.
   fakeable chat runtime path.
   - Status: checkpointed in `e3671d6f`
 
+- [x] Feishu/Lark provider-native direct text sends with OpenClaw-shaped
+  message-create payloads, target normalization, bearer auth, and provider
+  message/chat metadata persistence.
+  - Status: checkpointed in `d1515da1`
+
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
   flags in the body while omitting `thread_id` from the body.
@@ -616,10 +821,36 @@ may lag behind this tracker.
     activation checkpointed in `b8f39fe3`, bundled runtime plugin-SDK import
     metadata checkpointed in `54fb7bf8`, bundled plugin-SDK alias context
     checkpointed in `e6b506db`, source plugin-SDK subpath aliases checkpointed
-    in `55e1fb28`, and manifest document extractor contract metadata
-    checkpointed in `2196c65e`, but deeper module import/runtime activation
-    remains.
+    in `55e1fb28`, manifest document extractor contract metadata checkpointed
+    in `2196c65e`, bundled plugin runtime entry import checkpointed in
+    `8cb314f4`, and ESM plugin runtime entry import checkpointed in
+    `eb11e22f`, but deeper runtime executor invocation breadth remains.
   - Weight: 5
+
+- [x] ESM bundled plugin runtime entry import.
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/sdk-alias.ts`, and
+    `openclaw-main/src/plugins/loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `eb11e22f`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused ESM plugin runtime import proof (`1
+    passed`), adjacent plugin activation/import proof (`8 passed, 488
+    deselected`), gateway plugin runtime proof (`3 passed`), `ruff check`,
+    and `mypy`.
+
+- [x] Bundled plugin runtime entry import.
+  - Source: `openclaw-main/src/plugins/loader.ts`,
+    `openclaw-main/src/plugins/registry.ts`, and
+    `openclaw-main/src/plugins/loader.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `8cb314f4`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused plugin runtime import proof (`1
+    passed`), adjacent activation/import proof (`7 passed, 488 deselected`),
+    gateway plugin runtime proof (`3 passed`), `ruff check`, and `mypy`.
 
 - [x] Installed-record manifest runtime activation.
   - Source: `openclaw-main/src/plugins/loader.test.ts`,
@@ -841,6 +1072,81 @@ may lag behind this tracker.
     (`1 passed`), adjacent node method proof (`5 passed`), adjacent node API
     proof (`4 passed`), pairing refresh proof (`5 passed`), `ruff check`, and
     `mypy`.
+
+- [x] Companion QR setup-code bootstrap handoff.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`,
+    `openclaw-main/src/infra/device-bootstrap.ts`
+  - Target: `src/openzues/cli.py`,
+    `src/openzues/services/device_bootstrap_tokens.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `5262359f`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload
+    -q` (`1 passed`), adjacent setup/bootstrap CLI proof (`3 passed, 494
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Companion QR invalid URL preflight.
+  - Source: `openclaw-main/src/cli/qr-cli.test.ts`,
+    `openclaw-main/src/pairing/setup-code.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `f21c799c`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue
+    -q` (`1 passed`), adjacent QR setup-code proof (`2 passed, 496
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Companion QR remote fail-closed preflight.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `12dee789`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_remote_requires_explicit_remote_url_before_token_issue
+    -q` (`1 passed`), adjacent QR proof (`3 passed, 496 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Companion QR JSON setup-code contract.
+  - Source: `openclaw-main/src/cli/qr-cli.ts`,
+    `openclaw-main/src/cli/qr-cli.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `b79b87c3`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_qr_json_output_matches_openclaw_setup_code_contract
+    -q` (`1 passed`), adjacent QR proof (`4 passed, 496 deselected`), `ruff
+    check`, and `mypy`.
+
+- [x] Plugin provider metadata projection.
+  - Source: `openclaw-main/src/plugins/manifest.ts`,
+    `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest-registry.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `9b2bf4fc`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_list_json_preserves_manifest_auth_and_env_metadata
+    -q` (`1 passed`), adjacent manifest metadata proof (`6 passed, 494
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] Persisted plugin registry provider metadata.
+  - Source: `openclaw-main/src/plugins/manifest-registry.ts`,
+    `openclaw-main/src/plugins/manifest-registry.test.ts`
+  - Target: `src/openzues/cli.py`
+  - Test: `tests/test_cli.py`
+  - Status: checkpointed in `54c2fd49`.
+  - Weight: 1
+  - Last verified: 2026-05-04, focused `python -m pytest
+    tests\test_cli.py::test_plugins_registry_refresh_json_persists_provider_metadata
+    -q` (`1 passed`), adjacent registry proof (`4 passed, 497 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] Installed activation-adapter OpenClaw runtime load options.
   - Source: `openclaw-main/src/plugins/runtime/load-context.ts`,
@@ -1345,8 +1651,30 @@ may lag behind this tracker.
     `51ee9573`; WhatsApp audio/voice media send checkpointed in `c27d3439`;
     WhatsApp split-media result metadata checkpointed in `7e549c1e`; Discord
     thread result fallback checkpointed in `e47324f4`; Slack agent-request
-    thread metadata checkpointed in `e3671d6f`
+    thread metadata checkpointed in `e3671d6f`; Feishu/Lark native outbound
+    route checkpointed in `d1515da1`; Google Chat native/media route
+    checkpoints in `edb67dfc` and `7086dcb3`; Nextcloud Talk native route
+    checkpointed in `a6732846`; Synology Chat native route checkpointed in
+    `b69d5489`; Mattermost native route checkpointed in `44541ef9`; Signal
+    native route checkpointed in `81491ab7`; IRC native route checkpointed in
+    `8726ab49`; Twitch native route checkpointed in `6185301b`; Signal native
+    reaction action checkpointed in `c9b45ffb`
   - Weight: 3
+
+- [x] Feishu/Lark native outbound route.
+  - Source: `openclaw-main/extensions/feishu/src/send-target.ts`,
+    `openclaw-main/extensions/feishu/src/send.ts`,
+    `openclaw-main/extensions/feishu/src/send-result.ts`, and
+    `openclaw-main/extensions/feishu/src/outbound.ts`
+  - Target: `src/openzues/schemas.py`, `src/openzues/services/ops_mesh.py`,
+    `src/openzues/services/gateway_channels.py`, and `src/openzues/cli.py`
+  - Test: `tests/test_ops_mesh.py`, `tests/test_cli.py`
+  - Status: checkpointed in `d1515da1`
+  - Weight: 1
+  - Last verified: 2026-05-04, focused Feishu service proof (`2 passed`),
+    focused CLI proof (`1 passed`), adjacent provider send proof (`6 passed,
+    275 deselected`), adjacent route-create proof (`5 passed, 489
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] Slack agent-request thread metadata.
   - Source: `openclaw-main/src/agents/subagent-announce-delivery.ts`,

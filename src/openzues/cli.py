@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import codecs
 import copy
 import inspect
@@ -63,6 +64,7 @@ from openzues.services.control_chat import (
 from openzues.services.control_plane import ControlPlaneLease
 from openzues.services.cortex import build_cortex, build_doctrines
 from openzues.services.device_bootstrap_profile import default_device_bootstrap_profile
+from openzues.services.device_bootstrap_tokens import issue_device_bootstrap_token
 from openzues.services.environment import EnvironmentService
 from openzues.services.followups import operator_blocked_missions
 from openzues.services.gateway_acp_spawn import (
@@ -166,6 +168,7 @@ _DEFAULT_SANDBOX_TOOL_DENY = [
     "signal",
     "slack",
     "telegram",
+    "twitch",
     "whatsapp",
     "xmtp",
 ]
@@ -199,6 +202,54 @@ _CHANNEL_CAPABILITY_SUPPORT: dict[str, dict[str, object]] = {
         "chatTypes": ["direct", "group"],
         "reply": True,
         "media": True,
+    },
+    "googlechat": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "threads": True,
+        "media": False,
+        "polls": False,
+    },
+    "nextcloud-talk": {
+        "chatTypes": ["group", "channel"],
+        "reply": True,
+        "media": True,
+        "polls": False,
+    },
+    "synology-chat": {
+        "chatTypes": ["direct"],
+        "media": True,
+        "polls": False,
+    },
+    "mattermost": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": True,
+        "media": False,
+        "polls": False,
+    },
+    "msteams": {
+        "chatTypes": ["direct", "group", "channel"],
+        "reply": False,
+        "media": False,
+        "polls": True,
+        "threads": False,
+    },
+    "signal": {
+        "chatTypes": ["direct", "group"],
+        "media": True,
+        "polls": False,
+    },
+    "irc": {
+        "chatTypes": ["direct", "channel"],
+        "reply": True,
+        "media": False,
+        "polls": False,
+    },
+    "twitch": {
+        "chatTypes": ["channel"],
+        "media": False,
+        "polls": False,
+        "threads": False,
     },
     "zalo": {
         "chatTypes": ["direct", "group"],
@@ -4926,6 +4977,7 @@ _DOCTOR_CHANNEL_LABELS = {
     "signal": "Signal",
     "slack": "Slack",
     "telegram": "Telegram",
+    "twitch": "Twitch",
     "whatsapp": "WhatsApp",
     "zalo": "Zalo",
     "zulip": "Zulip",
@@ -7351,10 +7403,18 @@ def _with_doctor_gateway_runtime_payload(
 _RUNTIME_BRIDGE_NATIVE_PROVIDER_KINDS = {
     "bluebubbles",
     "discord",
+    "googlechat",
     "line",
     "matrix",
+    "mattermost",
+    "msteams",
+    "nextcloud-talk",
+    "irc",
+    "signal",
     "slack",
+    "synology-chat",
     "telegram",
+    "twitch",
     "whatsapp",
     "zalo",
 }
@@ -13986,6 +14046,22 @@ def _plugin_registry_storage_path(services: CliServices) -> Path | None:
     return data_dir / "settings" / "plugin-registry.json"
 
 
+_PLUGIN_REGISTRY_METADATA_KEYS = (
+    "providerEndpoints",
+    "modelIdNormalization",
+    "providerRequest",
+)
+
+
+def _plugin_registry_metadata_from_row(row: Mapping[str, object]) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    for key in _PLUGIN_REGISTRY_METADATA_KEYS:
+        value = row.get(key)
+        if isinstance(value, list | dict):
+            metadata[key] = copy.deepcopy(value)
+    return metadata
+
+
 def _normalize_plugin_registry_index(value: object) -> dict[str, object] | None:
     if not isinstance(value, dict):
         return None
@@ -14007,6 +14083,7 @@ def _normalize_plugin_registry_index(value: object) -> dict[str, object] | None:
             {
                 "pluginId": plugin_id,
                 "enabled": raw_plugin.get("enabled") is True,
+                **_plugin_registry_metadata_from_row(raw_plugin),
             }
         )
     plugins.sort(key=lambda plugin: str(plugin.get("pluginId") or ""))
@@ -14029,6 +14106,7 @@ def _plugin_registry_index_from_plugins(
             {
                 "pluginId": plugin_id,
                 "enabled": _optional_cli_string(plugin.get("status")) == "loaded",
+                **_plugin_registry_metadata_from_row(plugin),
             }
         )
     plugins.sort(key=lambda entry: str(entry.get("pluginId") or ""))
@@ -17501,7 +17579,7 @@ def _plugin_runtime_specs_from_installed_activation_adapter(
             adapter = candidate
             break
     if adapter is None:
-        return ()
+        adapter = _NativeInstalledPluginRuntimeActivationAdapter()
     only_plugin_ids = _dedupe_cli_strings(
         [
             plugin_id
@@ -17841,6 +17919,340 @@ def _call_plugin_runtime_activation_adapter(
     if callable(adapter):
         return adapter(dict(context))
     return None
+
+
+_NATIVE_PLUGIN_RUNTIME_LOADER_JS = r"""
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const { pathToFileURL } = require("url");
+const Module = require("module");
+
+const contextPath = process.argv[2];
+const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
+
+function normalizeLowercaseStringOrEmpty(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function normalizeOptionalLowercaseString(value) {
+  const text = normalizeLowercaseStringOrEmpty(value);
+  return text || undefined;
+}
+
+function passthrough(value) {
+  return value;
+}
+
+const textRuntime = {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+};
+
+const genericSdk = new Proxy(
+  {
+    normalizeLowercaseStringOrEmpty,
+    normalizeOptionalLowercaseString,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
+const originalLoad = Module._load;
+Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
+  if (
+    request === "openclaw/plugin-sdk/text-runtime" ||
+    request === "@openclaw/plugin-sdk/text-runtime"
+  ) {
+    return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk" ||
+    request === "@openclaw/plugin-sdk" ||
+    request.startsWith("openclaw/plugin-sdk/") ||
+    request.startsWith("@openclaw/plugin-sdk/")
+  ) {
+    return genericSdk;
+  }
+  return originalLoad.apply(this, arguments);
+};
+
+async function loadRuntimeModule(entryPath) {
+  const resolved = path.resolve(entryPath);
+  const source = fs.readFileSync(resolved, "utf8");
+  if (/^\s*import\s/m.test(source) || /^\s*export\s+default\s/m.test(source)) {
+    return requireTranspiledRuntimeModule(resolved, source);
+  }
+  try {
+    return require(resolved);
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    if (
+      error &&
+      (error.code === "ERR_REQUIRE_ESM" || message.includes("Cannot use import statement"))
+    ) {
+      return await import(pathToFileURL(resolved).href);
+    }
+    throw error;
+  }
+}
+
+function requireTranspiledRuntimeModule(entryPath, source) {
+  let transformed = source
+    .replace(
+      /import\s+\{([^}]+)\}\s+from\s+["']([^"']+)["'];?/g,
+      (_match, imports, specifier) => `const {${imports}} = require("${specifier}");`,
+    )
+    .replace(
+      /import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
+      (_match, localName, specifier) => `const ${localName} = require("${specifier}");`,
+    )
+    .replace(
+      /import\s+([A-Za-z_$][\w$]*)\s+from\s+["']([^"']+)["'];?/g,
+      (_match, localName, specifier) =>
+        `const ${localName} = require("${specifier}").default || require("${specifier}");`,
+    )
+    .replace(/export\s+default\s+/g, "module.exports = ");
+  const tempPath = path.join(
+    path.dirname(entryPath),
+    `.openzues-runtime-${process.pid}-${Date.now()}.cjs`,
+  );
+  fs.writeFileSync(tempPath, transformed, "utf8");
+  try {
+    return require(tempPath);
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (_error) {
+      // best-effort cleanup only
+    }
+  }
+}
+
+function unwrapRuntimeExport(moduleValue) {
+  let value = moduleValue;
+  for (let index = 0; index < 4; index += 1) {
+    if (
+      value &&
+      typeof value === "object" &&
+      "default" in value &&
+      value.default &&
+      (typeof value.default === "function" ||
+        typeof value.default.register === "function" ||
+        typeof value.default.activate === "function")
+    ) {
+      value = value.default;
+      continue;
+    }
+    break;
+  }
+  return value;
+}
+
+function toolNamesFromDefinition(definition) {
+  if (typeof definition === "string") {
+    return [definition];
+  }
+  if (!definition || typeof definition !== "object") {
+    return [];
+  }
+  const names = [];
+  if (typeof definition.name === "string") {
+    names.push(definition.name);
+  }
+  if (Array.isArray(definition.names)) {
+    for (const name of definition.names) {
+      if (typeof name === "string") {
+        names.push(name);
+      }
+    }
+  }
+  return Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+}
+
+async function activatePlugin(plugin) {
+  const entryPath = plugin.runtimeEntrySource;
+  if (typeof entryPath !== "string" || !entryPath.trim()) {
+    return null;
+  }
+  const loaded = await loadRuntimeModule(entryPath);
+  const runtime = unwrapRuntimeExport(loaded);
+  const activate =
+    runtime && typeof runtime === "object"
+      ? runtime.register || runtime.activate
+      : typeof runtime === "function"
+        ? runtime
+        : null;
+  if (typeof activate !== "function") {
+    return null;
+  }
+  const tools = [];
+  const registerTool = (definition) => {
+    const names = toolNamesFromDefinition(definition);
+    if (!names.length) {
+      return;
+    }
+    tools.push({
+      pluginId: plugin.id || plugin.pluginId,
+      pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+      source: "openclaw-plugin",
+      names,
+      description:
+        definition && typeof definition === "object" && typeof definition.description === "string"
+          ? definition.description
+          : undefined,
+    });
+  };
+  const api = {
+    pluginId: plugin.id || plugin.pluginId,
+    pluginName: plugin.name || plugin.pluginName || plugin.id || plugin.pluginId,
+    registerTool,
+    tools: { register: registerTool, registerTool },
+    tool: { register: registerTool, registerTool },
+  };
+  const returned = await Promise.resolve(activate(api));
+  if (returned && typeof returned === "object" && Array.isArray(returned.tools)) {
+    for (const definition of returned.tools) {
+      registerTool(definition);
+    }
+  }
+  return {
+    pluginId: plugin.id || plugin.pluginId,
+    tools,
+  };
+}
+
+(async () => {
+  const tools = [];
+  const importedPluginIds = [];
+  for (const plugin of Array.isArray(context.plugins) ? context.plugins : []) {
+    if (!plugin || typeof plugin !== "object") {
+      continue;
+    }
+    if (plugin.status && plugin.status !== "loaded") {
+      continue;
+    }
+    const result = await activatePlugin(plugin);
+    if (!result) {
+      continue;
+    }
+    if (result.pluginId) {
+      importedPluginIds.push(result.pluginId);
+    }
+    tools.push(...result.tools);
+  }
+  process.stdout.write(JSON.stringify({ tools, importedPluginIds }));
+})().catch((error) => {
+  const message = error && error.stack ? error.stack : String(error);
+  process.stderr.write(message);
+  process.exit(1);
+});
+"""
+
+
+class _NativeInstalledPluginRuntimeActivationAdapter:
+    def activate_installed_plugins(
+        self,
+        context: dict[str, object],
+    ) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+        plugins = context.get("plugins")
+        if not isinstance(plugins, list):
+            return ()
+        if not any(
+            isinstance(plugin, Mapping)
+            and _optional_cli_string(plugin.get("runtimeEntrySource")) is not None
+            for plugin in plugins
+        ):
+            return ()
+        if shutil.which("node") is None:
+            raise RuntimeError("Node.js is required to import OpenClaw plugin runtimes.")
+        with tempfile.TemporaryDirectory(prefix="openzues-plugin-runtime-") as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            loader_path = tmp_path / "loader.cjs"
+            context_path = tmp_path / "context.json"
+            loader_path.write_text(_NATIVE_PLUGIN_RUNTIME_LOADER_JS, encoding="utf-8")
+            context_path.write_text(
+                json.dumps({"plugins": plugins}, default=str),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                ["node", str(loader_path), str(context_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "unknown error").strip()
+            raise RuntimeError(detail[:1000])
+        try:
+            payload = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("plugin runtime loader returned invalid JSON") from exc
+        return _native_plugin_runtime_specs_from_loader_payload(payload)
+
+
+async def _native_plugin_runtime_executor(
+    tool: str,
+    _args: dict[str, Any],
+) -> dict[str, object]:
+    return {
+        "ok": False,
+        "tool": tool,
+        "error": "OpenClaw plugin runtime execution is not available in this native loader.",
+    }
+
+
+def _native_plugin_runtime_specs_from_loader_payload(
+    payload: object,
+) -> tuple[GatewayPluginRuntimeExecutorSpec, ...]:
+    if not isinstance(payload, Mapping):
+        return ()
+    entries = payload.get("tools")
+    if not isinstance(entries, list):
+        return ()
+    specs: list[GatewayPluginRuntimeExecutorSpec] = []
+    seen: set[tuple[str, str | None]] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        plugin_id = _optional_cli_string(entry.get("pluginId", entry.get("plugin_id")))
+        raw_names = entry.get("names")
+        names = _string_list_or_none(raw_names)
+        if not names:
+            maybe_name = _optional_cli_string(entry.get("name"))
+            names = [maybe_name] if maybe_name is not None else []
+        for name in names:
+            tool_name = name.strip()
+            if not tool_name:
+                continue
+            key = (tool_name.lower(), plugin_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append(
+                GatewayPluginRuntimeExecutorSpec(
+                    tool=tool_name,
+                    executor=_native_plugin_runtime_executor,
+                    plugin_id=plugin_id,
+                    plugin_name=_optional_cli_string(
+                        entry.get("pluginName", entry.get("plugin_name"))
+                    ),
+                    description=_optional_cli_string(entry.get("description")),
+                    source=_optional_cli_string(entry.get("source")) or "openclaw-plugin",
+                )
+            )
+    return tuple(specs)
 
 
 def _plugin_runtime_tool_entries(
@@ -18403,16 +18815,145 @@ def _plugin_manifest_provider_endpoints(value: object) -> list[dict[str, object]
             host.lower()
             for host in _plugin_manifest_string_list(raw_endpoint.get("hosts"))
         ]
+        host_suffixes = [
+            host.lower()
+            for host in _plugin_manifest_string_list(raw_endpoint.get("hostSuffixes"))
+        ]
         base_urls = _plugin_manifest_string_list(raw_endpoint.get("baseUrls"))
-        if not hosts and not base_urls:
+        if not hosts and not host_suffixes and not base_urls:
             continue
         endpoint: dict[str, object] = {"endpointClass": endpoint_class}
         if hosts:
             endpoint["hosts"] = hosts
+        if host_suffixes:
+            endpoint["hostSuffixes"] = host_suffixes
         if base_urls:
             endpoint["baseUrls"] = base_urls
+        google_vertex_region = _optional_cli_string(raw_endpoint.get("googleVertexRegion"))
+        if google_vertex_region is not None:
+            endpoint["googleVertexRegion"] = google_vertex_region
+        google_vertex_region_host_suffix = _optional_cli_string(
+            raw_endpoint.get("googleVertexRegionHostSuffix")
+        )
+        if google_vertex_region_host_suffix is not None:
+            endpoint["googleVertexRegionHostSuffix"] = (
+                google_vertex_region_host_suffix.lower()
+            )
         endpoints.append(endpoint)
     return endpoints
+
+
+def _plugin_manifest_owned_provider_ids(manifest: Mapping[str, object]) -> set[str]:
+    return {
+        provider.lower()
+        for provider in _plugin_manifest_string_list(manifest.get("providers"))
+    }
+
+
+def _plugin_manifest_model_id_prefix_rules(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rules: list[dict[str, object]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        model_prefix = _optional_cli_string(entry.get("modelPrefix"))
+        prefix = _optional_cli_string(entry.get("prefix"))
+        if model_prefix is None or prefix is None:
+            continue
+        rules.append({"modelPrefix": model_prefix, "prefix": prefix})
+    return rules
+
+
+def _plugin_manifest_model_id_normalization_provider(
+    value: object,
+) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    policy: dict[str, object] = {}
+    aliases = _plugin_manifest_string_record(value.get("aliases"))
+    if aliases:
+        policy["aliases"] = aliases
+    strip_prefixes = _plugin_manifest_string_list(value.get("stripPrefixes"))
+    if strip_prefixes:
+        policy["stripPrefixes"] = strip_prefixes
+    prefix_when_bare = _optional_cli_string(value.get("prefixWhenBare"))
+    if prefix_when_bare is not None:
+        policy["prefixWhenBare"] = prefix_when_bare
+    prefix_rules = _plugin_manifest_model_id_prefix_rules(
+        value.get("prefixWhenBareAfterAliasStartsWith")
+    )
+    if prefix_rules:
+        policy["prefixWhenBareAfterAliasStartsWith"] = prefix_rules
+    return policy or None
+
+
+def _plugin_manifest_model_id_normalization(
+    value: object,
+    *,
+    owned_provider_ids: set[str],
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_providers = value.get("providers")
+    if not isinstance(raw_providers, dict):
+        return {}
+    providers: dict[str, object] = {}
+    for raw_provider, raw_policy in raw_providers.items():
+        provider_id = _optional_cli_string(raw_provider)
+        if provider_id is None:
+            continue
+        normalized_provider_id = provider_id.lower()
+        if normalized_provider_id not in owned_provider_ids:
+            continue
+        policy = _plugin_manifest_model_id_normalization_provider(raw_policy)
+        if policy:
+            providers[normalized_provider_id] = policy
+    return {"providers": providers} if providers else {}
+
+
+def _plugin_manifest_provider_request_provider(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    request: dict[str, object] = {}
+    family = _optional_cli_string(value.get("family"))
+    if family is not None:
+        request["family"] = family
+    compatibility_family = _optional_cli_string(value.get("compatibilityFamily"))
+    if compatibility_family == "moonshot":
+        request["compatibilityFamily"] = compatibility_family
+    openai_completions = value.get("openAICompletions")
+    if isinstance(openai_completions, dict):
+        supports_streaming_usage = openai_completions.get("supportsStreamingUsage")
+        if isinstance(supports_streaming_usage, bool):
+            request["openAICompletions"] = {
+                "supportsStreamingUsage": supports_streaming_usage
+            }
+    return request or None
+
+
+def _plugin_manifest_provider_request(
+    value: object,
+    *,
+    owned_provider_ids: set[str],
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_providers = value.get("providers")
+    if not isinstance(raw_providers, dict):
+        return {}
+    providers: dict[str, object] = {}
+    for raw_provider, raw_policy in raw_providers.items():
+        provider_id = _optional_cli_string(raw_provider)
+        if provider_id is None:
+            continue
+        normalized_provider_id = provider_id.lower()
+        if normalized_provider_id not in owned_provider_ids:
+            continue
+        policy = _plugin_manifest_provider_request_provider(raw_policy)
+        if policy:
+            providers[normalized_provider_id] = policy
+    return {"providers": providers} if providers else {}
 
 
 def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, object]]:
@@ -18473,6 +19014,7 @@ def _plugin_manifest_provider_auth_choices(value: object) -> list[dict[str, obje
 
 def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str, object]:
     metadata: dict[str, object] = {}
+    owned_provider_ids = _plugin_manifest_owned_provider_ids(manifest)
     for key in ("providerAuthEnvVars", "channelEnvVars"):
         value = _plugin_manifest_string_list_record(manifest.get(key))
         if value:
@@ -18491,6 +19033,18 @@ def _plugin_manifest_auth_env_metadata(manifest: dict[str, object]) -> dict[str,
     )
     if provider_endpoints:
         metadata["providerEndpoints"] = provider_endpoints
+    model_id_normalization = _plugin_manifest_model_id_normalization(
+        manifest.get("modelIdNormalization"),
+        owned_provider_ids=owned_provider_ids,
+    )
+    if model_id_normalization:
+        metadata["modelIdNormalization"] = model_id_normalization
+    provider_request = _plugin_manifest_provider_request(
+        manifest.get("providerRequest"),
+        owned_provider_ids=owned_provider_ids,
+    )
+    if provider_request:
+        metadata["providerRequest"] = provider_request
     provider_auth_choices = _plugin_manifest_provider_auth_choices(
         manifest.get("providerAuthChoices")
     )
@@ -22585,6 +23139,65 @@ def _build_bootstrap_payload(
     )
 
 
+def _encode_pairing_setup_code(payload: Mapping[str, object]) -> str:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _format_pairing_host(host: str) -> str:
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _normalize_pairing_setup_url(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        raise ValueError("Gateway URL unavailable.")
+    candidate = value if "://" in value else f"wss://{value}"
+    parsed = urlparse(candidate)
+    if parsed.username or parsed.password:
+        raise ValueError("Configured publicUrl is invalid.")
+    scheme = parsed.scheme.lower()
+    if scheme == "http":
+        scheme = "ws"
+    elif scheme == "https":
+        scheme = "wss"
+    if scheme not in {"ws", "wss"} or not parsed.hostname:
+        raise ValueError("Configured publicUrl is invalid.")
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Configured publicUrl is invalid.") from exc
+    port = f":{parsed_port}" if parsed_port is not None else ""
+    return f"{scheme}://{_format_pairing_host(parsed.hostname)}{port}"
+
+
+def _resolve_qr_gateway_url(
+    *,
+    app_settings: Settings,
+    url: str | None,
+    public_url: str | None,
+    remote: bool,
+) -> tuple[str, str]:
+    explicit_url = str(url or "").strip() or str(public_url or "").strip()
+    if explicit_url:
+        return _normalize_pairing_setup_url(explicit_url), (
+            "cli.url" if str(url or "").strip() else "cli.publicUrl"
+        )
+    if remote:
+        raise ValueError(
+            "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
+        )
+    scheme = "wss" if remote else "ws"
+    return (
+        _normalize_pairing_setup_url(
+            f"{scheme}://{app_settings.host}:{app_settings.port}"
+        ),
+        "openzues.settings",
+    )
+
+
 def _apply_swarm_launch_override(
     payload: MissionCreate,
     *,
@@ -22708,6 +23321,114 @@ def health_command(
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
     _emit_health(payload, json_output=json_output)
+
+
+@app.command("qr")
+def qr_command(
+    remote: bool = typer.Option(
+        False,
+        "--remote",
+        help="Prefer a remote gateway URL when deriving the setup payload.",
+    ),
+    url: str | None = typer.Option(
+        None,
+        "--url",
+        help="Override the gateway URL used in the setup payload.",
+    ),
+    public_url: str | None = typer.Option(
+        None,
+        "--public-url",
+        help="Override the public gateway URL used in the setup payload.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        help="Accept an OpenClaw gateway-token override without embedding it in the setup code.",
+    ),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="Accept an OpenClaw gateway-password override without embedding it in the setup code.",
+    ),
+    setup_code_only: bool = typer.Option(
+        False,
+        "--setup-code-only",
+        help="Print only the base64url setup code.",
+    ),
+    ascii_qr: bool = typer.Option(
+        True,
+        "--ascii/--no-ascii",
+        help="Include the terminal QR placeholder in human output.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the setup code payload as JSON.",
+    ),
+) -> None:
+    try:
+        if str(token or "").strip() and str(password or "").strip():
+            raise ValueError("Use either --token or --password, not both.")
+        app_settings = _runtime_settings()
+        gateway_url, url_source = _resolve_qr_gateway_url(
+            app_settings=app_settings,
+            url=url,
+            public_url=public_url,
+            remote=remote,
+        )
+        issued = issue_device_bootstrap_token(base_dir=app_settings.data_dir)
+        setup_code = _encode_pairing_setup_code(
+            {
+                "url": gateway_url,
+                "bootstrapToken": issued.token,
+            }
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if setup_code_only:
+        typer.echo(setup_code)
+        return
+
+    auth_label = (
+        "password"
+        if str(password or "").strip()
+        else "token"
+        if str(token or "").strip()
+        else "bootstrap-token"
+    )
+    payload = {
+        "setupCode": setup_code,
+        "gatewayUrl": gateway_url,
+        "auth": auth_label,
+        "urlSource": url_source,
+    }
+    if json_output:
+        _emit_payload(payload, json_output=True)
+        return
+
+    lines = [
+        "Pairing QR",
+        "Scan this with the OpenClaw mobile app (Onboarding -> Scan QR).",
+        "",
+    ]
+    if ascii_qr:
+        lines.extend(
+            [
+                "(terminal QR rendering is unavailable in this native CLI build)",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            f"Setup code: {setup_code}",
+            f"Gateway: {gateway_url}",
+            f"Auth: {auth_label}",
+            f"Source: {url_source}",
+        ]
+    )
+    typer.echo("\n".join(lines))
 
 
 @app.command("status")
@@ -28598,8 +29319,9 @@ def routes_create_command(
         "webhook",
         "--kind",
         help=(
-            "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, line, "
-            "or matrix."
+            "Route kind: webhook, slack, telegram, discord, whatsapp, zalo, feishu, "
+            "googlechat, nextcloud-talk, synology-chat, mattermost, msteams, "
+            "signal, irc, twitch, line, or matrix."
         ),
     ),
     target: str = typer.Option(
@@ -28658,19 +29380,46 @@ def routes_create_command(
         "discord",
         "whatsapp",
         "zalo",
+        "feishu",
+        "googlechat",
+        "nextcloud-talk",
+        "synology-chat",
+        "mattermost",
+        "msteams",
+        "signal",
+        "irc",
+        "twitch",
         "line",
         "matrix",
     }:
         raise typer.BadParameter(
             "--kind must be one of: webhook, slack, telegram, discord, whatsapp, "
-            "zalo, line, matrix."
+            "zalo, feishu, googlechat, nextcloud-talk, synology-chat, mattermost, "
+            "msteams, signal, irc, twitch, line, matrix."
         )
     route_events = _parse_cli_csv_list(events)
     if not route_events:
         route_events = (
             ["gateway/send", "gateway/poll"]
             if route_kind
-            in {"slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"}
+            in {
+                "slack",
+                "telegram",
+                "discord",
+                "whatsapp",
+                "zalo",
+                "feishu",
+                "googlechat",
+                "nextcloud-talk",
+                "synology-chat",
+                "mattermost",
+                "msteams",
+                "signal",
+                "irc",
+                "twitch",
+                "line",
+                "matrix",
+            }
             else ["mission/completed", "mission/failed"]
         )
     payload = NotificationRouteCreate(
@@ -28683,6 +29432,15 @@ def routes_create_command(
                 "discord",
                 "whatsapp",
                 "zalo",
+                "feishu",
+                "googlechat",
+                "nextcloud-talk",
+                "synology-chat",
+                "mattermost",
+                "msteams",
+                "signal",
+                "irc",
+                "twitch",
                 "line",
                 "matrix",
             ],

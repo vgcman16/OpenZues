@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import io
+import json
 import re
+import secrets
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -7711,6 +7715,188 @@ def test_notification_route_create_accepts_zalo_native_route_kind() -> None:
     assert route.conversation_target.channel == "zalo"
 
 
+def test_notification_route_create_accepts_feishu_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Feishu Native Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id="feishu:chat:oc_chat_1",
+        ),
+        secret_token="tenant-access-token",
+    )
+
+    assert route.kind == "feishu"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "feishu"
+
+
+def test_notification_route_create_accepts_googlechat_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Google Chat Native Provider",
+        kind="googlechat",
+        target="spaces/AAAAAAA",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="googlechat",
+            account_id="workspace",
+            peer_kind="channel",
+            peer_id="spaces/AAAAAAA",
+        ),
+        secret_token="google-chat-access-token",
+    )
+
+    assert route.kind == "googlechat"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "googlechat"
+
+
+def test_notification_route_create_accepts_nextcloud_talk_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Nextcloud Talk Native Provider",
+        kind="nextcloud-talk",
+        target="https://nextcloud.example.com",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="nextcloud-talk",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="nextcloud-talk:room:abc123",
+        ),
+        secret_token="nextcloud-bot-secret",
+    )
+
+    assert route.kind == "nextcloud-talk"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "nextcloud-talk"
+
+
+def test_notification_route_create_accepts_synology_chat_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Synology Chat Native Provider",
+        kind="synology-chat",
+        target="https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="synology-chat",
+            account_id="default",
+            peer_kind="direct",
+            peer_id="42",
+        ),
+    )
+
+    assert route.kind == "synology-chat"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "synology-chat"
+
+
+def test_notification_route_create_accepts_mattermost_native_route_kind() -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    route = NotificationRouteCreate(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="mattermost",
+            account_id="default",
+            peer_kind="channel",
+            peer_id=f"channel:{channel_id}",
+        ),
+        secret_token="mattermost-bot-token",
+    )
+
+    assert route.kind == "mattermost"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "mattermost"
+
+
+def test_notification_route_create_accepts_msteams_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="msteams",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="conversation:19:ops-thread@thread.tacv2",
+        ),
+        secret_token="teams-app-password",
+    )
+
+    assert route.kind == "msteams"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "msteams"
+
+
+def test_notification_route_create_accepts_signal_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Signal Native Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="signal",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="signal:+15551234567",
+        ),
+    )
+
+    assert route.kind == "signal"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "signal"
+
+
+def test_notification_route_create_accepts_irc_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="IRC Native Provider",
+        kind="irc",
+        target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="irc",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="channel:ops-room",
+        ),
+        secret_token="irc-server-password",
+    )
+
+    assert route.kind == "irc"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "irc"
+
+
+def test_notification_route_create_accepts_twitch_native_route_kind() -> None:
+    route = NotificationRouteCreate(
+        name="Twitch Native Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        conversation_target=ConversationTargetView(
+            channel="twitch",
+            account_id="default",
+            peer_kind="channel",
+            peer_id="#OpenZues",
+        ),
+        secret_token="oauth:twitch-token",
+    )
+
+    assert route.kind == "twitch"
+    assert route.conversation_target is not None
+    assert route.conversation_target.channel == "twitch"
+
+
 @pytest.mark.asyncio
 async def test_ops_mesh_service_send_direct_channel_message_preserves_provider_native_options(
 ) -> None:
@@ -14747,11 +14933,7 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_telegram_native
             {
                 "chat_id": "-100123",
                 "photo": "https://example.com/telegram.png",
-                "caption": (
-                    "Ship native Telegram parity.\n\n"
-                    "Media:\n"
-                    "1. https://example.com/telegram.png"
-                ),
+                "caption": "Ship native Telegram parity.",
             },
         )
     ]
@@ -16372,6 +16554,4196 @@ async def test_ops_mesh_service_send_direct_channel_message_uses_zalo_native_rou
         "chatId": "dm-chat-1",
         "channelId": "dm-chat-1",
     }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_feishu_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-feishu-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    feishu_target = "feishu:chat:oc_chat_1"
+    await database.create_notification_route(
+        name="Feishu Native Send Provider",
+        kind="feishu",
+        target="https://open.feishu.cn/open-apis",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="tenant-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "feishu",
+            "account_id": "feishu-bot",
+            "peer_kind": "channel",
+            "peer_id": feishu_target,
+        },
+    )
+    feishu_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        feishu_posts.append((target, payload, secret_header_name, secret_token))
+        return {
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "message_id": "om_feishu_1",
+                "chat_id": "oc_chat_1",
+            },
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="feishu",
+        to=feishu_target,
+        message="Feishu **native** parity.",
+        account_id="feishu-bot",
+        idempotency_key="idem-native-feishu-send",
+    )
+
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="feishu",
+            account_id="feishu-bot",
+            peer_kind="channel",
+            peer_id=feishu_target,
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-feishu-send",
+        "channel": "feishu",
+        "messageId": "om_feishu_1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "feishu",
+            "target": feishu_target,
+            "accountId": "feishu-bot",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+    assert len(feishu_posts) == 1
+    target, payload, secret_header_name, secret_token = feishu_posts[0]
+    assert target == "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+    assert payload["receive_id"] == "oc_chat_1"
+    assert payload["msg_type"] == "post"
+    assert json.loads(str(payload["content"])) == {
+        "zh_cn": {
+            "content": [
+                [
+                    {
+                        "tag": "md",
+                        "text": "Feishu **native** parity.",
+                    }
+                ]
+            ]
+        }
+    }
+    assert secret_header_name == "Authorization"
+    assert secret_token == "Bearer tenant-access-token"
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "om_feishu_1",
+        "chatId": "oc_chat_1",
+        "channelId": "oc_chat_1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "googlechat:spaces/AAAAAAA"
+    await database.create_notification_route(
+        name="Google Chat Native Send Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/AAAAAAA/messages/msg-1"}
+
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="Google Chat **native** parity.",
+        account_id="workspace",
+        thread_id="spaces/AAAAAAA/threads/thread-1",
+        reply_to_id="spaces/AAAAAAA/messages/root",
+        idempotency_key="idem-native-googlechat-send",
+    )
+
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=build_launch_session_key(
+            mode="workspace_affinity",
+            preferred_instance_id=None,
+            task_id=None,
+            project_id=None,
+            operator_id=None,
+            conversation_target=ConversationTargetView(
+                channel="googlechat",
+                account_id="workspace",
+                peer_kind="channel",
+                peer_id=googlechat_target,
+            ),
+        ),
+        thread_id="spaces/AAAAAAA/threads/thread-1",
+    ).session_key
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-googlechat-send",
+        "channel": "googlechat",
+        "messageId": "spaces/AAAAAAA/messages/msg-1",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "googlechat",
+            "target": googlechat_target,
+            "accountId": "workspace",
+            "threadId": "spaces/AAAAAAA/threads/thread-1",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": "spaces/AAAAAAA",
+        "channelId": "spaces/AAAAAAA",
+        "threadId": "spaces/AAAAAAA/threads/thread-1",
+        "replyToId": "spaces/AAAAAAA/messages/root",
+    }
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages"
+            "?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+            {
+                "text": "Google Chat **native** parity.",
+                "thread": {"name": "spaces/AAAAAAA/threads/thread-1"},
+            },
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "spaces/AAAAAAA/messages/msg-1",
+        "chatId": "spaces/AAAAAAA",
+        "channelId": "spaces/AAAAAAA",
+        "threadId": "spaces/AAAAAAA/threads/thread-1",
+        "replyToId": "spaces/AAAAAAA/messages/root",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_googlechat_media_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-media"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    media_path = tmp_path / "chart.png"
+    media_path.write_bytes(b"png-bytes")
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "spaces/AAAAAAA"
+    await database.create_notification_route(
+        name="Google Chat Native Media Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "channel",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_uploads: list[dict[str, object]] = []
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_googlechat_attachment_upload(
+        self: OpsMeshService,
+        route_target: str,
+        *,
+        space: str,
+        filename: str,
+        media_bytes: bytes,
+        content_type: str | None,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_uploads.append(
+            {
+                "routeTarget": route_target,
+                "space": space,
+                "filename": filename,
+                "mediaBytes": media_bytes,
+                "contentType": content_type,
+                "secretToken": secret_token,
+            }
+        )
+        return {"attachmentDataRef": {"attachmentUploadToken": "upload-token-1"}}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/AAAAAAA/messages/msg-media"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_googlechat_attachment_upload",
+        fake_googlechat_attachment_upload,
+        raising=False,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="chart caption",
+        media_urls=[str(media_path)],
+        account_id="workspace",
+        idempotency_key="idem-native-googlechat-media",
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result["messageId"] == "spaces/AAAAAAA/messages/msg-media"
+    assert result["mediaIds"] == ["upload-token-1"]
+    assert result["mediaUrls"] == [str(media_path)]
+    assert googlechat_uploads == [
+        {
+            "routeTarget": "https://chat.googleapis.com/v1",
+            "space": "spaces/AAAAAAA",
+            "filename": "chart.png",
+            "mediaBytes": b"png-bytes",
+            "contentType": "image/png",
+            "secretToken": "google-chat-access-token",
+        }
+    ]
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/AAAAAAA/messages",
+            {
+                "text": "chart caption",
+                "attachment": [
+                    {
+                        "attachmentDataRef": {"attachmentUploadToken": "upload-token-1"},
+                        "contentName": "chart.png",
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["mediaIds"] == ["upload-token-1"]
+    assert delivery["route_scope"]["provider_result"]["filenames"] == ["chart.png"]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_resolves_googlechat_dm_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-googlechat-dm"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    googlechat_target = "googlechat:users/Owner@Example.COM"
+    await database.create_notification_route(
+        name="Google Chat Native DM Provider",
+        kind="googlechat",
+        target="https://chat.googleapis.com/v1",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="google-chat-access-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "googlechat",
+            "account_id": "workspace",
+            "peer_kind": "direct",
+            "peer_id": googlechat_target,
+        },
+    )
+    googlechat_gets: list[tuple[str, str | None, str | None]] = []
+    googlechat_posts: list[tuple[str, dict[str, object], str | None, str | None]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, payload, extra_headers, timeout_seconds
+        assert method == "GET"
+        googlechat_gets.append((target, secret_header_name, secret_token))
+        return {"name": "spaces/DM123"}
+
+    def fake_post_json_webhook(
+        self: OpsMeshService,
+        target: str,
+        payload: dict[str, object],
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+    ) -> dict[str, object]:
+        del self
+        googlechat_posts.append((target, payload, secret_header_name, secret_token))
+        return {"name": "spaces/DM123/messages/msg-1"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    monkeypatch.setattr(OpsMeshService, "_post_json_webhook", fake_post_json_webhook)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="googlechat",
+        to=googlechat_target,
+        message="DM parity.",
+        account_id="workspace",
+        idempotency_key="idem-native-googlechat-dm",
+    )
+
+    assert result["messageId"] == "spaces/DM123/messages/msg-1"
+    assert result["chatId"] == "spaces/DM123"
+    assert googlechat_gets == [
+        (
+            "https://chat.googleapis.com/v1/spaces:findDirectMessage"
+            "?name=users%2Fowner%40example.com",
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+    assert googlechat_posts == [
+        (
+            "https://chat.googleapis.com/v1/spaces/DM123/messages",
+            {"text": "DM parity."},
+            "Authorization",
+            "Bearer google-chat-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_nextcloud_talk_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-nextcloud-talk"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Nextcloud Talk Native Provider",
+        kind="nextcloud-talk",
+        target="https://nextcloud.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="nextcloud-bot-secret",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "nextcloud-talk",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "nextcloud-talk:room:abc123",
+        },
+    )
+    nextcloud_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_token_hex(length: int) -> str:
+        assert length == 16
+        return "fixedrandom"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert isinstance(payload, dict)
+        nextcloud_posts.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"ocs": {"data": {"id": 12345, "timestamp": 1706000000}}}
+
+    monkeypatch.setattr(secrets, "token_hex", fake_token_hex)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="nextcloud-talk",
+        to="nextcloud-talk:room:abc123",
+        message="Nextcloud **native** parity.",
+        media_urls=["https://example.com/chart.png"],
+        reply_to_id="reply-42",
+        account_id="default",
+        idempotency_key="idem-native-nextcloud-talk-send",
+    )
+
+    expected_signature = hmac.new(
+        b"nextcloud-bot-secret",
+        b"fixedrandomNextcloud **native** parity.\n\nAttachment: https://example.com/chart.png",
+        hashlib.sha256,
+    ).hexdigest()
+    assert result["messageId"] == "12345"
+    assert result["chatId"] == "abc123"
+    assert result["timestamp"] == 1706000000
+    assert nextcloud_posts == [
+        (
+            "POST",
+            "https://nextcloud.example.com/ocs/v2.php/apps/spreed/api/v1/bot/abc123/message",
+            {
+                "message": "Nextcloud **native** parity.\n\n"
+                "Attachment: https://example.com/chart.png",
+                "replyTo": "reply-42",
+            },
+            None,
+            None,
+            {
+                "OCS-APIRequest": "true",
+                "X-Nextcloud-Talk-Bot-Random": "fixedrandom",
+                "X-Nextcloud-Talk-Bot-Signature": expected_signature,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_synology_chat_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-synology-chat"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Synology Chat Native Provider",
+        kind="synology-chat",
+        target="https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "synology-chat",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "42",
+        },
+    )
+    synology_posts: list[tuple[str, str, dict[str, str], dict[str, str] | None]] = []
+
+    def fake_request_form_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert payload is not None
+        synology_posts.append((method, target, payload, extra_headers))
+        return {"status": 200}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_form_provider_url",
+        fake_request_form_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="synology-chat",
+        to="42",
+        message="Synology **native** parity.",
+        account_id="default",
+        idempotency_key="idem-native-synology-chat-send",
+    )
+
+    assert result["messageId"].startswith("synology-chat:")
+    assert result["chatId"] == "42"
+    assert synology_posts == [
+        (
+            "POST",
+            "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+            {
+                "payload": json.dumps(
+                    {
+                        "text": "Synology **native** parity.",
+                        "user_ids": [42],
+                    },
+                    separators=(",", ":"),
+                )
+            },
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_mattermost_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-mattermost"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Mattermost Native Provider",
+        kind="mattermost",
+        target="https://mattermost.example.com",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="mattermost-bot-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "mattermost",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"channel:{channel_id}",
+        },
+    )
+    mattermost_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None, dict[str, str] | None]
+    ] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        assert isinstance(payload, dict)
+        mattermost_posts.append(
+            (method, target, payload, secret_header_name, secret_token, extra_headers)
+        )
+        return {"id": "post-123", "channel_id": channel_id, "root_id": "post-parent"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="mattermost",
+        to=f"channel:{channel_id}",
+        message="Mattermost **native** parity.",
+        reply_to_id="post-parent",
+        account_id="default",
+        idempotency_key="idem-native-mattermost-send",
+    )
+
+    assert result["messageId"] == "post-123"
+    assert result["chatId"] == channel_id
+    assert result["channelId"] == channel_id
+    assert mattermost_posts == [
+        (
+            "POST",
+            "https://mattermost.example.com/api/v4/posts",
+            {
+                "channel_id": channel_id,
+                "message": "Mattermost **native** parity.",
+                "root_id": "post-parent",
+            },
+            "Authorization",
+            "Bearer mattermost-bot-token",
+            None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id};messageid=old-root",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        message="Microsoft Teams **native** parity.",
+        account_id="default",
+        idempotency_key="idem-native-msteams-send",
+    )
+
+    assert result["messageId"] == "teams-message-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities"
+            ),
+            {
+                "type": "message",
+                "text": "Microsoft Teams **native** parity.",
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_user_reference_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "a:personal-dm-conversation"
+    user_id = "alice-aad-id"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams-user"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native User Reference",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=personal"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": f"user:{user_id}",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-dm-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:user:{user_id}",
+        message="Microsoft Teams DM reference parity.",
+        account_id="default",
+        idempotency_key="idem-native-msteams-user-send",
+    )
+
+    assert result["messageId"] == "teams-dm-message-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "a%3Apersonal-dm-conversation/activities"
+            ),
+            {
+                "type": "message",
+                "text": "Microsoft Teams DM reference parity.",
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_thread_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams-thread"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Thread Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"conversation:{conversation_id}",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-thread-reply-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        message="Microsoft Teams threaded reply parity.",
+        reply_to_id="thread-root-1",
+        account_id="default",
+        idempotency_key="idem-native-msteams-thread-send",
+    )
+
+    assert result["messageId"] == "teams-thread-reply-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert result["replyToId"] == "thread-root-1"
+    assert msteams_posts[0][0] == "POST"
+    assert msteams_posts[0][1] == (
+        "https://smba.trafficmanager.net/amer/v3/conversations/"
+        "19%3Aops-thread%40thread.tacv2%3Bmessageid%3Dthread-root-1/activities"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_info_card_media(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams-file"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native File Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"conversation:{conversation_id}",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-file-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        message="Microsoft Teams native file card parity.",
+        media_urls=["https://files.example.com/reports/Q1%20Plan.PDF"],
+        channel_data={
+            "msteamsFileInfo": {
+                "name": "Q1 Plan.PDF",
+                "webDavUrl": "https://sharepoint.example.com/sites/ops/Q1%20Plan.PDF",
+                "eTag": '"{11111111-2222-3333-4444-555555555555},1"',
+            }
+        },
+        account_id="default",
+        idempotency_key="idem-native-msteams-file-send",
+    )
+
+    assert result["messageId"] == "teams-file-message-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert result["mediaUrls"] == ["https://files.example.com/reports/Q1%20Plan.PDF"]
+    assert result["filenames"] == ["Q1 Plan.PDF"]
+    assert result["fileIds"] == ["11111111-2222-3333-4444-555555555555"]
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities"
+            ),
+            {
+                "type": "message",
+                "text": "Microsoft Teams native file card parity.",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.teams.card.file.info",
+                        "contentUrl": (
+                            "https://sharepoint.example.com/sites/ops/Q1%20Plan.PDF"
+                        ),
+                        "name": "Q1 Plan.PDF",
+                        "content": {
+                            "uniqueId": "11111111-2222-3333-4444-555555555555",
+                            "fileType": "pdf",
+                        },
+                    }
+                ],
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_file_consent_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "a:personal-dm-conversation"
+    user_id = "alice-aad-id"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-msteams-consent"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native File Consent Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=personal"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": f"user:{user_id}",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-consent-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:user:{user_id}",
+        message="Please approve this upload.",
+        media_urls=["https://files.example.com/reports/big-report.pdf"],
+        channel_data={
+            "msteamsFileConsent": {
+                "filename": "big-report.pdf",
+                "sizeInBytes": 7_340_032,
+                "uploadId": "upload-consent-123",
+                "description": "Please approve this upload.",
+            }
+        },
+        account_id="default",
+        idempotency_key="idem-native-msteams-file-consent",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert result["messageId"] == "teams-consent-message-123"
+    assert result["chatId"] == conversation_id
+    assert result["conversationId"] == conversation_id
+    assert result["pendingUploadId"] == "upload-consent-123"
+    assert result["mediaUrls"] == ["https://files.example.com/reports/big-report.pdf"]
+    assert result["filenames"] == ["big-report.pdf"]
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "a%3Apersonal-dm-conversation/activities"
+            ),
+            {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.teams.card.file.consent",
+                        "name": "big-report.pdf",
+                        "content": {
+                            "description": "Please approve this upload.",
+                            "sizeInBytes": 7_340_032,
+                            "acceptContext": {
+                                "filename": "big-report.pdf",
+                                "uploadId": "upload-consent-123",
+                            },
+                            "declineContext": {
+                                "filename": "big-report.pdf",
+                                "uploadId": "upload-consent-123",
+                            },
+                        },
+                    }
+                ],
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"]["pendingUploadId"] == (
+        "upload-consent-123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_accepts_msteams_file_consent_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "a:personal-dm-conversation"
+    user_id = "alice-aad-id"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-consent-accept"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    report_path = tmp_path / "big-report.pdf"
+    report_bytes = b"%PDF-1.7 openzues file consent payload"
+    report_path.write_bytes(report_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native File Consent Accept Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=personal"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": f"user:{user_id}",
+        },
+    )
+    msteams_json_posts: list[
+        tuple[str, str, dict[str, object], str | None, str | None]
+    ] = []
+    uploads: list[tuple[str, str, bytes, dict[str, str]]] = []
+    validated_upload_urls: list[str] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_validate_upload_url(self: OpsMeshService, target: str) -> None:
+        del self
+        validated_upload_urls.append(target)
+
+    def fake_request_bytes_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        uploads.append((method, target, body, dict(headers or {})))
+        return {"status": 200}
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_json_posts.append(
+            (method, target, payload, secret_header_name, secret_token)
+        )
+        if method == "PUT":
+            return {"id": "teams-consent-message-123"}
+        return {"id": "teams-consent-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_validate_file_consent_upload_url",
+        fake_validate_upload_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bytes_provider_url",
+        fake_request_bytes_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    send_result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:user:{user_id}",
+        message="Please approve this upload.",
+        media_urls=[str(report_path)],
+        channel_data={
+            "msteamsFileConsent": {
+                "filename": "big-report.pdf",
+                "sizeInBytes": len(report_bytes),
+                "uploadId": "upload-consent-123",
+                "description": "Please approve this upload.",
+                "contentType": "application/pdf",
+            }
+        },
+        account_id="default",
+        idempotency_key="idem-native-msteams-file-consent-accept-send",
+    )
+    assert send_result["pendingUploadId"] == "upload-consent-123"
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="file-consent",
+            params={
+                "activity": {
+                    "type": "invoke",
+                    "name": "fileConsent/invoke",
+                    "conversation": {
+                        "id": f"{conversation_id};messageid=teams-consent-message-123"
+                    },
+                    "value": {
+                        "type": "fileUpload",
+                        "action": "accept",
+                        "context": {"uploadId": "upload-consent-123"},
+                        "uploadInfo": {
+                            "name": "big-report.pdf",
+                            "uploadUrl": (
+                                "https://tenant.sharepoint.com/upload/session"
+                            ),
+                            "contentUrl": (
+                                "https://tenant.sharepoint.com/drive/big-report.pdf"
+                            ),
+                            "uniqueId": "drive-item-777",
+                            "fileType": "pdf",
+                        },
+                    },
+                }
+            },
+            account_id="default",
+            idempotency_key="idem-msteams-file-consent-accept",
+        )
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "file-consent",
+        "uploadId": "upload-consent-123",
+        "accepted": True,
+        "uploaded": True,
+        "messageId": "teams-consent-message-123",
+        "fileId": "drive-item-777",
+        "filename": "big-report.pdf",
+        "contentUrl": "https://tenant.sharepoint.com/drive/big-report.pdf",
+    }
+    assert validated_upload_urls == ["https://tenant.sharepoint.com/upload/session"]
+    assert uploads == [
+        (
+            "PUT",
+            "https://tenant.sharepoint.com/upload/session",
+            report_bytes,
+            {
+                "User-Agent": "OpenZues",
+                "Content-Type": "application/pdf",
+                "Content-Range": f"bytes 0-{len(report_bytes) - 1}/{len(report_bytes)}",
+            },
+        )
+    ]
+    assert msteams_json_posts[-1] == (
+        "PUT",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "a%3Apersonal-dm-conversation/activities/teams-consent-message-123"
+        ),
+        {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.card.file.info",
+                    "contentUrl": (
+                        "https://tenant.sharepoint.com/drive/big-report.pdf"
+                    ),
+                    "name": "big-report.pdf",
+                    "content": {
+                        "uniqueId": "drive-item-777",
+                        "fileType": "pdf",
+                    },
+                }
+            ],
+        },
+        "Authorization",
+        "Bearer teams-access-token",
+    )
+    assert delivery is not None
+    provider_result = delivery["route_scope"]["provider_result"]
+    assert provider_result["meta"]["fileConsent"] == {
+        "uploadId": "upload-consent-123",
+        "status": "uploaded",
+        "filename": "big-report.pdf",
+        "contentUrl": "https://tenant.sharepoint.com/drive/big-report.pdf",
+        "uniqueId": "drive-item-777",
+        "fileType": "pdf",
+        "messageId": "teams-consent-message-123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_msteams_graph_upload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    site_id = "contoso.sharepoint.com,site-guid,web-guid"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-graph-upload"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    report_path = tmp_path / "Q1 Plan.pdf"
+    report_bytes = b"%PDF-1.7 graph upload payload"
+    report_path.write_bytes(report_bytes)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Graph Upload Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id&"
+            f"conversationId={conversation_id}&conversationType=channel&"
+            f"sharePointSiteId={site_id}"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"conversation:{conversation_id}",
+        },
+    )
+    graph_uploads: list[tuple[str, str, bytes, dict[str, str]]] = []
+    json_requests: list[
+        tuple[str, str, object | None, str | None, str | None]
+    ] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_bytes_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, timeout_seconds
+        graph_uploads.append((method, target, body, dict(headers or {})))
+        return {
+            "id": "drive-item-123",
+            "webUrl": "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf",
+            "name": "Q1 Plan.pdf",
+        }
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        json_requests.append((method, target, payload, secret_header_name, secret_token))
+        if target.endswith("/createLink"):
+            return {"link": {"webUrl": "https://tenant.sharepoint.com/:b:/share"}}
+        if "$select=eTag,webDavUrl,name" in target:
+            return {
+                "eTag": '"{11111111-2222-3333-4444-555555555555},1"',
+                "webDavUrl": (
+                    "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf"
+                ),
+                "name": "Q1 Plan.pdf",
+            }
+        return {"id": "teams-graph-upload-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_bytes_provider_url",
+        fake_request_bytes_provider_url,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        message="Here is the plan.",
+        media_urls=[str(report_path)],
+        channel_data={"msteamsGraphUpload": {"filename": "Q1 Plan.pdf"}},
+        account_id="default",
+        idempotency_key="idem-native-msteams-graph-upload",
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert result["messageId"] == "teams-graph-upload-message-123"
+    assert result["mediaUrls"] == [str(report_path)]
+    assert result["filenames"] == ["Q1 Plan.pdf"]
+    assert result["fileIds"] == ["11111111-2222-3333-4444-555555555555"]
+    assert graph_uploads == [
+        (
+            "PUT",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/root:"
+                "/OpenClawShared/Q1%20Plan.pdf:/content"
+            ),
+            report_bytes,
+            {
+                "User-Agent": "OpenZues",
+                "Authorization": "Bearer graph-access-token",
+                "Content-Type": "application/pdf",
+            },
+        )
+    ]
+    assert json_requests[:2] == [
+        (
+            "POST",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/items/"
+                "drive-item-123/createLink"
+            ),
+            {"type": "view", "scope": "organization"},
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+        (
+            "GET",
+            (
+                "https://graph.microsoft.com/v1.0/sites/"
+                "contoso.sharepoint.com,site-guid,web-guid/drive/items/"
+                "drive-item-123?$select=eTag,webDavUrl,name"
+            ),
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        ),
+    ]
+    assert json_requests[-1] == (
+        "POST",
+        (
+            "https://smba.trafficmanager.net/amer/v3/conversations/"
+            "19%3Aops-thread%40thread.tacv2/activities"
+        ),
+        {
+            "type": "message",
+            "channelData": {"feedbackLoopEnabled": False},
+            "entities": [
+                {
+                    "type": "https://schema.org/Message",
+                    "@type": "Message",
+                    "@id": "",
+                    "additionalType": ["AIGeneratedContent"],
+                }
+            ],
+            "text": "Here is the plan.",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.teams.card.file.info",
+                    "contentUrl": (
+                        "https://tenant.sharepoint.com/sites/ops/Q1%20Plan.pdf"
+                    ),
+                    "name": "Q1 Plan.pdf",
+                    "content": {
+                        "uniqueId": "11111111-2222-3333-4444-555555555555",
+                        "fileType": "pdf",
+                    },
+                }
+            ],
+        },
+        "Authorization",
+        "Bearer teams-access-token",
+    )
+    assert delivery is not None
+    provider_result = delivery["route_scope"]["provider_result"]
+    assert provider_result["meta"]["graphUpload"] == {
+        "siteId": site_id,
+        "itemIds": ["drive-item-123"],
+        "shareUrls": ["https://tenant.sharepoint.com/:b:/share"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_poll_uses_msteams_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-poll-msteams"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Poll Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id};messageid=old-root",
+        },
+    )
+    msteams_posts: list[tuple[str, str, dict[str, object], str | None, str | None]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        msteams_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {"id": "teams-poll-message-123"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_poll(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        question="Ship native Teams poll?",
+        options=["Yes", "No", "Later"],
+        max_selections=2,
+        account_id="default",
+        idempotency_key="idem-native-msteams-poll",
+    )
+
+    poll_id = str(result["pollId"])
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=ConversationTargetView(
+            channel="msteams",
+            account_id="default",
+            peer_kind="channel",
+            peer_id=f"msteams:conversation:{conversation_id}",
+        ),
+    )
+    delivery = await database.get_outbound_delivery(1)
+
+    assert result == {
+        "ok": True,
+        "runId": "idem-native-msteams-poll",
+        "channel": "msteams",
+        "messageId": "teams-poll-message-123",
+        "sessionKey": expected_session_key,
+        "deliveryId": 1,
+        "transport": {
+            "runtime": "native-provider-backed",
+            "channel": "msteams",
+            "target": f"msteams:conversation:{conversation_id}",
+            "accountId": "default",
+            "sessionKey": expected_session_key,
+        },
+        "chatId": conversation_id,
+        "channelId": conversation_id,
+        "conversationId": conversation_id,
+        "pollId": poll_id,
+    }
+    assert msteams_posts == [
+        (
+            "POST",
+            (
+                "https://smba.trafficmanager.net/amer/v3/conversations/"
+                "19%3Aops-thread%40thread.tacv2/activities"
+            ),
+            {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": {
+                            "type": "AdaptiveCard",
+                            "version": "1.5",
+                            "body": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Ship native Teams poll?",
+                                    "wrap": True,
+                                    "weight": "Bolder",
+                                    "size": "Medium",
+                                },
+                                {
+                                    "type": "Input.ChoiceSet",
+                                    "id": "choices",
+                                    "isMultiSelect": True,
+                                    "style": "expanded",
+                                    "choices": [
+                                        {"title": "Yes", "value": "0"},
+                                        {"title": "No", "value": "1"},
+                                        {"title": "Later", "value": "2"},
+                                    ],
+                                },
+                                {
+                                    "type": "TextBlock",
+                                    "text": "Select up to 2 options.",
+                                    "wrap": True,
+                                    "isSubtle": True,
+                                    "spacing": "Small",
+                                },
+                            ],
+                            "actions": [
+                                {
+                                    "type": "Action.Submit",
+                                    "title": "Vote",
+                                    "data": {
+                                        "openclawPollId": poll_id,
+                                        "pollId": poll_id,
+                                    },
+                                    "msteams": {
+                                        "type": "messageBack",
+                                        "text": "openclaw poll vote",
+                                        "displayText": "Vote recorded",
+                                        "value": {
+                                            "openclawPollId": poll_id,
+                                            "pollId": poll_id,
+                                        },
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+            "Authorization",
+            "Bearer teams-access-token",
+        )
+    ]
+    assert delivery is not None
+    assert delivery["route_scope"]["provider_result"] == {
+        "runtime": "native-provider-backed",
+        "messageId": "teams-poll-message-123",
+        "chatId": conversation_id,
+        "channelId": conversation_id,
+        "conversationId": conversation_id,
+        "pollId": poll_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_records_msteams_poll_vote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-vote"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Poll Vote Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/poll"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "teams-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, target, method, payload, secret_header_name, secret_token
+        del extra_headers, timeout_seconds
+        return {"id": "teams-poll-message-456"}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    poll_result = await service.send_direct_channel_poll(
+        channel="msteams",
+        to=f"msteams:conversation:{conversation_id}",
+        question="Pick release windows",
+        options=["Morning", "Afternoon", "Evening"],
+        max_selections=2,
+        account_id="default",
+        idempotency_key="idem-native-msteams-poll-vote-send",
+    )
+    poll_id = str(poll_result["pollId"])
+
+    vote_result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="poll-vote",
+            params={
+                "value": {
+                    "openclawPollId": poll_id,
+                    "choices": "0,2,1",
+                }
+            },
+            idempotency_key="idem-native-msteams-poll-vote",
+            account_id="default",
+            requester_sender_id="aad-user-1",
+        )
+    )
+
+    delivery = await database.get_outbound_delivery(1)
+    assert vote_result == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "poll-vote",
+        "pollId": poll_id,
+        "voterId": "aad-user-1",
+        "selections": ["0", "2"],
+        "recorded": True,
+    }
+    assert delivery is not None
+    poll_meta = delivery["route_scope"]["provider_result"]["meta"]["poll"]
+    assert poll_meta == {
+        "id": poll_id,
+        "question": "Pick release windows",
+        "options": ["Morning", "Afternoon", "Evening"],
+        "maxSelections": 2,
+        "conversationId": conversation_id,
+        "messageId": "teams-poll-message-456",
+        "votes": {"aad-user-1": ["0", "2"]},
+        "updatedAt": poll_meta["updatedAt"],
+    }
+    assert isinstance(poll_meta["updatedAt"], str)
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_adaptive_card_action_to_thread_session() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-adaptive-card-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-session-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+    action_value = {
+        "action": {
+            "type": "Action.Submit",
+            "data": {"intent": "deploy", "environment": "prod"},
+        },
+        "trigger": "button-click",
+    }
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "invoke-1",
+            "type": "invoke",
+            "name": "adaptiveCard/action",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": f"{conversation_id};messageid=thread-root-123",
+                "conversationType": "channel",
+            },
+            "replyToId": "nested-reply-999",
+            "channelData": {"team": {"id": "team-1"}},
+            "value": action_value,
+        },
+        account_id="default",
+    )
+
+    expected_text = json.dumps(action_value, separators=(",", ":"))
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="thread-root-123",
+    ).session_key
+
+    assert session_deliveries == [(expected_session_key, expected_text)]
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "adaptiveCard/action",
+        "messageId": "inbound-session-message-1",
+        "sessionKey": expected_session_key,
+        "threadId": "thread-root-123",
+        "text": expected_text,
+        "senderId": "user-aad",
+        "senderName": "User",
+        "conversationId": conversation_id,
+        "conversationType": "channel",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "delivery": {"runtime": "session-backed"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_message_text_without_mentions() -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-message-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-message-2"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-1",
+            "type": "message",
+            "text": "  <at>OpenZues</at> Ship the release notes.  ",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="direct",
+        peer_id="msteams:user:user-aad",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [(expected_session_key, "Ship the release notes.")]
+    assert result["text"] == "Ship the release notes."
+    assert result["messageId"] == "inbound-message-2"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_routes_msteams_html_attachment_text_fallback() -> None:
+    conversation_id = "19:group-chat@thread.v2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-html-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+
+    session_deliveries: list[tuple[str, str]] = []
+
+    async def fake_session_delivery(session_key: str, message: str) -> dict[str, str]:
+        session_deliveries.append((session_key, message))
+        return {"messageId": "inbound-html-message-1"}
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        session_delivery_service=fake_session_delivery,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "msg-html-1",
+            "type": "message",
+            "text": " ",
+            "attachments": [
+                {
+                    "contentType": "text/html",
+                    "content": (
+                        '<p><at>OpenZues</at> Review '
+                        '<a href="https://example.test/runbook">runbook</a>'
+                        " &amp; ship.</p>"
+                    ),
+                }
+            ],
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": conversation_id,
+                "conversationType": "groupChat",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="group",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+
+    assert session_deliveries == [
+        (expected_session_key, "Review runbook https://example.test/runbook & ship.")
+    ]
+    assert result["text"] == "Review runbook https://example.test/runbook & ship."
+    assert result["messageId"] == "inbound-html-message-1"
+    assert result["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_records_msteams_feedback_invoke_to_thread_session() -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-msteams-feedback-inbound"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "feedback-invoke-1",
+            "type": "invoke",
+            "name": "message/submitAction",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": f"{conversation_id};messageid=thread-root-123",
+                "conversationType": "channel",
+            },
+            "replyToId": "nested-reply-999",
+            "value": {
+                "actionName": "feedback",
+                "actionValue": {
+                    "reaction": "dislike",
+                    "feedback": json.dumps({"feedbackText": "Needs a clearer source link."}),
+                },
+                "replyToId": "bot-message-777",
+            },
+        },
+        account_id="default",
+    )
+
+    expected_target = ConversationTargetView(
+        channel="msteams",
+        account_id="default",
+        peer_kind="channel",
+        peer_id=f"msteams:conversation:{conversation_id}",
+    )
+    expected_base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=expected_target,
+    )
+    expected_session_key = resolve_thread_session_keys(
+        base_session_key=expected_base_session_key,
+        thread_id="thread-root-123",
+    ).session_key
+    messages = await database.list_control_chat_messages(
+        limit=10,
+        session_key=expected_session_key,
+    )
+    metadata = json.loads(messages[0]["metadata_json"])
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "message/submitAction",
+        "action": "feedback",
+        "sessionKey": expected_session_key,
+        "threadId": "thread-root-123",
+        "senderId": "user-aad",
+        "senderName": "User",
+        "conversationId": conversation_id,
+        "conversationType": "channel",
+        "conversationTarget": expected_target.model_dump(mode="json"),
+        "feedback": {
+            "messageId": "bot-message-777",
+            "value": "negative",
+            "comment": "Needs a clearer source link.",
+        },
+        "recorded": True,
+    }
+    assert len(messages) == 1
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == (
+        "Teams feedback: negative for bot-message-777\n"
+        "Comment: Needs a clearer source link."
+    )
+    assert metadata["event"] == "msteams.feedback"
+    assert metadata["feedback"]["value"] == "negative"
+    assert metadata["feedback"]["messageId"] == "bot-message-777"
+    assert metadata["feedback"]["comment"] == "Needs a clearer source link."
+    assert metadata["conversationTarget"] == expected_target.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_acks_msteams_signin_token_exchange_without_sso(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-1",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+                "name": "User",
+            },
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+            "value": {
+                "id": "exchange-flow-1",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "exchange-flow-1",
+            "tokenPresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "exchangeable-token" not in json.dumps(result)
+    assert await database.list_control_chat_messages(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_acks_msteams_signin_verify_state_without_sso(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-2",
+            "type": "invoke",
+            "name": "signin/verifyState",
+            "from": {
+                "id": "user-bf",
+                "aadObjectId": "user-aad",
+            },
+            "value": {"state": "112233"},
+        }
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/verifyState",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "unavailable",
+            "reason": "msteams_sso_not_configured",
+            "kind": "verifyState",
+            "statePresent": True,
+            "userId": "user-aad",
+            "channelId": "msteams",
+        },
+    }
+    assert "112233" not in json.dumps(result)
+    assert await database.list_control_chat_messages(limit=10) == []
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_exchanges_msteams_signin_token_when_sso_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        }
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-graph-token",
+            "expiration": "2030-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-3",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {"id": "user-bf", "aadObjectId": "aad-user-guid"},
+            "value": {
+                "id": "flow-1",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "exchanged",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "flow-1",
+            "tokenPresent": True,
+            "userId": "aad-user-guid",
+            "channelId": "msteams",
+            "stored": True,
+            "hasExpiry": True,
+            "expiresAt": "2030-01-01T00:00:00Z",
+        },
+    }
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert user_token_calls == [
+        {
+            "baseUrl": "https://token.example.test",
+            "path": "/api/usertoken/exchange",
+            "query": {
+                "userId": "aad-user-guid",
+                "connectionName": "GraphConnection",
+                "channelId": "msteams",
+            },
+            "method": "POST",
+            "bearerToken": "bf-service-token",
+            "body": {"token": "exchangeable-token"},
+        }
+    ]
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="aad-user-guid",
+    )
+    assert stored is not None
+    assert stored["token"] == "delegated-graph-token"
+    assert stored["expires_at"] == "2030-01-01T00:00:00Z"
+    assert "exchangeable-token" not in json.dumps(result)
+    assert "delegated-graph-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_verifies_msteams_signin_state_when_sso_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        }
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-token-3",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-4",
+            "type": "invoke",
+            "name": "signin/verifyState",
+            "channelId": "msteams",
+            "from": {"id": "user-bf", "aadObjectId": "aad-user-guid"},
+            "value": {"state": "112233"},
+        }
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/verifyState",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "verified",
+            "kind": "verifyState",
+            "statePresent": True,
+            "userId": "aad-user-guid",
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "stored": True,
+            "hasExpiry": False,
+        },
+    }
+    assert bot_token_calls == [("tenant-id", "teams-app-id", "teams-app-password")]
+    assert user_token_calls == [
+        {
+            "baseUrl": "https://token.example.test",
+            "path": "/api/usertoken/GetToken",
+            "query": {
+                "userId": "aad-user-guid",
+                "connectionName": "GraphConnection",
+                "channelId": "msteams",
+                "code": "112233",
+            },
+            "method": "GET",
+            "bearerToken": "bf-service-token",
+            "body": None,
+        }
+    ]
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="aad-user-guid",
+    )
+    assert stored is not None
+    assert stored["token"] == "delegated-token-3"
+    assert stored["expires_at"] is None
+    assert "112233" not in json.dumps(result)
+    assert "delegated-token-3" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_msteams_signin_exchange_for_dm_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "dmPolicy": "allowlist",
+                        "allowFrom": ["owner-aad"],
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        },
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-graph-token",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-blocked-dm",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {
+                "id": "blocked-bf-user",
+                "aadObjectId": "blocked-dm-aad",
+                "name": "Blocked Sender",
+            },
+            "conversation": {
+                "id": "a:personal-dm-conversation",
+                "conversationType": "personal",
+            },
+            "value": {
+                "id": "flow-blocked-dm",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "blocked",
+            "reason": "msteams_signin_sender_not_allowlisted",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "flow-blocked-dm",
+            "tokenPresent": True,
+            "userId": "blocked-dm-aad",
+            "channelId": "msteams",
+            "conversationType": "personal",
+        },
+    }
+    assert bot_token_calls == []
+    assert user_token_calls == []
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="blocked-dm-aad",
+    )
+    assert stored is None
+    assert "exchangeable-token" not in json.dumps(result)
+    assert "delegated-graph-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_blocks_msteams_signin_exchange_for_channel_route_allowlist(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target=None,
+    )
+
+    class FakeGatewayConfig:
+        def build_snapshot(self) -> dict[str, object]:
+            return {
+                "channels": {
+                    "msteams": {
+                        "groupPolicy": "allowlist",
+                        "groupAllowFrom": ["blocked-channel-aad"],
+                        "sso": {
+                            "enabled": True,
+                            "connectionName": "GraphConnection",
+                            "userTokenBaseUrl": "https://token.example.test",
+                        },
+                        "teams": {
+                            "team-allowlisted": {
+                                "channels": {
+                                    "19:allowlisted@thread.tacv2": {
+                                        "requireMention": False
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+        gateway_config_service=FakeGatewayConfig(),  # type: ignore[arg-type]
+    )
+    bot_token_calls: list[tuple[str, str, str]] = []
+    user_token_calls: list[dict[str, object]] = []
+
+    def fake_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        bot_token_calls.append((tenant_id, app_id, app_password))
+        return "bf-service-token"
+
+    def fake_request_user_token_service(
+        self: OpsMeshService,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del self
+        user_token_calls.append(
+            {
+                "baseUrl": base_url,
+                "path": path,
+                "query": query,
+                "method": method,
+                "bearerToken": bearer_token,
+                "body": body,
+            }
+        )
+        return {
+            "channelId": "msteams",
+            "connectionName": "GraphConnection",
+            "token": "delegated-graph-token",
+        }
+
+    monkeypatch.setattr(OpsMeshService, "_msteams_fetch_bot_token", fake_fetch_bot_token)
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_request_user_token_service",
+        fake_request_user_token_service,
+        raising=False,
+    )
+
+    result = await service.handle_msteams_inbound_activity(
+        {
+            "id": "signin-invoke-blocked-channel",
+            "type": "invoke",
+            "name": "signin/tokenExchange",
+            "channelId": "msteams",
+            "from": {
+                "id": "blocked-channel-bf-user",
+                "aadObjectId": "blocked-channel-aad",
+                "name": "Blocked Channel Sender",
+            },
+            "conversation": {
+                "id": "19:blocked-channel@thread.tacv2",
+                "conversationType": "channel",
+            },
+            "channelData": {
+                "team": {"id": "team-blocked"},
+                "channel": {"name": "General"},
+            },
+            "value": {
+                "id": "flow-blocked-channel",
+                "connectionName": "GraphConnection",
+                "token": "exchangeable-token",
+            },
+        },
+        account_id="default",
+    )
+
+    assert result == {
+        "ok": True,
+        "channel": "msteams",
+        "activityType": "invoke",
+        "name": "signin/tokenExchange",
+        "action": "signin",
+        "invokeResponse": {"type": "invokeResponse", "value": {"status": 200, "body": {}}},
+        "sso": {
+            "status": "blocked",
+            "reason": "msteams_signin_route_not_allowlisted",
+            "kind": "tokenExchange",
+            "connectionName": "GraphConnection",
+            "exchangeId": "flow-blocked-channel",
+            "tokenPresent": True,
+            "userId": "blocked-channel-aad",
+            "channelId": "msteams",
+            "conversationType": "channel",
+            "conversationId": "19:blocked-channel@thread.tacv2",
+            "teamId": "team-blocked",
+        },
+    }
+    assert bot_token_calls == []
+    assert user_token_calls == []
+    stored = await database.get_msteams_sso_token(
+        connection_name="GraphConnection",
+        user_id="blocked-channel-aad",
+    )
+    assert stored is None
+    assert "exchangeable-token" not in json.dumps(result)
+    assert "delegated-graph-token" not in json.dumps(result)
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_reactions_list_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-reactions"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Action Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_gets: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_gets.append((method, target, payload, secret_header_name, secret_token))
+        return {
+            "id": "msg-1",
+            "reactions": [
+                {"reactionType": "like", "user": {"id": "u1", "displayName": "Alice"}},
+                {"reactionType": "like", "user": {"displayName": "Deleted User"}},
+                {"reactionType": "like"},
+                {"reactionType": "heart", "user": {"id": "u2", "displayName": "Bob"}},
+            ],
+        }
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="reactions",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "msg-1",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-reactions-action",
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "reactions": [
+            {
+                "reactionType": "like",
+                "name": "like",
+                "emoji": "\U0001f44d",
+                "count": 3,
+                "users": [{"id": "u1", "displayName": "Alice"}],
+            },
+            {
+                "reactionType": "heart",
+                "name": "heart",
+                "emoji": "\u2764\ufe0f",
+                "count": 1,
+                "users": [{"id": "u2", "displayName": "Bob"}],
+            },
+        ],
+    }
+    assert graph_gets == [
+        (
+            "GET",
+            "https://graph.microsoft.com/v1.0/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1",
+            None,
+            "Authorization",
+            "Bearer graph-access-token",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_msteams_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conversation_id = "19:ops-thread@thread.tacv2"
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-msteams-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native React Provider",
+        kind="msteams",
+        target=(
+            "https://smba.trafficmanager.net/amer?"
+            "appId=teams-app-id&tenantId=tenant-id"
+        ),
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": f"teams:conversation:{conversation_id}",
+        },
+    )
+    graph_posts: list[tuple[str, str, object | None, str | None, str | None]] = []
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-delegated-token"
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, extra_headers, timeout_seconds
+        graph_posts.append((method, target, payload, secret_header_name, secret_token))
+        return {}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    added = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="react",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "msg-1",
+                "emoji": "LAUGH",
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-react-action",
+        )
+    )
+    removed = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="msteams",
+            action="react",
+            params={
+                "target": f"conversation:{conversation_id}",
+                "messageId": "msg-1",
+                "emoji": "heart",
+                "remove": True,
+            },
+            account_id="default",
+            requester_sender_id="u1",
+            sender_is_owner=True,
+            session_key=f"agent:main:msteams:channel:{conversation_id}",
+            idempotency_key="idem-msteams-unreact-action",
+        )
+    )
+
+    assert added == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "react",
+        "reactionType": "LAUGH",
+    }
+    assert removed == {
+        "ok": True,
+        "channel": "msteams",
+        "action": "react",
+        "reactionType": "heart",
+        "removed": True,
+    }
+    assert graph_posts == [
+        (
+            "POST",
+            "https://graph.microsoft.com/beta/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1/setReaction",
+            {"reactionType": "laugh"},
+            "Authorization",
+            "Bearer graph-delegated-token",
+        ),
+        (
+            "POST",
+            "https://graph.microsoft.com/beta/chats/19%3Aops-thread%40thread.tacv2/messages/msg-1/unsetReaction",
+            {"reactionType": "heart"},
+            "Authorization",
+            "Bearer graph-delegated-token",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_probe_channel_account_uses_msteams_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-probe-msteams-native"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Microsoft Teams Native Probe Provider",
+        kind="msteams",
+        target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="teams-app-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "msteams",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "conversation:19:ops-thread@thread.tacv2",
+        },
+    )
+    token_calls: list[tuple[str, str, str, str]] = []
+
+    def fake_msteams_fetch_bot_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("bot", tenant_id, app_id, app_password))
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self: OpsMeshService,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        token_calls.append(("graph", tenant_id, app_id, app_password))
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+        raising=False,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.probe_channel_account(
+        channel="msteams",
+        account_id="default",
+        timeout_ms=2500,
+    )
+
+    assert result == {
+        "ok": True,
+        "status": "ok",
+        "provider": "msteams",
+        "runtime": "native-provider-backed",
+        "accountId": "default",
+        "appId": "teams-app-id",
+        "graph": {"ok": True},
+        "timeoutMs": 2500,
+    }
+    assert token_calls == [
+        ("bot", "tenant-id", "teams-app-id", "teams-app-password"),
+        ("graph", "tenant-id", "teams-app-id", "teams-app-password"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_signal_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-signal"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "signal:+15551234567",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000000}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="signal",
+        to="signal:+15551234567",
+        message="Signal **native** parity.",
+        account_id="default",
+        idempotency_key="idem-native-signal-send",
+    )
+
+    assert result["messageId"] == "1700000000000"
+    assert result["chatId"] == "+15551234567"
+    assert signal_posts[0][0] == "POST"
+    assert signal_posts[0][1] == "http://signal.example.com:8080/api/v1/rpc"
+    payload = signal_posts[0][2]
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["method"] == "send"
+    assert isinstance(payload["id"], str)
+    assert payload["params"] == {
+        "message": "Signal **native** parity.",
+        "recipient": ["+15551234567"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_react_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-message-action-signal-react"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "signal:+15551234567",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000123}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "to": "signal:+15551234567",
+                "messageId": "1700000000000",
+                "emoji": "\U0001f44d",
+            },
+            account_id="default",
+            requester_sender_id="+15551234567",
+            sender_is_owner=True,
+            session_key="agent:main:signal:direct:+15551234567",
+            idempotency_key="idem-signal-react-action",
+        )
+    )
+
+    assert result == {"ok": True, "added": "\U0001f44d"}
+    assert len(signal_posts) == 1
+    method, target, payload = signal_posts[0]
+    assert method == "POST"
+    assert target == "http://signal.example.com:8080/api/v1/rpc"
+    assert payload["jsonrpc"] == "2.0"
+    assert payload["method"] == "sendReaction"
+    assert isinstance(payload["id"], str)
+    assert payload["params"] == {
+        "emoji": "\U0001f44d",
+        "targetTimestamp": 1700000000000,
+        "targetAuthor": "+15551234567",
+        "recipients": ["+15551234567"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_group_react_remove_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-signal-group-react-remove"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Group Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "group",
+            "peer_id": "signal:group:ops-group-id",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000456}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "recipient": "signal:group:ops-group-id",
+                "targetAuthorUuid": "uuid:author-uuid",
+                "messageId": 1700000000001,
+                "emoji": "\u2764\ufe0f",
+                "remove": True,
+            },
+            account_id="default",
+            requester_sender_id="author-uuid",
+            sender_is_owner=True,
+            session_key="agent:main:signal:group:ops-group-id",
+            idempotency_key="idem-signal-group-react-remove-action",
+        )
+    )
+
+    assert result == {"ok": True, "removed": "\u2764\ufe0f"}
+    assert len(signal_posts) == 1
+    method, target, payload = signal_posts[0]
+    assert method == "POST"
+    assert target == "http://signal.example.com:8080/api/v1/rpc"
+    assert payload["method"] == "sendReaction"
+    assert payload["params"] == {
+        "emoji": "\u2764\ufe0f",
+        "targetTimestamp": 1700000000001,
+        "remove": True,
+        "targetAuthor": "author-uuid",
+        "groupIds": ["ops-group-id"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_message_action_dispatches_signal_react_current_message_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = (
+        Path.cwd()
+        / ".tmp-pytest-local"
+        / "ops-mesh-message-action-signal-react-context"
+    )
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Signal Native Context Action Provider",
+        kind="signal",
+        target="http://signal.example.com:8080",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token=None,
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "signal",
+            "account_id": "default",
+            "peer_kind": "direct",
+            "peer_id": "signal:uuid:sender-uuid",
+        },
+    )
+    signal_posts: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_request_json_provider_url(
+        self: OpsMeshService,
+        target: str,
+        *,
+        method: str = "GET",
+        payload: object | None = None,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        del self, secret_header_name, secret_token, extra_headers, timeout_seconds
+        assert isinstance(payload, dict)
+        signal_posts.append((method, target, payload))
+        return {"result": {"timestamp": 1700000000789}}
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_request_json_provider_url",
+        fake_request_json_provider_url,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.dispatch_message_action(
+        GatewayMessageActionDispatchRequest(
+            channel="signal",
+            action="react",
+            params={
+                "to": "signal:uuid:sender-uuid",
+                "emoji": "\u2705",
+            },
+            account_id="default",
+            requester_sender_id="sender-uuid",
+            sender_is_owner=True,
+            session_key="agent:main:signal:direct:sender-uuid",
+            idempotency_key="idem-signal-react-context-action",
+            tool_context={"currentMessageId": "1737630212345"},
+        )
+    )
+
+    assert result == {"ok": True, "added": "\u2705"}
+    assert len(signal_posts) == 1
+    payload = signal_posts[0][2]
+    assert payload["params"] == {
+        "emoji": "\u2705",
+        "targetTimestamp": 1737630212345,
+        "targetAuthor": "sender-uuid",
+        "recipients": ["sender-uuid"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_irc_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-irc"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="IRC Native Provider",
+        kind="irc",
+        target="ircs://irc.example.net:6697?nick=openzues&username=openzues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="irc-server-password",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "irc",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "channel:ops-room",
+        },
+    )
+    irc_sends: list[dict[str, object]] = []
+
+    def fake_send_irc_privmsg(
+        self: OpsMeshService,
+        *,
+        host: str,
+        port: int,
+        tls: bool,
+        nick: str,
+        username: str,
+        realname: str,
+        password: str | None,
+        target: str,
+        message: str,
+    ) -> None:
+        del self
+        irc_sends.append(
+            {
+                "host": host,
+                "port": port,
+                "tls": tls,
+                "nick": nick,
+                "username": username,
+                "realname": realname,
+                "password": password,
+                "target": target,
+                "message": message,
+            }
+        )
+
+    monkeypatch.setattr(OpsMeshService, "_send_irc_privmsg", fake_send_irc_privmsg)
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="irc",
+        to="irc:channel:ops-room",
+        message="IRC **native** parity.",
+        reply_to_id="abc123",
+        account_id="default",
+        idempotency_key="idem-native-irc-send",
+    )
+
+    assert result["messageId"].startswith("irc:")
+    assert result["chatId"] == "#ops-room"
+    assert result["channelId"] == "#ops-room"
+    assert irc_sends == [
+        {
+            "host": "irc.example.net",
+            "port": 6697,
+            "tls": True,
+            "nick": "openzues",
+            "username": "openzues",
+            "realname": "OpenZues",
+            "password": "irc-server-password",
+            "target": "#ops-room",
+            "message": "IRC **native** parity.\n\n[reply:abc123]",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ops_mesh_service_send_direct_channel_message_uses_twitch_native_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_path = Path.cwd() / ".tmp-pytest-local" / "ops-mesh-direct-send-twitch"
+    shutil.rmtree(tmp_path, ignore_errors=True)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = Database(tmp_path / "ops.db")
+    await database.initialize()
+    await database.create_notification_route(
+        name="Twitch Native Provider",
+        kind="twitch",
+        target="twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+        events=["gateway/send"],
+        enabled=True,
+        secret_header_name=None,
+        secret_token="oauth:twitch-token",
+        vault_secret_id=None,
+        conversation_target={
+            "channel": "twitch",
+            "account_id": "default",
+            "peer_kind": "channel",
+            "peer_id": "#OpenZues",
+        },
+    )
+    twitch_sends: list[dict[str, object]] = []
+
+    def fake_send_twitch_chat_message(
+        self: OpsMeshService,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self
+        twitch_sends.append(
+            {
+                "username": username,
+                "client_id": client_id,
+                "token": token,
+                "channel": channel,
+                "message": message,
+            }
+        )
+        return "twitch-msg-123"
+
+    monkeypatch.setattr(
+        OpsMeshService,
+        "_send_twitch_chat_message",
+        fake_send_twitch_chat_message,
+    )
+    service = OpsMeshService(
+        database,
+        FakeManager(),  # type: ignore[arg-type]
+        FakeMissionService(),  # type: ignore[arg-type]
+        BroadcastHub(),
+        make_vault(database, tmp_path),
+        poll_interval_seconds=999,
+        snapshot_interval_seconds=999999,
+    )
+
+    result = await service.send_direct_channel_message(
+        channel="twitch",
+        to="twitch:#OpenZues",
+        message="Twitch **native** [parity](https://example.com).",
+        media_urls=["https://cdn.example.com/clip.png"],
+        account_id="default",
+        idempotency_key="idem-native-twitch-send",
+    )
+
+    assert result["messageId"] == "twitch-msg-123"
+    assert result["chatId"] == "openzues"
+    assert result["channelId"] == "openzues"
+    assert result["mediaUrls"] == ["https://cdn.example.com/clip.png"]
+    assert twitch_sends == [
+        {
+            "username": "openzues",
+            "client_id": "twitch-client-id",
+            "token": "oauth:twitch-token",
+            "channel": "openzues",
+            "message": "Twitch native parity. https://cdn.example.com/clip.png",
+        }
+    ]
 
 
 @pytest.mark.asyncio

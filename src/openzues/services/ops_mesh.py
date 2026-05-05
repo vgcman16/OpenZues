@@ -4,13 +4,18 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
+import html
 import io
+import ipaddress
 import json
 import logging
 import math
 import mimetypes
 import re
 import secrets
+import socket
+import ssl
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
@@ -224,6 +229,15 @@ BLUEBUBBLES_REACTION_EMOJIS = {
     "\u2753": "question",
     "\u2754": "question",
 }
+MSTEAMS_REACTION_EMOJIS = {
+    "like": "\U0001f44d",
+    "heart": "\u2764\ufe0f",
+    "laugh": "\U0001f606",
+    "surprised": "\U0001f62e",
+    "sad": "\U0001f622",
+    "angry": "\U0001f621",
+}
+MSTEAMS_USER_TOKEN_BASE_URL = "https://token.botframework.com"
 BLUEBUBBLES_EFFECT_IDS = {
     "slam": "com.apple.MobileSMS.expressivesend.impact",
     "loud": "com.apple.MobileSMS.expressivesend.loud",
@@ -250,11 +264,22 @@ NATIVE_PROVIDER_ROUTE_KINDS = {
     "discord",
     "whatsapp",
     "zalo",
+    "feishu",
+    "googlechat",
+    "nextcloud-talk",
+    "synology-chat",
+    "mattermost",
+    "msteams",
+    "signal",
+    "irc",
+    "twitch",
     "line",
     "matrix",
 }
 NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "bluebubbles",
+    "googlechat",
+    "nextcloud-talk",
     "line",
     "matrix",
     "discord",
@@ -262,6 +287,8 @@ NATIVE_PROVIDER_MEDIA_CAPTION_CHANNELS = {
     "telegram",
     "whatsapp",
     "zalo",
+    "msteams",
+    "twitch",
 }
 SLACK_THREAD_TS_PATTERN = re.compile(r"^\d+\.\d+$")
 PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
@@ -270,6 +297,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "discord",
     "line",
     "matrix",
+    "msteams",
     "zalo",
 }
 DEFAULT_CRON_FAILURE_ALERT_AFTER = 2
@@ -290,6 +318,66 @@ OUTBOUND_DELIVERY_PERMANENT_ERROR_PATTERNS = (
     re.compile(r"recipient is not a valid", re.IGNORECASE),
     re.compile(r"outbound not configured for channel", re.IGNORECASE),
     re.compile(r"user .* not in room", re.IGNORECASE),
+)
+
+
+@dataclass(frozen=True)
+class _IrcRouteConfig:
+    host: str
+    port: int
+    tls: bool
+    nick: str
+    username: str
+    realname: str
+    password: str | None
+
+
+@dataclass(frozen=True)
+class _TwitchRouteConfig:
+    username: str
+    client_id: str
+    token: str
+    default_channel: str | None
+
+
+@dataclass(frozen=True)
+class _MSTeamsRouteConfig:
+    service_url: str
+    app_id: str | None
+    tenant_id: str | None
+    conversation_id: str | None
+    conversation_type: str | None
+    graph_chat_id: str | None
+    share_point_site_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsSsoConfig:
+    connection_name: str
+    user_token_base_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsFileConsentInvoke:
+    action: Literal["accept", "decline"]
+    upload_id: str
+    upload_info: Mapping[str, object] | None
+    conversation_id: str | None
+
+
+MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST: tuple[str, ...] = (
+    "sharepoint.com",
+    "sharepoint.us",
+    "sharepoint.de",
+    "sharepoint.cn",
+    "sharepoint-df.com",
+    "storage.live.com",
+    "onedrive.com",
+    "1drv.ms",
+    "graph.microsoft.com",
+    "graph.microsoft.us",
+    "graph.microsoft.de",
+    "graph.microsoft.cn",
 )
 
 
@@ -1466,7 +1554,22 @@ def _message_action_param_integer(
 
 def _provider_peer_kind_from_target(target: str | None) -> ConversationTargetPeerKind:
     normalized = str(target or "").strip().lower()
-    if normalized.startswith(("direct:", "dm:", "user:", "matrix:user:", "matrix:@", "@")):
+    if normalized.startswith(
+        (
+            "direct:",
+            "dm:",
+            "user:",
+            "users/",
+            "googlechat:users/",
+            "google-chat:users/",
+            "gchat:users/",
+            "matrix:user:",
+            "matrix:@",
+            "msteams:user:",
+            "teams:user:",
+            "@",
+        )
+    ):
         return "direct"
     if normalized.startswith("group:"):
         return "group"
@@ -2932,6 +3035,2075 @@ def _zalo_chat_from_result(result: object, fallback: str) -> str:
                 if candidate:
                     return candidate
     return fallback
+
+
+GOOGLE_CHAT_API_BASE_URL = "https://chat.googleapis.com/v1"
+GOOGLE_CHAT_UPLOAD_BASE_URL = "https://chat.googleapis.com/upload/v1"
+
+
+def _googlechat_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Google Chat route is missing an access token secret.")
+    return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+
+def _googlechat_normalize_target(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    target = re.sub(
+        r"^(googlechat|google-chat|gchat):",
+        "",
+        target,
+        flags=re.IGNORECASE,
+    ).strip()
+    lowered = target.lower()
+    if lowered.startswith("user:"):
+        target = target.split(":", 1)[1].strip()
+        if target.lower().startswith("users/"):
+            target = target[len("users/") :]
+        target = f"users/{target}"
+    elif lowered.startswith("space:"):
+        target = target.split(":", 1)[1].strip()
+        if target.lower().startswith("spaces/"):
+            target = target[len("spaces/") :]
+        target = f"spaces/{target}"
+    lowered = target.lower()
+    if lowered.startswith("users/"):
+        suffix = target[len("users/") :]
+        return f"users/{suffix.lower()}" if "@" in suffix else target
+    if lowered.startswith("spaces/"):
+        return target
+    if "@" in target:
+        return f"users/{target.lower()}"
+    return target
+
+
+def _googlechat_strip_message_suffix(target: str) -> str:
+    index = target.lower().find("/messages/")
+    if index == -1:
+        return target
+    return target[:index]
+
+
+def _googlechat_space_target(raw_target: str | None) -> str | None:
+    normalized = _googlechat_normalize_target(raw_target)
+    if not normalized:
+        return None
+    base = _googlechat_strip_message_suffix(normalized)
+    if base.lower().startswith("spaces/"):
+        return base
+    return base
+
+
+def _googlechat_api_base(target: str | None) -> str:
+    route_target = str(target or "").strip()
+    if _normalized_http_webhook_url(route_target) is not None:
+        return route_target
+    return GOOGLE_CHAT_API_BASE_URL
+
+
+def _googlechat_messages_endpoint(
+    target: str | None,
+    *,
+    space: str,
+    thread: str | None,
+) -> str:
+    stripped = _googlechat_api_base(target).rstrip("/")
+    stripped_lower = stripped.lower()
+    normalized_space = space.strip("/")
+    if stripped_lower.endswith("/messages"):
+        endpoint = stripped
+    elif stripped_lower.endswith(f"/{normalized_space.lower()}"):
+        endpoint = f"{stripped}/messages"
+    else:
+        endpoint = f"{stripped}/{normalized_space}/messages"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    if thread:
+        separator = "&" if "?" in endpoint else "?"
+        endpoint = (
+            f"{endpoint}{separator}"
+            f"{urlencode({'messageReplyOption': 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD'})}"
+        )
+    return endpoint
+
+
+def _googlechat_direct_message_endpoint(target: str | None, *, user_name: str) -> str:
+    endpoint = f"{_googlechat_api_base(target).rstrip('/')}/spaces:findDirectMessage"
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}{urlencode({'name': user_name})}"
+
+
+def _googlechat_upload_endpoint(*, space: str) -> str:
+    return (
+        f"{GOOGLE_CHAT_UPLOAD_BASE_URL.rstrip('/')}/{space.strip('/')}"
+        "/attachments:upload?uploadType=multipart"
+    )
+
+
+def _googlechat_direct_message_space(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("name")
+    if candidate is None:
+        return None
+    normalized = str(candidate).strip()
+    return normalized if normalized else None
+
+
+def _googlechat_attachment_upload_token(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    data_ref = result.get("attachmentDataRef")
+    if not isinstance(data_ref, dict):
+        return None
+    token = data_ref.get("attachmentUploadToken")
+    if token is None:
+        return None
+    return str(token).strip() or None
+
+
+def _googlechat_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("name") or result.get("messageName")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _nextcloud_talk_room_token(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    for prefix in ("nextcloud-talk:", "nc-talk:", "nc:"):
+        if target.lower().startswith(prefix):
+            target = target[len(prefix) :].strip()
+            break
+    if target.lower().startswith("room:"):
+        target = target[len("room:") :].strip()
+    return target or None
+
+
+def _nextcloud_talk_endpoint(target: str | None, *, room_token: str) -> str:
+    base_url = str(target or "").strip()
+    if _normalized_http_webhook_url(base_url) is None:
+        raise RuntimeError("Nextcloud Talk route target must be an http(s) base URL.")
+    return (
+        f"{base_url.rstrip('/')}/ocs/v2.php/apps/spreed/api/v1/bot/"
+        f"{quote(room_token, safe='')}/message"
+    )
+
+
+def _nextcloud_talk_bot_secret(secret_token: str | None) -> str:
+    secret = str(secret_token or "").strip()
+    if not secret:
+        raise RuntimeError("Nextcloud Talk route is missing a bot secret.")
+    return secret
+
+
+def _nextcloud_talk_signature_headers(
+    *,
+    message: str,
+    secret_token: str | None,
+) -> dict[str, str]:
+    secret = _nextcloud_talk_bot_secret(secret_token)
+    random_value = secrets.token_hex(16)
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        f"{random_value}{message}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        "OCS-APIRequest": "true",
+        "X-Nextcloud-Talk-Bot-Random": random_value,
+        "X-Nextcloud-Talk-Bot-Signature": signature,
+    }
+
+
+def _nextcloud_talk_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    ocs = result.get("ocs")
+    if not isinstance(ocs, dict):
+        return None
+    data = ocs.get("data")
+    if not isinstance(data, dict):
+        return None
+    candidate = data.get("id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _nextcloud_talk_timestamp(result: object) -> int | None:
+    if not isinstance(result, dict):
+        return None
+    ocs = result.get("ocs")
+    if not isinstance(ocs, dict):
+        return None
+    data = ocs.get("data")
+    if not isinstance(data, dict):
+        return None
+    timestamp = data.get("timestamp")
+    return timestamp if isinstance(timestamp, int) else None
+
+
+def _synology_chat_incoming_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Synology Chat route target must be an http(s) incoming webhook URL.")
+    return target
+
+
+def _synology_chat_recipient_id(raw_target: str | None) -> int | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    try:
+        return int(target, 10)
+    except ValueError:
+        return None
+
+
+def _synology_chat_payload(
+    *,
+    text: str | None = None,
+    media_url: str | None = None,
+    recipient_id: int | None = None,
+) -> dict[str, str]:
+    body: dict[str, object] = {}
+    normalized_text = str(text or "").strip()
+    if normalized_text:
+        body["text"] = normalized_text
+    normalized_media_url = str(media_url or "").strip()
+    if normalized_media_url:
+        body["file_url"] = normalized_media_url
+    if recipient_id is not None:
+        body["user_ids"] = [recipient_id]
+    if "text" not in body and "file_url" not in body:
+        raise RuntimeError("Message must be non-empty for Synology Chat sends.")
+    return {"payload": json.dumps(body, separators=(",", ":"))}
+
+
+def _mattermost_base_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip().rstrip("/")
+    if target.lower().endswith("/api/v4"):
+        target = target[: -len("/api/v4")].rstrip("/")
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Mattermost route target must be an http(s) base URL.")
+    return target
+
+
+def _mattermost_api_endpoint(target: str | None, path: str) -> str:
+    suffix = str(path or "").strip().lstrip("/")
+    return f"{_mattermost_base_url(target)}/api/v4/{suffix}"
+
+
+def _mattermost_channel_id(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    lower = target.lower()
+    for prefix in ("channel:", "group:"):
+        if lower.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            break
+    if target.startswith("#"):
+        target = target[1:].strip()
+    return target or None
+
+
+def _mattermost_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Mattermost route is missing a bot token.")
+    if token.lower().startswith("bearer "):
+        return token
+    return f"Bearer {token}"
+
+
+def _mattermost_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _mattermost_result_channel_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    candidate = result.get("channel_id")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _msteams_route_config(raw_target: str | None) -> _MSTeamsRouteConfig:
+    target = str(raw_target or "").strip()
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Microsoft Teams route target must be an http(s) service URL.")
+    parsed = urlparse(target)
+    query = {key.lower(): value for key, value in parse_qsl(parsed.query, keep_blank_values=True)}
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/v3"):
+        path = path[:-3].rstrip("/")
+    service_url = parsed._replace(path=path, query="", fragment="").geturl().rstrip("/")
+    conversation_id = (
+        str(
+            query.get("conversationid")
+            or query.get("conversation_id")
+            or query.get("conversation")
+            or ""
+        ).strip()
+        or None
+    )
+    if conversation_id is not None:
+        conversation_id = _msteams_conversation_id(conversation_id)
+    conversation_type = (
+        str(query.get("conversationtype") or query.get("conversation_type") or "").strip()
+        or None
+    )
+    graph_chat_id = (
+        str(query.get("graphchatid") or query.get("graph_chat_id") or "").strip() or None
+    )
+    share_point_site_id = (
+        str(
+            query.get("sharepointsiteid")
+            or query.get("share_point_site_id")
+            or query.get("siteid")
+            or ""
+        ).strip()
+        or None
+    )
+    return _MSTeamsRouteConfig(
+        service_url=service_url,
+        app_id=query.get("appid") or None,
+        tenant_id=query.get("tenantid") or None,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+        graph_chat_id=graph_chat_id,
+        share_point_site_id=share_point_site_id,
+    )
+
+
+def _msteams_strip_channel_target_prefix(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    normalized_target = target.lower()
+    for prefix in ("msteams:", "teams:"):
+        if normalized_target.startswith(prefix):
+            return target[len(prefix) :].strip()
+    return target
+
+
+def _msteams_user_target_id(raw_target: str | None) -> str | None:
+    target = _msteams_strip_channel_target_prefix(raw_target)
+    if not target.lower().startswith("user:"):
+        return None
+    user_id = target[len("user:") :].strip()
+    user_id = re.split(r";messageid=", user_id, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    return user_id or None
+
+
+def _msteams_conversation_id(raw_target: str | None) -> str:
+    target = _msteams_strip_channel_target_prefix(raw_target)
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    if target.lower().startswith("conversation:"):
+        target = target[len("conversation:") :].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    if target.lower().startswith("user:"):
+        raise RuntimeError(
+            "Microsoft Teams user targets require a stored conversation reference; "
+            "use a conversation:<id> target for native routes."
+        )
+    target = re.split(r";messageid=", target, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams conversation target is required.")
+    return target
+
+
+def _msteams_resolve_route_conversation_id(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    raw_target: str | None,
+) -> str:
+    user_id = _msteams_user_target_id(raw_target)
+    if user_id is None:
+        return _msteams_conversation_id(raw_target)
+    conversation_id = route_config.conversation_id
+    if not conversation_id:
+        raise RuntimeError(
+            f"No conversation reference found for user:{user_id}. "
+            "The bot must receive a DM from this user before it can send proactively."
+        )
+    conversation_type = str(route_config.conversation_type or "").strip().lower()
+    if conversation_type and conversation_type != "personal":
+        raise RuntimeError(
+            f"Conversation reference for user:{user_id} resolved to a {conversation_type} "
+            f"conversation ({conversation_id}) instead of a personal DM. "
+            "The bot must receive a DM from this user before it can send proactively."
+        )
+    return conversation_id
+
+
+def _msteams_graph_compatible_conversation_id(conversation_id: str) -> bool:
+    return conversation_id.startswith("19:") or "@thread" in conversation_id
+
+
+def _msteams_activity_endpoint(
+    *,
+    service_url: str,
+    conversation_id: str,
+) -> str:
+    encoded_conversation_id = quote(conversation_id, safe="")
+    return f"{service_url.rstrip('/')}/v3/conversations/{encoded_conversation_id}/activities"
+
+
+def _msteams_activity_update_endpoint(
+    *,
+    service_url: str,
+    conversation_id: str,
+    activity_id: str,
+) -> str:
+    encoded_conversation_id = quote(conversation_id, safe="")
+    encoded_activity_id = quote(activity_id, safe="")
+    return (
+        f"{service_url.rstrip('/')}/v3/conversations/"
+        f"{encoded_conversation_id}/activities/{encoded_activity_id}"
+    )
+
+
+def _msteams_activity_conversation_id(
+    *,
+    conversation_id: str,
+    reply_to_id: str | None,
+    conversation_target: dict[str, Any] | None,
+) -> str:
+    thread_id = str(reply_to_id or "").strip()
+    if not thread_id:
+        return conversation_id
+    peer_kind = str((conversation_target or {}).get("peer_kind") or "").strip().lower()
+    if peer_kind != "channel":
+        return conversation_id
+    if re.search(r";messageid=", conversation_id, flags=re.IGNORECASE):
+        return conversation_id
+    return f"{conversation_id};messageid={thread_id}"
+
+
+def _msteams_base_conversation_id(raw_conversation_id: str | None) -> str:
+    conversation_id = str(raw_conversation_id or "").strip()
+    if not conversation_id:
+        return ""
+    return re.split(
+        r";messageid=",
+        conversation_id,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+
+
+def _msteams_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    for key in ("id", "activityId", "messageId"):
+        value = result.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _msteams_file_info_entries(event: Mapping[str, Any]) -> list[Mapping[str, object]]:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsFileInfo",
+            "msteamsFile",
+            "teamsFileInfo",
+            "teamsFile",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return [cast(Mapping[str, object], value)]
+        for key in (
+            "msteamsFileInfos",
+            "msteamsFiles",
+            "teamsFileInfos",
+            "teamsFiles",
+        ):
+            value = container.get(key)
+            if isinstance(value, list) and all(isinstance(item, Mapping) for item in value):
+                return [cast(Mapping[str, object], item) for item in value]
+    return []
+
+
+def _msteams_file_info_value(
+    file_info: Mapping[str, object],
+    *keys: str,
+) -> str | None:
+    for key in keys:
+        value = file_info.get(key)
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _msteams_file_unique_id(file_info: Mapping[str, object]) -> str:
+    raw_unique_id = _msteams_file_info_value(file_info, "uniqueId", "fileId", "id")
+    if raw_unique_id:
+        unique_id = raw_unique_id.strip("\"'").replace("{", "").replace("}", "").strip()
+        if unique_id:
+            return unique_id
+    raw_etag = _msteams_file_info_value(file_info, "eTag", "etag")
+    if raw_etag is None:
+        raise RuntimeError("Microsoft Teams file info card requires eTag or uniqueId.")
+    unique_id = (
+        raw_etag.strip("\"'")
+        .replace("{", "")
+        .replace("}", "")
+        .split(",", maxsplit=1)[0]
+        .strip()
+    )
+    if not unique_id:
+        raise RuntimeError("Microsoft Teams file info card requires a unique file id.")
+    return unique_id
+
+
+def _msteams_file_type(filename: str) -> str:
+    last_dot = filename.rfind(".")
+    if last_dot < 0 or last_dot == len(filename) - 1:
+        return ""
+    return filename[last_dot + 1 :].strip().lower()
+
+
+def _msteams_file_info_card(file_info: Mapping[str, object]) -> dict[str, object]:
+    filename = _msteams_file_info_value(
+        file_info,
+        "name",
+        "filename",
+        "fileName",
+        "displayName",
+    )
+    if filename is None:
+        raise RuntimeError("Microsoft Teams file info card requires a filename.")
+    content_url = _msteams_file_info_value(
+        file_info,
+        "webDavUrl",
+        "webDavURL",
+        "contentUrl",
+        "contentURL",
+    )
+    if _normalized_http_webhook_url(content_url) is None:
+        raise RuntimeError("Microsoft Teams file info card requires an HTTP webDavUrl.")
+    return {
+        "contentType": "application/vnd.microsoft.teams.card.file.info",
+        "contentUrl": str(content_url),
+        "name": filename,
+        "content": {
+            "uniqueId": _msteams_file_unique_id(file_info),
+            "fileType": _msteams_file_type(filename),
+        },
+    }
+
+
+def _msteams_file_info_cards_from_event(
+    *,
+    event: Mapping[str, Any],
+    media_urls: list[str],
+) -> list[dict[str, object]]:
+    entries = _msteams_file_info_entries(event)
+    if not entries:
+        raise RuntimeError(
+            "Microsoft Teams native media delivery requires FileConsentCard or "
+            "Graph upload support and is not available for this route yet."
+        )
+    if len(entries) != len(media_urls):
+        raise RuntimeError(
+            "Microsoft Teams file info card metadata must match the mediaUrls count."
+        )
+    return [_msteams_file_info_card(entry) for entry in entries]
+
+
+def _msteams_file_consent_entry(event: Mapping[str, Any]) -> Mapping[str, object] | None:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsFileConsent",
+            "msteamsFileConsentCard",
+            "teamsFileConsent",
+            "teamsFileConsentCard",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return cast(Mapping[str, object], value)
+    return None
+
+
+def _msteams_file_consent_size(file_consent: Mapping[str, object]) -> int:
+    for key in ("sizeInBytes", "size", "bytes", "contentLength"):
+        value = file_consent.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int) and value >= 0:
+            return value
+        if isinstance(value, float) and math.isfinite(value) and value >= 0:
+            return math.floor(value)
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                continue
+            try:
+                parsed = int(trimmed)
+            except ValueError:
+                continue
+            if parsed >= 0:
+                return parsed
+    raise RuntimeError("Microsoft Teams file consent card requires sizeInBytes.")
+
+
+def _msteams_file_consent_context(
+    file_consent: Mapping[str, object],
+    *,
+    filename: str,
+    upload_id: str,
+) -> dict[str, object]:
+    context: dict[str, object] = {"filename": filename, "uploadId": upload_id}
+    raw_context = file_consent.get("context")
+    if isinstance(raw_context, Mapping):
+        for key, value in raw_context.items():
+            if isinstance(key, str) and key not in {"filename", "uploadId"}:
+                context[key] = value
+    return context
+
+
+def _msteams_file_consent_card_from_event(
+    *,
+    event: Mapping[str, Any],
+    media_urls: list[str],
+) -> tuple[dict[str, object], str]:
+    if len(media_urls) != 1:
+        raise RuntimeError("Microsoft Teams FileConsentCard delivery supports one mediaUrl.")
+    file_consent = _msteams_file_consent_entry(event)
+    if file_consent is None:
+        raise RuntimeError(
+            "Microsoft Teams native media delivery requires FileConsentCard or "
+            "Graph upload support and is not available for this route yet."
+        )
+    filename = _msteams_file_info_value(
+        file_consent,
+        "filename",
+        "fileName",
+        "name",
+        "displayName",
+    )
+    if filename is None:
+        raise RuntimeError("Microsoft Teams file consent card requires a filename.")
+    upload_id = _msteams_file_info_value(file_consent, "uploadId", "id")
+    if upload_id is None:
+        upload_id = uuid.uuid4().hex
+    description = _msteams_file_info_value(file_consent, "description")
+    size_in_bytes = _msteams_file_consent_size(file_consent)
+    context = _msteams_file_consent_context(
+        file_consent,
+        filename=filename,
+        upload_id=upload_id,
+    )
+    card: dict[str, object] = {
+        "contentType": "application/vnd.microsoft.teams.card.file.consent",
+        "name": filename,
+        "content": {
+            "description": description or f"File: {filename}",
+            "sizeInBytes": size_in_bytes,
+            "acceptContext": dict(context),
+            "declineContext": dict(context),
+        },
+    }
+    return card, upload_id
+
+
+def _msteams_file_consent_invoke_from_params(
+    params: Mapping[str, Any],
+) -> _MSTeamsFileConsentInvoke | None:
+    raw_activity = params.get("activity")
+    activity = raw_activity if isinstance(raw_activity, Mapping) else params
+    activity_name = str(activity.get("name") or "").strip()
+    if activity_name and activity_name != "fileConsent/invoke":
+        return None
+    raw_value = activity.get("value")
+    value = raw_value if isinstance(raw_value, Mapping) else params.get("value")
+    if not isinstance(value, Mapping):
+        value = params
+    value_type = str(value.get("type") or "").strip()
+    if value_type and value_type != "fileUpload":
+        return None
+    raw_action = str(value.get("action") or params.get("consentAction") or "").strip().lower()
+    action: Literal["accept", "decline"] = "accept" if raw_action == "accept" else "decline"
+    context = value.get("context")
+    if not isinstance(context, Mapping):
+        context = params.get("context")
+    upload_id = ""
+    if isinstance(context, Mapping):
+        upload_id = str(context.get("uploadId") or "").strip()
+    if not upload_id:
+        upload_id = str(value.get("uploadId") or params.get("uploadId") or "").strip()
+    if not upload_id:
+        raise RuntimeError("Microsoft Teams file consent invoke requires uploadId.")
+    raw_upload_info = value.get("uploadInfo") or params.get("uploadInfo")
+    upload_info = (
+        cast(Mapping[str, object], raw_upload_info)
+        if isinstance(raw_upload_info, Mapping)
+        else None
+    )
+    raw_conversation = activity.get("conversation")
+    conversation_id: str | None = None
+    if isinstance(raw_conversation, Mapping):
+        conversation_id = str(raw_conversation.get("id") or "").strip() or None
+    if conversation_id is None:
+        conversation_id = (
+            str(value.get("conversationId") or params.get("conversationId") or "").strip()
+            or None
+        )
+    if conversation_id is not None:
+        conversation_id = _msteams_base_conversation_id(conversation_id) or None
+    return _MSTeamsFileConsentInvoke(
+        action=action,
+        upload_id=upload_id,
+        upload_info=upload_info,
+        conversation_id=conversation_id,
+    )
+
+
+def _msteams_file_consent_upload_info_value(
+    upload_info: Mapping[str, object],
+    key: str,
+) -> str:
+    value = str(upload_info.get(key) or "").strip()
+    if not value:
+        raise RuntimeError(f"Microsoft Teams file consent uploadInfo requires {key}.")
+    return value
+
+
+def _msteams_file_info_card_from_upload_info(
+    upload_info: Mapping[str, object],
+) -> dict[str, object]:
+    filename = _msteams_file_consent_upload_info_value(upload_info, "name")
+    content_url = _msteams_file_consent_upload_info_value(upload_info, "contentUrl")
+    unique_id = _msteams_file_consent_upload_info_value(upload_info, "uniqueId")
+    file_type = _msteams_file_consent_upload_info_value(upload_info, "fileType")
+    return {
+        "contentType": "application/vnd.microsoft.teams.card.file.info",
+        "contentUrl": content_url,
+        "name": filename,
+        "content": {
+            "uniqueId": unique_id,
+            "fileType": file_type,
+        },
+    }
+
+
+def _msteams_file_consent_content_type(
+    *,
+    event_payload: Mapping[str, Any],
+    downloaded_content_type: str | None,
+    filename: str | None,
+) -> str:
+    file_consent = _msteams_file_consent_entry(event_payload)
+    if file_consent is not None:
+        configured = _msteams_file_info_value(file_consent, "contentType", "mimeType")
+        if configured is not None:
+            return configured
+    if downloaded_content_type:
+        return downloaded_content_type
+    guessed = mimetypes.guess_type(str(filename or ""))[0]
+    return guessed or "application/octet-stream"
+
+
+def _msteams_graph_upload_entry(event: Mapping[str, Any]) -> Mapping[str, object] | None:
+    containers: list[Mapping[str, Any]] = [event]
+    channel_data = event.get("channelData")
+    if isinstance(channel_data, Mapping):
+        containers.append(channel_data)
+    for container in containers:
+        for key in (
+            "msteamsGraphUpload",
+            "msteamsSharePointUpload",
+            "teamsGraphUpload",
+            "teamsSharePointUpload",
+            "graphUpload",
+        ):
+            value = container.get(key)
+            if isinstance(value, Mapping):
+                return cast(Mapping[str, object], value)
+    return None
+
+
+def _msteams_graph_upload_site_id(
+    *,
+    event: Mapping[str, Any],
+    route_config: _MSTeamsRouteConfig,
+) -> str | None:
+    upload = _msteams_graph_upload_entry(event)
+    if upload is not None:
+        site_id = _msteams_file_info_value(
+            upload,
+            "siteId",
+            "sharePointSiteId",
+            "sharepointSiteId",
+            "share_point_site_id",
+        )
+        if site_id is not None:
+            return site_id
+    return route_config.share_point_site_id
+
+
+def _msteams_graph_upload_filename(
+    *,
+    event: Mapping[str, Any],
+    media_url: str,
+    downloaded_filename: str | None,
+    index: int,
+) -> str:
+    upload = _msteams_graph_upload_entry(event)
+    if upload is not None:
+        filename = _msteams_file_info_value(upload, "filename", "fileName", "name")
+        if filename is not None:
+            return filename
+    parsed_name = unquote(Path(urlparse(media_url).path).name)
+    return downloaded_filename or parsed_name or f"upload-{index}"
+
+
+def _msteams_poll_card(
+    *,
+    question: str,
+    options: list[str],
+    max_selections: int | None,
+) -> tuple[str, dict[str, object]]:
+    poll_id = str(uuid.uuid4())
+    normalized_max_selections = (
+        math.floor(max_selections) if isinstance(max_selections, int) and max_selections > 1 else 1
+    )
+    capped_max_selections = min(max(1, normalized_max_selections), len(options))
+    hint = (
+        f"Select up to {capped_max_selections} "
+        f"option{'' if capped_max_selections == 1 else 's'}."
+        if capped_max_selections > 1
+        else "Select one option."
+    )
+    card: dict[str, object] = {
+        "type": "AdaptiveCard",
+        "version": "1.5",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": question,
+                "wrap": True,
+                "weight": "Bolder",
+                "size": "Medium",
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "choices",
+                "isMultiSelect": capped_max_selections > 1,
+                "style": "expanded",
+                "choices": [
+                    {"title": option, "value": str(index)}
+                    for index, option in enumerate(options)
+                ],
+            },
+            {
+                "type": "TextBlock",
+                "text": hint,
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "Vote",
+                "data": {
+                    "openclawPollId": poll_id,
+                    "pollId": poll_id,
+                },
+                "msteams": {
+                    "type": "messageBack",
+                    "text": "openclaw poll vote",
+                    "displayText": "Vote recorded",
+                    "value": {
+                        "openclawPollId": poll_id,
+                        "pollId": poll_id,
+                    },
+                },
+            }
+        ],
+    }
+    return poll_id, card
+
+
+def _msteams_poll_vote_nested_value(
+    value: object,
+    keys: tuple[str, ...],
+) -> object | None:
+    current = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _msteams_poll_vote_optional_string(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return str(value)
+    return None
+
+
+def _msteams_poll_vote_selection_values(value: object) -> list[str]:
+    if isinstance(value, list):
+        selections = [
+            selection
+            for entry in value
+            if (selection := _msteams_poll_vote_optional_string(entry)) is not None
+        ]
+        return selections
+    normalized = _msteams_poll_vote_optional_string(value)
+    if normalized is None:
+        return []
+    if "," in normalized:
+        return [entry.strip() for entry in normalized.split(",") if entry.strip()]
+    return [normalized]
+
+
+def _msteams_poll_vote_from_value(value: object) -> tuple[str, list[str]] | None:
+    if not isinstance(value, Mapping):
+        return None
+    poll_id = (
+        _msteams_poll_vote_optional_string(value.get("openclawPollId"))
+        or _msteams_poll_vote_optional_string(value.get("pollId"))
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("openclaw", "pollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("openclaw", "poll", "id"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "openclawPollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "pollId"))
+        )
+        or _msteams_poll_vote_optional_string(
+            _msteams_poll_vote_nested_value(value, ("data", "openclaw", "pollId"))
+        )
+    )
+    if poll_id is None:
+        return None
+    selections = _msteams_poll_vote_selection_values(value.get("choices"))
+    if not selections:
+        selections = _msteams_poll_vote_selection_values(
+            _msteams_poll_vote_nested_value(value, ("data", "choices"))
+        )
+    if not selections:
+        return None
+    return poll_id, selections
+
+
+def _msteams_poll_vote_from_message_action_params(
+    params: Mapping[str, Any],
+) -> tuple[str, list[str]] | None:
+    sources: list[object] = []
+    activity = params.get("activity")
+    if isinstance(activity, Mapping):
+        sources.append(activity.get("value"))
+    for key in ("value", "actionValue", "data"):
+        sources.append(params.get(key))
+    sources.append(params)
+    for source in sources:
+        vote = _msteams_poll_vote_from_value(source)
+        if vote is not None:
+            return vote
+    return None
+
+
+_MSTEAMS_MISSING_ACTION_VALUE = object()
+
+
+def _msteams_serialize_adaptive_card_action_value(
+    value: object = _MSTEAMS_MISSING_ACTION_VALUE,
+) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or None
+    if value is _MSTEAMS_MISSING_ACTION_VALUE:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _msteams_strip_mention_tags(text: str) -> str:
+    return re.sub(r"<at[^>]*>.*?</at>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+
+def _msteams_html_attachment_text(activity: Mapping[str, Any]) -> str | None:
+    attachments = activity.get("attachments")
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, Mapping):
+            continue
+        content_type = str(attachment.get("contentType") or "").strip().lower()
+        if content_type != "text/html":
+            continue
+        content = attachment.get("content")
+        raw = ""
+        if isinstance(content, str):
+            raw = content
+        elif isinstance(content, Mapping):
+            raw = str(content.get("text") or content.get("body") or "")
+        if not raw:
+            continue
+        normalized = re.sub(
+            r"<at[^>]*>.*?</at>",
+            " ",
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        normalized = re.sub(
+            r"<a\b[^>]*href=[\"']([^\"']+)[\"'][^>]*>(.*?)</a>",
+            r"\2 \1",
+            normalized,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        normalized = re.sub(r"<br\s*/?>", "\n", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"</p>", "\n", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<[^>]+>", " ", normalized)
+        normalized = html.unescape(normalized.replace("\xa0", " "))
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _msteams_inbound_activity_text(activity: Mapping[str, Any]) -> str | None:
+    activity_type = str(activity.get("type") or "").strip().lower()
+    if activity_type == "message":
+        text = str(activity.get("text") or "").strip()
+        if not text:
+            text = _msteams_html_attachment_text(activity) or ""
+        text = _msteams_strip_mention_tags(text)
+        return text or None
+    if (
+        activity_type == "invoke"
+        and str(activity.get("name") or "").strip() == "adaptiveCard/action"
+    ):
+        value = activity.get("value", _MSTEAMS_MISSING_ACTION_VALUE)
+        return _msteams_serialize_adaptive_card_action_value(value)
+    return None
+
+
+def _msteams_normalize_inbound_conversation_id(raw: object) -> str | None:
+    normalized = str(raw or "").strip().split(";", 1)[0].strip()
+    return normalized or None
+
+
+def _msteams_inbound_conversation_message_id(raw: object) -> str | None:
+    match = re.search(r"(?:^|;)messageid=([^;]+)", str(raw or ""), flags=re.IGNORECASE)
+    if match is None:
+        return None
+    return unquote(match.group(1)).strip() or None
+
+
+def _msteams_inbound_mapping(value: object) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _msteams_inbound_optional_string(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _msteams_inbound_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    entries: list[str] = []
+    for entry in value:
+        normalized = _msteams_inbound_optional_string(entry)
+        if normalized is not None:
+            entries.append(normalized)
+    return entries
+
+
+def _msteams_channel_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> Mapping[str, Any]:
+    channels = _msteams_inbound_mapping(snapshot.get("channels"))
+    channel_config = _msteams_inbound_mapping(
+        channels.get("msteams") or channels.get("teams")
+    )
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    accounts = _msteams_inbound_mapping(channel_config.get("accounts"))
+    account_config: Mapping[str, Any] = {}
+    if accounts:
+        account_config = _msteams_inbound_mapping(
+            accounts.get(normalized_account_id)
+            or accounts.get(DEFAULT_ACCOUNT_ID)
+            or {}
+        )
+    if not account_config:
+        return channel_config
+    merged = dict(channel_config)
+    merged.update(account_config)
+    return merged
+
+
+def _msteams_signin_conversation_type(activity: Mapping[str, Any]) -> str | None:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    conversation_type = _msteams_inbound_optional_string(
+        conversation.get("conversationType")
+    )
+    return conversation_type.lower() if conversation_type is not None else None
+
+
+def _msteams_signin_conversation_id(activity: Mapping[str, Any]) -> str | None:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    return _msteams_normalize_inbound_conversation_id(conversation.get("id"))
+
+
+def _msteams_signin_is_direct_message(activity: Mapping[str, Any]) -> bool:
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    conversation_type = _msteams_signin_conversation_type(activity)
+    if conversation_type == "personal":
+        return True
+    return conversation_type is None and not bool(conversation.get("isGroup"))
+
+
+def _msteams_signin_channel_data(activity: Mapping[str, Any]) -> Mapping[str, Any]:
+    return _msteams_inbound_mapping(activity.get("channelData"))
+
+
+def _msteams_signin_team_id(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    team = _msteams_inbound_mapping(channel_data.get("team"))
+    return _msteams_inbound_optional_string(team.get("id"))
+
+
+def _msteams_signin_team_name(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    team = _msteams_inbound_mapping(channel_data.get("team"))
+    return _msteams_inbound_optional_string(team.get("name"))
+
+
+def _msteams_signin_channel_name(activity: Mapping[str, Any]) -> str | None:
+    channel_data = _msteams_signin_channel_data(activity)
+    channel = _msteams_inbound_mapping(channel_data.get("channel"))
+    return _msteams_inbound_optional_string(channel.get("name"))
+
+
+def _msteams_normalize_channel_slug(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def _msteams_channel_key_candidates(*keys: str | None) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for key in keys:
+        normalized = _msteams_inbound_optional_string(key)
+        if normalized is None or normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(normalized)
+    return candidates
+
+
+def _msteams_channel_entry_match(
+    entries: Mapping[str, Any],
+    *,
+    keys: list[str],
+    allow_name_matching: bool,
+) -> tuple[bool, Mapping[str, Any]]:
+    for key in keys:
+        if key in entries:
+            return True, _msteams_inbound_mapping(entries.get(key))
+    if allow_name_matching:
+        normalized_keys = {
+            _msteams_normalize_channel_slug(key) for key in keys if key.strip()
+        }
+        for entry_key, entry in entries.items():
+            normalized_entry_key = _msteams_normalize_channel_slug(str(entry_key))
+            if normalized_entry_key and normalized_entry_key in normalized_keys:
+                return True, _msteams_inbound_mapping(entry)
+    if "*" in entries:
+        return True, _msteams_inbound_mapping(entries.get("*"))
+    return False, {}
+
+
+def _msteams_signin_route_allowed(
+    channel_config: Mapping[str, Any],
+    activity: Mapping[str, Any],
+) -> bool:
+    teams = _msteams_inbound_mapping(channel_config.get("teams"))
+    if not teams:
+        return True
+    allow_name_matching = bool(channel_config.get("dangerouslyAllowNameMatching"))
+    team_name = _msteams_signin_team_name(activity)
+    team_matched, team_config = _msteams_channel_entry_match(
+        teams,
+        keys=_msteams_channel_key_candidates(
+            _msteams_signin_team_id(activity),
+            team_name if allow_name_matching else None,
+            (
+                _msteams_normalize_channel_slug(team_name)
+                if allow_name_matching and team_name
+                else None
+            ),
+        ),
+        allow_name_matching=allow_name_matching,
+    )
+    if not team_matched:
+        return False
+    channels = _msteams_inbound_mapping(team_config.get("channels"))
+    if not channels:
+        return True
+    channel_name = _msteams_signin_channel_name(activity)
+    channel_matched, _channel_config = _msteams_channel_entry_match(
+        channels,
+        keys=_msteams_channel_key_candidates(
+            _msteams_signin_conversation_id(activity),
+            channel_name if allow_name_matching else None,
+            (
+                _msteams_normalize_channel_slug(channel_name)
+                if allow_name_matching and channel_name
+                else None
+            ),
+        ),
+        allow_name_matching=allow_name_matching,
+    )
+    return channel_matched
+
+
+def _msteams_allowlist_allows_sender(
+    allow_from: list[str],
+    *,
+    sender_id: str,
+    sender_name: str | None,
+    allow_name_matching: bool,
+) -> bool:
+    normalized_allow_from = {
+        entry.strip().lower() for entry in allow_from if entry.strip()
+    }
+    if "*" in normalized_allow_from:
+        return True
+    normalized_sender_id = sender_id.strip().lower()
+    if normalized_sender_id and normalized_sender_id in normalized_allow_from:
+        return True
+    if allow_name_matching and sender_name:
+        return sender_name.strip().lower() in normalized_allow_from
+    return False
+
+
+def _msteams_signin_user(activity: Mapping[str, Any]) -> tuple[str, str]:
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    user_id = (
+        _msteams_inbound_optional_string(sender.get("aadObjectId"))
+        or _msteams_inbound_optional_string(sender.get("id"))
+        or ""
+    )
+    channel_id = (
+        _msteams_inbound_optional_string(activity.get("channelId")) or "msteams"
+    )
+    return user_id, channel_id
+
+
+def _msteams_signin_sso_metadata(
+    name: str,
+    value: object,
+    *,
+    user_id: str,
+    channel_id: str,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "status": "unavailable",
+        "reason": "msteams_sso_not_configured",
+        "kind": "verifyState" if name == "signin/verifyState" else "tokenExchange",
+        "userId": user_id,
+        "channelId": channel_id,
+    }
+    value_mapping = _msteams_inbound_mapping(value)
+    if name == "signin/tokenExchange":
+        connection_name = _msteams_inbound_optional_string(
+            value_mapping.get("connectionName")
+        )
+        exchange_id = _msteams_inbound_optional_string(value_mapping.get("id"))
+        if connection_name is not None:
+            metadata["connectionName"] = connection_name
+        if exchange_id is not None:
+            metadata["exchangeId"] = exchange_id
+        metadata["tokenPresent"] = _msteams_inbound_optional_string(
+            value_mapping.get("token")
+        ) is not None
+    else:
+        metadata["statePresent"] = _msteams_inbound_optional_string(
+            value_mapping.get("state")
+        ) is not None
+    return metadata
+
+
+def _msteams_sso_enabled(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _msteams_sso_config_from_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsSsoConfig | None:
+    channel_config = _msteams_channel_config_from_snapshot(
+        snapshot,
+        account_id=account_id,
+    )
+    sso_config = _msteams_inbound_mapping(
+        channel_config.get("sso")
+    )
+    if not _msteams_sso_enabled(sso_config.get("enabled")):
+        return None
+    connection_name = _msteams_inbound_optional_string(
+        sso_config.get("connectionName") or sso_config.get("connection_name")
+    )
+    if connection_name is None:
+        return None
+    user_token_base_url = (
+        _msteams_inbound_optional_string(
+            sso_config.get("userTokenBaseUrl") or sso_config.get("user_token_base_url")
+        )
+        or MSTEAMS_USER_TOKEN_BASE_URL
+    )
+    return _MSTeamsSsoConfig(
+        connection_name=connection_name,
+        user_token_base_url=user_token_base_url,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _MSTeamsInboundSessionContext:
+    conversation_target: ConversationTargetView
+    session_key: str
+    sender_id: str
+    sender_name: str | None
+    conversation_id: str
+    conversation_type: str
+    thread_id: str | None
+
+
+def _msteams_inbound_session_context(
+    activity: Mapping[str, Any],
+    *,
+    account_id: str | None,
+) -> _MSTeamsInboundSessionContext:
+    sender = _msteams_inbound_mapping(activity.get("from"))
+    conversation = _msteams_inbound_mapping(activity.get("conversation"))
+    sender_id = (
+        _msteams_inbound_optional_string(sender.get("aadObjectId"))
+        or _msteams_inbound_optional_string(sender.get("id"))
+    )
+    if sender_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Microsoft Teams inbound activity is missing sender id."
+        )
+    sender_name = _msteams_inbound_optional_string(sender.get("name"))
+    raw_conversation_id = conversation.get("id")
+    conversation_id = _msteams_normalize_inbound_conversation_id(raw_conversation_id)
+    if conversation_id is None:
+        raise GatewayOutboundRuntimeUnavailableError(
+            "Microsoft Teams inbound activity is missing conversation id."
+        )
+    conversation_type = str(
+        conversation.get("conversationType") or "personal"
+    ).strip().lower() or "personal"
+    normalized_account_id = normalize_optional_account_id(account_id) or DEFAULT_ACCOUNT_ID
+    if conversation_type == "personal":
+        peer_kind: ConversationTargetPeerKind = "direct"
+        peer_id = f"msteams:user:{sender_id}"
+        thread_id = None
+    else:
+        peer_kind = "channel" if conversation_type == "channel" else "group"
+        peer_id = f"msteams:conversation:{conversation_id}"
+        thread_id = (
+            _msteams_inbound_conversation_message_id(raw_conversation_id)
+            or _msteams_inbound_optional_string(activity.get("replyToId"))
+            if conversation_type == "channel"
+            else None
+        )
+    conversation_target = ConversationTargetView(
+        channel="msteams",
+        account_id=normalized_account_id,
+        peer_kind=peer_kind,
+        peer_id=peer_id,
+    )
+    base_session_key = build_launch_session_key(
+        mode="workspace_affinity",
+        preferred_instance_id=None,
+        task_id=None,
+        project_id=None,
+        operator_id=None,
+        conversation_target=conversation_target,
+    )
+    session_key = resolve_thread_session_keys(
+        base_session_key=base_session_key,
+        thread_id=thread_id,
+    ).session_key
+    return _MSTeamsInboundSessionContext(
+        conversation_target=conversation_target,
+        session_key=session_key,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+        thread_id=thread_id,
+    )
+
+
+def _msteams_normalize_poll_selections(
+    *,
+    options: list[str],
+    max_selections: int,
+    selections: list[str],
+) -> list[str]:
+    mapped: list[str] = []
+    for entry in selections:
+        try:
+            selected_index = int(entry, 10)
+        except ValueError:
+            continue
+        if 0 <= selected_index < len(options):
+            mapped.append(str(selected_index))
+    limit = max(1, max_selections)
+    limited = mapped[:limit] if limit > 1 else mapped[:1]
+    deduped: list[str] = []
+    for entry in limited:
+        if entry not in deduped:
+            deduped.append(entry)
+    return deduped
+
+
+def _msteams_action_target(request: GatewayMessageActionDispatchRequest) -> str:
+    target = (
+        _message_action_param_string(request.params, "to")
+        or _message_action_param_string(request.params, "target")
+        or _message_action_param_string(request.params, "conversationId")
+        or _message_action_param_string(request.params, "channelId")
+    )
+    tool_context = request.tool_context or {}
+    if target is None and isinstance(tool_context, dict):
+        target = (
+            _message_action_param_string(tool_context, "currentGraphChannelId")
+            or _message_action_param_string(tool_context, "currentChannelId")
+        )
+    if target is None:
+        raise RuntimeError("Microsoft Teams action requires a target.")
+    return target
+
+
+def _msteams_graph_conversation_target(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams Graph target is required.")
+    normalized = target.lower()
+    for prefix in ("msteams:", "teams:"):
+        if normalized.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            normalized = target.lower()
+            break
+    for prefix in ("conversation:", "channel:", "chat:", "group:"):
+        if normalized.startswith(prefix):
+            target = target[len(prefix) :].strip()
+            normalized = target.lower()
+            break
+    if normalized.startswith("user:"):
+        raise RuntimeError(
+            "Microsoft Teams user Graph actions require a stored Graph conversation reference."
+        )
+    target = re.split(r";messageid=", target, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+    if not target:
+        raise RuntimeError("Microsoft Teams Graph target is required.")
+    return target
+
+
+def _msteams_graph_message_endpoint(
+    *,
+    target: str,
+    message_id: str,
+) -> str:
+    conversation_id = _msteams_graph_conversation_target(target)
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/v1.0/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}"
+        )
+    return (
+        "https://graph.microsoft.com/v1.0/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}"
+    )
+
+
+def _msteams_graph_conversation_target_for_route(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    raw_target: str | None,
+) -> str:
+    user_id = _msteams_user_target_id(raw_target)
+    if user_id is None:
+        return _msteams_graph_conversation_target(raw_target)
+    if route_config.graph_chat_id:
+        return _msteams_graph_conversation_target(route_config.graph_chat_id)
+    if route_config.conversation_id and _msteams_graph_compatible_conversation_id(
+        route_config.conversation_id
+    ):
+        return _msteams_graph_conversation_target(route_config.conversation_id)
+    raise RuntimeError(
+        "Microsoft Teams user Graph actions require a stored Graph conversation reference."
+    )
+
+
+def _msteams_graph_beta_reaction_endpoint(
+    *,
+    route_config: _MSTeamsRouteConfig,
+    target: str,
+    message_id: str,
+    action: Literal["setReaction", "unsetReaction"],
+) -> str:
+    conversation_id = _msteams_graph_conversation_target_for_route(
+        route_config=route_config,
+        raw_target=target,
+    )
+    encoded_message_id = quote(message_id, safe="")
+    if "/" in conversation_id:
+        team_id, channel_id = conversation_id.split("/", 1)
+        if not team_id.strip() or not channel_id.strip():
+            raise RuntimeError("Microsoft Teams channel Graph target must be teamId/channelId.")
+        return (
+            "https://graph.microsoft.com/beta/teams/"
+            f"{quote(team_id.strip(), safe='')}/channels/"
+            f"{quote(channel_id.strip(), safe='')}/messages/{encoded_message_id}/{action}"
+        )
+    return (
+        "https://graph.microsoft.com/beta/chats/"
+        f"{quote(conversation_id, safe='')}/messages/{encoded_message_id}/{action}"
+    )
+
+
+def _msteams_reaction_type(raw_reaction: str | None) -> str:
+    normalized = str(raw_reaction or "").strip()
+    if not normalized:
+        raise RuntimeError("React requires an emoji (reaction type).")
+    lowered = normalized.lower()
+    if lowered in MSTEAMS_REACTION_EMOJIS:
+        return lowered
+    return normalized
+
+
+def _msteams_reaction_summaries(result: object) -> list[dict[str, object]]:
+    if not isinstance(result, dict):
+        raise RuntimeError("Microsoft Teams Graph API returned a non-JSON response.")
+    raw_reactions = result.get("reactions")
+    if not isinstance(raw_reactions, list):
+        return []
+    grouped: dict[str, dict[str, object]] = {}
+    for raw_reaction in raw_reactions:
+        if not isinstance(raw_reaction, dict):
+            continue
+        reaction_type = str(raw_reaction.get("reactionType") or "unknown").strip() or "unknown"
+        entry = grouped.setdefault(
+            reaction_type,
+            {
+                "reactionType": reaction_type,
+                "name": reaction_type,
+                "count": 0,
+                "users": [],
+            },
+        )
+        emoji = MSTEAMS_REACTION_EMOJIS.get(reaction_type)
+        if emoji is not None:
+            entry["emoji"] = emoji
+        current_count = entry.get("count")
+        entry["count"] = (
+            current_count if isinstance(current_count, int) and not isinstance(current_count, bool)
+            else 0
+        ) + 1
+        user = raw_reaction.get("user")
+        if not isinstance(user, dict):
+            continue
+        user_id = str(user.get("id") or "").strip()
+        if not user_id:
+            continue
+        user_entry: dict[str, object] = {"id": user_id}
+        display_name = str(user.get("displayName") or "").strip()
+        if display_name:
+            user_entry["displayName"] = display_name
+        users = entry.get("users")
+        if isinstance(users, list):
+            users.append(user_entry)
+    return list(grouped.values())
+
+
+def _msteams_decode_jwt_payload(token: str) -> dict[str, object] | None:
+    parts = str(token or "").split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1].strip()
+    if not payload:
+        return None
+    padded = payload + "=" * ((4 - len(payload) % 4) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        parsed = json.loads(decoded)
+    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _msteams_graph_probe_metadata(token: str) -> dict[str, object]:
+    metadata: dict[str, object] = {"ok": True}
+    payload = _msteams_decode_jwt_payload(token)
+    if payload is None:
+        return metadata
+    roles = payload.get("roles")
+    if isinstance(roles, list):
+        normalized_roles = [str(role).strip() for role in roles if str(role).strip()]
+        if normalized_roles:
+            metadata["roles"] = normalized_roles
+    scopes = payload.get("scp")
+    if isinstance(scopes, str):
+        normalized_scopes = [scope.strip() for scope in scopes.split() if scope.strip()]
+        if normalized_scopes:
+            metadata["scopes"] = normalized_scopes
+    return metadata
+
+
+def _signal_base_url(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip().rstrip("/")
+    if _normalized_http_webhook_url(target) is None:
+        raise RuntimeError("Signal route target must be an http(s) base URL.")
+    return target
+
+
+def _signal_rpc_endpoint(raw_target: str | None) -> str:
+    return f"{_signal_base_url(raw_target)}/api/v1/rpc"
+
+
+def _signal_target_params(raw_target: str | None) -> tuple[dict[str, object], str]:
+    target = str(raw_target or "").strip()
+    if not target:
+        raise RuntimeError("Signal recipient is required.")
+    if target.lower().startswith("signal:"):
+        target = target[len("signal:") :].strip()
+    normalized = target.lower()
+    if normalized.startswith("group:"):
+        group_id = target[len("group:") :].strip()
+        if not group_id:
+            raise RuntimeError("Signal group id is required.")
+        return {"groupId": group_id}, group_id
+    if normalized.startswith("username:"):
+        username = target[len("username:") :].strip()
+        if not username:
+            raise RuntimeError("Signal username is required.")
+        return {"username": [username]}, username
+    if normalized.startswith("u:"):
+        username = target.strip()
+        return {"username": [username]}, username
+    return {"recipient": [target]}, target
+
+
+def _signal_reaction_normalized_id(raw_target: str | None) -> str:
+    target = str(raw_target or "").strip()
+    if target.lower().startswith("signal:"):
+        target = target[len("signal:") :].strip()
+    if target.lower().startswith("uuid:"):
+        target = target[len("uuid:") :].strip()
+    return target
+
+
+def _signal_reaction_target_params(
+    raw_target: str | None,
+) -> tuple[dict[str, object], str | None]:
+    target = _signal_reaction_normalized_id(raw_target)
+    if not target:
+        raise RuntimeError("recipient or group required")
+    if target.lower().startswith("group:"):
+        group_id = target[len("group:") :].strip()
+        if not group_id:
+            raise RuntimeError("recipient or group required")
+        return {"groupIds": [group_id]}, None
+    return {"recipients": [target]}, target
+
+
+def _signal_reaction_target_author(
+    params: dict[str, Any],
+    *,
+    fallback: str | None,
+) -> str | None:
+    for key in ("targetAuthor", "targetAuthorUuid"):
+        candidate = _message_action_param_string(params, key)
+        normalized = _signal_reaction_normalized_id(candidate)
+        if normalized:
+            return normalized
+    return fallback
+
+
+def _signal_reaction_message_timestamp(
+    request: GatewayMessageActionDispatchRequest,
+) -> int:
+    message_id = _message_action_param_string_or_number(request.params, "messageId")
+    if message_id is None and request.tool_context is not None:
+        current_message_id = request.tool_context.get("currentMessageId")
+        if current_message_id is not None:
+            if isinstance(current_message_id, bool) or not isinstance(
+                current_message_id,
+                (str, int, float),
+            ):
+                raise RuntimeError("toolContext.currentMessageId must be a string or number.")
+            message_id = str(current_message_id).strip() or None
+    if message_id is None:
+        raise RuntimeError(
+            "messageId (timestamp) required. Provide messageId explicitly "
+            "or react to the current inbound message."
+        )
+    match = re.match(r"^[+-]?\d+", message_id)
+    if match is None:
+        raise RuntimeError(f"Invalid messageId: {message_id}. Expected numeric timestamp.")
+    timestamp = int(match.group(0))
+    if timestamp <= 0:
+        raise RuntimeError("Valid targetTimestamp is required for Signal reaction")
+    return timestamp
+
+
+def _signal_rpc_result_timestamp(result: object) -> int | None:
+    if isinstance(result, dict) and isinstance(result.get("result"), dict):
+        timestamp = result["result"].get("timestamp")
+        return timestamp if isinstance(timestamp, int) else None
+    if isinstance(result, dict):
+        timestamp = result.get("timestamp")
+        return timestamp if isinstance(timestamp, int) else None
+    return None
+
+
+def _irc_wire_value(value: str | None, label: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise RuntimeError(f"IRC {label} is required.")
+    if any(character in normalized for character in ("\r", "\n", "\x00")):
+        raise RuntimeError(f"IRC {label} cannot contain control characters.")
+    return normalized
+
+
+def _irc_normalize_target(raw_target: str | None) -> str | None:
+    target = str(raw_target or "").strip()
+    if not target:
+        return None
+    if target.lower().startswith("irc:"):
+        target = target[len("irc:") :].strip()
+    lower = target.lower()
+    if lower.startswith("channel:"):
+        channel = target[len("channel:") :].strip()
+        target = channel if channel.startswith(("#", "&")) else f"#{channel}"
+    elif lower.startswith("user:"):
+        target = target[len("user:") :].strip()
+    elif lower.startswith("direct:"):
+        target = target[len("direct:") :].strip()
+    if (
+        not target
+        or ":" in target
+        or any(character.isspace() for character in target)
+        or any(ord(character) < 32 for character in target)
+    ):
+        return None
+    return target
+
+
+def _irc_route_config(target: str | None, secret_token: str | None) -> _IrcRouteConfig:
+    parsed = urlparse(str(target or "").strip())
+    scheme = parsed.scheme.lower()
+    if scheme not in {"irc", "ircs"} or not parsed.hostname:
+        raise RuntimeError("IRC route target must be an irc(s) server URL.")
+    tls = scheme == "ircs"
+    try:
+        port = parsed.port or (6697 if tls else 6667)
+    except ValueError as exc:
+        raise RuntimeError("IRC route target port is invalid.") from exc
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    nick = query.get("nick") or (unquote(parsed.username) if parsed.username else "") or "openzues"
+    username = query.get("username") or nick
+    realname = query.get("realname") or "OpenZues"
+    password = str(secret_token or "").strip() or (
+        unquote(parsed.password) if parsed.password else ""
+    )
+    return _IrcRouteConfig(
+        host=_irc_wire_value(parsed.hostname, "host"),
+        port=port,
+        tls=tls,
+        nick=_irc_wire_value(nick, "nick"),
+        username=_irc_wire_value(username, "username"),
+        realname=_irc_wire_value(realname, "realname"),
+        password=_irc_wire_value(password, "password") if password else None,
+    )
+
+
+def _twitch_query_value(query: Mapping[str, str], *names: str) -> str | None:
+    lowered = {key.lower(): value for key, value in query.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value is not None and value.strip():
+            return value.strip()
+    return None
+
+
+def _twitch_normalize_channel(raw_channel: str | None) -> str | None:
+    channel = str(raw_channel or "").strip()
+    if not channel:
+        return None
+    if channel.lower().startswith("twitch:"):
+        channel = channel[len("twitch:") :].strip()
+    lowered = channel.lower()
+    if lowered.startswith("channel:") or lowered.startswith("user:"):
+        channel = channel.split(":", 1)[1].strip()
+    if channel.startswith("#"):
+        channel = channel[1:].strip()
+    normalized = channel.lower()
+    if not normalized or not re.fullmatch(r"[a-z0-9_]{1,25}", normalized):
+        return None
+    return normalized
+
+
+def _twitch_route_config(target: str | None, secret_token: str | None) -> _TwitchRouteConfig:
+    parsed = urlparse(str(target or "").strip())
+    if parsed.scheme.lower() != "twitch":
+        raise RuntimeError("Twitch route target must be a twitch:// configuration URL.")
+    query = {key: value for key, value in parse_qsl(parsed.query, keep_blank_values=False)}
+    username = _twitch_query_value(query, "username", "user", "nick")
+    client_id = _twitch_query_value(query, "clientId", "client_id")
+    token = str(secret_token or "").strip() or (
+        _twitch_query_value(query, "token", "accessToken", "access_token") or ""
+    )
+    default_channel = _twitch_normalize_channel(
+        _twitch_query_value(query, "channel", "defaultChannel", "default_channel")
+    )
+    if not username:
+        raise RuntimeError("Twitch route is missing username.")
+    if not client_id:
+        raise RuntimeError("Twitch route is missing clientId.")
+    if not token:
+        raise RuntimeError("Twitch route is missing an OAuth token secret.")
+    return _TwitchRouteConfig(
+        username=_irc_wire_value(username.lower(), "Twitch username"),
+        client_id=_irc_wire_value(client_id, "Twitch clientId"),
+        token=_irc_wire_value(token, "Twitch token"),
+        default_channel=default_channel,
+    )
+
+
+def _strip_markdown_for_twitch(markdown: str) -> str:
+    text = str(markdown or "")
+    text = re.sub(r"!\[[^\]]*]\([^)]+\)", "", text)
+    text = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"~~([^~]+)~~", r"\1", text)
+    text = re.sub(r"```[\s\S]*?```", lambda match: match.group(0).replace("```", ""), text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    text = text.replace("\r", "")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = text.replace("\n", " ")
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
+def _twitch_text_chunks(text: str, *, limit: int = 500) -> list[str]:
+    cleaned = _strip_markdown_for_twitch(text)
+    if not cleaned:
+        return []
+    if limit <= 0 or len(cleaned) <= limit:
+        return [cleaned]
+    chunks: list[str] = []
+    remaining = cleaned
+    while len(remaining) > limit:
+        window = remaining[:limit]
+        split_index = window.rfind(" ")
+        if split_index == -1:
+            chunks.append(window)
+            remaining = remaining[limit:]
+        else:
+            chunks.append(window[:split_index])
+            remaining = remaining[split_index + 1 :]
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+FEISHU_API_BASE_URL = "https://open.feishu.cn/open-apis"
+FEISHU_REPLY_FALLBACK_CODES = {230011, 231003}
+
+
+def _feishu_bearer_token(secret_token: str | None) -> str:
+    token = str(secret_token or "").strip()
+    if not token:
+        raise RuntimeError("Feishu route is missing a tenant access token secret.")
+    return token if token.lower().startswith("bearer ") else f"Bearer {token}"
+
+
+def _feishu_api_endpoint(
+    target: str | None,
+    path: str,
+    *,
+    query: Mapping[str, object] | None = None,
+) -> str:
+    base_url = str(target or "").strip() or FEISHU_API_BASE_URL
+    stripped_base = base_url.rstrip("/")
+    stripped_path = path.strip("/")
+    if stripped_base.endswith(f"/{stripped_path}"):
+        endpoint = stripped_base
+    else:
+        endpoint = f"{stripped_base}/{stripped_path}"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Feishu route target must be an http(s) Open API base URL.")
+    if query:
+        separator = "&" if "?" in endpoint else "?"
+        query_string = urlencode({key: str(value) for key, value in query.items()})
+        endpoint = f"{endpoint}{separator}{query_string}"
+    return endpoint
+
+
+def _feishu_strip_provider_prefix(target: str) -> str:
+    return re.sub(r"^(feishu|lark):", "", target.strip(), flags=re.IGNORECASE).strip()
+
+
+def _feishu_target(raw_target: str | None) -> tuple[str, str] | None:
+    target = _feishu_strip_provider_prefix(str(raw_target or ""))
+    if not target:
+        return None
+    lowered = target.lower()
+    for prefix in ("chat:", "group:", "channel:"):
+        if lowered.startswith(prefix):
+            receive_id = target[len(prefix) :].strip()
+            return (receive_id, "chat_id") if receive_id else None
+    if lowered.startswith("open_id:"):
+        receive_id = target[len("open_id:") :].strip()
+        return (receive_id, "open_id") if receive_id else None
+    for prefix in ("user:", "dm:"):
+        if lowered.startswith(prefix):
+            receive_id = target[len(prefix) :].strip()
+            if not receive_id:
+                return None
+            receive_id_type = "open_id" if receive_id.startswith("ou_") else "user_id"
+            return receive_id, receive_id_type
+    if target.startswith("oc_"):
+        return target, "chat_id"
+    if target.startswith("ou_"):
+        return target, "open_id"
+    return target, "user_id"
+
+
+def _feishu_post_content(text: str) -> str:
+    return json.dumps(
+        {
+            "zh_cn": {
+                "content": [
+                    [
+                        {
+                            "tag": "md",
+                            "text": text,
+                        }
+                    ]
+                ]
+            }
+        },
+        separators=(",", ":"),
+    )
+
+
+def _feishu_message_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    payload = result.get("data")
+    if not isinstance(payload, dict):
+        return None
+    candidate = payload.get("message_id") or payload.get("messageId")
+    if candidate is None:
+        return None
+    return str(candidate).strip() or None
+
+
+def _feishu_chat_from_result(result: object, fallback: str) -> str:
+    if isinstance(result, dict):
+        payload = result.get("data")
+        if isinstance(payload, dict):
+            candidate = str(
+                payload.get("chat_id")
+                or payload.get("chatId")
+                or payload.get("receive_id")
+                or ""
+            ).strip()
+            if candidate:
+                return candidate
+    return fallback
+
+
+def _feishu_reply_target_unavailable(result: object) -> bool:
+    if not isinstance(result, dict):
+        return False
+    code = result.get("code")
+    if isinstance(code, int) and code in FEISHU_REPLY_FALLBACK_CODES:
+        return True
+    message = str(result.get("msg") or "").strip().lower()
+    return "withdrawn" in message or "not found" in message
+
+
+def _feishu_assert_success(result: object, error_prefix: str) -> None:
+    if not isinstance(result, dict):
+        raise RuntimeError("Feishu API returned a non-JSON response.")
+    if result.get("code") != 0:
+        detail = str(result.get("msg") or f"code {result.get('code')}").strip()
+        raise RuntimeError(f"{error_prefix}: {detail}")
 
 
 def _line_push_endpoint(target: str | None) -> str:
@@ -4524,6 +6696,7 @@ def _serialize_gateway_provider_result(result: dict[str, Any]) -> dict[str, obje
         "threadId",
         "replyToId",
         "pollId",
+        "pendingUploadId",
         "mediaId",
         "mediaIds",
         "mediaUrl",
@@ -4845,6 +7018,21 @@ def _conversation_target_peer_id_matches(
 ) -> bool:
     if route_peer_id == event_peer_id:
         return True
+    if channel == "googlechat":
+        route_googlechat_target = _googlechat_normalize_target(route_peer_id)
+        event_googlechat_target = _googlechat_normalize_target(event_peer_id)
+        return bool(
+            route_googlechat_target
+            and event_googlechat_target
+            and route_googlechat_target.strip().lower()
+            == event_googlechat_target.strip().lower()
+        )
+    if channel == "nextcloud-talk":
+        route_room = _nextcloud_talk_room_token(route_peer_id)
+        event_room = _nextcloud_talk_room_token(event_peer_id)
+        return bool(
+            route_room and event_room and route_room.strip().lower() == event_room.strip().lower()
+        )
     if channel == "telegram":
         route_target = _parse_telegram_delivery_target(route_peer_id)
         event_target = _parse_telegram_delivery_target(event_peer_id)
@@ -4859,6 +7047,29 @@ def _conversation_target_peer_id_matches(
         route_room_id = str(_matrix_route_match_target(route_peer_id) or "").strip().lower()
         event_room_id = str(_matrix_route_match_target(event_peer_id) or "").strip().lower()
         return bool(route_room_id and route_room_id == event_room_id)
+    if channel == "irc":
+        route_irc_target = str(_irc_normalize_target(route_peer_id) or "").strip().lower()
+        event_irc_target = str(_irc_normalize_target(event_peer_id) or "").strip().lower()
+        return bool(route_irc_target and route_irc_target == event_irc_target)
+    if channel == "twitch":
+        route_twitch_target = str(_twitch_normalize_channel(route_peer_id) or "").strip()
+        event_twitch_target = str(_twitch_normalize_channel(event_peer_id) or "").strip()
+        return bool(route_twitch_target and route_twitch_target == event_twitch_target)
+    if channel == "msteams":
+        route_msteams_user = _msteams_user_target_id(route_peer_id)
+        event_msteams_user = _msteams_user_target_id(event_peer_id)
+        if route_msteams_user is not None or event_msteams_user is not None:
+            return bool(
+                route_msteams_user
+                and event_msteams_user
+                and route_msteams_user.strip().lower() == event_msteams_user.strip().lower()
+            )
+        try:
+            route_msteams_target = _msteams_conversation_id(route_peer_id).strip().lower()
+            event_msteams_target = _msteams_conversation_id(event_peer_id).strip().lower()
+        except RuntimeError:
+            return False
+        return bool(route_msteams_target and route_msteams_target == event_msteams_target)
     return False
 
 
@@ -4880,7 +7091,13 @@ def _conversation_target_route_match(
         return None
 
     if route_peer_kind not in {"", "*"} and route_peer_kind != event_peer_kind:
-        return None
+        if not (
+            route_channel == "synology-chat"
+            and route_peer_kind == "direct"
+            and route_peer_id
+            and route_peer_id == event_peer_id
+        ):
+            return None
     if route_peer_id not in {"", "*"} and not _conversation_target_peer_id_matches(
         channel=route_channel,
         route_peer_id=route_peer_id,
@@ -6917,6 +9134,500 @@ class OpsMeshService:
         runtime = self._resolve_outbound_runtime_service()
         return runtime is not None and runtime.has_session_deliverer()
 
+    def _msteams_sso_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> _MSTeamsSsoConfig | None:
+        if self.gateway_config_service is None:
+            return None
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return None
+        if not isinstance(snapshot, Mapping):
+            return None
+        return _msteams_sso_config_from_snapshot(snapshot, account_id=account_id)
+
+    def _msteams_signin_channel_config(
+        self,
+        *,
+        account_id: str | None,
+    ) -> Mapping[str, Any]:
+        if self.gateway_config_service is None:
+            return {}
+        try:
+            snapshot = self.gateway_config_service.build_snapshot()
+        except Exception:
+            return {}
+        if not isinstance(snapshot, Mapping):
+            return {}
+        return _msteams_channel_config_from_snapshot(snapshot, account_id=account_id)
+
+    async def _msteams_sso_route_credentials(
+        self,
+    ) -> tuple[_MSTeamsRouteConfig, str] | None:
+        for route in await self.database.list_notification_routes():
+            if str(route.get("kind") or "").strip().lower() != "msteams":
+                continue
+            if not bool(route.get("enabled", True)):
+                continue
+            try:
+                route_config = _msteams_route_config(str(route.get("target") or ""))
+            except RuntimeError:
+                continue
+            if not route_config.app_id or not route_config.tenant_id:
+                continue
+            secret_token = await self._notification_route_secret_token(route)
+            if not str(secret_token or "").strip():
+                continue
+            return route_config, str(secret_token)
+        return None
+
+    def _msteams_sso_error_metadata(
+        self,
+        base_metadata: Mapping[str, object],
+        *,
+        code: str,
+        message: str,
+        status: int | None = None,
+    ) -> dict[str, object]:
+        del self
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "error"
+        metadata["code"] = code
+        metadata["message"] = message
+        if status is not None:
+            metadata["httpStatus"] = status
+        return metadata
+
+    def _msteams_signin_authorization_block_metadata(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+        base_metadata: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        channel_config = self._msteams_signin_channel_config(account_id=account_id)
+        if not channel_config:
+            return None
+        if not _msteams_signin_is_direct_message(activity):
+            if _msteams_signin_route_allowed(channel_config, activity):
+                return None
+            metadata = dict(base_metadata)
+            metadata.pop("code", None)
+            metadata.pop("message", None)
+            metadata["status"] = "blocked"
+            metadata["reason"] = "msteams_signin_route_not_allowlisted"
+            metadata["conversationType"] = (
+                _msteams_signin_conversation_type(activity) or "unknown"
+            )
+            conversation_id = _msteams_signin_conversation_id(activity)
+            team_id = _msteams_signin_team_id(activity)
+            if conversation_id is not None:
+                metadata["conversationId"] = conversation_id
+            if team_id is not None:
+                metadata["teamId"] = team_id
+            return metadata
+        dm_policy = (
+            _msteams_inbound_optional_string(channel_config.get("dmPolicy"))
+            or "pairing"
+        ).lower()
+        if dm_policy != "allowlist":
+            return None
+        sender = _msteams_inbound_mapping(activity.get("from"))
+        sender_id, _channel_id = _msteams_signin_user(activity)
+        sender_name = _msteams_inbound_optional_string(sender.get("name"))
+        allow_name_matching = bool(channel_config.get("dangerouslyAllowNameMatching"))
+        if _msteams_allowlist_allows_sender(
+            _msteams_inbound_string_list(channel_config.get("allowFrom")),
+            sender_id=sender_id,
+            sender_name=sender_name,
+            allow_name_matching=allow_name_matching,
+        ):
+            return None
+        metadata = dict(base_metadata)
+        metadata.pop("code", None)
+        metadata.pop("message", None)
+        metadata["status"] = "blocked"
+        metadata["reason"] = "msteams_signin_sender_not_allowlisted"
+        metadata["conversationType"] = (
+            _msteams_signin_conversation_type(activity) or "personal"
+        )
+        return metadata
+
+    async def _msteams_handle_signin_token_exchange(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        base_metadata: Mapping[str, object],
+        sso_config: _MSTeamsSsoConfig,
+        user_id: str,
+        channel_id: str,
+    ) -> dict[str, object]:
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if not user_id:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_user",
+                message="no user id on invoke activity",
+            )
+        connection_name = (
+            _msteams_inbound_optional_string(value.get("connectionName"))
+            or sso_config.connection_name
+        )
+        if not connection_name:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_connection",
+                message="no OAuth connection name",
+            )
+        exchange_token = _msteams_inbound_optional_string(value.get("token"))
+        if exchange_token is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_token",
+                message="no exchangeable token on invoke",
+            )
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_route",
+                message="no native Microsoft Teams route with app credentials is configured",
+            )
+        route_config, app_password = credentials
+        try:
+            bearer_token = await asyncio.to_thread(
+                self._msteams_fetch_bot_token,
+                tenant_id=route_config.tenant_id or "",
+                app_id=route_config.app_id or "",
+                app_password=app_password,
+            )
+            result = await asyncio.to_thread(
+                self._msteams_request_user_token_service,
+                base_url=sso_config.user_token_base_url,
+                path="/api/usertoken/exchange",
+                query={
+                    "userId": user_id,
+                    "connectionName": connection_name,
+                    "channelId": channel_id or "msteams",
+                },
+                method="POST",
+                body={"token": exchange_token},
+                bearer_token=bearer_token,
+            )
+        except Exception as exc:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="service_error",
+                message=str(exc).strip() or type(exc).__name__,
+            )
+        token = _msteams_inbound_optional_string(result.get("token"))
+        result_connection_name = _msteams_inbound_optional_string(
+            result.get("connectionName")
+        )
+        if token is None or result_connection_name is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="unexpected_response",
+                message="User Token service response missing token/connectionName",
+            )
+        expires_at = _msteams_inbound_optional_string(result.get("expiration"))
+        await self.database.upsert_msteams_sso_token(
+            connection_name=connection_name,
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at,
+        )
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "exchanged"
+        metadata["connectionName"] = connection_name
+        metadata["stored"] = True
+        metadata["hasExpiry"] = expires_at is not None
+        if expires_at is not None:
+            metadata["expiresAt"] = expires_at
+        return metadata
+
+    async def _msteams_handle_signin_verify_state(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        base_metadata: Mapping[str, object],
+        sso_config: _MSTeamsSsoConfig,
+        user_id: str,
+        channel_id: str,
+    ) -> dict[str, object]:
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if not user_id:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_user",
+                message="no user id on invoke activity",
+            )
+        state = _msteams_inbound_optional_string(value.get("state"))
+        if state is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_state",
+                message="no state code on invoke",
+            )
+        credentials = await self._msteams_sso_route_credentials()
+        if credentials is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="missing_route",
+                message="no native Microsoft Teams route with app credentials is configured",
+            )
+        route_config, app_password = credentials
+        try:
+            bearer_token = await asyncio.to_thread(
+                self._msteams_fetch_bot_token,
+                tenant_id=route_config.tenant_id or "",
+                app_id=route_config.app_id or "",
+                app_password=app_password,
+            )
+            result = await asyncio.to_thread(
+                self._msteams_request_user_token_service,
+                base_url=sso_config.user_token_base_url,
+                path="/api/usertoken/GetToken",
+                query={
+                    "userId": user_id,
+                    "connectionName": sso_config.connection_name,
+                    "channelId": channel_id or "msteams",
+                    "code": state,
+                },
+                method="GET",
+                bearer_token=bearer_token,
+            )
+        except Exception as exc:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="service_error",
+                message=str(exc).strip() or type(exc).__name__,
+            )
+        token = _msteams_inbound_optional_string(result.get("token"))
+        result_connection_name = _msteams_inbound_optional_string(
+            result.get("connectionName")
+        )
+        if token is None or result_connection_name is None:
+            return self._msteams_sso_error_metadata(
+                base_metadata,
+                code="unexpected_response",
+                message="User Token service response missing token/connectionName",
+            )
+        expires_at = _msteams_inbound_optional_string(result.get("expiration"))
+        await self.database.upsert_msteams_sso_token(
+            connection_name=sso_config.connection_name,
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at,
+        )
+        metadata = dict(base_metadata)
+        metadata.pop("reason", None)
+        metadata["status"] = "verified"
+        metadata["connectionName"] = sso_config.connection_name
+        metadata["stored"] = True
+        metadata["hasExpiry"] = expires_at is not None
+        if expires_at is not None:
+            metadata["expiresAt"] = expires_at
+        return metadata
+
+    async def _handle_msteams_signin_invoke(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if str(activity.get("type") or "").strip().lower() != "invoke":
+            return None
+        name = str(activity.get("name") or "").strip()
+        if name not in {"signin/tokenExchange", "signin/verifyState"}:
+            return None
+        user_id, channel_id = _msteams_signin_user(activity)
+        sso_metadata = _msteams_signin_sso_metadata(
+            name,
+            activity.get("value"),
+            user_id=user_id,
+            channel_id=channel_id,
+        )
+        sso_config = self._msteams_sso_config(account_id=account_id)
+        if sso_config is not None:
+            authorization_block = self._msteams_signin_authorization_block_metadata(
+                activity,
+                account_id=account_id,
+                base_metadata=sso_metadata,
+            )
+            if authorization_block is not None:
+                sso_metadata = authorization_block
+            elif name == "signin/tokenExchange":
+                sso_metadata = await self._msteams_handle_signin_token_exchange(
+                    activity,
+                    base_metadata=sso_metadata,
+                    sso_config=sso_config,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                )
+            else:
+                sso_metadata = await self._msteams_handle_signin_verify_state(
+                    activity,
+                    base_metadata=sso_metadata,
+                    sso_config=sso_config,
+                    user_id=user_id,
+                    channel_id=channel_id,
+                )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "invoke",
+            "name": name,
+            "action": "signin",
+            "invokeResponse": {
+                "type": "invokeResponse",
+                "value": {"status": 200, "body": {}},
+            },
+            "sso": sso_metadata,
+        }
+
+    async def _handle_msteams_feedback_invoke(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        if (
+            str(activity.get("type") or "").strip().lower() != "invoke"
+            or str(activity.get("name") or "").strip() != "message/submitAction"
+        ):
+            return None
+        value = _msteams_inbound_mapping(activity.get("value"))
+        if str(value.get("actionName") or "").strip() != "feedback":
+            return None
+        action_value = _msteams_inbound_mapping(value.get("actionValue"))
+        reaction = str(action_value.get("reaction") or "").strip().lower()
+        if reaction not in {"like", "dislike"}:
+            return None
+        feedback_value = "negative" if reaction == "dislike" else "positive"
+        user_comment: str | None = None
+        raw_feedback = action_value.get("feedback")
+        if isinstance(raw_feedback, str) and raw_feedback.strip():
+            try:
+                parsed_feedback = json.loads(raw_feedback)
+            except json.JSONDecodeError:
+                parsed_feedback = None
+            if isinstance(parsed_feedback, Mapping):
+                user_comment = _msteams_inbound_optional_string(
+                    parsed_feedback.get("feedbackText")
+                )
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
+        feedback_message_id = (
+            _msteams_inbound_optional_string(value.get("replyToId"))
+            or _msteams_inbound_optional_string(activity.get("replyToId"))
+            or "unknown"
+        )
+        content = f"Teams feedback: {feedback_value} for {feedback_message_id}"
+        if user_comment is not None:
+            content = f"{content}\nComment: {user_comment}"
+        feedback_payload: dict[str, object] = {
+            "messageId": feedback_message_id,
+            "value": feedback_value,
+        }
+        if user_comment is not None:
+            feedback_payload["comment"] = user_comment
+        await self.database.append_control_chat_message(
+            role="system",
+            content=content,
+            session_key=context.session_key,
+            metadata={
+                "event": "msteams.feedback",
+                "activityId": _msteams_inbound_optional_string(activity.get("id")),
+                "feedback": feedback_payload,
+                "channel": "msteams",
+                "senderId": context.sender_id,
+                "senderName": context.sender_name,
+                "conversationId": context.conversation_id,
+                "conversationType": context.conversation_type,
+                "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            },
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": "invoke",
+            "name": "message/submitAction",
+            "action": "feedback",
+            "sessionKey": context.session_key,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "feedback": feedback_payload,
+            "recorded": True,
+        }
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        if context.sender_name is not None:
+            result["senderName"] = context.sender_name
+        return result
+
+    async def handle_msteams_inbound_activity(
+        self,
+        activity: Mapping[str, Any],
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        signin_result = await self._handle_msteams_signin_invoke(
+            activity,
+            account_id=account_id,
+        )
+        if signin_result is not None:
+            return signin_result
+        feedback_result = await self._handle_msteams_feedback_invoke(
+            activity,
+            account_id=account_id,
+        )
+        if feedback_result is not None:
+            return feedback_result
+        text = _msteams_inbound_activity_text(activity)
+        if text is None:
+            return {
+                "ok": False,
+                "channel": "msteams",
+                "activityType": str(activity.get("type") or "").strip() or None,
+                "name": str(activity.get("name") or "").strip() or None,
+                "skipped": True,
+                "reason": "msteams_inbound_activity_without_message_text",
+            }
+        context = _msteams_inbound_session_context(activity, account_id=account_id)
+        if self.session_delivery_service is None:
+            raise GatewayOutboundRuntimeUnavailableError(
+                "Microsoft Teams inbound session delivery is unavailable."
+            )
+        delivery_result = await self.session_delivery_service(context.session_key, text)
+        message_id = _session_delivery_message_id(delivery_result)
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "activityType": str(activity.get("type") or "").strip() or None,
+            "name": str(activity.get("name") or "").strip() or None,
+            "sessionKey": context.session_key,
+            "text": text,
+            "senderId": context.sender_id,
+            "conversationId": context.conversation_id,
+            "conversationType": context.conversation_type,
+            "conversationTarget": context.conversation_target.model_dump(mode="json"),
+            "delivery": {"runtime": "session-backed"},
+        }
+        if message_id is not None:
+            result["messageId"] = message_id
+        if context.thread_id is not None:
+            result["threadId"] = context.thread_id
+        if context.sender_name is not None:
+            result["senderName"] = context.sender_name
+        return result
+
     def _bluebubbles_config_snapshot(self) -> dict[str, Any]:
         if self.gateway_config_service is None:
             return {}
@@ -8753,6 +11464,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "msteams":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_msteams_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         try:
             return await asyncio.to_thread(
                 self._probe_slack_provider_route,
@@ -8806,6 +11535,46 @@ class OpsMeshService:
             "userId": str(result.get("user_id") or ""),
             "timeoutMs": timeout_ms,
         }
+
+    def _probe_msteams_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        graph: dict[str, object]
+        try:
+            graph_token = self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            )
+            graph = _msteams_graph_probe_metadata(
+                graph_token.removeprefix("Bearer ").strip()
+            )
+        except Exception as exc:
+            graph = {"ok": False, "error": str(exc).strip() or type(exc).__name__}
+        result: dict[str, Any] = {
+            "ok": True,
+            "status": "ok",
+            "provider": "msteams",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "graph": graph,
+            "timeoutMs": timeout_ms,
+        }
+        if route_config.app_id:
+            result["appId"] = route_config.app_id
+        return result
 
     def _probe_telegram_provider_route(
         self,
@@ -9719,6 +12488,24 @@ class OpsMeshService:
             return self._post_whatsapp_provider_event
         if route_kind == "zalo":
             return self._post_zalo_provider_event
+        if route_kind == "feishu":
+            return self._post_feishu_provider_event
+        if route_kind == "googlechat":
+            return self._post_googlechat_provider_event
+        if route_kind == "nextcloud-talk":
+            return self._post_nextcloud_talk_provider_event
+        if route_kind == "synology-chat":
+            return self._post_synology_chat_provider_event
+        if route_kind == "mattermost":
+            return self._post_mattermost_provider_event
+        if route_kind == "msteams":
+            return self._post_msteams_provider_event
+        if route_kind == "signal":
+            return self._post_signal_provider_event
+        if route_kind == "irc":
+            return self._post_irc_provider_event
+        if route_kind == "twitch":
+            return self._post_twitch_provider_event
         if route_kind == "line":
             return self._post_line_provider_event
         if route_kind == "matrix":
@@ -9834,6 +12621,72 @@ class OpsMeshService:
             )
         if channel == "zalo" and action == "send":
             return await self._dispatch_zalo_send_message_action(request)
+        if channel == "signal" and action == "react":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Signal route is configured for message.action react."
+                )
+            return await asyncio.to_thread(
+                self._dispatch_signal_react_message_action,
+                route,
+                request,
+            )
+        if channel == "msteams" and action == "poll-vote":
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    "No native Microsoft Teams route is configured for message.action poll-vote."
+                )
+            return await self._dispatch_msteams_poll_vote_message_action(request)
+        if channel == "msteams" and action in {
+            "file-consent",
+            "file-consent-invoke",
+            "fileConsent/invoke",
+        }:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Microsoft Teams route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            return await self._dispatch_msteams_file_consent_message_action(
+                route,
+                request,
+                secret_token,
+            )
+        if channel == "msteams" and action in {"react", "unreact", "reactions"}:
+            route = await self._provider_route_for_channel_account(
+                channel=channel,
+                account_id=request.account_id or DEFAULT_ACCOUNT_ID,
+            )
+            if route is None:
+                raise GatewayOutboundRuntimeUnavailableError(
+                    f"No native Microsoft Teams route is configured for message.action {action}."
+                )
+            secret_token = await self._notification_route_secret_token(route)
+            if action in {"react", "unreact"}:
+                return await asyncio.to_thread(
+                    self._dispatch_msteams_react_message_action,
+                    route,
+                    request,
+                    secret_token,
+                )
+            return await asyncio.to_thread(
+                self._dispatch_msteams_reactions_message_action,
+                route,
+                request,
+                secret_token,
+            )
         if channel == "matrix" and action in {"send", "sendMessage"}:
             return await self._dispatch_matrix_send_message_action(request)
         if channel == "matrix" and action in {"edit", "editMessage"}:
@@ -17482,6 +20335,100 @@ class OpsMeshService:
         except URLError as exc:
             raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
 
+    def _send_irc_privmsg(
+        self,
+        *,
+        host: str,
+        port: int,
+        tls: bool,
+        nick: str,
+        username: str,
+        realname: str,
+        password: str | None,
+        target: str,
+        message: str,
+    ) -> None:
+        del self
+        safe_host = _irc_wire_value(host, "host")
+        safe_nick = _irc_wire_value(nick, "nick")
+        safe_username = _irc_wire_value(username, "username")
+        safe_realname = _irc_wire_value(realname, "realname")
+        safe_target = _irc_wire_value(target, "target")
+        safe_message = str(message or "").strip()
+        if not safe_message:
+            raise RuntimeError("Message must be non-empty for IRC sends.")
+        if "\x00" in safe_message:
+            raise RuntimeError("IRC message cannot contain null characters.")
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        def send_session(connection: socket.socket) -> None:
+            if password:
+                send_line(connection, f"PASS {_irc_wire_value(password, 'password')}")
+            send_line(connection, f"NICK {safe_nick}")
+            send_line(connection, f"USER {safe_username} 0 * :{safe_realname}")
+            for line in safe_message.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+                send_line(connection, f"PRIVMSG {safe_target} :{line}")
+            send_line(connection, "QUIT :OpenZues delivery complete")
+
+        try:
+            with socket.create_connection((safe_host, port), timeout=15.0) as raw_socket:
+                raw_socket.settimeout(15.0)
+                if tls:
+                    context = ssl.create_default_context()
+                    with context.wrap_socket(raw_socket, server_hostname=safe_host) as tls_socket:
+                        send_session(tls_socket)
+                else:
+                    send_session(raw_socket)
+        except OSError as exc:
+            raise RuntimeError(f"IRC provider request failed: {exc}") from exc
+
+    def _send_twitch_chat_message(
+        self,
+        *,
+        username: str,
+        client_id: str,
+        token: str,
+        channel: str,
+        message: str,
+    ) -> str:
+        del self, client_id
+        safe_username = _irc_wire_value(username.lower(), "Twitch username")
+        safe_channel = _twitch_normalize_channel(channel)
+        if safe_channel is None:
+            raise RuntimeError("Twitch route is missing a valid channel target.")
+        normalized_token = _irc_wire_value(token, "Twitch token")
+        pass_token = (
+            normalized_token
+            if normalized_token.lower().startswith("oauth:")
+            else f"oauth:{normalized_token}"
+        )
+        safe_message = _strip_markdown_for_twitch(message)
+        if not safe_message:
+            return "skipped"
+        message_id = f"twitch:{uuid.uuid4().hex}"
+
+        def send_line(connection: socket.socket, line: str) -> None:
+            connection.sendall(f"{line}\r\n".encode())
+
+        try:
+            with socket.create_connection(("irc.chat.twitch.tv", 6697), timeout=15.0) as raw_socket:
+                raw_socket.settimeout(15.0)
+                context = ssl.create_default_context()
+                with context.wrap_socket(
+                    raw_socket,
+                    server_hostname="irc.chat.twitch.tv",
+                ) as tls_socket:
+                    send_line(tls_socket, f"PASS {pass_token}")
+                    send_line(tls_socket, f"NICK {safe_username}")
+                    send_line(tls_socket, f"JOIN #{safe_channel}")
+                    send_line(tls_socket, f"PRIVMSG #{safe_channel} :{safe_message}")
+                    send_line(tls_socket, "QUIT :OpenZues delivery complete")
+        except OSError as exc:
+            raise RuntimeError(f"Twitch provider request failed: {exc}") from exc
+        return message_id
+
     def _request_json_provider_url(
         self,
         target: str,
@@ -17507,6 +20454,72 @@ class OpsMeshService:
             data=body,
             headers=headers,
             method=str(method or "GET").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if not response_body:
+                    return {"status": response.status}
+                try:
+                    return json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_bytes_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "GET",
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        request = Request(
+            target,
+            data=body,
+            headers={str(key): str(value) for key, value in (headers or {}).items()},
+            method=str(method or "GET").upper(),
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Provider returned HTTP {response.status}")
+                response_body = response.read().strip()
+                if response_body:
+                    try:
+                        return json.loads(response_body.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        pass
+                return {"status": response.status}
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Provider returned HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Provider request failed: {exc.reason}") from exc
+
+    def _request_form_provider_url(
+        self,
+        target: str,
+        *,
+        method: str = "POST",
+        payload: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> object | None:
+        headers: dict[str, str] = {"Content-Type": "application/x-www-form-urlencoded"}
+        if extra_headers:
+            headers.update({str(key): str(value) for key, value in extra_headers.items()})
+        body = urlencode(payload or {}).encode("utf-8")
+        request = Request(
+            target,
+            data=body,
+            headers=headers,
+            method=str(method or "POST").upper(),
         )
         try:
             with urlopen(request, timeout=timeout_seconds) as response:
@@ -17808,6 +20821,58 @@ class OpsMeshService:
             error = str(result.get("error") or "unknown_error")
             raise RuntimeError(f"Slack API returned {error}.")
         return result
+
+    def _request_googlechat_attachment_upload(
+        self,
+        route_target: str,
+        *,
+        space: str,
+        filename: str,
+        media_bytes: bytes,
+        content_type: str | None,
+        secret_token: str | None,
+    ) -> object | None:
+        del route_target
+        boundary = f"openzues-{uuid.uuid4().hex}"
+        upload_filename = filename or "attachment"
+        metadata = json.dumps({"filename": upload_filename}, separators=(",", ":"))
+        body = bytearray()
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(b"Content-Type: application/json; charset=UTF-8\r\n\r\n")
+        body.extend(metadata.encode("utf-8"))
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(
+            f"Content-Type: {content_type or 'application/octet-stream'}\r\n\r\n".encode(
+                "ascii"
+            )
+        )
+        body.extend(media_bytes)
+        body.extend(f"\r\n--{boundary}--\r\n".encode("ascii"))
+        request = Request(
+            _googlechat_upload_endpoint(space=space),
+            data=bytes(body),
+            headers={
+                "Authorization": _googlechat_bearer_token(secret_token),
+                "Content-Type": f"multipart/related; boundary={boundary}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=60) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Google Chat upload returned HTTP {response.status}")
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Google Chat upload returned HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Google Chat upload failed: {exc.reason}") from exc
+        try:
+            return json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Google Chat upload returned a non-JSON response.") from exc
 
     def _download_slack_media_url(self, media_url: str) -> bytes:
         if self.canvas_state_dir is not None:
@@ -19138,6 +22203,1612 @@ class OpsMeshService:
             "chatId": delivered_chat,
             "channelId": delivered_chat,
         }
+
+    def _post_feishu_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Feishu native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        parsed_target = _feishu_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if parsed_target is None:
+            raise RuntimeError("Feishu route is missing a receive target.")
+        receive_id, receive_id_type = parsed_target
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if media_urls:
+            raise RuntimeError("Feishu native provider route does not support media sends yet.")
+        text = str(event.get("message") or "").strip()
+        if not text:
+            raise RuntimeError("Feishu route is missing message text.")
+        content = _feishu_post_content(text)
+        message_payload: dict[str, object] = {
+            "content": content,
+            "msg_type": "post",
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        thread_id = str(event.get("threadId") or "").strip()
+        bearer_token = _feishu_bearer_token(secret_token)
+        result: object
+        if reply_to_id:
+            result = self._post_json_webhook(
+                _feishu_api_endpoint(
+                    str(route.get("target") or ""),
+                    f"im/v1/messages/{quote(reply_to_id, safe='')}/reply",
+                ),
+                {
+                    **message_payload,
+                    **({"reply_in_thread": True} if thread_id else {}),
+                },
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+            if _feishu_reply_target_unavailable(result):
+                if thread_id:
+                    raise RuntimeError(
+                        "Feishu thread reply failed: reply target is unavailable and "
+                        "cannot safely fall back to a top-level send."
+                    )
+            else:
+                _feishu_assert_success(result, "Feishu reply failed")
+                message_id = _feishu_message_id(result)
+                if message_id is None:
+                    raise RuntimeError("Feishu API response did not include a message id.")
+                delivered_chat = _feishu_chat_from_result(result, receive_id)
+                return {
+                    "runtime": "native-provider-backed",
+                    "messageId": message_id,
+                    "chatId": delivered_chat,
+                    "channelId": delivered_chat,
+                    "replyToId": reply_to_id,
+                }
+        result = self._post_json_webhook(
+            _feishu_api_endpoint(
+                str(route.get("target") or ""),
+                "im/v1/messages",
+                query={"receive_id_type": receive_id_type},
+            ),
+            {
+                "receive_id": receive_id,
+                **message_payload,
+            },
+            secret_header_name="Authorization",
+            secret_token=bearer_token,
+        )
+        _feishu_assert_success(result, "Feishu send failed")
+        message_id = _feishu_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Feishu API response did not include a message id.")
+        delivered_chat = _feishu_chat_from_result(result, receive_id)
+        return {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": delivered_chat,
+            "channelId": delivered_chat,
+        }
+
+    def _post_googlechat_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Google Chat native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        route_conversation_target = _normalize_conversation_target(
+            event.get("routeConversationTarget")
+        )
+        target_candidate = (
+            event.get("to")
+            or (conversation_target or {}).get("peer_id")
+            or (route_conversation_target or {}).get("peer_id")
+            or route.get("target")
+        )
+        normalized_target = _googlechat_space_target(str(target_candidate or ""))
+        if normalized_target is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        if normalized_target.lower().startswith("users/"):
+            direct_message = self._request_json_provider_url(
+                _googlechat_direct_message_endpoint(
+                    str(route.get("target") or ""),
+                    user_name=normalized_target,
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=_googlechat_bearer_token(secret_token),
+            )
+            space = _googlechat_direct_message_space(direct_message)
+            if space is None:
+                raise RuntimeError(f"No Google Chat DM found for {normalized_target}.")
+        else:
+            space = normalized_target
+        if space is None:
+            raise RuntimeError("Google Chat route is missing a space target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        text = str(event.get("message") or "").strip()
+        if not text and not media_urls:
+            raise RuntimeError("Google Chat route is missing message text.")
+        thread = str(event.get("threadId") or event.get("replyToId") or "").strip()
+        payload: dict[str, object] = {}
+        if text:
+            payload["text"] = text
+        if thread:
+            payload["thread"] = {"name": thread}
+        media_ids: list[str] = []
+        filenames: list[str] = []
+        if media_urls:
+            attachments: list[dict[str, object]] = []
+            for media_url in media_urls:
+                media_bytes, content_type, filename = self._download_matrix_media_url(media_url)
+                upload_filename = filename or _matrix_media_filename(media_url, "attachment")
+                upload = self._request_googlechat_attachment_upload(
+                    str(route.get("target") or ""),
+                    space=space,
+                    filename=upload_filename,
+                    media_bytes=media_bytes,
+                    content_type=content_type,
+                    secret_token=secret_token,
+                )
+                upload_token = _googlechat_attachment_upload_token(upload)
+                if upload_token is None:
+                    raise RuntimeError(
+                        "Google Chat upload response did not include an attachment token."
+                    )
+                media_ids.append(upload_token)
+                filenames.append(upload_filename)
+                attachments.append(
+                    {
+                        "attachmentDataRef": {"attachmentUploadToken": upload_token},
+                        "contentName": upload_filename,
+                    }
+                )
+            payload["attachment"] = attachments
+        result = self._post_json_webhook(
+            _googlechat_messages_endpoint(
+                str(route.get("target") or ""),
+                space=space,
+                thread=thread or None,
+            ),
+            payload,
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON response.")
+        if result.get("error"):
+            raise RuntimeError(f"Google Chat send failed: {result.get('error')}")
+        message_id = _googlechat_message_id(result)
+        if message_id is None:
+            raise RuntimeError("Google Chat API response did not include a message name.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": space,
+            "channelId": space,
+        }
+        if media_urls:
+            native_result["mediaIds"] = media_ids
+            native_result["mediaUrls"] = media_urls
+            native_result["filenames"] = filenames
+        if thread:
+            native_result["threadId"] = thread
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        return native_result
+
+    def _post_nextcloud_talk_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Nextcloud Talk native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        room_token = _nextcloud_talk_room_token(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if room_token is None:
+            raise RuntimeError("Nextcloud Talk route is missing a room token.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts: list[str] = []
+        text = str(event.get("message") or "").strip()
+        if text:
+            message_parts.append(text)
+        message_parts.extend(f"Attachment: {media_url}" for media_url in media_urls)
+        message = "\n\n".join(message_parts).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for Nextcloud Talk sends.")
+        payload: dict[str, object] = {"message": message}
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["replyTo"] = reply_to_id
+        result = self._request_json_provider_url(
+            _nextcloud_talk_endpoint(
+                str(route.get("target") or ""),
+                room_token=room_token,
+            ),
+            method="POST",
+            payload=payload,
+            extra_headers=_nextcloud_talk_signature_headers(
+                message=message,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Nextcloud Talk API returned a non-JSON response.")
+        message_id = _nextcloud_talk_message_id(result) or "unknown"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": room_token,
+            "channelId": room_token,
+        }
+        timestamp = _nextcloud_talk_timestamp(result)
+        if timestamp is not None:
+            native_result["timestamp"] = timestamp
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_synology_chat_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del secret_token
+        if event_type != "gateway/send":
+            raise RuntimeError("Synology Chat native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        recipient = str(event.get("to") or (conversation_target or {}).get("peer_id") or "").strip()
+        recipient_id = _synology_chat_recipient_id(recipient)
+        text = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        incoming_url = _synology_chat_incoming_url(str(route.get("target") or ""))
+        delivered_payloads = 0
+        if text:
+            self._request_form_provider_url(
+                incoming_url,
+                method="POST",
+                payload=_synology_chat_payload(text=text, recipient_id=recipient_id),
+                extra_headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            delivered_payloads += 1
+        for media_url in media_urls:
+            self._request_form_provider_url(
+                incoming_url,
+                method="POST",
+                payload=_synology_chat_payload(
+                    media_url=media_url,
+                    recipient_id=recipient_id,
+                ),
+                extra_headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            delivered_payloads += 1
+        if delivered_payloads == 0:
+            raise RuntimeError("Message must be non-empty for Synology Chat sends.")
+        message_id = f"synology-chat:{uuid.uuid4().hex}"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": recipient or "synology-chat",
+            "channelId": recipient or "synology-chat",
+        }
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_mattermost_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Mattermost native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        channel_id = _mattermost_channel_id(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if channel_id is None:
+            raise RuntimeError("Mattermost route is missing a channel id target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = "\n".join(part for part in message_parts if part).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for Mattermost sends.")
+        payload: dict[str, object] = {
+            "channel_id": channel_id,
+            "message": message,
+        }
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            payload["root_id"] = reply_to_id
+        result = self._request_json_provider_url(
+            _mattermost_api_endpoint(str(route.get("target") or ""), "posts"),
+            method="POST",
+            payload=payload,
+            secret_header_name="Authorization",
+            secret_token=_mattermost_bearer_token(secret_token),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Mattermost API returned a non-JSON response.")
+        result_channel_id = _mattermost_result_channel_id(result) or channel_id
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": _mattermost_message_id(result) or "unknown",
+            "chatId": result_channel_id,
+            "channelId": result_channel_id,
+        }
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _msteams_request_user_token_service(
+        self,
+        *,
+        base_url: str,
+        path: str,
+        query: dict[str, str],
+        method: str,
+        bearer_token: str,
+        body: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        encoded_query = urlencode(query)
+        target = f"{base_url.rstrip('/')}{path}"
+        if encoded_query:
+            target = f"{target}?{encoded_query}"
+        result = self._request_json_provider_url(
+            target,
+            method=method,
+            payload=body,
+            secret_header_name="Authorization",
+            secret_token=f"Bearer {bearer_token}",
+            extra_headers={
+                "Accept": "application/json",
+                "User-Agent": "OpenZues",
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("User Token service returned a non-JSON response.")
+        token = _msteams_inbound_optional_string(result.get("token"))
+        connection_name = _msteams_inbound_optional_string(result.get("connectionName"))
+        if token is None or connection_name is None:
+            raise RuntimeError("User Token service response missing token/connectionName.")
+        response: dict[str, object] = {
+            "connectionName": connection_name,
+            "token": token,
+        }
+        channel_id = _msteams_inbound_optional_string(result.get("channelId"))
+        if channel_id is not None:
+            response["channelId"] = channel_id
+        expiration = _msteams_inbound_optional_string(result.get("expiration"))
+        if expiration is not None:
+            response["expiration"] = expiration
+        return response
+
+    def _msteams_fetch_bot_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "client_credentials",
+                "scope": "https://api.botframework.com/.default",
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(_http_error_message("Microsoft Teams token HTTP", exc)) from exc
+        except URLError as exc:
+            raise RuntimeError(f"Microsoft Teams token request failed: {exc.reason}") from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Microsoft Teams token response was not JSON.") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Microsoft Teams token response was not an object.")
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            raise RuntimeError("Microsoft Teams token response did not include access_token.")
+        return token
+
+    def _msteams_fetch_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        token_url = (
+            "https://login.microsoftonline.com/"
+            f"{quote(tenant_id, safe='')}/oauth2/v2.0/token"
+        )
+        body = urlencode(
+            {
+                "client_id": app_id,
+                "client_secret": app_password,
+                "grant_type": "client_credentials",
+                "scope": "https://graph.microsoft.com/.default",
+            }
+        ).encode("utf-8")
+        request = Request(
+            token_url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=10.0) as response:
+                response_body = response.read().strip()
+        except HTTPError as exc:
+            raise RuntimeError(
+                _http_error_message("Microsoft Teams Graph token HTTP", exc)
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Microsoft Teams Graph token request failed: {exc.reason}"
+            ) from exc
+        try:
+            payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Microsoft Teams Graph token response was not JSON.") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("Microsoft Teams Graph token response was not an object.")
+        token = str(payload.get("access_token") or "").strip()
+        if not token:
+            raise RuntimeError("Microsoft Teams Graph token response did not include access_token.")
+        return token
+
+    def _msteams_bearer_token(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+    ) -> str:
+        secret = str(secret_token or "").strip()
+        if secret.lower().startswith("bearer "):
+            return secret
+        if not route_config.app_id or not route_config.tenant_id or not secret:
+            raise RuntimeError(
+                "Microsoft Teams route requires appId, tenantId, and app password "
+                "configuration."
+            )
+        access_token = self._msteams_fetch_bot_token(
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret,
+        )
+        return f"Bearer {access_token}"
+
+    def _msteams_graph_bearer_token(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        secret_token: str | None,
+    ) -> str:
+        secret = str(secret_token or "").strip()
+        if secret.lower().startswith("bearer "):
+            return secret
+        if not route_config.app_id or not route_config.tenant_id or not secret:
+            raise RuntimeError(
+                "Microsoft Teams Graph actions require appId, tenantId, and app password "
+                "configuration."
+            )
+        access_token = self._msteams_fetch_graph_token(
+            tenant_id=route_config.tenant_id,
+            app_id=route_config.app_id,
+            app_password=secret,
+        )
+        return f"Bearer {access_token}"
+
+    def _msteams_validate_file_consent_upload_url(self, target: str) -> None:
+        parsed = urlparse(str(target or "").strip())
+        if parsed.scheme.lower() != "https":
+            raise RuntimeError("Consent upload URL must use HTTPS.")
+        hostname = str(parsed.hostname or "").strip().lower()
+        if not hostname:
+            raise RuntimeError("Consent upload URL hostname is required.")
+        if not any(
+            hostname == allowed or hostname.endswith(f".{allowed}")
+            for allowed in MSTEAMS_CONSENT_UPLOAD_HOST_ALLOWLIST
+        ):
+            raise RuntimeError(
+                f'Consent upload URL hostname "{hostname}" is not in the allowed domains.'
+            )
+        try:
+            resolved = socket.getaddrinfo(hostname, None)
+        except OSError as exc:
+            raise RuntimeError(
+                f'Failed to resolve consent upload URL hostname "{hostname}".'
+            ) from exc
+        addresses = {
+            str(entry[4][0])
+            for entry in resolved
+            if len(entry) >= 5 and isinstance(entry[4], tuple) and entry[4]
+        }
+        if not addresses:
+            raise RuntimeError(
+                f'Failed to resolve consent upload URL hostname "{hostname}".'
+            )
+        for address in addresses:
+            try:
+                ip = ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_unspecified
+            ):
+                raise RuntimeError(
+                    f"Consent upload URL resolves to a private/reserved IP ({address})."
+                )
+
+    def _msteams_graph_upload_result_value(
+        self,
+        result: object,
+        key: str,
+        *,
+        label: str,
+    ) -> str:
+        del self
+        if not isinstance(result, Mapping):
+            raise RuntimeError(f"Microsoft Teams Graph {label} returned a non-JSON response.")
+        value = str(result.get(key) or "").strip()
+        if not value:
+            raise RuntimeError(f"Microsoft Teams Graph {label} response missing {key}.")
+        return value
+
+    def _msteams_graph_file_cards_from_upload(
+        self,
+        *,
+        route_config: _MSTeamsRouteConfig,
+        event: dict[str, Any],
+        media_urls: list[str],
+        secret_token: str | None,
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
+        site_id = _msteams_graph_upload_site_id(
+            event=event,
+            route_config=route_config,
+        )
+        if site_id is None:
+            raise RuntimeError(
+                "Microsoft Teams native media delivery requires FileConsentCard or "
+                "Graph upload support and is not available for this route yet."
+            )
+        if not media_urls:
+            return [], {}
+        bearer_token = self._msteams_graph_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        encoded_site_id = quote(site_id, safe=",")
+        attachments: list[dict[str, object]] = []
+        item_ids: list[str] = []
+        share_urls: list[str] = []
+        for index, media_url in enumerate(media_urls, start=1):
+            media_bytes, content_type, downloaded_filename = self._download_matrix_media_url(
+                media_url
+            )
+            if not media_bytes:
+                raise RuntimeError("Microsoft Teams Graph upload media is empty.")
+            filename = _msteams_graph_upload_filename(
+                event=event,
+                media_url=media_url,
+                downloaded_filename=downloaded_filename,
+                index=index,
+            )
+            upload_content_type = content_type or mimetypes.guess_type(filename)[0]
+            encoded_filename = quote(filename, safe="")
+            upload_result = self._request_bytes_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/root:/OpenClawShared/"
+                    f"{encoded_filename}:/content"
+                ),
+                method="PUT",
+                body=media_bytes,
+                headers={
+                    "User-Agent": "OpenZues",
+                    "Authorization": bearer_token,
+                    "Content-Type": upload_content_type or "application/octet-stream",
+                },
+                timeout_seconds=60.0,
+            )
+            item_id = self._msteams_graph_upload_result_value(
+                upload_result,
+                "id",
+                label="upload",
+            )
+            item_ids.append(item_id)
+            create_link_result = self._request_json_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/items/{quote(item_id, safe='')}/createLink"
+                ),
+                method="POST",
+                payload={"type": "view", "scope": "organization"},
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+                extra_headers={"User-Agent": "OpenZues"},
+            )
+            if isinstance(create_link_result, Mapping):
+                link = create_link_result.get("link")
+                if isinstance(link, Mapping):
+                    share_url = str(link.get("webUrl") or "").strip()
+                    if share_url:
+                        share_urls.append(share_url)
+            drive_item = self._request_json_provider_url(
+                (
+                    "https://graph.microsoft.com/v1.0/sites/"
+                    f"{encoded_site_id}/drive/items/{quote(item_id, safe='')}"
+                    "?$select=eTag,webDavUrl,name"
+                ),
+                method="GET",
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+                extra_headers={"User-Agent": "OpenZues"},
+            )
+            if not isinstance(drive_item, Mapping):
+                raise RuntimeError("Microsoft Teams Graph driveItem response was not JSON.")
+            attachments.append(_msteams_file_info_card(cast(Mapping[str, object], drive_item)))
+        meta: dict[str, object] = {"siteId": site_id, "itemIds": item_ids}
+        if share_urls:
+            meta["shareUrls"] = share_urls
+        return attachments, meta
+
+    def _msteams_poll_vote_voter_id(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> str:
+        del self
+        raw_voter_id = (
+            str(request.requester_sender_id or "").strip()
+            or _message_action_param_string(request.params, "voterId")
+            or _message_action_param_string(request.params, "senderId")
+            or _message_action_param_string(request.params, "userId")
+        )
+        if raw_voter_id:
+            return raw_voter_id
+        tool_context = request.tool_context or {}
+        if isinstance(tool_context, dict):
+            for key in ("currentSenderId", "senderId", "currentUserId", "userId"):
+                normalized = str(tool_context.get(key) or "").strip()
+                if normalized:
+                    return normalized
+        raise RuntimeError("Microsoft Teams poll vote requires a voter id.")
+
+    async def _msteams_poll_delivery_for_vote(
+        self,
+        poll_id: str,
+    ) -> dict[str, Any] | None:
+        for delivery in await self.database.list_outbound_deliveries(limit=1000):
+            if str(delivery.get("event_type") or "") != "gateway/poll":
+                continue
+            event_payload = delivery.get("event_payload")
+            if not isinstance(event_payload, dict):
+                continue
+            if str(event_payload.get("channel") or "").strip().lower() != "msteams":
+                continue
+            route_scope = delivery.get("route_scope")
+            if not isinstance(route_scope, dict):
+                continue
+            provider_result = route_scope.get("provider_result")
+            if not isinstance(provider_result, dict):
+                continue
+            if str(provider_result.get("pollId") or "").strip() == poll_id:
+                return delivery
+        return None
+
+    async def _msteams_file_consent_delivery_for_upload(
+        self,
+        upload_id: str,
+    ) -> dict[str, Any] | None:
+        for delivery in await self.database.list_outbound_deliveries(limit=1000):
+            if str(delivery.get("event_type") or "") != "gateway/send":
+                continue
+            event_payload = delivery.get("event_payload")
+            if not isinstance(event_payload, dict):
+                continue
+            if str(event_payload.get("channel") or "").strip().lower() != "msteams":
+                continue
+            route_scope = delivery.get("route_scope")
+            if not isinstance(route_scope, dict):
+                continue
+            provider_result = route_scope.get("provider_result")
+            if not isinstance(provider_result, dict):
+                continue
+            if str(provider_result.get("pendingUploadId") or "").strip() == upload_id:
+                return delivery
+        return None
+
+    async def _dispatch_msteams_file_consent_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        invoke = _msteams_file_consent_invoke_from_params(request.params)
+        if invoke is None:
+            raise RuntimeError("Microsoft Teams file consent invoke payload is invalid.")
+        delivery = await self._msteams_file_consent_delivery_for_upload(invoke.upload_id)
+        if delivery is None:
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "action": "file-consent",
+                "uploadId": invoke.upload_id,
+                "accepted": invoke.action == "accept",
+                "uploaded": False,
+                "recorded": False,
+                "reason": "pending_upload_not_found",
+            }
+        result, updated_route_scope = await asyncio.to_thread(
+            self._complete_msteams_file_consent_message_action,
+            route,
+            request,
+            secret_token,
+            delivery,
+            invoke,
+        )
+        if updated_route_scope is not None:
+            await self.database.update_outbound_delivery(
+                int(delivery["id"]),
+                route_scope=updated_route_scope,
+            )
+        return result
+
+    def _complete_msteams_file_consent_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+        delivery: dict[str, Any],
+        invoke: _MSTeamsFileConsentInvoke,
+    ) -> tuple[dict[str, object], dict[str, Any] | None]:
+        del request
+        event_payload = delivery.get("event_payload")
+        route_scope = delivery.get("route_scope")
+        if not isinstance(event_payload, dict) or not isinstance(route_scope, dict):
+            raise RuntimeError("Microsoft Teams file consent could not load pending upload.")
+        raw_provider_result = route_scope.get("provider_result")
+        provider_result = (
+            dict(cast(Mapping[str, object], raw_provider_result))
+            if isinstance(raw_provider_result, dict)
+            else {}
+        )
+        expected_conversation_id = _msteams_base_conversation_id(
+            str(provider_result.get("conversationId") or "")
+        )
+        if (
+            invoke.conversation_id is not None
+            and expected_conversation_id
+            and invoke.conversation_id != expected_conversation_id
+        ):
+            return (
+                {
+                    "ok": True,
+                    "channel": "msteams",
+                    "action": "file-consent",
+                    "uploadId": invoke.upload_id,
+                    "accepted": invoke.action == "accept",
+                    "uploaded": False,
+                    "recorded": False,
+                    "reason": "conversation_mismatch",
+                },
+                None,
+            )
+        raw_meta = provider_result.get("meta")
+        meta = (
+            dict(cast(Mapping[str, object], raw_meta))
+            if isinstance(raw_meta, dict)
+            else {}
+        )
+        if invoke.action == "decline":
+            meta["fileConsent"] = {
+                "uploadId": invoke.upload_id,
+                "status": "declined",
+                "updatedAt": utcnow(),
+            }
+            provider_result["meta"] = meta
+            updated_route_scope = dict(route_scope)
+            updated_route_scope["provider_result"] = provider_result
+            return (
+                {
+                    "ok": True,
+                    "channel": "msteams",
+                    "action": "file-consent",
+                    "uploadId": invoke.upload_id,
+                    "accepted": False,
+                    "uploaded": False,
+                    "recorded": True,
+                },
+                updated_route_scope,
+            )
+        if invoke.upload_info is None:
+            raise RuntimeError("Microsoft Teams file consent accept requires uploadInfo.")
+        upload_url = _msteams_file_consent_upload_info_value(
+            invoke.upload_info,
+            "uploadUrl",
+        )
+        raw_media_urls = event_payload.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=(
+                event_payload.get("mediaUrl")
+                if isinstance(event_payload.get("mediaUrl"), str)
+                else None
+            ),
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not media_urls:
+            raise RuntimeError("Microsoft Teams file consent pending upload has no media.")
+        media_bytes, downloaded_content_type, downloaded_filename = (
+            self._download_matrix_media_url(media_urls[0])
+        )
+        if not media_bytes:
+            raise RuntimeError("Microsoft Teams file consent pending upload is empty.")
+        content_type = _msteams_file_consent_content_type(
+            event_payload=event_payload,
+            downloaded_content_type=downloaded_content_type,
+            filename=downloaded_filename,
+        )
+        self._msteams_validate_file_consent_upload_url(upload_url)
+        self._request_bytes_provider_url(
+            upload_url,
+            method="PUT",
+            body=media_bytes,
+            headers={
+                "User-Agent": "OpenZues",
+                "Content-Type": content_type,
+                "Content-Range": f"bytes 0-{len(media_bytes) - 1}/{len(media_bytes)}",
+            },
+            timeout_seconds=60.0,
+        )
+        file_info_card = _msteams_file_info_card_from_upload_info(invoke.upload_info)
+        file_info_activity: dict[str, object] = {
+            "type": "message",
+            "attachments": [file_info_card],
+        }
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = expected_conversation_id or route_config.conversation_id
+        if not conversation_id:
+            raise RuntimeError("Microsoft Teams file consent requires a conversation id.")
+        bearer_token = self._msteams_bearer_token(
+            route_config=route_config,
+            secret_token=secret_token,
+        )
+        activity_id = str(provider_result.get("messageId") or "").strip()
+        result: object | None
+        if activity_id:
+            try:
+                result = self._request_json_provider_url(
+                    _msteams_activity_update_endpoint(
+                        service_url=route_config.service_url,
+                        conversation_id=conversation_id,
+                        activity_id=activity_id,
+                    ),
+                    method="PUT",
+                    payload=file_info_activity,
+                    secret_header_name="Authorization",
+                    secret_token=bearer_token,
+                )
+            except RuntimeError:
+                result = self._request_json_provider_url(
+                    _msteams_activity_endpoint(
+                        service_url=route_config.service_url,
+                        conversation_id=conversation_id,
+                    ),
+                    method="POST",
+                    payload=file_info_activity,
+                    secret_header_name="Authorization",
+                    secret_token=bearer_token,
+                )
+        else:
+            result = self._request_json_provider_url(
+                _msteams_activity_endpoint(
+                    service_url=route_config.service_url,
+                    conversation_id=conversation_id,
+                ),
+                method="POST",
+                payload=file_info_activity,
+                secret_header_name="Authorization",
+                secret_token=bearer_token,
+            )
+        message_id = _msteams_message_id(result) or activity_id or "unknown"
+        filename = _msteams_file_consent_upload_info_value(invoke.upload_info, "name")
+        content_url = _msteams_file_consent_upload_info_value(
+            invoke.upload_info,
+            "contentUrl",
+        )
+        unique_id = _msteams_file_consent_upload_info_value(invoke.upload_info, "uniqueId")
+        file_type = _msteams_file_consent_upload_info_value(invoke.upload_info, "fileType")
+        meta["fileConsent"] = {
+            "uploadId": invoke.upload_id,
+            "status": "uploaded",
+            "filename": filename,
+            "contentUrl": content_url,
+            "uniqueId": unique_id,
+            "fileType": file_type,
+            "messageId": message_id,
+        }
+        provider_result["meta"] = meta
+        updated_route_scope = dict(route_scope)
+        updated_route_scope["provider_result"] = provider_result
+        return (
+            {
+                "ok": True,
+                "channel": "msteams",
+                "action": "file-consent",
+                "uploadId": invoke.upload_id,
+                "accepted": True,
+                "uploaded": True,
+                "messageId": message_id,
+                "fileId": unique_id,
+                "filename": filename,
+                "contentUrl": content_url,
+            },
+            updated_route_scope,
+        )
+
+    async def _dispatch_msteams_poll_vote_message_action(
+        self,
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        vote = _msteams_poll_vote_from_message_action_params(request.params)
+        if vote is None:
+            raise RuntimeError("Microsoft Teams poll vote requires pollId and choices.")
+        poll_id, raw_selections = vote
+        voter_id = self._msteams_poll_vote_voter_id(request)
+        delivery = await self._msteams_poll_delivery_for_vote(poll_id)
+        if delivery is None:
+            return {
+                "ok": True,
+                "channel": "msteams",
+                "action": "poll-vote",
+                "pollId": poll_id,
+                "voterId": voter_id,
+                "selections": raw_selections,
+                "recorded": False,
+            }
+        event_payload = delivery.get("event_payload")
+        route_scope = delivery.get("route_scope")
+        if not isinstance(event_payload, dict) or not isinstance(route_scope, dict):
+            raise RuntimeError("Microsoft Teams poll vote could not load poll metadata.")
+        raw_options = event_payload.get("options")
+        options = (
+            [str(option) for option in raw_options if isinstance(option, str)]
+            if isinstance(raw_options, list)
+            else []
+        )
+        if not options:
+            raise RuntimeError("Microsoft Teams poll vote could not load poll options.")
+        max_selections = _optional_int_payload_value(event_payload, "maxSelections") or 1
+        selections = _msteams_normalize_poll_selections(
+            options=options,
+            max_selections=max_selections,
+            selections=raw_selections,
+        )
+        raw_provider_result = route_scope.get("provider_result")
+        provider_result = (
+            dict(cast(Mapping[str, object], raw_provider_result))
+            if isinstance(raw_provider_result, dict)
+            else {}
+        )
+        raw_meta = provider_result.get("meta")
+        meta = (
+            dict(cast(Mapping[str, object], raw_meta))
+            if isinstance(raw_meta, dict)
+            else {}
+        )
+        existing_poll = meta.get("poll")
+        poll_meta = dict(existing_poll) if isinstance(existing_poll, dict) else {}
+        existing_votes = poll_meta.get("votes")
+        votes: dict[str, list[str]] = {}
+        if isinstance(existing_votes, dict):
+            for key, value in existing_votes.items():
+                if isinstance(value, list):
+                    votes[str(key)] = [str(entry) for entry in value]
+        votes[voter_id] = selections
+        poll_meta.update(
+            {
+                "id": poll_id,
+                "question": str(event_payload.get("question") or ""),
+                "options": options,
+                "maxSelections": max(1, max_selections),
+                "conversationId": str(provider_result.get("conversationId") or ""),
+                "messageId": str(provider_result.get("messageId") or ""),
+                "votes": votes,
+                "updatedAt": utcnow(),
+            }
+        )
+        meta["poll"] = poll_meta
+        provider_result["meta"] = meta
+        updated_route_scope = dict(route_scope)
+        updated_route_scope["provider_result"] = provider_result
+        await self.database.update_outbound_delivery(
+            int(delivery["id"]),
+            route_scope=updated_route_scope,
+        )
+        return {
+            "ok": True,
+            "channel": "msteams",
+            "action": "poll-vote",
+            "pollId": poll_id,
+            "voterId": voter_id,
+            "selections": selections,
+            "recorded": True,
+        }
+
+    def _dispatch_msteams_reactions_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams reactions requires a messageId.")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        result = self._request_json_provider_url(
+            _msteams_graph_message_endpoint(
+                target=target,
+                message_id=message_id,
+            ),
+            method="GET",
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        return {
+            "ok": True,
+            "reactions": _msteams_reaction_summaries(result),
+        }
+
+    def _dispatch_msteams_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        target = _msteams_action_target(request)
+        message_id = _message_action_param_string(
+            request.params,
+            "messageId",
+            required=True,
+        )
+        if message_id is None:
+            raise RuntimeError("Microsoft Teams react requires a messageId.")
+        raw_reaction = _message_action_param_string(
+            request.params,
+            "emoji",
+            allow_empty=True,
+        ) or _message_action_param_string(
+            request.params,
+            "reactionType",
+            allow_empty=True,
+        )
+        reaction_type = _msteams_reaction_type(raw_reaction)
+        remove = (
+            request.action.strip().lower() == "unreact"
+            or _message_action_param_bool(request.params, "remove") is True
+        )
+        graph_action: Literal["setReaction", "unsetReaction"] = (
+            "unsetReaction" if remove else "setReaction"
+        )
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        self._request_json_provider_url(
+            _msteams_graph_beta_reaction_endpoint(
+                route_config=route_config,
+                target=target,
+                message_id=message_id,
+                action=graph_action,
+            ),
+            method="POST",
+            payload={"reactionType": reaction_type},
+            secret_header_name="Authorization",
+            secret_token=self._msteams_graph_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        result: dict[str, object] = {
+            "ok": True,
+            "channel": "msteams",
+            "action": "react",
+            "reactionType": str(raw_reaction or "").strip(),
+        }
+        if remove:
+            result["removed"] = True
+        return result
+
+    def _post_msteams_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        raw_target = str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        route_config = _msteams_route_config(str(route.get("target") or ""))
+        conversation_id = _msteams_resolve_route_conversation_id(
+            route_config=route_config,
+            raw_target=raw_target,
+        )
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        poll_id: str | None = None
+        send_media_urls: list[str] = []
+        send_attachments: list[dict[str, object]] = []
+        pending_upload_id: str | None = None
+        graph_upload_meta: dict[str, object] | None = None
+        if event_type == "gateway/poll":
+            question = str(event.get("question") or event.get("summary") or "").strip()
+            raw_options = event.get("options")
+            options = (
+                [str(option).strip() for option in raw_options if str(option).strip()]
+                if isinstance(raw_options, list)
+                else []
+            )
+            _validate_direct_channel_poll_shape(question, options)
+            _validate_direct_channel_poll_option_count("msteams", options)
+            max_selections = _optional_int_payload_value(event, "maxSelections")
+            _validate_direct_channel_poll_max_selections(options, max_selections)
+            poll_id, card = _msteams_poll_card(
+                question=question,
+                options=options,
+                max_selections=max_selections,
+            )
+            activity_payload: dict[str, object] = {
+                "type": "message",
+                "attachments": [
+                    {
+                        "contentType": "application/vnd.microsoft.card.adaptive",
+                        "content": card,
+                    }
+                ],
+            }
+        elif event_type == "gateway/send":
+            message = str(event.get("message") or "").strip()
+            raw_media_urls = event.get("mediaUrls")
+            media_urls = _normalize_direct_channel_media_urls(
+                media_url=(
+                    event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None
+                ),
+                media_urls=(
+                    [str(media_url) for media_url in raw_media_urls]
+                    if isinstance(raw_media_urls, list)
+                    else None
+                ),
+            )
+            send_media_urls = media_urls
+            if media_urls:
+                if _msteams_file_info_entries(event):
+                    send_attachments = _msteams_file_info_cards_from_event(
+                        event=event,
+                        media_urls=media_urls,
+                    )
+                elif (
+                    _msteams_graph_upload_site_id(
+                        event=event,
+                        route_config=route_config,
+                    )
+                    is not None
+                ):
+                    send_attachments, graph_upload_meta = (
+                        self._msteams_graph_file_cards_from_upload(
+                            route_config=route_config,
+                            event=event,
+                            media_urls=media_urls,
+                            secret_token=secret_token,
+                        )
+                    )
+                else:
+                    consent_card, pending_upload_id = _msteams_file_consent_card_from_event(
+                        event=event,
+                        media_urls=media_urls,
+                    )
+                    send_attachments = [consent_card]
+            if not message and not send_attachments:
+                raise RuntimeError("Microsoft Teams send requires text or media.")
+
+            activity_payload = {
+                "type": "message",
+                "channelData": {"feedbackLoopEnabled": False},
+                "entities": [
+                    {
+                        "type": "https://schema.org/Message",
+                        "@type": "Message",
+                        "@id": "",
+                        "additionalType": ["AIGeneratedContent"],
+                    }
+                ],
+            }
+            if message and pending_upload_id is None:
+                activity_payload["text"] = message
+            if send_attachments:
+                activity_payload["attachments"] = send_attachments
+        else:
+            raise RuntimeError("Microsoft Teams native provider route does not support this event.")
+        result = self._request_json_provider_url(
+            _msteams_activity_endpoint(
+                service_url=route_config.service_url,
+                conversation_id=_msteams_activity_conversation_id(
+                    conversation_id=conversation_id,
+                    reply_to_id=reply_to_id,
+                    conversation_target=conversation_target,
+                ),
+            ),
+            method="POST",
+            payload=activity_payload,
+            secret_header_name="Authorization",
+            secret_token=self._msteams_bearer_token(
+                route_config=route_config,
+                secret_token=secret_token,
+            ),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Microsoft Teams API returned a non-JSON response.")
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": _msteams_message_id(result) or "unknown",
+            "chatId": conversation_id,
+            "channelId": conversation_id,
+            "conversationId": conversation_id,
+        }
+        if poll_id is not None:
+            native_result["pollId"] = poll_id
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        if event_type == "gateway/send":
+            if send_media_urls:
+                native_result["mediaUrls"] = send_media_urls
+                native_result["filenames"] = [
+                    str(attachment.get("name") or "").strip()
+                    for attachment in send_attachments
+                    if str(attachment.get("name") or "").strip()
+                ]
+                if pending_upload_id is not None:
+                    native_result["pendingUploadId"] = pending_upload_id
+                file_ids: list[str] = []
+                for attachment in send_attachments:
+                    content = attachment.get("content")
+                    if not isinstance(content, dict):
+                        continue
+                    unique_id = str(content.get("uniqueId") or "").strip()
+                    if unique_id:
+                        file_ids.append(unique_id)
+                if file_ids:
+                    native_result["fileIds"] = file_ids
+                if graph_upload_meta is not None:
+                    native_result["meta"] = {"graphUpload": graph_upload_meta}
+        return native_result
+
+    def _post_signal_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        del secret_token
+        if event_type != "gateway/send":
+            raise RuntimeError("Signal native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target_params, chat_id = _signal_target_params(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        message = str(event.get("message") or "").strip()
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        if not message and not media_urls:
+            raise RuntimeError("Signal send requires text or media.")
+        params: dict[str, object] = {"message": message}
+        if media_urls:
+            params["attachments"] = media_urls
+        params.update(target_params)
+        payload: dict[str, object] = {
+            "jsonrpc": "2.0",
+            "method": "send",
+            "params": params,
+            "id": uuid.uuid4().hex,
+        }
+        result = self._request_json_provider_url(
+            _signal_rpc_endpoint(str(route.get("target") or "")),
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        timestamp = _signal_rpc_result_timestamp(result)
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": str(timestamp) if timestamp is not None else "unknown",
+            "chatId": chat_id,
+            "channelId": chat_id,
+        }
+        if timestamp is not None:
+            native_result["timestamp"] = timestamp
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _dispatch_signal_react_message_action(
+        self,
+        route: dict[str, Any],
+        request: GatewayMessageActionDispatchRequest,
+    ) -> dict[str, object]:
+        raw_target = _message_action_param_string(request.params, "recipient")
+        if raw_target is None:
+            raw_target = _message_action_param_string(
+                request.params,
+                "to",
+                required=True,
+            )
+        target_params, direct_target_author = _signal_reaction_target_params(raw_target)
+        timestamp = _signal_reaction_message_timestamp(request)
+        remove = request.params.get("remove") is True
+        emoji = (
+            _message_action_param_string(
+                request.params,
+                "emoji",
+                required=True,
+                allow_empty=True,
+            )
+            or ""
+        )
+        if remove and not emoji:
+            raise RuntimeError("Emoji required to remove reaction.")
+        if not remove and not emoji:
+            raise RuntimeError("Emoji required to add reaction.")
+
+        target_author = _signal_reaction_target_author(
+            request.params,
+            fallback=direct_target_author,
+        )
+        if "groupIds" in target_params and not target_author:
+            raise RuntimeError("targetAuthor or targetAuthorUuid required for group reactions.")
+
+        params: dict[str, object] = {
+            "emoji": emoji,
+            "targetTimestamp": timestamp,
+        }
+        if remove:
+            params["remove"] = True
+        if target_author:
+            params["targetAuthor"] = target_author
+        params.update(target_params)
+        payload: dict[str, object] = {
+            "jsonrpc": "2.0",
+            "method": "sendReaction",
+            "params": params,
+            "id": uuid.uuid4().hex,
+        }
+        result = self._request_json_provider_url(
+            _signal_rpc_endpoint(str(route.get("target") or "")),
+            method="POST",
+            payload=payload,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        if remove:
+            return {"ok": True, "removed": emoji}
+        return {"ok": True, "added": emoji}
+
+    def _post_irc_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("IRC native provider route does not support polls.")
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        target = _irc_normalize_target(
+            str(event.get("to") or (conversation_target or {}).get("peer_id") or "")
+        )
+        if target is None:
+            raise RuntimeError("IRC route is missing a valid channel or user target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = "\n".join(part for part in message_parts if part).strip()
+        if not message:
+            raise RuntimeError("Message must be non-empty for IRC sends.")
+        reply_to_id = str(event.get("replyToId") or "").strip()
+        if reply_to_id:
+            message = f"{message}\n\n[reply:{reply_to_id}]"
+        config = _irc_route_config(str(route.get("target") or ""), secret_token)
+        self._send_irc_privmsg(
+            host=config.host,
+            port=config.port,
+            tls=config.tls,
+            nick=config.nick,
+            username=config.username,
+            realname=config.realname,
+            password=config.password,
+            target=target,
+            message=message,
+        )
+        message_id = f"irc:{uuid.uuid4().hex}"
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_id,
+            "chatId": target,
+            "channelId": target,
+        }
+        if reply_to_id:
+            native_result["replyToId"] = reply_to_id
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
+
+    def _post_twitch_provider_event(
+        self,
+        route: dict[str, Any],
+        event_type: str,
+        event: dict[str, Any],
+        secret_token: str | None,
+    ) -> dict[str, object]:
+        if event_type != "gateway/send":
+            raise RuntimeError("Twitch native provider route does not support polls.")
+        config = _twitch_route_config(str(route.get("target") or ""), secret_token)
+        conversation_target = _normalize_conversation_target(event.get("conversationTarget"))
+        channel = _twitch_normalize_channel(
+            str(
+                event.get("to")
+                or (conversation_target or {}).get("peer_id")
+                or config.default_channel
+                or ""
+            )
+        )
+        if channel is None:
+            raise RuntimeError("Twitch route is missing a valid channel target.")
+        raw_media_urls = event.get("mediaUrls")
+        media_urls = _normalize_direct_channel_media_urls(
+            media_url=event.get("mediaUrl") if isinstance(event.get("mediaUrl"), str) else None,
+            media_urls=(
+                [str(media_url) for media_url in raw_media_urls]
+                if isinstance(raw_media_urls, list)
+                else None
+            ),
+        )
+        message_parts = [str(event.get("message") or "").strip()]
+        message_parts.extend(media_urls)
+        message = " ".join(part for part in message_parts if part).strip()
+        chunks = _twitch_text_chunks(message)
+        if not chunks:
+            return {
+                "runtime": "native-provider-backed",
+                "messageId": "skipped",
+                "chatId": channel,
+                "channelId": channel,
+            }
+        message_ids = [
+            self._send_twitch_chat_message(
+                username=config.username,
+                client_id=config.client_id,
+                token=config.token,
+                channel=channel,
+                message=chunk,
+            )
+            for chunk in chunks
+        ]
+        native_result: dict[str, object] = {
+            "runtime": "native-provider-backed",
+            "messageId": message_ids[-1],
+            "chatId": channel,
+            "channelId": channel,
+            "timestamp": _timestamp_ms(datetime.now(UTC)) or 0,
+        }
+        if len(message_ids) > 1:
+            native_result["messageIds"] = message_ids
+        if media_urls:
+            native_result["mediaUrls"] = media_urls
+        return native_result
 
     def _post_line_provider_event(
         self,

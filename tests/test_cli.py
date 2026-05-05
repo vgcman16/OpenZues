@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import codecs
 import json
 import os
@@ -50,6 +51,11 @@ from openzues.services.ops_mesh import OUTBOUND_DELIVERY_MAX_RETRIES
 from openzues.settings import Settings
 
 runner = CliRunner()
+
+
+def _decode_base64url_json(value: str) -> dict[str, object]:
+    padded = value.strip() + "=" * (-len(value.strip()) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
 
 
 def _bootstrap_cli_workspace(tmp_path, monkeypatch, *, task_name: str = "CLI Gateway Loop") -> None:
@@ -107,6 +113,111 @@ def test_close_services_shuts_down_background_service_loops() -> None:
         "mission_service",
         "manager",
     ]
+
+
+def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("OPENZUES_GATEWAY_TOKEN", "raw-gateway-token")
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "wss://gateway.example.test:18789",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    setup_code = result.stdout.strip()
+    assert setup_code
+    assert "\n" not in setup_code
+    assert "=" not in setup_code
+    assert "raw-gateway-token" not in setup_code
+
+    payload = _decode_base64url_json(setup_code)
+    assert payload["url"] == "wss://gateway.example.test:18789"
+    bootstrap_token = payload["bootstrapToken"]
+    assert isinstance(bootstrap_token, str)
+    assert bootstrap_token
+
+    bootstrap_state_path = data_dir / "devices" / "bootstrap.json"
+    bootstrap_state = json.loads(bootstrap_state_path.read_text(encoding="utf-8"))
+    record = bootstrap_state[bootstrap_token]
+    assert record["token"] == bootstrap_token
+    assert record["profile"]["roles"] == ["node", "operator"]
+    assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
+
+
+def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "http://localhost:notaport",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Configured publicUrl is invalid." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_remote_requires_explicit_remote_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(app, ["qr", "--setup-code-only", "--remote"])
+
+    assert result.exit_code == 1
+    assert (
+        "qr --remote requires gateway.remote.url (or gateway.tailscale.mode=serve/funnel)."
+        in result.stderr
+    )
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
+def test_qr_json_output_matches_openclaw_setup_code_contract(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(tmp_path / "data"))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--json",
+            "--url",
+            "wss://gateway.example.test:18789",
+            "--token",
+            "override-token",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "override-token" not in result.stdout
+    payload = json.loads(result.stdout)
+    assert set(payload) == {"setupCode", "gatewayUrl", "auth", "urlSource"}
+    assert payload["gatewayUrl"] == "wss://gateway.example.test:18789"
+    assert payload["auth"] == "token"
+    assert payload["urlSource"] == "cli.url"
+    setup_payload = _decode_base64url_json(payload["setupCode"])
+    assert setup_payload["url"] == "wss://gateway.example.test:18789"
+    assert isinstance(setup_payload["bootstrapToken"], str)
+    assert setup_payload["bootstrapToken"]
 
 
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
@@ -1388,6 +1499,97 @@ def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     }
 
 
+def test_channels_status_json_reports_msteams_native_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams Probe Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    def fake_msteams_fetch_bot_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "bot-access-token"
+
+    def fake_msteams_fetch_graph_token(
+        self,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_password: str,
+    ) -> str:
+        del self
+        assert tenant_id == "tenant-id"
+        assert app_id == "teams-app-id"
+        assert app_password == "teams-app-password"
+        return "graph-access-token"
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._msteams_fetch_bot_token",
+        fake_msteams_fetch_bot_token,
+    )
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._msteams_fetch_graph_token",
+        fake_msteams_fetch_graph_token,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["msteams"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "msteams",
+        "runtime": "native-provider-backed",
+        "accountId": "default",
+        "appId": "teams-app-id",
+        "graph": {"ok": True},
+        "timeoutMs": 2500,
+    }
+
+
 def test_channels_status_json_calls_gateway_method_owner_with_probe(monkeypatch) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -1549,6 +1751,63 @@ def test_channels_capabilities_json_reports_zalo_support(tmp_path, monkeypatch) 
     assert report["support"]["polls"] is False
     assert report["support"]["threads"] is False
     assert report["actions"] == ["send", "broadcast"]
+
+
+def test_channels_capabilities_json_reports_msteams_poll_support(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Teams Capabilities")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="CLI Microsoft Teams Route",
+            kind="msteams",
+            target="https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            events=["gateway/send", "gateway/poll"],
+            conversation_target={
+                "channel": "msteams",
+                "account_id": "default",
+                "peer_kind": "channel",
+                "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                "summary": "msteams default channel",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="teams-app-password",
+            vault_secret_id=None,
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "capabilities",
+            "--channel",
+            "msteams",
+            "--account",
+            "default",
+            "--target",
+            "conversation:19:ops-thread@thread.tacv2",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["target"] == "conversation:19:ops-thread@thread.tacv2"
+    assert len(payload["channels"]) == 1
+    report = payload["channels"][0]
+    assert report["channel"] == "msteams"
+    assert report["accountId"] == "default"
+    assert report["configured"] is True
+    assert report["enabled"] is True
+    assert report["support"]["chatTypes"] == ["direct", "group", "channel"]
+    assert report["support"]["media"] is False
+    assert report["support"]["polls"] is True
+    assert report["support"]["threads"] is False
+    assert report["actions"] == ["send", "broadcast", "poll"]
 
 
 def test_channels_capabilities_json_uses_account_probe_result(monkeypatch) -> None:
@@ -7479,10 +7738,37 @@ def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
                     {
                         "endpointClass": "openai-public",
                         "hosts": ["API.OPENAI.COM", ""],
+                        "hostSuffixes": [".OPENAI.AZURE.COM", ""],
                         "baseUrls": ["https://api.openai.com/v1"],
+                        "googleVertexRegion": "global",
+                        "googleVertexRegionHostSuffix": "-AIPLATFORM.GOOGLEAPIS.COM",
                     },
                     {"endpointClass": "empty"},
                 ],
+                "modelIdNormalization": {
+                    "providers": {
+                        "openai": {
+                            "aliases": {"gpt-latest": "gpt-5.4", "": "ignored"},
+                            "stripPrefixes": ["openai/", ""],
+                            "prefixWhenBare": "openai",
+                            "prefixWhenBareAfterAliasStartsWith": [
+                                {"modelPrefix": "gpt-", "prefix": "openai"},
+                                {"modelPrefix": "", "prefix": "ignored"},
+                            ],
+                        },
+                        "ignored": {"prefixWhenBare": "ignored"},
+                    }
+                },
+                "providerRequest": {
+                    "providers": {
+                        "openai": {
+                            "family": "openai-family",
+                            "compatibilityFamily": "moonshot",
+                            "openAICompletions": {"supportsStreamingUsage": True},
+                        },
+                        "ignored": {"family": "ignored"},
+                    }
+                },
                 "syntheticAuthRefs": ["openai-cli", ""],
                 "nonSecretAuthMarkers": ["openai-cli"],
                 "providerAuthAliases": {
@@ -7545,9 +7831,33 @@ def test_plugins_list_json_preserves_manifest_auth_and_env_metadata(
         {
             "endpointClass": "openai-public",
             "hosts": ["api.openai.com"],
+            "hostSuffixes": [".openai.azure.com"],
             "baseUrls": ["https://api.openai.com/v1"],
+            "googleVertexRegion": "global",
+            "googleVertexRegionHostSuffix": "-aiplatform.googleapis.com",
         }
     ]
+    assert plugin["modelIdNormalization"] == {
+        "providers": {
+            "openai": {
+                "aliases": {"gpt-latest": "gpt-5.4"},
+                "stripPrefixes": ["openai/"],
+                "prefixWhenBare": "openai",
+                "prefixWhenBareAfterAliasStartsWith": [
+                    {"modelPrefix": "gpt-", "prefix": "openai"}
+                ],
+            }
+        }
+    }
+    assert plugin["providerRequest"] == {
+        "providers": {
+            "openai": {
+                "family": "openai-family",
+                "compatibilityFamily": "moonshot",
+                "openAICompletions": {"supportsStreamingUsage": True},
+            }
+        }
+    }
     assert plugin["syntheticAuthRefs"] == ["openai-cli"]
     assert plugin["nonSecretAuthMarkers"] == ["openai-cli"]
     assert plugin["providerAuthAliases"] == {"openai-codex": "openai"}
@@ -10875,6 +11185,160 @@ def test_plugins_doctor_json_passes_bundled_package_plugin_sdk_alias_to_activati
     assert runtime_activation["missingExecutorPlugins"] == []
 
 
+def test_plugins_doctor_json_imports_bundled_sdk_runtime_entry_without_fake_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    dist_root = package_root / "dist"
+    plugin_dir = dist_root / "extensions" / "discord"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "const { normalizeLowercaseStringOrEmpty } = "
+        'require("openclaw/plugin-sdk/text-runtime");\n'
+        "module.exports = {\n"
+        "  register(api) {\n"
+        "    api.registerTool({\n"
+        '      name: normalizeLowercaseStringOrEmpty("DISCORD.SEND"),\n'
+        '      description: "Send to Discord"\n'
+        "    });\n"
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(dist_root / "extensions"))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["discord"]["runtimeEntrySource"] == str(
+        entry_path.resolve(strict=False)
+    )
+    assert plugins["discord"]["imported"] is True
+
+
+def test_plugins_doctor_json_imports_bundled_esm_sdk_runtime_entry_without_fake_adapter(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    package_root = tmp_path / "openclaw-runtime"
+    dist_root = package_root / "dist"
+    plugin_dir = dist_root / "extensions" / "discord"
+    _write_openclaw_runtime_plugin(
+        plugin_dir,
+        plugin_id="discord",
+        enabled_by_default=True,
+        contracts={"tools": ["discord.send"]},
+    )
+    entry_path = plugin_dir / "index.js"
+    entry_path.write_text(
+        "import { normalizeLowercaseStringOrEmpty } from "
+        '"openclaw/plugin-sdk/text-runtime";\n'
+        "export default {\n"
+        "  register(api) {\n"
+        "    api.registerTool({\n"
+        '      name: normalizeLowercaseStringOrEmpty("DISCORD.SEND"),\n'
+        '      description: "Send to Discord"\n'
+        "    });\n"
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    (plugin_dir / "package.json").write_text(
+        json.dumps({"openclaw": {"extensions": ["./index.js"]}}),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"enabled": True},
+            }
+        )
+    )
+    monkeypatch.setenv("OPENCLAW_BUNDLED_PLUGINS_DIR", str(dist_root / "extensions"))
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    result = runner.invoke(app, ["plugins", "doctor", "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    runtime_activation = json.loads(result.stdout)["runtimeActivation"]
+    assert runtime_activation["status"] == "ok"
+    assert runtime_activation["runtimeExecutorPlugins"] == [
+        {"pluginId": "discord", "tools": ["discord.send"]}
+    ]
+    assert runtime_activation["missingExecutorPlugins"] == []
+    list_result = runner.invoke(app, ["plugins", "list", "--json"])
+    assert list_result.exit_code == 0, list_result.stdout
+    plugins = {
+        str(plugin["id"]): plugin
+        for plugin in json.loads(list_result.stdout)["plugins"]
+    }
+    assert plugins["discord"]["runtimeEntrySource"] == str(
+        entry_path.resolve(strict=False)
+    )
+    assert plugins["discord"]["imported"] is True
+
+
 def test_plugins_doctor_json_passes_source_plugin_sdk_subpath_aliases_to_activation_adapter(
     tmp_path,
     monkeypatch,
@@ -11523,6 +11987,93 @@ def test_plugins_registry_refresh_json_persists_current_index(
         "persisted": {"plugins": [{"pluginId": "native-runtime", "enabled": True}]},
         "current": {"plugins": [{"pluginId": "native-runtime", "enabled": True}]},
     }
+
+
+def test_plugins_registry_refresh_json_persists_provider_metadata(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    gateway_config = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="openzues",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    plugin_dir = tmp_path / "plugins" / "provider-registry"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "openclaw.plugin.json").write_text(
+        json.dumps(
+            {
+                "id": "provider-registry",
+                "name": "Provider Registry",
+                "enabledByDefault": True,
+                "providers": ["openai"],
+                "providerEndpoints": [
+                    {
+                        "endpointClass": "openai-public",
+                        "hostSuffixes": [".OPENAI.AZURE.COM"],
+                    }
+                ],
+                "modelIdNormalization": {
+                    "providers": {"openai": {"prefixWhenBare": "openai"}}
+                },
+                "providerRequest": {
+                    "providers": {
+                        "openai": {
+                            "family": "openai-family",
+                            "openAICompletions": {"supportsStreamingUsage": True},
+                        }
+                    }
+                },
+                "configSchema": {"type": "object"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    gateway_config.set_raw(
+        json.dumps(
+            {
+                "basePath": "",
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "openzues",
+                "serverVersion": "9.9.9",
+                "localMediaPreviewRoots": [],
+                "embedSandbox": "scripts",
+                "allowExternalEmbedUrls": False,
+                "plugins": {"load": {"paths": [str(plugin_dir)]}},
+            }
+        )
+    )
+    _patch_plugins_cli_services(monkeypatch, gateway_config=gateway_config)
+
+    refresh = runner.invoke(app, ["plugins", "registry", "--refresh", "--json"])
+    inspect = runner.invoke(app, ["plugins", "registry", "--json"])
+
+    assert refresh.exit_code == 0, refresh.stdout
+    assert inspect.exit_code == 0, inspect.stdout
+    registry_plugin = json.loads(refresh.stdout)["registry"]["plugins"][0]
+    assert registry_plugin == {
+        "pluginId": "provider-registry",
+        "enabled": True,
+        "providerEndpoints": [
+            {
+                "endpointClass": "openai-public",
+                "hostSuffixes": [".openai.azure.com"],
+            }
+        ],
+        "modelIdNormalization": {"providers": {"openai": {"prefixWhenBare": "openai"}}},
+        "providerRequest": {
+            "providers": {
+                "openai": {
+                    "family": "openai-family",
+                    "openAICompletions": {"supportsStreamingUsage": True},
+                }
+            }
+        },
+    }
+    assert json.loads(inspect.stdout)["persisted"]["plugins"][0] == registry_plugin
 
 
 def test_plugins_list_json_reports_persisted_registry_source_after_refresh(
@@ -19072,6 +19623,494 @@ def test_routes_create_command_accepts_zalo_native_route(tmp_path, monkeypatch) 
     assert routes[0]["kind"] == "zalo"
     assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
     assert routes[0]["conversation_target"]["channel"] == "zalo"
+
+
+def test_routes_create_command_accepts_feishu_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Feishu Native Gateway",
+            "--kind",
+            "feishu",
+            "--target",
+            "https://open.feishu.cn/open-apis",
+            "--conversation-channel",
+            "feishu",
+            "--conversation-account",
+            "feishu-bot",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "feishu:chat:oc_chat_1",
+            "--secret-token",
+            "tenant-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Feishu Native Gateway"
+    assert payload["kind"] == "feishu"
+    assert payload["target"] == "https://open.feishu.cn/open-apis"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "feishu"
+    assert conversation_target["account_id"] == "feishu-bot"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "feishu:chat:oc_chat_1"
+    assert "feishu:chat:oc_chat_1" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "feishu"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "feishu"
+
+
+def test_routes_create_command_accepts_googlechat_native_route(tmp_path, monkeypatch) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Google Chat Native Gateway",
+            "--kind",
+            "googlechat",
+            "--target",
+            "https://chat.googleapis.com/v1",
+            "--conversation-channel",
+            "googlechat",
+            "--conversation-account",
+            "workspace",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "googlechat:spaces/AAAAAAA",
+            "--secret-token",
+            "google-chat-access-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Google Chat Native Gateway"
+    assert payload["kind"] == "googlechat"
+    assert payload["target"] == "https://chat.googleapis.com/v1"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "googlechat"
+    assert conversation_target["account_id"] == "workspace"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "googlechat:spaces/AAAAAAA"
+    assert "googlechat:spaces/AAAAAAA" in conversation_target["summary"]
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "googlechat"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "googlechat"
+
+
+def test_routes_create_command_accepts_nextcloud_talk_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Nextcloud Talk Native Gateway",
+            "--kind",
+            "nextcloud-talk",
+            "--target",
+            "https://nextcloud.example.com",
+            "--conversation-channel",
+            "nextcloud-talk",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "nextcloud-talk:room:abc123",
+            "--secret-token",
+            "nextcloud-bot-secret",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Nextcloud Talk Native Gateway"
+    assert payload["kind"] == "nextcloud-talk"
+    assert payload["target"] == "https://nextcloud.example.com"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "nextcloud-talk"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "nextcloud-talk:room:abc123"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "nextcloud-talk"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "nextcloud-talk"
+
+
+def test_routes_create_command_accepts_synology_chat_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Synology Chat Native Gateway",
+            "--kind",
+            "synology-chat",
+            "--target",
+            "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot",
+            "--conversation-channel",
+            "synology-chat",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "direct",
+            "--conversation-peer-id",
+            "42",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Synology Chat Native Gateway"
+    assert payload["kind"] == "synology-chat"
+    assert (
+        payload["target"]
+        == "https://nas.example.com/webapi/entry.cgi?api=SYNO.Chat.External&method=chatbot"
+    )
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "synology-chat"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "direct"
+    assert conversation_target["peer_id"] == "42"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "synology-chat"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "synology-chat"
+
+
+def test_routes_create_command_accepts_mattermost_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Mattermost Native Gateway",
+            "--kind",
+            "mattermost",
+            "--target",
+            "https://mattermost.example.com",
+            "--conversation-channel",
+            "mattermost",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            f"channel:{channel_id}",
+            "--secret-token",
+            "mattermost-bot-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Mattermost Native Gateway"
+    assert payload["kind"] == "mattermost"
+    assert payload["target"] == "https://mattermost.example.com"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "mattermost"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == f"channel:{channel_id}"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "mattermost"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "mattermost"
+
+
+def test_routes_create_command_accepts_signal_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Signal Native Gateway",
+            "--kind",
+            "signal",
+            "--target",
+            "http://signal.example.com:8080",
+            "--conversation-channel",
+            "signal",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "signal:+15551234567",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Signal Native Gateway"
+    assert payload["kind"] == "signal"
+    assert payload["target"] == "http://signal.example.com:8080"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "signal"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "signal:+15551234567"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "signal"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "signal"
+
+
+def test_routes_create_command_accepts_irc_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "IRC Native Gateway",
+            "--kind",
+            "irc",
+            "--target",
+            "ircs://irc.example.net:6697?nick=openzues&username=openzues",
+            "--conversation-channel",
+            "irc",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "channel:ops-room",
+            "--secret-token",
+            "irc-server-password",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "IRC Native Gateway"
+    assert payload["kind"] == "irc"
+    assert payload["target"] == "ircs://irc.example.net:6697?nick=openzues&username=openzues"
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "irc"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "channel:ops-room"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "irc"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "irc"
+
+
+def test_routes_create_command_accepts_twitch_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Twitch Native Gateway",
+            "--kind",
+            "twitch",
+            "--target",
+            "twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues",
+            "--conversation-channel",
+            "twitch",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "#OpenZues",
+            "--secret-token",
+            "oauth:twitch-token",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Twitch Native Gateway"
+    assert payload["kind"] == "twitch"
+    assert (
+        payload["target"]
+        == "twitch://chat?username=openzues&clientId=twitch-client-id&channel=OpenZues"
+    )
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "twitch"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "#OpenZues"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "twitch"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "twitch"
+
+
+def test_routes_create_command_accepts_msteams_native_route(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "routes",
+            "create",
+            "--name",
+            "Microsoft Teams Native Gateway",
+            "--kind",
+            "msteams",
+            "--target",
+            "https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id",
+            "--conversation-channel",
+            "msteams",
+            "--conversation-account",
+            "default",
+            "--conversation-peer-kind",
+            "channel",
+            "--conversation-peer-id",
+            "conversation:19:ops-thread@thread.tacv2",
+            "--secret-token",
+            "teams-app-password",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["name"] == "Microsoft Teams Native Gateway"
+    assert payload["kind"] == "msteams"
+    assert (
+        payload["target"]
+        == "https://smba.trafficmanager.net/amer?appId=teams-app-id&tenantId=tenant-id"
+    )
+    assert payload["events"] == ["gateway/send", "gateway/poll"]
+    conversation_target = payload["conversation_target"]
+    assert conversation_target["channel"] == "msteams"
+    assert conversation_target["account_id"] == "default"
+    assert conversation_target["peer_kind"] == "channel"
+    assert conversation_target["peer_id"] == "conversation:19:ops-thread@thread.tacv2"
+
+    settings = Settings(data_dir=data_dir, db_path=data_dir / "openzues.db")
+    database = Database(settings.db_path)
+    asyncio.run(database.initialize())
+    routes = asyncio.run(database.list_notification_routes())
+    assert len(routes) == 1
+    assert routes[0]["kind"] == "msteams"
+    assert routes[0]["events"] == ["gateway/send", "gateway/poll"]
+    assert routes[0]["conversation_target"]["channel"] == "msteams"
 
 
 def test_routes_send_json_calls_native_direct_send_runtime(monkeypatch) -> None:

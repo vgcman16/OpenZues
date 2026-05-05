@@ -4811,6 +4811,15 @@ def test_gateway_channels_endpoint_returns_notification_route_inventory(tmp_path
         "telegram",
         "whatsapp",
         "zalo",
+        "feishu",
+        "googlechat",
+        "nextcloud-talk",
+        "synology-chat",
+        "mattermost",
+        "msteams",
+        "signal",
+        "irc",
+        "twitch",
         "line",
         "matrix",
     ]
@@ -4944,6 +4953,303 @@ def test_gateway_channels_endpoint_classifies_zalo_native_route(tmp_path) -> Non
     assert payload["channelDefaultAccountId"]["zalo"] == "zalo-bot"
 
 
+def test_gateway_channels_endpoint_classifies_googlechat_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Google Chat Native Gateway",
+                "kind": "googlechat",
+                "target": "https://chat.googleapis.com/v1",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "googlechat",
+                    "account_id": "workspace",
+                    "peer_kind": "channel",
+                    "peer_id": "googlechat:spaces/AAAAAAA",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "googlechat" in payload["channelOrder"]
+    assert payload["channelLabels"]["googlechat"] == "Google Chat"
+    assert payload["channelDetailLabels"]["googlechat"] == "Google Chat"
+    assert payload["channels"]["googlechat"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["googlechat"] == "workspace"
+
+
+def test_gateway_channels_endpoint_classifies_nextcloud_talk_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Nextcloud Talk Native Gateway",
+                "kind": "nextcloud-talk",
+                "target": "https://nextcloud.example.com",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "nextcloud-talk",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "nextcloud-talk:room:abc123",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "nextcloud-talk" in payload["channelOrder"]
+    assert payload["channelLabels"]["nextcloud-talk"] == "Nextcloud Talk"
+    assert payload["channelDetailLabels"]["nextcloud-talk"] == "Nextcloud Talk"
+    assert payload["channels"]["nextcloud-talk"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["nextcloud-talk"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_synology_chat_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Synology Chat Native Gateway",
+                "kind": "synology-chat",
+                "target": (
+                    "https://nas.example.com/webapi/entry.cgi?"
+                    "api=SYNO.Chat.External&method=chatbot"
+                ),
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "synology-chat",
+                    "account_id": "default",
+                    "peer_kind": "direct",
+                    "peer_id": "42",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "synology-chat" in payload["channelOrder"]
+    assert payload["channelLabels"]["synology-chat"] == "Synology Chat"
+    assert payload["channelDetailLabels"]["synology-chat"] == "Synology Chat"
+    assert payload["channels"]["synology-chat"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["synology-chat"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_mattermost_native_route(tmp_path) -> None:
+    channel_id = "dthcxgoxhifn3pwh65cut3ud3w"
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Mattermost Native Gateway",
+                "kind": "mattermost",
+                "target": "https://mattermost.example.com",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "mattermost",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": f"channel:{channel_id}",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "mattermost" in payload["channelOrder"]
+    assert payload["channelLabels"]["mattermost"] == "Mattermost"
+    assert payload["channelDetailLabels"]["mattermost"] == "Mattermost"
+    assert payload["channels"]["mattermost"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["mattermost"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_signal_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Signal Native Gateway",
+                "kind": "signal",
+                "target": "http://signal.example.com:8080",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "signal",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "signal:+15551234567",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "signal" in payload["channelOrder"]
+    assert payload["channelLabels"]["signal"] == "Signal"
+    assert payload["channelDetailLabels"]["signal"] == "Signal"
+    assert payload["channels"]["signal"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["signal"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_irc_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "IRC Native Gateway",
+                "kind": "irc",
+                "target": "ircs://irc.example.net:6697?nick=openzues&username=openzues",
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "irc",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "channel:ops-room",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "irc" in payload["channelOrder"]
+    assert payload["channelLabels"]["irc"] == "IRC"
+    assert payload["channelDetailLabels"]["irc"] == "IRC"
+    assert payload["channels"]["irc"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["irc"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_twitch_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Twitch Native Gateway",
+                "kind": "twitch",
+                "target": (
+                    "twitch://chat?username=openzues&clientId=twitch-client-id"
+                    "&channel=OpenZues"
+                ),
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "twitch",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "#OpenZues",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "twitch" in payload["channelOrder"]
+    assert payload["channelLabels"]["twitch"] == "Twitch"
+    assert payload["channelDetailLabels"]["twitch"] == "Twitch"
+    assert payload["channels"]["twitch"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["twitch"] == "default"
+
+
+def test_gateway_channels_endpoint_classifies_msteams_native_route(tmp_path) -> None:
+    with make_client(tmp_path) as client:
+        route_response = client.post(
+            "/api/notification-routes",
+            json={
+                "name": "Microsoft Teams Native Gateway",
+                "kind": "msteams",
+                "target": (
+                    "https://smba.trafficmanager.net/amer?"
+                    "appId=teams-app-id&tenantId=tenant-id"
+                ),
+                "events": ["gateway/send", "gateway/poll"],
+                "conversation_target": {
+                    "channel": "msteams",
+                    "account_id": "default",
+                    "peer_kind": "channel",
+                    "peer_id": "conversation:19:ops-thread@thread.tacv2",
+                },
+                "enabled": True,
+            },
+        )
+        response = client.get("/api/gateway/channels")
+
+    assert route_response.status_code == 200
+    assert response.status_code == 200
+    payload = response.json()
+    assert "msteams" in payload["channelOrder"]
+    assert payload["channelLabels"]["msteams"] == "Microsoft Teams"
+    assert payload["channelDetailLabels"]["msteams"] == "Microsoft Teams"
+    assert payload["channels"]["msteams"] == {
+        "routeCount": 1,
+        "enabledRouteCount": 1,
+        "conversationTargetCount": 1,
+        "accountCount": 1,
+    }
+    assert payload["channelDefaultAccountId"]["msteams"] == "default"
+
+
+NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET = (
+    '["slack", "telegram", "discord", "whatsapp", "zalo", "googlechat", '
+    '"nextcloud-talk", "synology-chat", "mattermost", "msteams", "signal", '
+    '"irc", "twitch", "line", "matrix"].includes(routeKind)'
+)
+
+
 def test_notification_route_operator_form_offers_line_native_routes() -> None:
     template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
         encoding="utf-8"
@@ -4953,10 +5259,7 @@ def test_notification_route_operator_form_offers_line_native_routes() -> None:
     )
 
     assert '<option value="line">LINE native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
-    )
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
@@ -4968,10 +5271,7 @@ def test_notification_route_operator_form_offers_matrix_native_routes() -> None:
     )
 
     assert '<option value="matrix">Matrix native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
-    )
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
@@ -4983,10 +5283,103 @@ def test_notification_route_operator_form_offers_zalo_native_routes() -> None:
     )
 
     assert '<option value="zalo">Zalo native route</option>' in template
-    assert (
-        '["slack", "telegram", "discord", "whatsapp", "zalo", "line", "matrix"].includes(routeKind)'
-        in script
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_googlechat_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
     )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="googlechat">Google Chat native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_nextcloud_talk_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="nextcloud-talk">Nextcloud Talk native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_synology_chat_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="synology-chat">Synology Chat native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_mattermost_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="mattermost">Mattermost native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_msteams_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="msteams">Microsoft Teams native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_signal_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="signal">Signal native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_irc_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="irc">IRC native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
+
+
+def test_notification_route_operator_form_offers_twitch_native_routes() -> None:
+    template = (Path(__file__).parents[1] / "src/openzues/web/templates/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = (Path(__file__).parents[1] / "src/openzues/web/static/app.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '<option value="twitch">Twitch native route</option>' in template
+    assert NATIVE_ROUTE_DEFAULT_EVENTS_SNIPPET in script
 
 
 def test_gateway_bootstrap_endpoint_marks_connected_local_lane_ready_without_api_key(

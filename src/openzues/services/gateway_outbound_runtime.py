@@ -59,6 +59,7 @@ def _native_result_payload(result: object) -> dict[str, object]:
         "threadId",
         "replyToId",
         "pollId",
+        "pendingUploadId",
         "mediaId",
         "mediaIds",
         "mediaUrl",

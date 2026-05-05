@@ -461,6 +461,14 @@ class Database:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS msteams_sso_tokens (
+                    connection_name TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    token TEXT NOT NULL,
+                    expires_at TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (connection_name, user_id)
+                );
                 CREATE TABLE IF NOT EXISTS skill_pins (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id INTEGER NOT NULL,
@@ -2650,6 +2658,71 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("DELETE FROM vault_secrets WHERE id = ?", (secret_id,))
             await db.commit()
+
+    async def upsert_msteams_sso_token(
+        self,
+        *,
+        connection_name: str,
+        user_id: str,
+        token: str,
+        expires_at: str | None,
+    ) -> None:
+        now = utcnow()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """
+                INSERT INTO msteams_sso_tokens (
+                    connection_name,
+                    user_id,
+                    token,
+                    expires_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(connection_name, user_id) DO UPDATE SET
+                    token = excluded.token,
+                    expires_at = excluded.expires_at,
+                    updated_at = excluded.updated_at
+                """,
+                (connection_name, user_id, token, expires_at, now),
+            )
+            await db.commit()
+
+    async def get_msteams_sso_token(
+        self,
+        *,
+        connection_name: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                """
+                SELECT connection_name, user_id, token, expires_at, updated_at
+                FROM msteams_sso_tokens
+                WHERE connection_name = ? AND user_id = ?
+                """,
+                (connection_name, user_id),
+            )
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+    async def delete_msteams_sso_token(
+        self,
+        *,
+        connection_name: str,
+        user_id: str,
+    ) -> bool:
+        async with aiosqlite.connect(self.path) as db:
+            cursor = await db.execute(
+                """
+                DELETE FROM msteams_sso_tokens
+                WHERE connection_name = ? AND user_id = ?
+                """,
+                (connection_name, user_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
 
     async def list_skill_pins(self) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.path) as db:

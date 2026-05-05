@@ -34,6 +34,51 @@ _CHANNEL_META = (
         "detailLabel": "Zalo",
     },
     {
+        "id": "feishu",
+        "label": "Feishu/Lark",
+        "detailLabel": "Feishu/Lark",
+    },
+    {
+        "id": "googlechat",
+        "label": "Google Chat",
+        "detailLabel": "Google Chat",
+    },
+    {
+        "id": "nextcloud-talk",
+        "label": "Nextcloud Talk",
+        "detailLabel": "Nextcloud Talk",
+    },
+    {
+        "id": "synology-chat",
+        "label": "Synology Chat",
+        "detailLabel": "Synology Chat",
+    },
+    {
+        "id": "mattermost",
+        "label": "Mattermost",
+        "detailLabel": "Mattermost",
+    },
+    {
+        "id": "msteams",
+        "label": "Microsoft Teams",
+        "detailLabel": "Microsoft Teams",
+    },
+    {
+        "id": "signal",
+        "label": "Signal",
+        "detailLabel": "Signal",
+    },
+    {
+        "id": "irc",
+        "label": "IRC",
+        "detailLabel": "IRC",
+    },
+    {
+        "id": "twitch",
+        "label": "Twitch",
+        "detailLabel": "Twitch",
+    },
+    {
         "id": "line",
         "label": "LINE",
         "detailLabel": "LINE",
