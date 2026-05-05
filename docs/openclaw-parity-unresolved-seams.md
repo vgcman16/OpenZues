@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~63.9% overall, with a reasonable
-  band of ~50-64%.
+- Repo-wide OpenClaw parity is estimated at ~64.0% overall, with a reasonable
+  band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -5932,9 +5932,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~63.9%. Verified with focused runtime pytest, adjacent
   Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
   `eb663838`.
+- Closed the Microsoft Teams poll vote storage seam from OpenClaw
+  `extensions/msteams/src/polls.ts`,
+  `extensions/msteams/src/monitor-handler/message-handler.ts`, and
+  `extensions/msteams/src/outbound.ts`: native Teams adaptive-card vote
+  payloads now extract `openclawPollId` / `pollId` plus `choices`, normalize
+  selected option indexes against saved poll options and `maxSelections`, map
+  sender ids to voters, consume unknown poll ids without error, and persist
+  known votes on the saved outbound poll delivery metadata. Repo-wide parity
+  is now estimated at ~64.0%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `b3726879`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap, starting with Microsoft Teams
-  Graph/FileConsent upload, vote-invoke breadth, or
+  Graph/FileConsent upload or inbound monitor/session routing, or
   another source-backed channel/provider route/action adapter, or
   packaging/plugin breadth seam if provider discovery proves no smaller route
   slice.
