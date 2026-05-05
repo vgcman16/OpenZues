@@ -12845,6 +12845,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`66 passed, 803 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `f0a21c8c`.
+- Imported OpenClaw plugin runtime entries now have source-backed
+  `openclaw/plugin-sdk/command-auth` helpers from
+  `src/plugin-sdk/command-auth.ts`, `src/plugin-sdk/access-groups.ts`,
+  `src/plugin-sdk/direct-dm.ts`, `src/auto-reply/command-detection.ts`,
+  `src/auto-reply/commands-registry.ts`, and
+  `src/channels/command-gating.ts`: sender command authorization across DM,
+  group, pairing-store, and access-group allowlist sources, runtime-backed
+  authorization wrappers, direct-DM authorization outcome projection,
+  command-gating re-exports, command detection re-exports, direct-DM/access
+  group compatibility re-exports, and deprecated command-status builders are
+  now available through `tools.invoke`. This closes `OZ-PLUGIN-001TY`;
+  repo-wide parity is now estimated at ~76.2%. The next plugin/runtime seam
+  remains broader SDK helper/runtime surface breadth.
+- Verified the command-auth shim slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_command_auth_helpers -q`
+  (`1 passed`), adjacent plugin invoke proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw_runtime_entry_tool or imported_openclaw_esm_runtime_entry_tool or imported_openclaw_runtime_tool_factory_with_context or imported_openclaw_command_auth_helpers or imported_openclaw_channel_pairing_helpers or imported_openclaw_channel_send_result_helpers or imported_openclaw_direct_dm_helpers or imported_openclaw_direct_dm_guard_policy_helpers or imported_openclaw_direct_dm_access_helpers or imported_openclaw_access_groups_helpers or imported_openclaw_allow_from_helpers or imported_openclaw_channel_policy_helpers or imported_openclaw_channel_route_helpers or imported_openclaw_channel_inbound_helpers or imported_openclaw_channel_feedback_helpers or imported_openclaw_channel_reply_pipeline_helpers or imported_openclaw_channel_reply_options_helpers or imported_openclaw_reply_dedupe_helpers or imported_openclaw_reply_reference_helpers or imported_openclaw_reply_history_helpers or imported_openclaw_markdown_table_runtime_helpers or imported_openclaw_channel_inbound_debounce_helpers or imported_openclaw_concurrency_runtime_helpers or imported_openclaw_global_singleton_helpers or imported_openclaw_command_detection_helpers or imported_openclaw_media_mime_helpers or imported_openclaw_command_primitives_runtime_helpers or imported_openclaw_lazy_value_helpers or imported_openclaw_keyed_async_queue_helpers or imported_openclaw_retry_runtime_helpers or imported_openclaw_dedupe_runtime_helpers or imported_openclaw_text_autolink_runtime_helpers or imported_openclaw_response_limit_runtime_helpers or imported_openclaw_target_resolver_runtime_helpers or imported_openclaw_transport_ready_runtime_helpers or imported_openclaw_async_lock_runtime_helpers or imported_openclaw_collection_runtime_helpers or imported_openclaw_secure_random_runtime_helpers or imported_openclaw_number_runtime_helpers or imported_openclaw_time_runtime_helpers or imported_openclaw_text_runtime_normalization_helpers or imported_openclaw_string_normalization_helpers or imported_openclaw_dangerous_name_runtime_helpers or imported_openclaw_channel_logging_helpers or imported_openclaw_error_runtime_helpers or imported_openclaw_temp_path_helpers or imported_openclaw_secret_input_helpers or imported_openclaw_routing_helpers or imported_openclaw_reply_chunking_helpers or imported_openclaw_text_chunking_helper or imported_openclaw_reply_payload_helpers or imported_openclaw_account_helpers or imported_openclaw_account_core_helpers or imported_openclaw_tool_payload_helpers or imported_openclaw_boolean_param_helper or imported_openclaw_channel_actions_helpers or imported_openclaw_channel_status_helpers or imported_openclaw_status_helpers or plugin_executor"`
+  (`67 passed, 803 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `d06e2c42`.
 
 ## References
 
