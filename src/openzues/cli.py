@@ -22947,7 +22947,11 @@ def _normalize_pairing_setup_url(raw: str) -> str:
         scheme = "wss"
     if scheme not in {"ws", "wss"} or not parsed.hostname:
         raise ValueError("Configured publicUrl is invalid.")
-    port = f":{parsed.port}" if parsed.port is not None else ""
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Configured publicUrl is invalid.") from exc
+    port = f":{parsed_port}" if parsed_port is not None else ""
     return f"{scheme}://{_format_pairing_host(parsed.hostname)}{port}"
 
 

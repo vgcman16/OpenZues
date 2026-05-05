@@ -153,6 +153,27 @@ def test_qr_setup_code_only_emits_openclaw_base64url_bootstrap_payload(
     assert record["profile"]["scopes"] == list(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES)
 
 
+def test_qr_setup_code_only_rejects_invalid_override_url_before_token_issue(
+    tmp_path, monkeypatch
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("OPENZUES_DATA_DIR", str(data_dir))
+
+    result = runner.invoke(
+        app,
+        [
+            "qr",
+            "--setup-code-only",
+            "--url",
+            "http://localhost:notaport",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Configured publicUrl is invalid." in result.stderr
+    assert not (data_dir / "devices" / "bootstrap.json").exists()
+
+
 def test_root_option_token_consumption_matches_openclaw_reference_cases() -> None:
     assert _is_root_value_token("work") is True
     assert _is_root_value_token("-1") is True
