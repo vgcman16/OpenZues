@@ -6802,6 +6802,149 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-payload.cjs"
+    runtime_entry.write_text(
+        """
+const {
+  countOutboundMedia,
+  formatTextWithAttachmentLinks,
+  hasOutboundMedia,
+  hasOutboundReplyContent,
+  hasOutboundText,
+  isNumericTargetId,
+  isReasoningReplyPayload,
+  normalizeOutboundReplyPayload,
+  resolveOutboundMediaUrls,
+  resolveSendableOutboundReplyParts,
+  resolveTextChunksWithFallback
+} = require("openclaw/plugin-sdk/reply-payload");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_payload",
+      description: "Use OpenClaw reply-payload helpers",
+      parameters: { type: "object" },
+      execute() {
+        const normalized = normalizeOutboundReplyPayload({
+          text: "hello",
+          mediaUrls: ["https://a", "", 7, "https://b"],
+          mediaUrl: "https://legacy",
+          trustedLocalMedia: true,
+          sensitiveMedia: true,
+          replyToId: "abc123"
+        });
+        return {
+          reasoning: [
+            isReasoningReplyPayload({ text: "> Reasoning:\\n> hidden" }),
+            isReasoningReplyPayload({ text: "Intro\\nReasoning: visible" })
+          ],
+          normalized,
+          mediaUrls: resolveOutboundMediaUrls(normalized),
+          mediaCount: countOutboundMedia(normalized),
+          hasMedia: hasOutboundMedia(normalized),
+          hasRawText: hasOutboundText({ text: "   " }),
+          hasTrimmedText: hasOutboundText({ text: "   " }, { trim: true }),
+          hasContent: hasOutboundReplyContent({ text: "   ", mediaUrl: "https://m" }, {
+            trimText: true
+          }),
+          sendable: resolveSendableOutboundReplyParts({
+            mediaUrls: [" https://a ", "   "]
+          }),
+          fallbackChunks: resolveTextChunksWithFallback("hello", []),
+          keptChunks: resolveTextChunksWithFallback("hello", ["a", "b"]),
+          numeric: [isNumericTargetId("12345"), isNumericTargetId("ab12")],
+          attachmentText: formatTextWithAttachmentLinks("hello", ["https://a", "https://b"])
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-payload-plugin",
+                    "name": "Runtime Reply Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-reply-payload-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_payload"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "reasoning": [True, False],
+        "normalized": {
+            "text": "hello",
+            "mediaUrls": ["https://a", "https://b"],
+            "mediaUrl": "https://legacy",
+            "sensitiveMedia": True,
+            "replyToId": "abc123",
+        },
+        "mediaUrls": ["https://a", "https://b"],
+        "mediaCount": 2,
+        "hasMedia": True,
+        "hasRawText": True,
+        "hasTrimmedText": False,
+        "hasContent": True,
+        "sendable": {
+            "text": "",
+            "trimmedText": "",
+            "mediaUrls": ["https://a"],
+            "mediaCount": 1,
+            "hasText": False,
+            "hasMedia": True,
+            "hasContent": True,
+        },
+        "fallbackChunks": ["hello"],
+        "keptChunks": ["a", "b"],
+        "numeric": [True, False],
+        "attachmentText": "hello\n\nAttachment: https://a\nAttachment: https://b",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_merges_top_level_action_for_plugin_schema(
     tmp_path,
 ) -> None:
