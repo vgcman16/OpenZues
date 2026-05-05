@@ -5605,7 +5605,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `disable_content_type_detection`, and retain terminal/provider media
   metadata. Repo-wide parity is now estimated at ~60.9%. Verified with
   focused Telegram media-group pytest, adjacent Telegram native-options proof,
-  `ruff check`, and `mypy`; checkpoint pending.
+  `ruff check`, and `mypy`; checkpointed in `b2bc7fb7`.
 - Next repo-wide queue head: rotate to the next provider-specific
   send/poll/replay metadata gap or packaging/plugin breadth seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,

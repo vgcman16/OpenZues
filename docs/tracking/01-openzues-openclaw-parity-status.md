@@ -201,7 +201,7 @@ may lag behind this tracker.
 
 - [x] Telegram raw media-caption metadata, preserving OpenClaw's first-media
   raw caption without appended delivery-summary `Media:` URL inventory.
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b2bc7fb7`
 
 - [x] Update status channel projection, preserving OpenClaw's `update`,
   `channel`, and conservative `availability` JSON fields.
@@ -732,7 +732,7 @@ may lag behind this tracker.
     `openclaw-main/extensions/telegram/src/send.ts`
   - Target: `src/openzues/services/ops_mesh.py`
   - Test: `tests/test_ops_mesh.py`
-  - Status: verified; checkpoint pending
+  - Status: checkpointed in `b2bc7fb7`
   - Weight: 1
   - Last verified: 2026-05-04, focused `python -m pytest
     tests\test_ops_mesh.py::test_ops_mesh_service_send_direct_channel_message_uses_telegram_media_group
