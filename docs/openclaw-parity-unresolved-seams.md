@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~64.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~64.7% overall, with a reasonable
   band of ~50-65%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6008,12 +6008,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   feedback metadata. Repo-wide parity is now estimated at ~64.6%. Verified
   with focused runtime pytest, adjacent Teams send/action/provider proof,
   `ruff check`, and `mypy`; checkpointed in `7a545faf`.
+- Closed the Microsoft Teams SSO no-config invoke acknowledgement seam from
+  OpenClaw `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/sso.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: `signin/tokenExchange`
+  and `signin/verifyState` invokes now return a Bot Framework
+  `invokeResponse` status 200 before message routing, project a native
+  unavailable SSO posture when no SSO adapter is configured, and never persist
+  or return raw exchange tokens or verify-state magic codes. Repo-wide parity
+  is now estimated at ~64.7%. Verified with focused runtime pytest, adjacent
+  Teams send/action/provider proof, `ruff check`, and `mypy`; checkpointed in
+  `49ebe481`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, starting with Microsoft Teams full Bot
-  Framework HTTP inbound wiring, feedback/SSO/member lifecycle breadth, or
-  another source-backed channel/provider route/action adapter, or
-  packaging/plugin breadth seam if provider discovery proves no smaller route
-  slice.
+  send/poll/replay metadata gap, starting with Microsoft Teams configured SSO
+  token exchange/store handling, full Bot Framework HTTP inbound wiring,
+  feedback reflection follow-up generation, welcome/member lifecycle handling,
+  richer inbound media staging, or another source-backed channel/provider
+  route/action adapter.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

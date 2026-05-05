@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~64.6% overall, with a reasonable band of ~50-65%.
+- Estimated repo-wide parity: ~64.7% overall, with a reasonable band of ~50-65%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -10654,6 +10654,29 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`13 passed, 304 deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `7a545faf`.
+
+- Microsoft Teams SSO no-config invoke acknowledgement now mirrors the safe
+  boundary in OpenClaw's `extensions/msteams/src/monitor-handler.ts`,
+  `extensions/msteams/src/sso.ts`, and
+  `extensions/msteams/src/monitor-handler.sso.test.ts`: Teams
+  `signin/tokenExchange` and `signin/verifyState` invokes are acknowledged
+  with a Bot Framework `invokeResponse` status 200 before normal message
+  routing, return an OpenZues-native unavailable SSO posture when
+  `msteams.sso` is not configured, and expose only safe metadata such as
+  connection name, exchange id, token/state presence, user id, and channel id
+  without persisting or leaking the exchange token or magic-code state. This
+  closes `OZ-PROV-001AM`; repo-wide parity is now estimated at ~64.7%.
+  Remaining Microsoft Teams breadth is configured SSO token exchange/store
+  handling, feedback reflection follow-up generation, full Bot Framework HTTP
+  inbound wiring, richer inbound media staging, and welcome/member lifecycle
+  handling.
+- Verified the Microsoft Teams SSO no-config invoke slice with
+  `python -m pytest tests\test_ops_mesh.py::test_ops_mesh_service_acks_msteams_signin_token_exchange_without_sso tests\test_ops_mesh.py::test_ops_mesh_service_acks_msteams_signin_verify_state_without_sso -q`
+  (`2 passed`), adjacent Teams send/action/provider proof
+  `python -m pytest tests\test_ops_mesh.py -q -k "msteams_signin or msteams_feedback_invoke or msteams_message_text_without_mentions or msteams_html_attachment_text_fallback or adaptive_card_action_to_thread_session or msteams_graph_upload or msteams_file_consent_upload or msteams_file_consent_card or msteams_file_info_card_media or msteams_poll_vote or send_direct_channel_poll_uses_msteams_native_route or msteams_thread_reply or msteams_react_route or msteams_reactions or msteams_native_probe"`
+  (`15 passed, 304 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
+  src\openzues\services\ops_mesh.py`. Checkpointed in `49ebe481`.
 
 ## References
 
