@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~70.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~70.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -870,6 +870,10 @@ may lag behind this tracker.
 - [x] Feishu/Lark mediaMaxMb support, preserving OpenClaw account/channel
   media-size caps before upload.
   - Status: checkpointed in `45d6a6bc`
+
+- [x] Feishu/Lark channel capability discovery support, preserving OpenClaw
+  media, thread/reply, reaction/edit, and voice-transcode capability metadata.
+  - Status: checkpointed in `326f471f`
 
 - [x] Discord provider-native webhook sends with OpenClaw-shaped thread
   execution query placement, preserving reply message references and silent
@@ -1919,7 +1923,8 @@ may lag behind this tracker.
     Feishu/Lark audio/video media sends checkpointed in `6e99a40b`;
     Feishu/Lark mediaLocalRoots local-path guard checkpointed in `78cfda1f`;
     Feishu/Lark audioAsVoice transcode checkpointed in `81c93c0e`;
-    Feishu/Lark mediaMaxMb limits checkpointed in `45d6a6bc`; Signal native
+    Feishu/Lark mediaMaxMb limits checkpointed in `45d6a6bc`; Feishu/Lark
+    channel capability discovery checkpointed in `326f471f`; Signal native
     reaction action checkpointed in `c9b45ffb`
   - Weight: 3
 

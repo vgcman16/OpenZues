@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-05.
-- Estimated repo-wide parity: ~70.0% overall, with a reasonable band of ~50-70%.
+- Estimated repo-wide parity: ~70.1% overall, with a reasonable band of ~50-70%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -2116,7 +2116,7 @@ These are complete within the bounded OpenZues-local parity contract verified in
 ## Remaining Not-Fully-Complete Areas
 
 - Config-driven sandboxed target runtimes beyond the app-wired Codex workspace-write path plus deeper persistent thread unbind/end-hook behavior.
-- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/local-media-root/audio-as-voice/media-max/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; Feishu/Lark channel capability discovery metadata remains open.
+- Broader provider-native outbound runtime breadth for remaining provider-specific edge cases and production `message.action` adapters beyond the verified Telegram topic-qualified send/poll paths, Telegram reaction actions, Discord send/edit/delete/pin/unpin/list-pins/read/fetch-message/permissions/thread-create/active+archived thread-list/thread-reply/search/sticker/sticker-upload/poll/set-presence/member-info/role-info/emoji-list/emoji-upload/channel-info/channel-list/channel-create/channel-edit/channel-delete/channel-move/channel-permission-set/channel-permission-remove/category-create/category-edit/category-delete/voice-status/event-list/event-create/timeout/kick/ban/role-add/role-remove/reaction action adapters, WhatsApp reaction action adapter, Zalo send action adapter, WhatsApp/Zalo media payloads, fakeable action dispatch hook, Slack send/reaction/reactions/edit/delete/pin/unpin/list-pins/read/member-info/emoji-list/upload-file/download-file action adapters, and Feishu/Lark send/thread-reply/presentation-card/image-media/file-media/audio-video-media/local-media-root/audio-as-voice/media-max/capabilities/read/edit/pin/unpin/list-pins/channel-info/member-info/channel-list/react/reactions action adapters; Feishu/Lark direct provider-route media sends remain open.
 - Remote marketplace clone/update breadth and deeper runtime plugin activation/import metadata beyond metadata-only config load-path discovery and the fakeable ordered executor registry.
 - Broader OpenClaw companion apps, packaging/distribution, full CLI/TUI ergonomics, and non-Windows host parity.
 - OpenClaw file-store-only edge cases that do not cleanly map to OpenZues' current SQLite-backed transcript source of truth.
@@ -11626,6 +11626,18 @@ These are complete within the bounded OpenZues-local parity contract verified in
   deselected`), `ruff check
   src\openzues\services\ops_mesh.py tests\test_ops_mesh.py`, and `mypy
   src\openzues\services\ops_mesh.py`. Checkpointed in `45d6a6bc`.
+- Feishu/Lark channel capability discovery now mirrors OpenClaw
+  `extensions/feishu/src/channel.ts`: `channels capabilities` reports
+  direct/channel chat types, replies, threads, media, reactions, edit support,
+  `polls=false`, and `tts.voice.transcodesAudio=true` for Feishu/Lark routes.
+  This closes `OZ-PROV-001CO`; repo-wide parity is now estimated at ~70.1%.
+  The next Feishu seam is direct provider-route media sends.
+- Verified the Feishu/Lark capability discovery slice with
+  `python -m pytest tests\test_cli.py::test_channels_capabilities_json_reports_feishu_media_voice_support -q`
+  (`1 passed`), adjacent channel-capabilities CLI proof
+  `python -m pytest tests\test_cli.py -q -k "channels_capabilities"` (`5
+  passed, 509 deselected`), `ruff check src\openzues\cli.py tests\test_cli.py`,
+  and `mypy src\openzues\cli.py`. Checkpointed in `326f471f`.
 
 ## References
 

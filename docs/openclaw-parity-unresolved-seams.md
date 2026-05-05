@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~70.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~70.1% overall, with a reasonable
   band of ~50-70%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -6559,9 +6559,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Repo-wide parity is now estimated at ~70.0%. Verified with focused runtime
   pytest, adjacent Feishu provider proof, `ruff check`, and `mypy`; source/test
   checkpointed in `45d6a6bc`.
+- Closed the Feishu/Lark channel capability discovery seam from OpenClaw
+  `extensions/feishu/src/channel.ts`: CLI channel capabilities now advertise
+  Feishu/Lark direct/channel chat types, reply/thread/media/reaction/edit
+  support, `polls=false`, and voice TTS transcode metadata. Repo-wide parity is
+  now estimated at ~70.1%. Verified with focused CLI pytest, adjacent
+  channel-capabilities proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `326f471f`.
 - Next repo-wide queue head: rotate to the next provider-specific
-  send/poll/replay metadata gap, continuing Feishu/Lark channel capability
-  discovery metadata from `extensions/feishu/src/channel.ts`.
+  send/poll/replay metadata gap, continuing Feishu/Lark direct provider-route
+  media sends from `extensions/feishu/src/media.ts`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
