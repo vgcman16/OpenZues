@@ -32171,6 +32171,12 @@ function resolveConfiguredAcpBindingRecord(params = {}) {
   };
 }
 
+const CLAUDE_CLI_BACKEND_ID = "claude-cli";
+
+function isClaudeCliProvider(providerId) {
+  return normalizeOptionalLowercaseString(providerId) === CLAUDE_CLI_BACKEND_ID;
+}
+
 function routeForSessionBinding(params) {
   return {
     ...params.route,
@@ -34014,8 +34020,14 @@ const acpBindingResolveRuntime = {
   resolveConfiguredAcpBindingRecord,
 };
 
+const anthropicCliRuntime = {
+  CLAUDE_CLI_BACKEND_ID,
+  isClaudeCliProvider,
+};
+
 const genericSdk = new Proxy(
   {
+    CLAUDE_CLI_BACKEND_ID,
     DEFAULT_ACCOUNT_ID,
     DEFAULT_GROUP_HISTORY_LIMIT,
     DEFAULT_EMOJIS,
@@ -34024,6 +34036,7 @@ const genericSdk = new Proxy(
     PAIRING_APPROVED_MESSAGE,
     ReplyRuntimeConfigSchemaShape,
     resolveConfiguredAcpBindingRecord,
+    isClaudeCliProvider,
     SILENT_REPLY_TOKEN,
     ToolPolicySchema,
     CODING_TOOL_TOKENS,
@@ -35010,6 +35023,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/acp-binding-resolve-runtime"
   ) {
     return acpBindingResolveRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-cli" ||
+    request === "@openclaw/plugin-sdk/anthropic-cli"
+  ) {
+    return anthropicCliRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

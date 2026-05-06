@@ -19159,6 +19159,100 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_cli_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-cli.cjs"
+    runtime_entry.write_text(
+        """
+const anthropicCli = require("openclaw/plugin-sdk/anthropic-cli");
+const scopedAnthropicCli = require("@openclaw/plugin-sdk/anthropic-cli");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_cli",
+      description: "Use OpenClaw anthropic-cli SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(anthropicCli).sort(),
+          backendId: anthropicCli.CLAUDE_CLI_BACKEND_ID,
+          direct: anthropicCli.isClaudeCliProvider("claude-cli"),
+          trimmedCase: anthropicCli.isClaudeCliProvider(" CLAUDE-CLI "),
+          other: anthropicCli.isClaudeCliProvider("anthropic"),
+          scoped: scopedAnthropicCli.isClaudeCliProvider("claude-cli"),
+          genericId: genericSdk.CLAUDE_CLI_BACKEND_ID,
+          genericType: typeof genericSdk.isClaudeCliProvider
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-cli-plugin",
+                    "name": "Runtime Anthropic CLI Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-cli.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.anthropic_cli"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.anthropic_cli"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["CLAUDE_CLI_BACKEND_ID", "isClaudeCliProvider"],
+        "backendId": "claude-cli",
+        "direct": True,
+        "trimmedCase": True,
+        "other": False,
+        "scoped": True,
+        "genericId": "claude-cli",
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
