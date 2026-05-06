@@ -32178,9 +32178,15 @@ function isClaudeCliProvider(providerId) {
 }
 
 function normalizeOptionalSecretInputValue(value) {
-  const normalized = normalizeSecretInput(value);
-  return normalized ? normalized : undefined;
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
+
+const ANTHROPIC_VERTEX_DEFAULT_REGION = "global";
+const ANTHROPIC_VERTEX_REGION_RE = /^[a-z0-9-]+$/;
 
 function hasAnthropicVertexMetadataServerAdc(env = process.env) {
   const explicitMetadataOptIn = normalizeOptionalSecretInputValue(
@@ -32192,24 +32198,72 @@ function hasAnthropicVertexMetadataServerAdc(env = process.env) {
   );
 }
 
+function resolveAnthropicVertexRegion(env = process.env) {
+  const region =
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_LOCATION) ||
+    normalizeOptionalSecretInputValue(env && env.CLOUD_ML_REGION);
+  return region && ANTHROPIC_VERTEX_REGION_RE.test(region)
+    ? region
+    : ANTHROPIC_VERTEX_DEFAULT_REGION;
+}
+
+function resolveAnthropicVertexRegionFromBaseUrl(baseUrl) {
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    return undefined;
+  }
+  let hostname;
+  try {
+    hostname = new URL(baseUrl).hostname.toLowerCase();
+  } catch (_error) {
+    return undefined;
+  }
+  if (hostname === "aiplatform.googleapis.com") {
+    return ANTHROPIC_VERTEX_DEFAULT_REGION;
+  }
+  const suffix = "-aiplatform.googleapis.com";
+  if (!hostname.endsWith(suffix)) {
+    return undefined;
+  }
+  const region = hostname.slice(0, -suffix.length);
+  return region ? region : undefined;
+}
+
+function resolveAnthropicVertexClientRegion(params = {}) {
+  return (
+    resolveAnthropicVertexRegionFromBaseUrl(params && params.baseUrl) ||
+    resolveAnthropicVertexRegion(params && params.env)
+  );
+}
+
+function resolveAnthropicVertexHomeDir(env = process.env) {
+  return (
+    normalizeOptionalSecretInputValue(env && env.HOME) ||
+    normalizeOptionalSecretInputValue(env && env.USERPROFILE) ||
+    os.homedir()
+  );
+}
+
 function resolveAnthropicVertexDefaultAdcPath(env = process.env) {
   if (process.platform === "win32") {
     return path.join(
-      (env && env.APPDATA) || path.join(os.homedir(), "AppData", "Roaming"),
+      normalizeOptionalSecretInputValue(env && env.APPDATA) ||
+        path.join(resolveAnthropicVertexHomeDir(env), "AppData", "Roaming"),
       "gcloud",
       "application_default_credentials.json",
     );
   }
-  return path.join(os.homedir(), ".config", "gcloud", "application_default_credentials.json");
+  return path.join(
+    resolveAnthropicVertexHomeDir(env),
+    ".config",
+    "gcloud",
+    "application_default_credentials.json",
+  );
 }
 
 function resolveAnthropicVertexAdcCredentialsPathCandidate(env = process.env) {
-  const explicit = normalizeOptionalString(env && env.GOOGLE_APPLICATION_CREDENTIALS);
+  const explicit = normalizeOptionalSecretInputValue(env && env.GOOGLE_APPLICATION_CREDENTIALS);
   if (explicit) {
     return explicit;
-  }
-  if (env !== process.env) {
-    return undefined;
   }
   return resolveAnthropicVertexDefaultAdcPath(env);
 }
@@ -32229,6 +32283,31 @@ function canReadAnthropicVertexAdc(env = process.env) {
 
 function hasAnthropicVertexAvailableAuth(env = process.env) {
   return hasAnthropicVertexMetadataServerAdc(env) || canReadAnthropicVertexAdc(env);
+}
+
+function resolveAnthropicVertexProjectIdFromAdc(env = process.env) {
+  const credentialsPath = resolveAnthropicVertexAdcCredentialsPathCandidate(env);
+  if (!credentialsPath) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
+    return (
+      normalizeOptionalSecretInputValue(parsed && parsed.project_id) ||
+      normalizeOptionalSecretInputValue(parsed && parsed.quota_project_id)
+    );
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function resolveAnthropicVertexProjectId(env = process.env) {
+  return (
+    normalizeOptionalSecretInputValue(env && env.ANTHROPIC_VERTEX_PROJECT_ID) ||
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_PROJECT) ||
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_PROJECT_ID) ||
+    resolveAnthropicVertexProjectIdFromAdc(env)
+  );
 }
 
 function routeForSessionBinding(params) {
@@ -34079,6 +34158,11 @@ const anthropicCliRuntime = {
   isClaudeCliProvider,
 };
 
+const anthropicVertexRuntime = {
+  resolveAnthropicVertexClientRegion,
+  resolveAnthropicVertexProjectId,
+};
+
 const anthropicVertexAuthPresenceRuntime = {
   hasAnthropicVertexAvailableAuth,
 };
@@ -34094,6 +34178,8 @@ const genericSdk = new Proxy(
     PAIRING_APPROVED_MESSAGE,
     ReplyRuntimeConfigSchemaShape,
     resolveConfiguredAcpBindingRecord,
+    resolveAnthropicVertexClientRegion,
+    resolveAnthropicVertexProjectId,
     hasAnthropicVertexAvailableAuth,
     isClaudeCliProvider,
     SILENT_REPLY_TOKEN,
@@ -35088,6 +35174,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/anthropic-cli"
   ) {
     return anthropicCliRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-vertex" ||
+    request === "@openclaw/plugin-sdk/anthropic-vertex"
+  ) {
+    return anthropicVertexRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/anthropic-vertex-auth-presence" ||

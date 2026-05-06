@@ -19366,6 +19366,146 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_vertex_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-vertex.cjs"
+    runtime_entry.write_text(
+        """
+const vertex = require("openclaw/plugin-sdk/anthropic-vertex");
+const scopedVertex = require("@openclaw/plugin-sdk/anthropic-vertex");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_vertex",
+      description: "Use OpenClaw anthropic-vertex SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        return {
+          exportKeys: Object.keys(vertex).sort(),
+          regionalEndpoint: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://europe-west4-aiplatform.googleapis.com/v1",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          globalEndpoint: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://aiplatform.googleapis.com",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          envRegion: vertex.resolveAnthropicVertexClientRegion({
+            env: { GOOGLE_CLOUD_LOCATION: "us-east1" }
+          }),
+          malformedEnvRegion: vertex.resolveAnthropicVertexClientRegion({
+            env: { GOOGLE_CLOUD_LOCATION: "us-central1.attacker.example" }
+          }),
+          envProject: vertex.resolveAnthropicVertexProjectId({
+            ANTHROPIC_VERTEX_PROJECT_ID: " vertex-project "
+          }),
+          googleProject: scopedVertex.resolveAnthropicVertexProjectId({
+            GOOGLE_CLOUD_PROJECT: " google-project "
+          }),
+          adcProject: vertex.resolveAnthropicVertexProjectId({
+            GOOGLE_APPLICATION_CREDENTIALS: args.adcProjectPath
+          }),
+          adcQuotaProject: vertex.resolveAnthropicVertexProjectId({
+            GOOGLE_APPLICATION_CREDENTIALS: args.adcQuotaPath
+          }),
+          customProxyRegion: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://proxy.example.com/google/aiplatform",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          genericTypes: [
+            typeof genericSdk.resolveAnthropicVertexClientRegion,
+            typeof genericSdk.resolveAnthropicVertexProjectId
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adc_project_path = tmp_path / "adc-project.json"
+    adc_project_path.write_text('{"project_id":"adc-project"}\n', encoding="utf-8")
+    adc_quota_path = tmp_path / "adc-quota.json"
+    adc_quota_path.write_text('{"quota_project_id":"quota-project"}\n', encoding="utf-8")
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-vertex-plugin",
+                    "name": "Runtime Anthropic Vertex Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-vertex.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.anthropic_vertex"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.anthropic_vertex",
+            "args": {
+                "adcProjectPath": str(adc_project_path),
+                "adcQuotaPath": str(adc_quota_path),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "resolveAnthropicVertexClientRegion",
+            "resolveAnthropicVertexProjectId",
+        ],
+        "regionalEndpoint": "europe-west4",
+        "globalEndpoint": "global",
+        "envRegion": "us-east1",
+        "malformedEnvRegion": "global",
+        "envProject": "vertex-project",
+        "googleProject": "google-project",
+        "adcProject": "adc-project",
+        "adcQuotaProject": "quota-project",
+        "customProxyRegion": "us-east5",
+        "genericTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
