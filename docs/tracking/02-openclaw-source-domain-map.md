@@ -30,11 +30,13 @@ repo-wide percentage.
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, update-status channel projection, and git branch channel labeling verified; npm package, plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
-Latest verified plugin SDK helper addition: `fetch-runtime` from
+Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
 `src/infra/net/proxy-env.ts`, `src/infra/net/proxy-fetch.ts`, and
 `src/infra/net/ssrf.ts` is checkpointed in `3aa66305` with focused,
-adjacent, imported-plugin, `ruff`, and `mypy` evidence. Count it with the
+adjacent, imported-plugin, `ruff`, and `mypy` evidence; `cli-backend` from
+`src/plugin-sdk/cli-backend.ts` and `src/agents/cli-watchdog-defaults.ts` is
+checkpointed in `be724e3f` with the same evidence class. Count both with the
 plugin/extension system row above.
 
 ## How To Use This Map

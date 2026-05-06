@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~87.8% overall, with a reasonable band of ~78-88%.
+- Estimated repo-wide parity: ~87.9% overall, with a reasonable band of ~78-88%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -15027,6 +15027,22 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`170 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `3aa66305`.
+- Imported OpenClaw plugin runtime entries now have the exact `cli-backend`
+  SDK subpath from `src/plugin-sdk/cli-backend.ts` and
+  `src/agents/cli-watchdog-defaults.ts`: scoped and unscoped imports expose
+  `CLI_FRESH_WATCHDOG_DEFAULTS` and `CLI_RESUME_WATCHDOG_DEFAULTS` with the
+  upstream no-output timeout ratios and min/max timeout windows. This closes
+  `OZ-PLUGIN-001YL`; repo-wide parity is now estimated at ~87.9%. Remaining
+  plugin SDK breadth stays on the broader unresolved helper/runtime queue.
+- Verified the cli-backend slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_cli_backend_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "cli_backend or fetch_runtime or runtime_fetch"`
+  (`3 passed, 980 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`171 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `be724e3f`.
 
 ## References
 
