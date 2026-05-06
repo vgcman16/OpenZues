@@ -36243,6 +36243,10 @@ const approvalAuthRuntime = {
   resolveApprovalApprovers,
 };
 
+const approvalApproversRuntime = {
+  resolveApprovalApprovers,
+};
+
 const DEFAULT_EXEC_APPROVAL_DECISIONS = ["allow-once", "allow-always", "deny"];
 
 function normalizeExecAsk(value) {
@@ -43387,6 +43391,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-auth-runtime"
   ) {
     return approvalAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-approvers" ||
+    request === "@openclaw/plugin-sdk/approval-approvers"
+  ) {
+    return approvalApproversRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/approval-reply-runtime" ||

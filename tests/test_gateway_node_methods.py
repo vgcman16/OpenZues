@@ -13885,6 +13885,8 @@ async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
         """
 const approvalAuth = require("openclaw/plugin-sdk/approval-auth-runtime");
 const scopedApprovalAuth = require("@openclaw/plugin-sdk/approval-auth-runtime");
+const approvalApprovers = require("openclaw/plugin-sdk/approval-approvers");
+const scopedApprovalApprovers = require("@openclaw/plugin-sdk/approval-approvers");
 
 function normalizeApprover(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -13920,6 +13922,8 @@ module.exports = {
         return {
           keys: Object.keys(approvalAuth).sort(),
           scopedType: typeof scopedApprovalAuth.resolveApprovalApprovers,
+          approverKeys: Object.keys(approvalApprovers).sort(),
+          approverScopedType: typeof scopedApprovalApprovers.resolveApprovalApprovers,
           explicit: approvalAuth.resolveApprovalApprovers({
             explicit: [" Alice ", "alice", 42, ""],
             allowFrom: ["bob"],
@@ -13931,6 +13935,13 @@ module.exports = {
             allowFrom: [" Bob ", "bob"],
             extraAllowFrom: ["Carol"],
             defaultTo: "  Dave  ",
+            normalizeApprover
+          }),
+          approverSubpath: approvalApprovers.resolveApprovalApprovers({
+            explicit: [],
+            allowFrom: [" Erin ", "erin"],
+            extraAllowFrom: ["Frank"],
+            defaultTo: "  Grace  ",
             normalizeApprover
           }),
           authorized: adapter.authorizeActorAction({
@@ -14010,8 +14021,11 @@ module.exports = {
             "resolveApprovalApprovers",
         ],
         "scopedType": "function",
+        "approverKeys": ["resolveApprovalApprovers"],
+        "approverScopedType": "function",
         "explicit": ["alice", "42"],
         "inferred": ["bob", "carol", "dave"],
+        "approverSubpath": ["erin", "frank", "grace"],
         "authorized": {"authorized": True},
         "denied": {
             "authorized": False,
