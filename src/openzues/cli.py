@@ -39063,6 +39063,102 @@ const nativeCommandConfigRuntime = {
   resolveNativeSkillsEnabled,
 };
 
+const TELEGRAM_COMMAND_NAME_PATTERN = /^[a-z0-9_]{1,32}$/;
+
+function normalizeSlashCommandName(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const withoutSlash = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
+  return normalizeLowercaseStringOrEmpty(withoutSlash).replace(/-/g, "_");
+}
+
+function normalizeCommandDescription(value) {
+  return String(value ?? "").trim();
+}
+
+function reservedCommandHas(reservedCommands, command) {
+  if (!reservedCommands) {
+    return false;
+  }
+  if (typeof reservedCommands.has === "function") {
+    return reservedCommands.has(command);
+  }
+  return Array.isArray(reservedCommands) && reservedCommands.includes(command);
+}
+
+function resolveTelegramCustomCommands(params = {}) {
+  const entries = Array.isArray(params.commands) ? params.commands : [];
+  const checkReserved = params.checkReserved !== false;
+  const checkDuplicates = params.checkDuplicates !== false;
+  const seen = new Set();
+  const resolved = [];
+  const issues = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index] || {};
+    const normalized = normalizeSlashCommandName(entry.command || "");
+    if (!normalized) {
+      issues.push({
+        index,
+        field: "command",
+        message: "Telegram custom command is missing a command name.",
+      });
+      continue;
+    }
+    if (!TELEGRAM_COMMAND_NAME_PATTERN.test(normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message:
+          `Telegram custom command "/${normalized}" is invalid ` +
+          "(use a-z, 0-9, underscore; max 32 chars).",
+      });
+      continue;
+    }
+    if (checkReserved && reservedCommandHas(params.reservedCommands, normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message: `Telegram custom command "/${normalized}" conflicts with a native command.`,
+      });
+      continue;
+    }
+    if (checkDuplicates && seen.has(normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message: `Telegram custom command "/${normalized}" is duplicated.`,
+      });
+      continue;
+    }
+    const description = normalizeCommandDescription(entry.description || "");
+    if (!description) {
+      issues.push({
+        index,
+        field: "description",
+        message: `Telegram custom command "/${normalized}" is missing a description.`,
+      });
+      continue;
+    }
+    if (checkDuplicates) {
+      seen.add(normalized);
+    }
+    resolved.push({ command: normalized, description });
+  }
+  return { commands: resolved, issues };
+}
+
+const telegramCommandConfigRuntime = {
+  TELEGRAM_COMMAND_NAME_PATTERN,
+  getTelegramCommandNamePattern() {
+    return TELEGRAM_COMMAND_NAME_PATTERN;
+  },
+  normalizeTelegramCommandDescription: normalizeCommandDescription,
+  normalizeTelegramCommandName: normalizeSlashCommandName,
+  resolveTelegramCustomCommands,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -41020,6 +41116,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/native-command-config-runtime"
   ) {
     return nativeCommandConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram-command-config" ||
+    request === "@openclaw/plugin-sdk/telegram-command-config"
+  ) {
+    return telegramCommandConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||

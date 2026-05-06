@@ -14023,6 +14023,172 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-telegram-command-config.cjs"
+    runtime_entry.write_text(
+        """
+const telegramCommandConfig = require("openclaw/plugin-sdk/telegram-command-config");
+const scopedTelegramCommandConfig = require("@openclaw/plugin-sdk/telegram-command-config");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.telegram_command_config",
+      description: "Use OpenClaw Telegram command config SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const pattern = telegramCommandConfig.getTelegramCommandNamePattern();
+        return {
+          keys: Object.keys(telegramCommandConfig).sort(),
+          scopedType: typeof scopedTelegramCommandConfig.resolveTelegramCustomCommands,
+          patternIdentity: pattern === telegramCommandConfig.TELEGRAM_COMMAND_NAME_PATTERN,
+          pattern: {
+            source: pattern.source,
+            valid: pattern.test("hello_world"),
+            invalidCase: pattern.test("Hello"),
+            invalidDash: pattern.test("hello-world")
+          },
+          normalized: [
+            telegramCommandConfig.normalizeTelegramCommandName("/Hello-World"),
+            telegramCommandConfig.normalizeTelegramCommandDescription("  hi  ")
+          ],
+          resolved: telegramCommandConfig.resolveTelegramCustomCommands({
+            commands: [
+              { command: "/Hello-World", description: "  Says hi  " },
+              { command: "/Hello-World", description: "duplicate" },
+              { command: "", description: "missing command" },
+              { command: "/ok", description: "" }
+            ]
+          }),
+          reserved: telegramCommandConfig.resolveTelegramCustomCommands({
+            commands: [
+              { command: "/start", description: "native" },
+              { command: "/plain", description: "Plain" }
+            ],
+            reservedCommands: new Set(["start"])
+          }),
+          duplicateAllowed: telegramCommandConfig.resolveTelegramCustomCommands({
+            commands: [
+              { command: "/same", description: "First" },
+              { command: "/same", description: "Second" }
+            ],
+            checkDuplicates: false
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-telegram-command-config-plugin",
+                    "name": "Runtime Telegram Command Config Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-telegram-command-config.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.telegram_command_config"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.telegram_command_config"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "TELEGRAM_COMMAND_NAME_PATTERN",
+            "getTelegramCommandNamePattern",
+            "normalizeTelegramCommandDescription",
+            "normalizeTelegramCommandName",
+            "resolveTelegramCustomCommands",
+        ],
+        "scopedType": "function",
+        "patternIdentity": True,
+        "pattern": {
+            "source": "^[a-z0-9_]{1,32}$",
+            "valid": True,
+            "invalidCase": False,
+            "invalidDash": False,
+        },
+        "normalized": ["hello_world", "hi"],
+        "resolved": {
+            "commands": [{"command": "hello_world", "description": "Says hi"}],
+            "issues": [
+                {
+                    "index": 1,
+                    "field": "command",
+                    "message": 'Telegram custom command "/hello_world" is duplicated.',
+                },
+                {
+                    "index": 2,
+                    "field": "command",
+                    "message": "Telegram custom command is missing a command name.",
+                },
+                {
+                    "index": 3,
+                    "field": "description",
+                    "message": 'Telegram custom command "/ok" is missing a description.',
+                },
+            ],
+        },
+        "reserved": {
+            "commands": [{"command": "plain", "description": "Plain"}],
+            "issues": [
+                {
+                    "index": 0,
+                    "field": "command",
+                    "message": 'Telegram custom command "/start" conflicts with a native command.',
+                },
+            ],
+        },
+        "duplicateAllowed": {
+            "commands": [
+                {"command": "same", "description": "First"},
+                {"command": "same", "description": "Second"},
+            ],
+            "issues": [],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:
