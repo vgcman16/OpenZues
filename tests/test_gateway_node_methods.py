@@ -27475,6 +27475,199 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_secret_resolution_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-secret-resolution.cjs"
+    runtime_entry.write_text(
+        """
+const secretResolution = require("openclaw/plugin-sdk/runtime-secret-resolution");
+const scopedSecretResolution = require("@openclaw/plugin-sdk/runtime-secret-resolution");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_resolution",
+      description: "Use OpenClaw runtime-secret-resolution SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const config = {
+          secrets: {
+            defaults: { env: "workspace" },
+            providers: {
+              workspace: {
+                source: "env",
+                allowlist: ["OPENAI_API_KEY", "OBJECT_SECRET"]
+              }
+            }
+          }
+        };
+        const env = {
+          OPENAI_API_KEY: "  resolved-secret  ",
+          OBJECT_SECRET: "header-value"
+        };
+        const context = secretResolution.createResolverContext({
+          sourceConfig: config,
+          env
+        });
+        const applied = {};
+        context.assignments.push({
+          ref: { source: "env", provider: "workspace", id: "OPENAI_API_KEY" },
+          path: "models.providers.openai.apiKey",
+          expected: "string",
+          apply(value) {
+            applied.apiKey = value;
+          }
+        });
+        context.assignments.push({
+          ref: { source: "env", provider: "workspace", id: "OBJECT_SECRET" },
+          path: "models.providers.openai.headers.Authorization",
+          expected: "string-or-object",
+          apply(value) {
+            applied.header = value;
+          }
+        });
+        const resolved = await secretResolution.resolveSecretRefValues(
+          context.assignments.map((entry) => entry.ref),
+          { config, env, cache: context.cache }
+        );
+        secretResolution.applyResolvedAssignments({
+          assignments: context.assignments,
+          resolved
+        });
+
+        let blocked = "";
+        try {
+          await secretResolution.resolveSecretRefValues(
+            [{ source: "env", provider: "workspace", id: "BLOCKED" }],
+            { config, env: { BLOCKED: "nope" } }
+          );
+        } catch (err) {
+          blocked = String(err && err.message ? err.message : err);
+        }
+
+        let gatewayUnavailable = "";
+        try {
+          await secretResolution.resolveCommandSecretRefsViaGateway({
+            config,
+            targetIds: new Set(["models.providers.*.apiKey"])
+          });
+        } catch (err) {
+          gatewayUnavailable = String(err && err.message ? err.message : err);
+        }
+
+        const channelTargets = [
+          ...secretResolution.getChannelsCommandSecretTargetIds()
+        ].sort();
+        return {
+          keys: Object.keys(secretResolution).sort(),
+          scopedType: typeof scopedSecretResolution.createResolverContext,
+          contextShape: {
+            cache: typeof context.cache,
+            warnings: Array.isArray(context.warnings),
+            warningKeys: typeof context.warningKeys.add,
+            assignments: context.assignments.length,
+            sameConfig: context.sourceConfig === config,
+            sameEnv: context.env === env
+          },
+          resolved: Object.fromEntries([...resolved.entries()]),
+          applied,
+          blocked,
+          gatewayUnavailable,
+          hasTelegramBotTokenTarget: channelTargets.includes("channels.telegram.botToken")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-resolution-plugin",
+                    "name": "Runtime Secret Resolution Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-secret-resolution.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_resolution"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_resolution"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyResolvedAssignments",
+            "createResolverContext",
+            "getChannelsCommandSecretTargetIds",
+            "resolveCommandSecretRefsViaGateway",
+            "resolveSecretRefValues",
+        ],
+        "scopedType": "function",
+        "contextShape": {
+            "cache": "object",
+            "warnings": True,
+            "warningKeys": "function",
+            "assignments": 2,
+            "sameConfig": True,
+            "sameEnv": True,
+        },
+        "resolved": {
+            "env:workspace:OBJECT_SECRET": "header-value",
+            "env:workspace:OPENAI_API_KEY": "  resolved-secret  ",
+        },
+        "applied": {
+            "apiKey": "  resolved-secret  ",
+            "header": "header-value",
+        },
+        "blocked": (
+            'Environment variable "BLOCKED" is not allowlisted in '
+            "secrets.providers.workspace.allowlist."
+        ),
+        "gatewayUnavailable": (
+            "resolveCommandSecretRefsViaGateway is unavailable in OpenZues "
+            "plugin runtime."
+        ),
+        "hasTelegramBotTokenTarget": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

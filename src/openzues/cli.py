@@ -26755,6 +26755,186 @@ function collectSecretInputAssignment(params) {
   });
 }
 
+function secretRuntimeRefKey(ref) {
+  return `${ref.source}:${ref.provider}:${ref.id}`;
+}
+
+function createResolverContext(params) {
+  return {
+    sourceConfig: (params && params.sourceConfig) || {},
+    env: (params && params.env) || process.env || {},
+    cache: {},
+    warnings: [],
+    warningKeys: new Set(),
+    assignments: [],
+  };
+}
+
+function isExpectedResolvedSecretValue(value, expected) {
+  if (expected === "string") {
+    return normalizeSecretInputString(value) !== undefined;
+  }
+  return (
+    normalizeSecretInputString(value) !== undefined ||
+    (isRecord(value) && Object.keys(value).length > 0)
+  );
+}
+
+function assertExpectedResolvedSecretValue(params) {
+  if (!isExpectedResolvedSecretValue(params.value, params.expected)) {
+    throw new Error(params.errorMessage);
+  }
+}
+
+function applyResolvedAssignments(params) {
+  const assignments = Array.isArray(params && params.assignments) ? params.assignments : [];
+  const resolved = params && params.resolved;
+  for (const assignment of assignments) {
+    const key = secretRuntimeRefKey(assignment.ref);
+    if (!resolved || typeof resolved.has !== "function" || !resolved.has(key)) {
+      throw new Error(`Secret reference "${key}" resolved to no value.`);
+    }
+    const value = resolved.get(key);
+    assertExpectedResolvedSecretValue({
+      value,
+      expected: assignment.expected,
+      errorMessage:
+        assignment.expected === "string"
+          ? `${assignment.path} resolved to a non-string or empty value.`
+          : `${assignment.path} resolved to an unsupported value type.`,
+    });
+    assignment.apply(value);
+  }
+}
+
+function resolveResolutionLimits(config) {
+  const resolution = config && config.secrets && config.secrets.resolution;
+  const maxRefsPerProvider = Number(resolution && resolution.maxRefsPerProvider);
+  return {
+    maxRefsPerProvider:
+      Number.isFinite(maxRefsPerProvider) && maxRefsPerProvider > 0
+        ? Math.floor(maxRefsPerProvider)
+        : 512,
+  };
+}
+
+function normalizeSecretResolutionRef(ref) {
+  if (!isSecretRef(ref)) {
+    throw new Error("Secret reference must include source, provider, and id.");
+  }
+  const id = ref.id.trim();
+  if (!id) {
+    throw new Error("Secret reference id is empty.");
+  }
+  if (ref.source === "exec" && !isValidExecSecretRefId(id)) {
+    throw new Error(
+      `${formatExecSecretRefIdValidationMessage()} (ref: ${ref.source}:${ref.provider}:${id}).`,
+    );
+  }
+  return { ...ref, id };
+}
+
+function resolveEnvSecretRefs(params) {
+  const resolved = new Map();
+  const allowlist = Array.isArray(params.providerConfig && params.providerConfig.allowlist)
+    ? new Set(params.providerConfig.allowlist)
+    : null;
+  for (const ref of params.refs) {
+    if (allowlist && !allowlist.has(ref.id)) {
+      throw new Error(
+        `Environment variable "${ref.id}" is not allowlisted in ` +
+          `secrets.providers.${params.providerName}.allowlist.`,
+      );
+    }
+    const envValue = params.env && params.env[ref.id];
+    if (normalizeSecretInputString(envValue) === undefined) {
+      throw new Error(`Environment variable "${ref.id}" is missing or empty.`);
+    }
+    resolved.set(ref.id, envValue);
+  }
+  return resolved;
+}
+
+async function resolveSecretRefValues(refs, options = {}) {
+  if (!Array.isArray(refs) || refs.length === 0) {
+    return new Map();
+  }
+  const config = options.config || {};
+  const env = options.env || process.env || {};
+  const limits = resolveResolutionLimits(config);
+  const uniqueRefs = new Map();
+  for (const rawRef of refs) {
+    const ref = normalizeSecretResolutionRef(rawRef);
+    uniqueRefs.set(secretRuntimeRefKey(ref), ref);
+  }
+  const grouped = new Map();
+  for (const ref of uniqueRefs.values()) {
+    const groupKey = `${ref.source}:${ref.provider}`;
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        source: ref.source,
+        providerName: ref.provider,
+        refs: [],
+      });
+    }
+    grouped.get(groupKey).refs.push(ref);
+  }
+  const resolved = new Map();
+  for (const group of grouped.values()) {
+    if (group.refs.length > limits.maxRefsPerProvider) {
+      throw new Error(
+        `Secret provider "${group.providerName}" exceeded maxRefsPerProvider ` +
+          `(${limits.maxRefsPerProvider}).`,
+      );
+    }
+    const providerConfig = resolveConfiguredSecretProvider(group.refs[0], config);
+    if (providerConfig.source !== "env") {
+      throw new Error(
+        `Secret source "${providerConfig.source}" is unavailable in this runtime context.`,
+      );
+    }
+    const values = resolveEnvSecretRefs({
+      refs: group.refs,
+      providerName: group.providerName,
+      providerConfig,
+      env,
+    });
+    for (const ref of group.refs) {
+      if (!values.has(ref.id)) {
+        throw new Error(`Secret provider "${group.providerName}" did not return id "${ref.id}".`);
+      }
+      resolved.set(secretRuntimeRefKey(ref), values.get(ref.id));
+    }
+  }
+  return resolved;
+}
+
+async function resolveCommandSecretRefsViaGateway() {
+  throw new Error("resolveCommandSecretRefsViaGateway is unavailable in OpenZues plugin runtime.");
+}
+
+const CHANNELS_COMMAND_SECRET_TARGET_IDS = [
+  "channels.telegram.botToken",
+  "channels.slack.botToken",
+  "channels.slack.appToken",
+  "channels.slack.signingSecret",
+  "channels.discord.botToken",
+  "channels.discord.publicKey",
+  "channels.whatsapp.accessToken",
+  "channels.signal.jsonRpcToken",
+  "channels.twitch.accessToken",
+  "channels.googlechat.credentials",
+  "channels.msteams.botPassword",
+  "channels.feishu.appSecret",
+  "channels.nextcloud-talk.botSecret",
+  "channels.mattermost.botToken",
+  "channels.synology-chat.webhookToken",
+];
+
+function getChannelsCommandSecretTargetIds() {
+  return new Set(CHANNELS_COMMAND_SECRET_TARGET_IDS);
+}
+
 function collectTtsApiKeyAssignments(params) {
   const providers = params.tts && params.tts.providers;
   if (!isRecord(providers)) {
@@ -46700,6 +46880,14 @@ const secretFileRuntime = {
   writePrivateSecretFileAtomic,
 };
 
+const runtimeSecretResolutionRuntime = {
+  applyResolvedAssignments,
+  createResolverContext,
+  getChannelsCommandSecretTargetIds,
+  resolveCommandSecretRefsViaGateway,
+  resolveSecretRefValues,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
@@ -47694,6 +47882,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-logger"
   ) {
     return runtimeLoggerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-secret-resolution" ||
+    request === "@openclaw/plugin-sdk/runtime-secret-resolution"
+  ) {
+    return runtimeSecretResolutionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
