@@ -21533,6 +21533,163 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_mention_gating_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-mention-gating.cjs"
+    runtime_entry.write_text(
+        """
+const mentionGating = require("openclaw/plugin-sdk/channel-mention-gating");
+const scopedMentionGating = require("@openclaw/plugin-sdk/channel-mention-gating");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_mention_gating",
+      description: "Use OpenClaw channel mention-gating SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          agents: { list: [{ id: "assistant", identity: { name: "Zeus Bot" } }] },
+          messages: { groupChat: { mentionPatterns: ["\\\\bZeus\\\\b", "["] } }
+        };
+        const mentionRegexes = mentionGating.buildMentionRegexes(cfg, "assistant");
+        const decision = mentionGating.resolveInboundMentionDecision({
+          facts: {
+            canDetectMention: true,
+            wasMentioned: false,
+            hasAnyMention: false,
+            implicitMentionKinds: ["reply_to_bot", "native"]
+          },
+          policy: {
+            isGroup: true,
+            requireMention: true,
+            allowedImplicitMentionKinds: ["reply_to_bot"],
+            allowTextCommands: true,
+            hasControlCommand: false,
+            commandAuthorized: false
+          }
+        });
+        const legacy = mentionGating.resolveMentionGating({
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false,
+          implicitMention: true
+        });
+        const bypass = mentionGating.resolveMentionGatingWithBypass({
+          isGroup: true,
+          requireMention: true,
+          canDetectMention: true,
+          wasMentioned: false,
+          hasAnyMention: false,
+          allowTextCommands: true,
+          hasControlCommand: true,
+          commandAuthorized: true
+        });
+        return {
+          keys: Object.keys(mentionGating).sort(),
+          scopedType: typeof scopedMentionGating.resolveInboundMentionDecision,
+          marker: mentionGating.CURRENT_MESSAGE_MARKER,
+          normalized: mentionGating.normalizeMentionText(" ZE\\u200bus "),
+          regexChecks: [
+            mentionRegexes.length,
+            mentionRegexes[0].test("hello zeus"),
+            mentionRegexes.some((regex) => regex.test("hello other"))
+          ],
+          implicit: [
+            mentionGating.implicitMentionKindWhen("native", true),
+            mentionGating.implicitMentionKindWhen("native", false)
+          ],
+          decision: [
+            decision.implicitMention,
+            decision.matchedImplicitMentionKinds.join(","),
+            decision.effectiveWasMentioned,
+            decision.shouldSkip,
+            decision.shouldBypassMention
+          ],
+          legacy,
+          bypass
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-mention-gating-plugin",
+                    "name": "Runtime Channel Mention Gating Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-mention-gating.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_mention_gating"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_mention_gating"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CURRENT_MESSAGE_MARKER",
+            "buildMentionRegexes",
+            "implicitMentionKindWhen",
+            "normalizeMentionText",
+            "resolveInboundMentionDecision",
+            "resolveMentionGating",
+            "resolveMentionGatingWithBypass",
+        ],
+        "scopedType": "function",
+        "marker": "[Current message - respond to this]",
+        "normalized": "zeus",
+        "regexChecks": [1, True, False],
+        "implicit": [["native"], []],
+        "decision": [True, "reply_to_bot", True, False, False],
+        "legacy": {"effectiveWasMentioned": True, "shouldSkip": False},
+        "bypass": {
+            "effectiveWasMentioned": True,
+            "shouldSkip": False,
+            "shouldBypassMention": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

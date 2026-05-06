@@ -37278,6 +37278,16 @@ const channelEnvelopeRuntime = {
   resolveEnvelopeFormatOptions,
 };
 
+const channelMentionGatingRuntime = {
+  CURRENT_MESSAGE_MARKER,
+  buildMentionRegexes,
+  implicitMentionKindWhen,
+  normalizeMentionText,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38147,6 +38157,7 @@ const genericSdk = new Proxy(
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
+    ...channelMentionGatingRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39180,6 +39191,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-envelope"
   ) {
     return channelEnvelopeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-mention-gating" ||
+    request === "@openclaw/plugin-sdk/channel-mention-gating"
+  ) {
+    return channelMentionGatingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
