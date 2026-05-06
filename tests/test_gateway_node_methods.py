@@ -30137,6 +30137,275 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-diagnostic-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const diagnostic = require("openclaw/plugin-sdk/diagnostic-runtime");
+const scopedDiagnostic = require("@openclaw/plugin-sdk/diagnostic-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.diagnostic",
+      description: "Use OpenClaw diagnostic-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(diagnostic).sort();
+        if (!keys.includes("emitDiagnosticEvent")) {
+          return {
+            keys,
+            scopedType: typeof scopedDiagnostic.createDiagnosticTraceContext
+          };
+        }
+        diagnostic.resetDiagnosticEventsForTest();
+        const publicEvents = [];
+        const internalEvents = [];
+        const offPublic = diagnostic.onDiagnosticEvent((event) => {
+          publicEvents.push({
+            type: event.type,
+            seq: event.seq,
+            ts: event.ts,
+            channel: event.channel,
+            frozen: Object.isFrozen(event)
+          });
+        });
+        const offInternal = diagnostic.onInternalDiagnosticEvent((event, metadata) => {
+          internalEvents.push({
+            type: event.type,
+            seq: event.seq,
+            trusted: metadata.trusted,
+            frozen: Object.isFrozen(event),
+            metadataFrozen: Object.isFrozen(metadata)
+          });
+        });
+        const originalNow = Date.now;
+        Date.now = () => 246813579;
+        try {
+          diagnostic.emitDiagnosticEvent({
+            type: "webhook.received",
+            channel: "slack",
+            chatId: "C123"
+          });
+          diagnostic.emitTrustedDiagnosticEvent({
+            type: "webhook.processed",
+            channel: "slack",
+            durationMs: 12
+          });
+        } finally {
+          Date.now = originalNow;
+        }
+        offPublic();
+        offInternal();
+        diagnostic.emitDiagnosticEvent({
+          type: "webhook.received",
+          channel: "telegram"
+        });
+
+        const parent = diagnostic.createDiagnosticTraceContext({
+          traceId: "1234567890ABCDEF1234567890ABCDEF",
+          spanId: "1111111111111111",
+          traceFlags: "00"
+        });
+        const child = scopedDiagnostic.createChildDiagnosticTraceContext(parent, {
+          spanId: "2222222222222222"
+        });
+        const parsed = diagnostic.parseDiagnosticTraceparent(
+          "00-1234567890ABCDEF1234567890ABCDEF-3333333333333333-01"
+        );
+        return {
+          keys,
+          scopedType: typeof scopedDiagnostic.createDiagnosticTraceContext,
+          flags: {
+            exact: diagnostic.isDiagnosticFlagEnabled(
+              "plugin.load",
+              { diagnostics: { flags: ["plugin.load"] } },
+              {}
+            ),
+            dottedWildcard: diagnostic.isDiagnosticFlagEnabled(
+              "plugin.load.step",
+              { diagnostics: { flags: ["plugin.*"] } },
+              {}
+            ),
+            prefixWildcard: diagnostic.isDiagnosticFlagEnabled(
+              "runtime.trace",
+              { diagnostics: { flags: ["runtime*"] } },
+              {}
+            ),
+            envAll: diagnostic.isDiagnosticFlagEnabled(
+              "anything",
+              {},
+              { OPENCLAW_DIAGNOSTICS: "all" }
+            ),
+            envDisabled: diagnostic.isDiagnosticFlagEnabled(
+              "plugin.load",
+              { diagnostics: { flags: ["plugin.load"] } },
+              { OPENCLAW_DIAGNOSTICS: "off" }
+            ),
+            blank: diagnostic.isDiagnosticFlagEnabled("", {}, {})
+          },
+          diagnosticsEnabled: {
+            defaultValue: diagnostic.isDiagnosticsEnabled({}),
+            disabled: diagnostic.isDiagnosticsEnabled({
+              diagnostics: { enabled: false }
+            })
+          },
+          publicEvents,
+          internalEvents,
+          parent,
+          child,
+          formattedChild: diagnostic.formatDiagnosticTraceparent(child),
+          parsed,
+          invalidParse: diagnostic.parseDiagnosticTraceparent(
+            "00-00000000000000000000000000000000-3333333333333333-01"
+          ) || null,
+          validators: {
+            trace: diagnostic.isValidDiagnosticTraceId(parent.traceId),
+            traceUpper: diagnostic.isValidDiagnosticTraceId(
+              "1234567890ABCDEF1234567890ABCDEF"
+            ),
+            span: diagnostic.isValidDiagnosticSpanId(parent.spanId),
+            flags: diagnostic.isValidDiagnosticTraceFlags("0a")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-diagnostic-plugin",
+                    "name": "Runtime Diagnostic Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-diagnostic-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.diagnostic"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.diagnostic"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createChildDiagnosticTraceContext",
+            "createDiagnosticTraceContext",
+            "emitDiagnosticEvent",
+            "emitTrustedDiagnosticEvent",
+            "formatDiagnosticTraceparent",
+            "isDiagnosticFlagEnabled",
+            "isDiagnosticsEnabled",
+            "isValidDiagnosticSpanId",
+            "isValidDiagnosticTraceFlags",
+            "isValidDiagnosticTraceId",
+            "onDiagnosticEvent",
+            "onInternalDiagnosticEvent",
+            "parseDiagnosticTraceparent",
+            "resetDiagnosticEventsForTest",
+        ],
+        "scopedType": "function",
+        "flags": {
+            "exact": True,
+            "dottedWildcard": True,
+            "prefixWildcard": True,
+            "envAll": True,
+            "envDisabled": False,
+            "blank": False,
+        },
+        "diagnosticsEnabled": {"defaultValue": True, "disabled": False},
+        "publicEvents": [
+            {
+                "type": "webhook.received",
+                "seq": 1,
+                "ts": 246813579,
+                "channel": "slack",
+                "frozen": True,
+            }
+        ],
+        "internalEvents": [
+            {
+                "type": "webhook.received",
+                "seq": 1,
+                "trusted": False,
+                "frozen": True,
+                "metadataFrozen": True,
+            },
+            {
+                "type": "webhook.processed",
+                "seq": 2,
+                "trusted": True,
+                "frozen": True,
+                "metadataFrozen": True,
+            },
+        ],
+        "parent": {
+            "traceId": "1234567890abcdef1234567890abcdef",
+            "spanId": "1111111111111111",
+            "traceFlags": "00",
+        },
+        "child": {
+            "traceId": "1234567890abcdef1234567890abcdef",
+            "spanId": "2222222222222222",
+            "parentSpanId": "1111111111111111",
+            "traceFlags": "00",
+        },
+        "formattedChild": (
+            "00-1234567890abcdef1234567890abcdef-2222222222222222-00"
+        ),
+        "parsed": {
+            "traceId": "1234567890abcdef1234567890abcdef",
+            "spanId": "3333333333333333",
+            "traceFlags": "01",
+        },
+        "invalidParse": None,
+        "validators": {
+            "trace": True,
+            "traceUpper": False,
+            "span": True,
+            "flags": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

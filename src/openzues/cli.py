@@ -18541,6 +18541,421 @@ async function writeJsonFileAtomically(filePath, value) {
   }
 }
 
+const DIAGNOSTICS_ENV = "OPENCLAW_DIAGNOSTICS";
+const DIAGNOSTIC_EVENTS_STATE_KEY = Symbol.for("openclaw.diagnosticEvents.state.v1");
+const DIAGNOSTIC_TRACEPARENT_VERSION = "00";
+const DIAGNOSTIC_TRACE_FLAGS_DEFAULT = "01";
+const DIAGNOSTIC_TRACEPARENT_MAX_LENGTH = 128;
+const DIAGNOSTIC_TRACE_ID_RE = /^[0-9a-f]{32}$/;
+const DIAGNOSTIC_SPAN_ID_RE = /^[0-9a-f]{16}$/;
+const DIAGNOSTIC_TRACE_FLAGS_RE = /^[0-9a-f]{2}$/;
+const DIAGNOSTIC_TRACEPARENT_VERSION_RE = /^[0-9a-f]{2}$/;
+const ASYNC_DIAGNOSTIC_EVENT_TYPES = new Set([
+  "tool.execution.started",
+  "tool.execution.completed",
+  "tool.execution.error",
+  "exec.process.completed",
+  "message.delivery.started",
+  "message.delivery.completed",
+  "message.delivery.error",
+  "model.call.started",
+  "model.call.completed",
+  "model.call.error",
+  "run.progress",
+  "harness.run.started",
+  "harness.run.completed",
+  "harness.run.error",
+  "context.assembled",
+  "log.record",
+]);
+
+function parseDiagnosticEnvFlags(raw) {
+  if (!raw) {
+    return { flags: [], disablesAll: false };
+  }
+  const trimmed = String(raw).trim();
+  const lowered = normalizeLowercaseStringOrEmpty(trimmed);
+  if (!lowered) {
+    return { flags: [], disablesAll: false };
+  }
+  if (["0", "false", "off", "none"].includes(lowered)) {
+    return { flags: [], disablesAll: true };
+  }
+  if (["1", "true", "all", "*"].includes(lowered)) {
+    return { flags: ["*"], disablesAll: false };
+  }
+  return {
+    flags: trimmed
+      .split(/[,\s]+/)
+      .map((value) => normalizeLowercaseStringOrEmpty(value))
+      .filter(Boolean),
+    disablesAll: false,
+  };
+}
+
+function uniqueDiagnosticFlags(flags) {
+  const seen = new Set();
+  const out = [];
+  for (const flag of flags) {
+    const normalized = normalizeLowercaseStringOrEmpty(flag);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function resolveDiagnosticFlags(cfg, env = process.env) {
+  const configFlags =
+    cfg && cfg.diagnostics && Array.isArray(cfg.diagnostics.flags)
+      ? cfg.diagnostics.flags
+      : [];
+  const envFlags = parseDiagnosticEnvFlags(env && env[DIAGNOSTICS_ENV]);
+  if (envFlags.disablesAll) {
+    return [];
+  }
+  return uniqueDiagnosticFlags([...configFlags, ...envFlags.flags]);
+}
+
+function matchesDiagnosticFlag(flag, enabledFlags) {
+  const target = normalizeLowercaseStringOrEmpty(flag);
+  if (!target) {
+    return false;
+  }
+  for (const raw of enabledFlags) {
+    const enabled = normalizeLowercaseStringOrEmpty(raw);
+    if (!enabled) {
+      continue;
+    }
+    if (enabled === "*" || enabled === "all") {
+      return true;
+    }
+    if (enabled.endsWith(".*")) {
+      const prefix = enabled.slice(0, -2);
+      if (target === prefix || target.startsWith(`${prefix}.`)) {
+        return true;
+      }
+    }
+    if (enabled.endsWith("*")) {
+      const prefix = enabled.slice(0, -1);
+      if (target.startsWith(prefix)) {
+        return true;
+      }
+    }
+    if (enabled === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isDiagnosticFlagEnabled(flag, cfg, env = process.env) {
+  return matchesDiagnosticFlag(flag, resolveDiagnosticFlags(cfg, env));
+}
+
+function isDiagnosticsEnabled(config) {
+  return !config || !config.diagnostics || config.diagnostics.enabled !== false;
+}
+
+function getDiagnosticEventsState() {
+  return resolveGlobalSingleton(DIAGNOSTIC_EVENTS_STATE_KEY, () => ({
+    marker: DIAGNOSTIC_EVENTS_STATE_KEY,
+    enabled: true,
+    seq: 0,
+    listeners: new Set(),
+    dispatchDepth: 0,
+    asyncQueue: [],
+    asyncDrainScheduled: false,
+  }));
+}
+
+function deepFreezeDiagnosticValue(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreezeDiagnosticValue(item, seen);
+    }
+    return Object.freeze(value);
+  }
+  for (const nested of Object.values(value)) {
+    deepFreezeDiagnosticValue(nested, seen);
+  }
+  return Object.freeze(value);
+}
+
+function cloneDiagnosticEventForListener(event) {
+  const cloned =
+    typeof structuredClone === "function"
+      ? structuredClone(event)
+      : JSON.parse(JSON.stringify(event));
+  return deepFreezeDiagnosticValue(cloned);
+}
+
+function createDiagnosticMetadataForListener(metadata) {
+  return Object.freeze({ ...metadata });
+}
+
+function dispatchDiagnosticEvent(state, enriched, metadata) {
+  if (state.dispatchDepth > 100) {
+    return;
+  }
+  state.dispatchDepth += 1;
+  try {
+    for (const listener of Array.from(state.listeners)) {
+      try {
+        listener(
+          cloneDiagnosticEventForListener(enriched),
+          createDiagnosticMetadataForListener(metadata),
+        );
+      } catch (_error) {
+        // Diagnostic listener failures are isolated from runtime execution.
+      }
+    }
+  } finally {
+    state.dispatchDepth -= 1;
+  }
+}
+
+function scheduleAsyncDiagnosticDrain(state) {
+  if (state.asyncDrainScheduled) {
+    return;
+  }
+  state.asyncDrainScheduled = true;
+  setImmediate(() => {
+    state.asyncDrainScheduled = false;
+    const batch = state.asyncQueue.splice(0);
+    for (const entry of batch) {
+      dispatchDiagnosticEvent(state, entry.event, entry.metadata);
+    }
+    if (state.asyncQueue.length > 0) {
+      scheduleAsyncDiagnosticDrain(state);
+    }
+  });
+}
+
+function enrichDiagnosticEvent(state, event) {
+  const enriched = {};
+  for (const [key, value] of Object.entries(event && typeof event === "object" ? event : {})) {
+    if (isBlockedObjectKey(key)) {
+      continue;
+    }
+    enriched[key] = value;
+  }
+  state.seq += 1;
+  enriched.seq = state.seq;
+  enriched.ts = Date.now();
+  return enriched;
+}
+
+function emitDiagnosticEventWithTrust(event, trusted) {
+  const state = getDiagnosticEventsState();
+  if (!state.enabled) {
+    return;
+  }
+  const enriched = enrichDiagnosticEvent(state, event);
+  const metadata = { trusted };
+  if (ASYNC_DIAGNOSTIC_EVENT_TYPES.has(enriched.type)) {
+    if (state.asyncQueue.length >= 10000) {
+      return;
+    }
+    state.asyncQueue.push({ event: enriched, metadata });
+    scheduleAsyncDiagnosticDrain(state);
+    return;
+  }
+  dispatchDiagnosticEvent(state, enriched, metadata);
+}
+
+function emitDiagnosticEvent(event) {
+  emitDiagnosticEventWithTrust(event, false);
+}
+
+function emitTrustedDiagnosticEvent(event) {
+  emitDiagnosticEventWithTrust(event, true);
+}
+
+function onInternalDiagnosticEvent(listener) {
+  const state = getDiagnosticEventsState();
+  state.listeners.add(listener);
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+function onDiagnosticEvent(listener) {
+  return onInternalDiagnosticEvent((event, metadata) => {
+    if ((metadata && metadata.trusted) || event.type === "log.record") {
+      return;
+    }
+    listener(event);
+  });
+}
+
+function resetDiagnosticEventsForTest() {
+  const state = getDiagnosticEventsState();
+  state.enabled = true;
+  state.seq = 0;
+  state.listeners.clear();
+  state.dispatchDepth = 0;
+  state.asyncQueue = [];
+  state.asyncDrainScheduled = false;
+}
+
+function randomDiagnosticHex(bytes) {
+  return crypto.randomBytes(bytes).toString("hex");
+}
+
+function isNonZeroDiagnosticHex(value) {
+  return !/^0+$/.test(value);
+}
+
+function randomDiagnosticTraceId() {
+  let traceId = randomDiagnosticHex(16);
+  while (!isNonZeroDiagnosticHex(traceId)) {
+    traceId = randomDiagnosticHex(16);
+  }
+  return traceId;
+}
+
+function randomDiagnosticSpanId() {
+  let spanId = randomDiagnosticHex(8);
+  while (!isNonZeroDiagnosticHex(spanId)) {
+    spanId = randomDiagnosticHex(8);
+  }
+  return spanId;
+}
+
+function isValidDiagnosticTraceId(value) {
+  return (
+    typeof value === "string" &&
+    DIAGNOSTIC_TRACE_ID_RE.test(value) &&
+    isNonZeroDiagnosticHex(value)
+  );
+}
+
+function isValidDiagnosticSpanId(value) {
+  return (
+    typeof value === "string" &&
+    DIAGNOSTIC_SPAN_ID_RE.test(value) &&
+    isNonZeroDiagnosticHex(value)
+  );
+}
+
+function isValidDiagnosticTraceFlags(value) {
+  return typeof value === "string" && DIAGNOSTIC_TRACE_FLAGS_RE.test(value);
+}
+
+function normalizeDiagnosticTraceId(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticTraceId(normalized) ? normalized : undefined;
+}
+
+function normalizeDiagnosticSpanId(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticSpanId(normalized) ? normalized : undefined;
+}
+
+function normalizeDiagnosticTraceFlags(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticTraceFlags(normalized) ? normalized : undefined;
+}
+
+function parseDiagnosticTraceparent(traceparent) {
+  if (
+    typeof traceparent !== "string" ||
+    traceparent.length > DIAGNOSTIC_TRACEPARENT_MAX_LENGTH
+  ) {
+    return undefined;
+  }
+  const parts = traceparent.trim().toLowerCase().split("-");
+  if (!parts || parts.length < 4) {
+    return undefined;
+  }
+  const [version, traceId, spanId, traceFlags] = parts;
+  if (
+    !DIAGNOSTIC_TRACEPARENT_VERSION_RE.test(version) ||
+    version === "ff" ||
+    (version === DIAGNOSTIC_TRACEPARENT_VERSION && parts.length !== 4)
+  ) {
+    return undefined;
+  }
+  const normalizedTraceId = normalizeDiagnosticTraceId(traceId);
+  const normalizedSpanId = normalizeDiagnosticSpanId(spanId);
+  const normalizedTraceFlags = normalizeDiagnosticTraceFlags(traceFlags);
+  if (!normalizedTraceId || !normalizedSpanId || !normalizedTraceFlags) {
+    return undefined;
+  }
+  return {
+    traceId: normalizedTraceId,
+    spanId: normalizedSpanId,
+    traceFlags: normalizedTraceFlags,
+  };
+}
+
+function formatDiagnosticTraceparent(context) {
+  if (!context || !context.spanId) {
+    return undefined;
+  }
+  const traceId = normalizeDiagnosticTraceId(context.traceId);
+  const spanId = normalizeDiagnosticSpanId(context.spanId);
+  const traceFlags =
+    normalizeDiagnosticTraceFlags(context.traceFlags) || DIAGNOSTIC_TRACE_FLAGS_DEFAULT;
+  if (!traceId || !spanId) {
+    return undefined;
+  }
+  return `${DIAGNOSTIC_TRACEPARENT_VERSION}-${traceId}-${spanId}-${traceFlags}`;
+}
+
+function createDiagnosticTraceContext(input = {}) {
+  const parsed = parseDiagnosticTraceparent(input.traceparent);
+  const traceId =
+    normalizeDiagnosticTraceId(input.traceId) ||
+    (parsed && parsed.traceId) ||
+    randomDiagnosticTraceId();
+  const spanId =
+    normalizeDiagnosticSpanId(input.spanId) ||
+    (parsed && parsed.spanId) ||
+    randomDiagnosticSpanId();
+  const parentSpanId = normalizeDiagnosticSpanId(input.parentSpanId);
+  return {
+    traceId,
+    spanId,
+    ...(parentSpanId && parentSpanId !== spanId ? { parentSpanId } : {}),
+    traceFlags:
+      normalizeDiagnosticTraceFlags(input.traceFlags) ||
+      (parsed && parsed.traceFlags) ||
+      DIAGNOSTIC_TRACE_FLAGS_DEFAULT,
+  };
+}
+
+function createChildDiagnosticTraceContext(parent, input = {}) {
+  const parentSpanId =
+    normalizeDiagnosticSpanId(input.parentSpanId) ||
+    normalizeDiagnosticSpanId(parent && parent.spanId);
+  return createDiagnosticTraceContext({
+    traceId: parent && parent.traceId,
+    spanId: input.spanId,
+    parentSpanId,
+    traceFlags: input.traceFlags || (parent && parent.traceFlags),
+  });
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32840,6 +33255,23 @@ const jsonStoreRuntime = {
   writeJsonFileAtomically,
 };
 
+const diagnosticRuntime = {
+  createChildDiagnosticTraceContext,
+  createDiagnosticTraceContext,
+  emitDiagnosticEvent,
+  emitTrustedDiagnosticEvent,
+  formatDiagnosticTraceparent,
+  isDiagnosticFlagEnabled,
+  isDiagnosticsEnabled,
+  isValidDiagnosticSpanId,
+  isValidDiagnosticTraceFlags,
+  isValidDiagnosticTraceId,
+  onDiagnosticEvent,
+  onInternalDiagnosticEvent,
+  parseDiagnosticTraceparent,
+  resetDiagnosticEventsForTest,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43622,6 +44054,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/json-store"
   ) {
     return jsonStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/diagnostic-runtime" ||
+    request === "@openclaw/plugin-sdk/diagnostic-runtime"
+  ) {
+    return diagnosticRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
