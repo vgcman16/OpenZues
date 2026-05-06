@@ -31955,6 +31955,222 @@ function resolveConfiguredBinding(params) {
   };
 }
 
+function normalizeAcpBindingMode(value) {
+  const raw = normalizeLowercaseStringOrEmpty(value);
+  return raw === "oneshot" ? "oneshot" : "persistent";
+}
+
+function normalizeAcpBindingText(value) {
+  return normalizeOptionalString(value);
+}
+
+function resolveAgentRuntimeAcpDefaultsFromConfig(cfg, agentId) {
+  const ownerAgentId = normalizeAgentId(agentId);
+  const agents = cfg && cfg.agents && Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+  const agent = agents.find((entry) => normalizeAgentId(entry && entry.id) === ownerAgentId);
+  if (!agent || !agent.runtime || agent.runtime.type !== "acp") {
+    return {};
+  }
+  const acp = agent.runtime.acp || {};
+  return {
+    acpAgentId: normalizeAcpBindingText(acp.agent),
+    mode: normalizeAcpBindingText(acp.mode),
+    cwd: normalizeAcpBindingText(acp.cwd),
+    backend: normalizeAcpBindingText(acp.backend),
+  };
+}
+
+function resolveConfiguredAcpWorkspaceCwd(cfg, agentId) {
+  const explicitAgentWorkspace = normalizeAcpBindingText(
+    resolveAgentConfigEntry(cfg, agentId) && resolveAgentConfigEntry(cfg, agentId).workspace,
+  );
+  if (explicitAgentWorkspace) {
+    return resolveAgentWorkspaceDirFromConfig(cfg, agentId);
+  }
+  const defaultAgentId = normalizeAgentId(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.id,
+  );
+  const defaultWorkspace = normalizeAcpBindingText(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.workspace,
+  );
+  if (defaultWorkspace && normalizeAgentId(agentId) === defaultAgentId) {
+    return resolveAgentWorkspaceDirFromConfig(cfg, agentId);
+  }
+  return undefined;
+}
+
+function resolveConfiguredAcpBindingConversation(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  const conversationId = normalizeAcpBindingText(params && params.conversationId);
+  if (!channel || !conversationId) {
+    return null;
+  }
+  return {
+    channel,
+    accountId: normalizeAccountId(params && params.accountId),
+    conversationId,
+    parentConversationId: normalizeAcpBindingText(params && params.parentConversationId),
+  };
+}
+
+function resolveConfiguredAcpBindingMatchId(binding) {
+  const match = (binding && binding.match) || {};
+  const peer = match && match.peer && typeof match.peer === "object" ? match.peer : {};
+  return normalizeAcpBindingText(
+    peer.id || match.conversationId || match.peerId || match.to || binding.conversationId,
+  );
+}
+
+function scoreConfiguredAcpBindingMatch(binding, conversation) {
+  if (!binding || binding.type !== "acp") {
+    return null;
+  }
+  const match = binding.match || {};
+  const channel = normalizeLowercaseStringOrEmpty(match.channel || match.provider);
+  if (!channel || channel !== conversation.channel) {
+    return null;
+  }
+  const matchAccountRaw = normalizeAcpBindingText(match.accountId);
+  let accountScore = 1;
+  if (matchAccountRaw && matchAccountRaw !== "*") {
+    if (normalizeAccountId(matchAccountRaw) !== conversation.accountId) {
+      return null;
+    }
+    accountScore = 4;
+  } else if (matchAccountRaw === "*") {
+    accountScore = 2;
+  }
+  const matchId = resolveConfiguredAcpBindingMatchId(binding);
+  if (!matchId) {
+    return null;
+  }
+  const candidates = [
+    { id: conversation.conversationId, score: 40 },
+    { id: conversation.parentConversationId, score: 20 },
+  ];
+  if (conversation.parentConversationId) {
+    candidates.push({
+      id: `${conversation.parentConversationId}:topic:${conversation.conversationId}`,
+      score: 35,
+    });
+  }
+  if (conversation.conversationId.includes(":sender:")) {
+    candidates.push({
+      id: conversation.conversationId.slice(0, conversation.conversationId.indexOf(":sender:")),
+      score: 30,
+    });
+  }
+  const matched = candidates.find((candidate) => candidate.id && candidate.id === matchId);
+  if (!matched) {
+    return null;
+  }
+  return {
+    score: accountScore + matched.score,
+    conversation: {
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: matchId,
+    },
+  };
+}
+
+function buildConfiguredAcpBindingHash(spec) {
+  return crypto
+    .createHash("sha256")
+    .update(`${spec.channel}:${spec.accountId}:${spec.conversationId}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function buildConfiguredAcpSessionKey(spec) {
+  const hash = buildConfiguredAcpBindingHash(spec);
+  return [
+    "agent",
+    sanitizeAgentId(spec.agentId),
+    "acp",
+    "binding",
+    spec.channel,
+    spec.accountId,
+    hash,
+  ].join(":");
+}
+
+function toConfiguredAcpBindingRecord(spec) {
+  return {
+    bindingId: `config:acp:${spec.channel}:${spec.accountId}:${spec.conversationId}`,
+    targetSessionKey: buildConfiguredAcpSessionKey(spec),
+    targetKind: "session",
+    conversation: {
+      channel: spec.channel,
+      accountId: spec.accountId,
+      conversationId: spec.conversationId,
+      ...(spec.parentConversationId ? { parentConversationId: spec.parentConversationId } : {}),
+    },
+    status: "active",
+    boundAt: 0,
+    metadata: {
+      source: "config",
+      mode: spec.mode,
+      agentId: spec.agentId,
+      ...(spec.acpAgentId ? { acpAgentId: spec.acpAgentId } : {}),
+      ...(spec.label ? { label: spec.label } : {}),
+      ...(spec.backend ? { backend: spec.backend } : {}),
+      ...(spec.cwd ? { cwd: spec.cwd } : {}),
+    },
+  };
+}
+
+function resolveConfiguredAcpBindingRecord(params = {}) {
+  const cfg = params.cfg || {};
+  const conversation = resolveConfiguredAcpBindingConversation(params);
+  if (!conversation) {
+    return null;
+  }
+  const matches = (Array.isArray(cfg.bindings) ? cfg.bindings : [])
+    .map((binding, index) => {
+      const matched = scoreConfiguredAcpBindingMatch(binding, conversation);
+      return matched ? { binding, index, matched } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.matched.score - left.matched.score || left.index - right.index);
+  if (matches.length === 0) {
+    return null;
+  }
+  const binding = matches[0].binding;
+  const materializedConversation = matches[0].matched.conversation;
+  const agentId = normalizeAgentId(binding.agentId);
+  const runtimeDefaults = resolveAgentRuntimeAcpDefaultsFromConfig(cfg, agentId);
+  const acpOverrides = binding.acp || {};
+  const mode = normalizeAcpBindingMode(acpOverrides.mode || runtimeDefaults.mode);
+  const cwd =
+    normalizeAcpBindingText(acpOverrides.cwd) ||
+    runtimeDefaults.cwd ||
+    resolveConfiguredAcpWorkspaceCwd(cfg, agentId);
+  const spec = {
+    channel: materializedConversation.channel,
+    accountId: materializedConversation.accountId,
+    conversationId: materializedConversation.conversationId,
+    ...(materializedConversation.parentConversationId
+      ? { parentConversationId: materializedConversation.parentConversationId }
+      : {}),
+    agentId,
+    ...(runtimeDefaults.acpAgentId ? { acpAgentId: runtimeDefaults.acpAgentId } : {}),
+    mode,
+    ...(cwd ? { cwd } : {}),
+    ...(normalizeAcpBindingText(acpOverrides.backend) || runtimeDefaults.backend
+      ? { backend: normalizeAcpBindingText(acpOverrides.backend) || runtimeDefaults.backend }
+      : {}),
+    ...(normalizeAcpBindingText(acpOverrides.label)
+      ? { label: normalizeAcpBindingText(acpOverrides.label) }
+      : {}),
+  };
+  const record = toConfiguredAcpBindingRecord(spec);
+  return {
+    spec,
+    record,
+  };
+}
+
 function routeForSessionBinding(params) {
   return {
     ...params.route,
@@ -33794,6 +34010,10 @@ const agentConfigPrimitivesRuntime = {
   ToolPolicySchema,
 };
 
+const acpBindingResolveRuntime = {
+  resolveConfiguredAcpBindingRecord,
+};
+
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
@@ -33803,6 +34023,7 @@ const genericSdk = new Proxy(
     DEFAULT_TIMING,
     PAIRING_APPROVED_MESSAGE,
     ReplyRuntimeConfigSchemaShape,
+    resolveConfiguredAcpBindingRecord,
     SILENT_REPLY_TOKEN,
     ToolPolicySchema,
     CODING_TOOL_TOKENS,
@@ -34783,6 +35004,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/agent-config-primitives"
   ) {
     return agentConfigPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-binding-resolve-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-binding-resolve-runtime"
+  ) {
+    return acpBindingResolveRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

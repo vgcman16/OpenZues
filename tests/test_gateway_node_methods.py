@@ -18974,6 +18974,191 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_binding_resolve_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-binding-resolve.cjs"
+    runtime_entry.write_text(
+        """
+const acpBinding = require("openclaw/plugin-sdk/acp-binding-resolve-runtime");
+const scopedAcpBinding = require("@openclaw/plugin-sdk/acp-binding-resolve-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_binding_resolve",
+      description: "Use OpenClaw ACP binding resolve runtime SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const cfg = {
+          bindings: [
+            {
+              type: "acp",
+              agentId: "codex",
+              match: {
+                channel: "discord",
+                accountId: "*",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: { mode: "persistent", backend: "wildcard" }
+            },
+            {
+              type: "acp",
+              agentId: "claude",
+              match: {
+                channel: "discord",
+                accountId: "work",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: {
+                mode: "oneshot",
+                backend: "acpx",
+                cwd: args.cwd,
+                label: "Work ACP"
+              }
+            }
+          ]
+        };
+        const resolved = acpBinding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "work",
+          conversationId: args.threadId,
+          parentConversationId: args.parentConversationId
+        });
+        const missing = scopedAcpBinding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "other",
+          conversationId: "missing-thread",
+          parentConversationId: "missing-parent"
+        });
+        return {
+          exportKeys: Object.keys(acpBinding).sort(),
+          genericType: typeof genericSdk.resolveConfiguredAcpBindingRecord,
+          missing,
+          resolved: {
+            spec: resolved && resolved.spec,
+            record: resolved && {
+              bindingId: resolved.record.bindingId,
+              targetKind: resolved.record.targetKind,
+              targetSessionKeyStartsWith: resolved.record.targetSessionKey.startsWith(
+                "agent:claude:acp:binding:discord:work:"
+              ),
+              targetSessionKeyHashLength: resolved.record.targetSessionKey.split(":").pop().length,
+              conversation: resolved.record.conversation,
+              status: resolved.record.status,
+              boundAt: resolved.record.boundAt,
+              metadata: resolved.record.metadata
+            }
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-binding-resolve-plugin",
+                    "name": "Runtime ACP Binding Resolve Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-acp-binding-resolve.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_binding_resolve"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.acp_binding_resolve",
+            "args": {
+                "threadId": "thread-123",
+                "parentConversationId": "channel-parent-1",
+                "cwd": str(tmp_path / "workspace"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveConfiguredAcpBindingRecord"],
+        "genericType": "function",
+        "missing": None,
+        "resolved": {
+            "spec": {
+                "channel": "discord",
+                "accountId": "work",
+                "conversationId": "channel-parent-1",
+                "agentId": "claude",
+                "mode": "oneshot",
+                "cwd": str(tmp_path / "workspace"),
+                "backend": "acpx",
+                "label": "Work ACP",
+            },
+            "record": {
+                "bindingId": "config:acp:discord:work:channel-parent-1",
+                "targetKind": "session",
+                "targetSessionKeyStartsWith": True,
+                "targetSessionKeyHashLength": 16,
+                "conversation": {
+                    "channel": "discord",
+                    "accountId": "work",
+                    "conversationId": "channel-parent-1",
+                },
+                "status": "active",
+                "boundAt": 0,
+                "metadata": {
+                    "source": "config",
+                    "mode": "oneshot",
+                    "agentId": "claude",
+                    "label": "Work ACP",
+                    "backend": "acpx",
+                    "cwd": str(tmp_path / "workspace"),
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
