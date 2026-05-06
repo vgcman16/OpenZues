@@ -10243,6 +10243,188 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_adapter_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-setup-adapter-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const setupAdapter = require("openclaw/plugin-sdk/setup-adapter-runtime");
+const scopedSetupAdapter = require("@openclaw/plugin-sdk/setup-adapter-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.setup_adapter",
+      description: "Use OpenClaw setup-adapter-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const adapter = setupAdapter.createEnvPatchedAccountSetupAdapter({
+          channelKey: "discord",
+          defaultAccountOnlyEnvError: "env default only",
+          missingCredentialError: "missing token",
+          hasCredentials: (input) => Boolean(input.token),
+          buildPatch: (input) => ({ token: input.token, mode: input.mode || "bot" })
+        });
+        const scopedAdapter = scopedSetupAdapter.createEnvPatchedAccountSetupAdapter({
+          channelKey: "matrix",
+          alwaysUseAccounts: true,
+          ensureChannelEnabled: true,
+          defaultAccountOnlyEnvError: "matrix env default only",
+          missingCredentialError: "missing access token",
+          hasCredentials: (input) => Boolean(input.accessToken),
+          buildPatch: (input) => ({ accessToken: input.accessToken })
+        });
+        return {
+          exportKeys: Object.keys(setupAdapter).sort(),
+          validation: {
+            missing: adapter.validateInput({ cfg: {}, accountId: "default", input: {} }),
+            envNamed: adapter.validateInput({
+              cfg: {},
+              accountId: "work",
+              input: { useEnv: true }
+            }),
+            ok: adapter.validateInput({
+              cfg: {},
+              accountId: "work",
+              input: { token: "abc" }
+            })
+          },
+          resolvedDefault: adapter.resolveAccountId({}),
+          resolvedNamed: adapter.resolveAccountId({ accountId: "Work Account!" }),
+          defaultPatch: adapter.applyAccountConfig({
+            cfg: {},
+            accountId: "default",
+            input: { token: "abc", name: "Primary" }
+          }),
+          namedPatch: adapter.applyAccountConfig({
+            cfg: {
+              channels: {
+                discord: {
+                  name: "Base",
+                  accounts: { existing: { token: "old" } }
+                }
+              }
+            },
+            accountId: "work",
+            input: { token: "def", name: "Work" }
+          }),
+          scopedPatch: scopedAdapter.applyAccountConfig({
+            cfg: { channels: { matrix: {} } },
+            accountId: "default",
+            input: { accessToken: "mat", name: "Matrix Default" }
+          }),
+          scopedExportType: typeof scopedSetupAdapter.createEnvPatchedAccountSetupAdapter
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-adapter-plugin",
+                    "name": "Runtime Setup Adapter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-adapter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setup_adapter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setup_adapter"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["createEnvPatchedAccountSetupAdapter"],
+        "validation": {
+            "missing": "missing token",
+            "envNamed": "env default only",
+            "ok": None,
+        },
+        "resolvedDefault": "default",
+        "resolvedNamed": "work-account",
+        "defaultPatch": {
+            "channels": {
+                "discord": {
+                    "enabled": True,
+                    "name": "Primary",
+                    "token": "abc",
+                    "mode": "bot",
+                }
+            }
+        },
+        "namedPatch": {
+            "channels": {
+                "discord": {
+                    "enabled": True,
+                    "accounts": {
+                        "existing": {"token": "old"},
+                        "work": {
+                            "name": "Work",
+                            "enabled": True,
+                            "token": "def",
+                            "mode": "bot",
+                        },
+                        "default": {"name": "Base"},
+                    },
+                }
+            }
+        },
+        "scopedPatch": {
+            "channels": {
+                "matrix": {
+                    "enabled": True,
+                    "accounts": {
+                        "default": {
+                            "name": "Matrix Default",
+                            "enabled": True,
+                            "accessToken": "mat",
+                        }
+                    },
+                }
+            }
+        },
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_allowlist_config_edit_helpers(
     tmp_path,
 ) -> None:

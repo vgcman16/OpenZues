@@ -29682,6 +29682,256 @@ function createOptionalChannelSetupAdapter(params) {
   };
 }
 
+function resolveSetupChannelSection(cfg, channelKey) {
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = channels[channelKey];
+  return base && typeof base === "object" && !Array.isArray(base) ? base : {};
+}
+
+function resolveSetupChannelAccounts(section) {
+  return section && section.accounts && typeof section.accounts === "object"
+    ? section.accounts
+    : {};
+}
+
+function shouldStoreSetupNameInAccounts(params) {
+  if (params.alwaysUseAccounts) {
+    return true;
+  }
+  if (params.accountId !== DEFAULT_ACCOUNT_ID) {
+    return true;
+  }
+  return Object.keys(resolveSetupChannelAccounts(
+    resolveSetupChannelSection(params.cfg, params.channelKey),
+  )).length > 0;
+}
+
+function applySetupAccountNameToChannelSection(params) {
+  const trimmed = typeof params.name === "string" ? params.name.trim() : "";
+  if (!trimmed) {
+    return params.cfg || {};
+  }
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const accountId = normalizeAccountId(params.accountId);
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const useAccounts = shouldStoreSetupNameInAccounts({
+    cfg,
+    channelKey: params.channelKey,
+    accountId,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+  if (!useAccounts && accountId === DEFAULT_ACCOUNT_ID) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.channelKey]: {
+          ...base,
+          name: trimmed,
+        },
+      },
+    };
+  }
+  const accounts = resolveSetupChannelAccounts(base);
+  const existingAccount =
+    accounts[accountId] && typeof accounts[accountId] === "object" ? accounts[accountId] : {};
+  const baseWithoutName = { ...base };
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    delete baseWithoutName.name;
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...baseWithoutName,
+        accounts: {
+          ...accounts,
+          [accountId]: {
+            ...existingAccount,
+            name: trimmed,
+          },
+        },
+      },
+    },
+  };
+}
+
+function migrateSetupBaseNameToDefaultAccount(params) {
+  if (params.alwaysUseAccounts) {
+    return params.cfg || {};
+  }
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const baseName = typeof base.name === "string" ? base.name.trim() : "";
+  if (!baseName) {
+    return cfg;
+  }
+  const accounts = { ...resolveSetupChannelAccounts(base) };
+  const defaultAccount =
+    accounts[DEFAULT_ACCOUNT_ID] && typeof accounts[DEFAULT_ACCOUNT_ID] === "object"
+      ? accounts[DEFAULT_ACCOUNT_ID]
+      : {};
+  if (!defaultAccount.name) {
+    accounts[DEFAULT_ACCOUNT_ID] = { ...defaultAccount, name: baseName };
+  }
+  const baseWithoutName = { ...base };
+  delete baseWithoutName.name;
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...baseWithoutName,
+        accounts,
+      },
+    },
+  };
+}
+
+function prepareScopedSetupConfig(params) {
+  const accountId = normalizeAccountId(params.accountId);
+  const namedConfig = applySetupAccountNameToChannelSection({
+    cfg: params.cfg,
+    channelKey: params.channelKey,
+    accountId,
+    name: params.name,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+  if (!params.migrateBaseName || accountId === DEFAULT_ACCOUNT_ID) {
+    return namedConfig;
+  }
+  return migrateSetupBaseNameToDefaultAccount({
+    cfg: namedConfig,
+    channelKey: params.channelKey,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+}
+
+function patchScopedSetupAccountConfig(params) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const accountId = normalizeAccountId(params.accountId);
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const ensureChannelEnabled =
+    typeof params.ensureChannelEnabled === "boolean" ? params.ensureChannelEnabled : true;
+  const ensureAccountEnabled =
+    typeof params.ensureAccountEnabled === "boolean"
+      ? params.ensureAccountEnabled
+      : ensureChannelEnabled;
+  const patch = params.patch && typeof params.patch === "object" ? params.patch : {};
+  const accountPatch =
+    params.accountPatch && typeof params.accountPatch === "object" ? params.accountPatch : patch;
+  if (accountId === DEFAULT_ACCOUNT_ID && !params.scopeDefaultToAccounts) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.channelKey]: {
+          ...base,
+          ...(ensureChannelEnabled ? { enabled: true } : {}),
+          ...patch,
+        },
+      },
+    };
+  }
+  const accounts = resolveSetupChannelAccounts(base);
+  const existingAccount =
+    accounts[accountId] && typeof accounts[accountId] === "object" ? accounts[accountId] : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...base,
+        ...(ensureChannelEnabled ? { enabled: true } : {}),
+        accounts: {
+          ...accounts,
+          [accountId]: {
+            ...existingAccount,
+            ...(ensureAccountEnabled
+              ? {
+                  enabled:
+                    typeof existingAccount.enabled === "boolean" ? existingAccount.enabled : true,
+                }
+              : {}),
+            ...accountPatch,
+          },
+        },
+      },
+    },
+  };
+}
+
+function createPatchedAccountSetupAdapter(params) {
+  return {
+    resolveAccountId: ({ accountId } = {}) => normalizeAccountId(accountId),
+    applyAccountName: ({ cfg, accountId, name } = {}) =>
+      prepareScopedSetupConfig({
+        cfg: cfg || {},
+        channelKey: params.channelKey,
+        accountId,
+        name,
+        alwaysUseAccounts: params.alwaysUseAccounts,
+      }),
+    validateInput: params.validateInput,
+    applyAccountConfig: ({ cfg, accountId, input } = {}) => {
+      const setupInput = input && typeof input === "object" ? input : {};
+      const resolvedAccountId = normalizeAccountId(accountId);
+      const next = prepareScopedSetupConfig({
+        cfg: cfg || {},
+        channelKey: params.channelKey,
+        accountId: resolvedAccountId,
+        name: setupInput.name,
+        alwaysUseAccounts: params.alwaysUseAccounts,
+        migrateBaseName: !params.alwaysUseAccounts,
+      });
+      const patch =
+        typeof params.buildPatch === "function" ? params.buildPatch(setupInput) : {};
+      return patchScopedSetupAccountConfig({
+        cfg: next,
+        channelKey: params.channelKey,
+        accountId: resolvedAccountId,
+        patch,
+        accountPatch: patch,
+        ensureChannelEnabled: params.ensureChannelEnabled ?? !params.alwaysUseAccounts,
+        ensureAccountEnabled: params.ensureAccountEnabled ?? true,
+        scopeDefaultToAccounts: params.alwaysUseAccounts,
+      });
+    },
+  };
+}
+
+function createEnvPatchedAccountSetupAdapter(params) {
+  return createPatchedAccountSetupAdapter({
+    channelKey: params.channelKey,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+    ensureChannelEnabled: params.ensureChannelEnabled,
+    ensureAccountEnabled: params.ensureAccountEnabled,
+    validateInput: (inputParams = {}) => {
+      const input = inputParams.input && typeof inputParams.input === "object"
+        ? inputParams.input
+        : {};
+      const accountId = normalizeAccountId(inputParams.accountId);
+      if (input.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
+        return params.defaultAccountOnlyEnvError;
+      }
+      if (
+        !input.useEnv &&
+        !(typeof params.hasCredentials === "function" && params.hasCredentials(input))
+      ) {
+        return params.missingCredentialError;
+      }
+      return typeof params.validateInput === "function"
+        ? params.validateInput({ ...inputParams, accountId, input })
+        : null;
+    },
+    buildPatch: params.buildPatch,
+  });
+}
+
 function createOptionalChannelSetupWizard(params) {
   const message = buildOptionalChannelSetupMessage(params);
   return {
@@ -33924,6 +34174,10 @@ const channelSetupRuntime = {
   splitSetupEntries,
 };
 
+const setupAdapterRuntime = {
+  createEnvPatchedAccountSetupAdapter,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -35075,6 +35329,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-setup"
   ) {
     return channelSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/setup-adapter-runtime" ||
+    request === "@openclaw/plugin-sdk/setup-adapter-runtime"
+  ) {
+    return setupAdapterRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
