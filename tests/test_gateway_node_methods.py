@@ -20076,6 +20076,356 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_lifecycle_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-lifecycle.cjs"
+    runtime_entry.write_text(
+        """
+const lifecycle = require("openclaw/plugin-sdk/channel-lifecycle");
+const scopedLifecycle = require("@openclaw/plugin-sdk/channel-lifecycle");
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_lifecycle",
+      description: "Use OpenClaw channel lifecycle SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const statusPatches = [];
+        const sink = lifecycle.createAccountStatusSink({
+          accountId: "work",
+          setStatus: (patch) => statusPatches.push(patch)
+        });
+        sink({ running: true, lastStartAt: 123 });
+
+        const abort = new AbortController();
+        let abortCleanup = 0;
+        const abortTask = lifecycle.waitUntilAbort(abort.signal, async () => {
+          abortCleanup += 1;
+        });
+        abort.abort();
+        await abortTask;
+
+        const passiveAbort = new AbortController();
+        const passiveEvents = [];
+        const passiveTask = lifecycle.runPassiveAccountLifecycle({
+          abortSignal: passiveAbort.signal,
+          start: async () => {
+            passiveEvents.push("start");
+            return { id: "handle" };
+          },
+          stop: async (handle) => {
+            passiveEvents.push(`stop:${handle.id}`);
+          },
+          onStop: async () => {
+            passiveEvents.push("onStop");
+          }
+        });
+        await Promise.resolve();
+        passiveAbort.abort();
+        await passiveTask;
+
+        let closeListener;
+        const server = {
+          once(event, listener) {
+            if (event === "close") {
+              closeListener = listener;
+            }
+          },
+          close() {
+            closeListener && closeListener();
+          }
+        };
+        const serverAbort = new AbortController();
+        let serverAbortCleanup = 0;
+        const serverTask = lifecycle.keepHttpServerTaskAlive({
+          server,
+          abortSignal: serverAbort.signal,
+          onAbort: async () => {
+            serverAbortCleanup += 1;
+            server.close();
+          }
+        });
+        serverAbort.abort();
+        await serverTask;
+
+        const runStatuses = [];
+        const runAbort = new AbortController();
+        const runState = lifecycle.createRunStateMachine({
+          abortSignal: runAbort.signal,
+          heartbeatMs: 10,
+          now: () => 5000,
+          setStatus: (patch) => runStatuses.push(patch)
+        });
+        const activeBefore = runState.isActive();
+        runState.onRunStart();
+        runState.onRunEnd();
+        runAbort.abort();
+        const activeAfter = runState.isActive();
+
+        const queueOrder = [];
+        const queueStatuses = [];
+        let queueDone;
+        const queueDonePromise = new Promise((resolve) => {
+          queueDone = resolve;
+        });
+        const queue = lifecycle.createChannelRunQueue({
+          setStatus: (patch) => queueStatuses.push(patch)
+        });
+        queue.enqueue("same", async () => {
+          queueOrder.push("first");
+          await sleep(1);
+        });
+        queue.enqueue("same", async () => {
+          queueOrder.push("second");
+          queueDone();
+        });
+        await queueDonePromise;
+        await sleep(5);
+        queue.deactivate();
+
+        const draftSends = [];
+        const loop = lifecycle.createDraftStreamLoop({
+          throttleMs: 0,
+          isStopped: () => false,
+          sendOrEditStreamMessage: async (text) => {
+            draftSends.push(text);
+            return true;
+          }
+        });
+        loop.update("hello");
+        await loop.flush();
+        loop.resetThrottleWindow();
+        loop.resetPending();
+
+        const state = { stopped: false, final: false };
+        const controls = lifecycle.createFinalizableDraftStreamControlsForState({
+          throttleMs: 0,
+          state,
+          sendOrEditStreamMessage: async (text) => {
+            draftSends.push(`control:${text}`);
+            return true;
+          }
+        });
+        controls.update("preview");
+        await controls.stop();
+
+        let heldId = "msg-1";
+        const takenId = await lifecycle.takeMessageIdAfterStop({
+          stopForClear: async () => {
+            draftSends.push("stopForClear");
+          },
+          readMessageId: () => heldId,
+          clearMessageId: () => {
+            heldId = undefined;
+          }
+        });
+
+        const deleted = [];
+        await lifecycle.clearFinalizableDraftMessage({
+          stopForClear: async () => undefined,
+          readMessageId: () => "msg-2",
+          clearMessageId: () => undefined,
+          isValidMessageId: (value) => typeof value === "string",
+          deleteMessage: async (messageId) => {
+            deleted.push(messageId);
+          },
+          warnPrefix: "draft"
+        });
+
+        const finalized = [];
+        const delivered = [];
+        const previewResult = await lifecycle.deliverFinalizableDraftPreview({
+          kind: "final",
+          payload: { text: "done" },
+          draft: {
+            flush: async () => finalized.push("flush"),
+            id: () => "preview-1",
+            seal: async () => finalized.push("seal"),
+            clear: async () => finalized.push("clear")
+          },
+          buildFinalEdit: (payload) => ({ body: payload.text }),
+          editFinal: async (id, edit) => finalized.push(`${id}:${edit.body}`),
+          deliverNormally: async () => {
+            delivered.push("normal");
+            return true;
+          },
+          onPreviewFinalized: async (id) => finalized.push(`finalized:${id}`)
+        });
+        const normalResult = await lifecycle.deliverFinalizableDraftPreview({
+          kind: "tool",
+          payload: "plain",
+          buildFinalEdit: () => undefined,
+          editFinal: async () => undefined,
+          deliverNormally: async (payload) => {
+            delivered.push(payload);
+            return true;
+          },
+          onNormalDelivered: async () => delivered.push("normal-delivered")
+        });
+
+        const watchdogTimeouts = [];
+        const watchdog = lifecycle.createArmableStallWatchdog({
+          label: "test",
+          timeoutMs: 50,
+          checkIntervalMs: 100,
+          onTimeout: (meta) => watchdogTimeouts.push(meta)
+        });
+        watchdog.arm(1000);
+        const watchdogArmed = watchdog.isArmed();
+        watchdog.touch(1025);
+        watchdog.disarm();
+        const watchdogDisarmed = watchdog.isArmed();
+        watchdog.stop();
+
+        return {
+          keys: Object.keys(lifecycle).sort(),
+          scopedType: typeof scopedLifecycle.waitUntilAbort,
+          statusPatches,
+          abortCleanup,
+          passiveEvents,
+          serverAbortCleanup,
+          runState: {
+            activeBefore,
+            activeAfter,
+            statuses: runStatuses
+          },
+          queue: {
+            order: queueOrder,
+            firstStatus: queueStatuses[0],
+            lastBusy: queueStatuses[queueStatuses.length - 1].busy
+          },
+          draft: {
+            sends: draftSends,
+            state,
+            takenId,
+            heldId: heldId ?? null,
+            deleted,
+            previewResult,
+            normalResult,
+            finalized,
+            delivered
+          },
+          watchdog: {
+            armed: watchdogArmed,
+            disarmed: watchdogDisarmed,
+            timeoutCount: watchdogTimeouts.length
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-lifecycle-plugin",
+                    "name": "Runtime Channel Lifecycle Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-lifecycle.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_lifecycle"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_lifecycle"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "clearFinalizableDraftMessage",
+            "createAccountStatusSink",
+            "createArmableStallWatchdog",
+            "createChannelRunQueue",
+            "createDraftStreamLoop",
+            "createFinalizableDraftLifecycle",
+            "createFinalizableDraftStreamControls",
+            "createFinalizableDraftStreamControlsForState",
+            "createRunStateMachine",
+            "deliverFinalizableDraftPreview",
+            "keepHttpServerTaskAlive",
+            "runPassiveAccountLifecycle",
+            "takeMessageIdAfterStop",
+            "waitUntilAbort",
+        ],
+        "scopedType": "function",
+        "statusPatches": [{"accountId": "work", "running": True, "lastStartAt": 123}],
+        "abortCleanup": 1,
+        "passiveEvents": ["start", "stop:handle", "onStop"],
+        "serverAbortCleanup": 1,
+        "runState": {
+            "activeBefore": True,
+            "activeAfter": False,
+            "statuses": [
+                {"activeRuns": 0, "busy": False},
+                {"activeRuns": 1, "busy": True, "lastRunActivityAt": 5000},
+                {"activeRuns": 0, "busy": False, "lastRunActivityAt": 5000},
+            ],
+        },
+        "queue": {
+            "order": ["first", "second"],
+            "firstStatus": {"activeRuns": 0, "busy": False},
+            "lastBusy": False,
+        },
+        "draft": {
+            "sends": ["hello", "control:preview", "stopForClear"],
+            "state": {"stopped": False, "final": True},
+            "takenId": "msg-1",
+            "heldId": None,
+            "deleted": ["msg-2"],
+            "previewResult": "preview-finalized",
+            "normalResult": "normal-delivered",
+            "finalized": [
+                "flush",
+                "seal",
+                "preview-1:done",
+                "finalized:preview-1",
+            ],
+            "delivered": ["plain", "normal-delivered"],
+        },
+        "watchdog": {"armed": True, "disarmed": False, "timeoutCount": 0},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
