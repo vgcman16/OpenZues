@@ -37273,6 +37273,11 @@ const channelStreamingRuntime = {
   resolveChannelStreamingPreviewToolProgress,
 };
 
+const channelEnvelopeRuntime = {
+  formatInboundEnvelope,
+  resolveEnvelopeFormatOptions,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38141,6 +38146,7 @@ const genericSdk = new Proxy(
     ...channelContractTestingRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
+    ...channelEnvelopeRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39168,6 +39174,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-streaming"
   ) {
     return channelStreamingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-envelope" ||
+    request === "@openclaw/plugin-sdk/channel-envelope"
+  ) {
+    return channelEnvelopeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

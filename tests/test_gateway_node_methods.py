@@ -21420,6 +21420,119 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_envelope_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-envelope.cjs"
+    runtime_entry.write_text(
+        """
+const envelope = require("openclaw/plugin-sdk/channel-envelope");
+const scopedEnvelope = require("@openclaw/plugin-sdk/channel-envelope");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_envelope",
+      description: "Use OpenClaw channel envelope SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(envelope).sort(),
+          scopedType: typeof scopedEnvelope.formatInboundEnvelope,
+          options: envelope.resolveEnvelopeFormatOptions({
+            agents: {
+              defaults: {
+                envelopeTimezone: "utc",
+                envelopeTimestamp: "off",
+                envelopeElapsed: "off",
+                userTimezone: "America/Chicago",
+              },
+            },
+          }),
+          group: envelope.formatInboundEnvelope({
+            channel: "Slack",
+            from: "channel:C1",
+            body: "hello",
+            chatType: "group",
+            senderLabel: "Ada [ops]\\nteam",
+          }),
+          selfDirect: envelope.formatInboundEnvelope({
+            channel: "Telegram",
+            from: "dm",
+            body: "hi",
+            chatType: "direct",
+            fromMe: true,
+          }),
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-envelope-plugin",
+                    "name": "Runtime Channel Envelope Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-envelope.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_envelope"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_envelope"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["formatInboundEnvelope", "resolveEnvelopeFormatOptions"],
+        "scopedType": "function",
+        "options": {
+            "timezone": "utc",
+            "includeTimestamp": False,
+            "includeElapsed": False,
+            "userTimezone": "America/Chicago",
+        },
+        "group": "[Slack channel:C1] Ada (ops) team: hello",
+        "selfDirect": "[Telegram dm] (self): hi",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
