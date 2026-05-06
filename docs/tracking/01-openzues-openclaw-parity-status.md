@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~87.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~87.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -988,6 +988,11 @@ may lag behind this tracker.
 - [x] Imported plugin SDK oauth-utils shim for form-url encoding and base64url/
   hex PKCE verifier/challenge generation.
   - Status: checkpointed in `210beb78`
+
+- [x] Imported plugin SDK runtime-config-snapshot shim for activation-context
+  runtime config access, snapshot set/get/clear, config-cache no-op, and
+  source-snapshot selection.
+  - Status: checkpointed in `39afd0ea`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
