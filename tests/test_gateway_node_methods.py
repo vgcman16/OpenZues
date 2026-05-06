@@ -14186,6 +14186,303 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_plugin_common_and_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-plugin-common.cjs"
+    runtime_entry.write_text(
+        """
+const common = require("openclaw/plugin-sdk/channel-plugin-common");
+const scopedCommon = require("@openclaw/plugin-sdk/channel-plugin-common");
+const core = require("openclaw/plugin-sdk/core");
+
+function parseSummary(result) {
+  if (!result) {
+    return null;
+  }
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+  return {
+    success: false,
+    issues: result.error ? result.error.issues : result.issues
+  };
+}
+
+function pickMeta(meta) {
+  return {
+    id: meta && meta.id,
+    label: meta && meta.label,
+    selectionLabel: meta && meta.selectionLabel,
+    docsPath: meta && meta.docsPath,
+    docsLabel: meta && meta.docsLabel,
+    detailLabel: meta && meta.detailLabel,
+    systemImage: meta && meta.systemImage
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_plugin_common",
+      description: "Use OpenClaw channel-plugin-common and core SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const empty = common.emptyPluginConfigSchema();
+        const channelEmpty = core.emptyChannelConfigSchema();
+        const namedConfig = common.applyAccountNameToChannelSection({
+          cfg: { channels: { telegram: { accounts: {} } } },
+          channelKey: "telegram",
+          accountId: " Work Account! ",
+          name: " Work Bot "
+        });
+        const migratedConfig = common.migrateBaseNameToDefaultAccount({
+          cfg: {
+            channels: {
+              telegram: {
+                name: "Root Bot",
+                accounts: { work: { name: "Work Bot" } }
+              }
+            }
+          },
+          channelKey: "telegram"
+        });
+        const enabledConfig = common.setAccountEnabledInConfigSection({
+          cfg: { channels: { telegram: { accounts: { work: { name: "Work" } } } } },
+          sectionKey: "telegram",
+          accountId: "work",
+          enabled: true
+        });
+        const deletedConfig = common.deleteAccountFromConfigSection({
+          cfg: {
+            channels: {
+              telegram: {
+                accounts: {
+                  default: { botToken: "default-token" },
+                  work: { botToken: "work-token" }
+                }
+              }
+            }
+          },
+          sectionKey: "telegram",
+          accountId: "work"
+        });
+        const cleared = common.clearAccountEntryFields({
+          accounts: { work: { botToken: "secret", keep: "yes" } },
+          accountId: "work",
+          fields: ["botToken"]
+        });
+        const base = core.createChannelPluginBase({
+          id: "telegram",
+          meta: { label: "Telegram Override" },
+          capabilities: { send: true },
+          setup: { kind: "setup" }
+        });
+        return {
+          commonExportKeys: Object.keys(common).sort(),
+          scopedMetaType: typeof scopedCommon.getChatChannelMeta,
+          defaults: {
+            accountId: common.DEFAULT_ACCOUNT_ID,
+            normalized: common.normalizeAccountId(" Work Account! "),
+            pairing: common.formatPairingApproveHint("telegram"),
+            approved: common.PAIRING_APPROVED_MESSAGE
+          },
+          meta: pickMeta(common.getChatChannelMeta("telegram")),
+          coreMeta: pickMeta(core.getChatChannelMeta("telegram")),
+          emptySchema: {
+            jsonSchema: empty.jsonSchema,
+            undefinedValue: parseSummary(empty.safeParse(undefined)),
+            emptyObject: parseSummary(empty.safeParse({})),
+            extraObject: parseSummary(empty.safeParse({ extra: true })),
+            arrayValue: parseSummary(empty.safeParse([]))
+          },
+          emptyChannelSchema: {
+            schema: channelEmpty.schema,
+            emptyObject: parseSummary(channelEmpty.runtime.safeParse({})),
+            extraObject: parseSummary(channelEmpty.runtime.safeParse({ extra: true }))
+          },
+          setupHelpers: {
+            namedAccount: namedConfig.channels.telegram.accounts["work-account"],
+            migrated: migratedConfig.channels.telegram,
+            enabled: enabledConfig.channels.telegram.accounts.work,
+            deletedAccounts: deletedConfig.channels.telegram.accounts,
+            cleared
+          },
+          basePlugin: {
+            id: base.id,
+            meta: pickMeta(base.meta),
+            capabilities: base.capabilities,
+            setup: base.setup
+          },
+          coreTypes: {
+            buildChannelConfigSchema: typeof core.buildChannelConfigSchema,
+            createChannelPluginBase: typeof core.createChannelPluginBase
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-plugin-common-plugin",
+                    "name": "Runtime Channel Plugin Common Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-plugin-common.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_plugin_common"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_plugin_common"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "commonExportKeys": [
+            "DEFAULT_ACCOUNT_ID",
+            "PAIRING_APPROVED_MESSAGE",
+            "applyAccountNameToChannelSection",
+            "buildChannelConfigSchema",
+            "clearAccountEntryFields",
+            "deleteAccountFromConfigSection",
+            "emptyPluginConfigSchema",
+            "formatPairingApproveHint",
+            "getChatChannelMeta",
+            "migrateBaseNameToDefaultAccount",
+            "normalizeAccountId",
+            "setAccountEnabledInConfigSection",
+        ],
+        "scopedMetaType": "function",
+        "defaults": {
+            "accountId": "default",
+            "normalized": "work-account",
+            "pairing": (
+                "Approve via: openclaw pairing list telegram / "
+                "openclaw pairing approve telegram <code>"
+            ),
+            "approved": "\u2705 OpenClaw access approved. Send a message to start chatting.",
+        },
+        "meta": {
+            "id": "telegram",
+            "label": "Telegram",
+            "selectionLabel": "Telegram (Bot API)",
+            "docsPath": "/channels/telegram",
+            "docsLabel": "telegram",
+            "detailLabel": "Telegram Bot",
+            "systemImage": "paperplane",
+        },
+        "coreMeta": {
+            "id": "telegram",
+            "label": "Telegram",
+            "selectionLabel": "Telegram (Bot API)",
+            "docsPath": "/channels/telegram",
+            "docsLabel": "telegram",
+            "detailLabel": "Telegram Bot",
+            "systemImage": "paperplane",
+        },
+        "emptySchema": {
+            "jsonSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            "undefinedValue": {"success": True},
+            "emptyObject": {"success": True, "data": {}},
+            "extraObject": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+            "arrayValue": {
+                "success": False,
+                "issues": [{"path": [], "message": "expected config object"}],
+            },
+        },
+        "emptyChannelSchema": {
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            "emptyObject": {"success": True, "data": {}},
+            "extraObject": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+        },
+        "setupHelpers": {
+            "namedAccount": {"name": "Work Bot"},
+            "migrated": {
+                "accounts": {
+                    "work": {"name": "Work Bot"},
+                    "default": {"name": "Root Bot"},
+                }
+            },
+            "enabled": {"name": "Work", "enabled": True},
+            "deletedAccounts": {"default": {"botToken": "default-token"}},
+            "cleared": {
+                "nextAccounts": {"work": {"keep": "yes"}},
+                "changed": True,
+                "cleared": True,
+            },
+        },
+        "basePlugin": {
+            "id": "telegram",
+            "meta": {
+                "id": "telegram",
+                "label": "Telegram Override",
+                "selectionLabel": "Telegram (Bot API)",
+                "docsPath": "/channels/telegram",
+                "docsLabel": "telegram",
+                "detailLabel": "Telegram Bot",
+                "systemImage": "paperplane",
+            },
+            "capabilities": {"send": True},
+            "setup": {"kind": "setup"},
+        },
+        "coreTypes": {
+            "buildChannelConfigSchema": "function",
+            "createChannelPluginBase": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
     tmp_path,
 ) -> None:

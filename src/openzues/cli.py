@@ -34114,6 +34114,428 @@ const githubCopilotTokenRuntime = {
   resolveCopilotApiToken,
 };
 
+function emptyPluginConfigSchema() {
+  const error = (message) => ({
+    success: false,
+    error: { issues: [{ path: [], message }] },
+  });
+  return {
+    safeParse(value) {
+      if (value === undefined) {
+        return { success: true, data: undefined };
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return error("expected config object");
+      }
+      if (Object.keys(value).length > 0) {
+        return error("config must be empty");
+      }
+      return { success: true, data: value };
+    },
+    jsonSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+  };
+}
+
+function emptyChannelConfigSchema() {
+  return {
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+    runtime: {
+      safeParse(value) {
+        if (value === undefined) {
+          return { success: true, data: undefined };
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return {
+            success: false,
+            issues: [{ path: [], message: "expected config object" }],
+          };
+        }
+        if (Object.keys(value).length > 0) {
+          return {
+            success: false,
+            issues: [{ path: [], message: "config must be empty" }],
+          };
+        }
+        return { success: true, data: value };
+      },
+    },
+  };
+}
+
+function cloneRuntimeIssue(issue) {
+  const record = issue && typeof issue === "object" ? issue : {};
+  const path = Array.isArray(record.path)
+    ? record.path.filter((segment) => typeof segment === "string" || typeof segment === "number")
+    : [];
+  return {
+    ...record,
+    path,
+  };
+}
+
+function safeParseRuntimeSchema(schema, value, channelMode = false) {
+  const result =
+    schema && typeof schema.safeParse === "function"
+      ? schema.safeParse(value)
+      : { success: true, data: value };
+  if (result && result.success) {
+    return { success: true, data: result.data };
+  }
+  const issues =
+    result && result.error && Array.isArray(result.error.issues)
+      ? result.error.issues
+      : result && Array.isArray(result.issues)
+        ? result.issues
+        : [{ path: [], message: "invalid config" }];
+  const cloned = issues.map((issue) => cloneRuntimeIssue(issue));
+  return channelMode
+    ? { success: false, issues: cloned }
+    : { success: false, error: { issues: cloned } };
+}
+
+function normalizeJsonSchema(schema) {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => normalizeJsonSchema(item));
+  }
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  const record = { ...schema };
+  delete record.$schema;
+  for (const [key, value] of Object.entries(record)) {
+    record[key] = normalizeJsonSchema(value);
+  }
+  if (
+    record.propertyNames &&
+    typeof record.propertyNames === "object" &&
+    !Array.isArray(record.propertyNames) &&
+    record.propertyNames.type === "string"
+  ) {
+    delete record.propertyNames;
+  }
+  if (Array.isArray(record.required) && record.required.length === 0) {
+    delete record.required;
+  }
+  return record;
+}
+
+function buildPluginConfigSchema(schema, options = {}) {
+  const safeParse =
+    typeof options.safeParse === "function"
+      ? options.safeParse
+      : (value) => safeParseRuntimeSchema(schema, value, false);
+  const jsonSchema =
+    schema && typeof schema.toJSONSchema === "function"
+      ? normalizeJsonSchema(
+          schema.toJSONSchema({
+            target: "draft-07",
+            io: "input",
+            unrepresentable: "any",
+          }),
+        )
+      : {
+          type: "object",
+          additionalProperties: true,
+        };
+  return {
+    safeParse,
+    ...(options.uiHints ? { uiHints: options.uiHints } : {}),
+    jsonSchema,
+  };
+}
+
+function buildChannelConfigSchema(schema, options = {}) {
+  const jsonSchema =
+    schema && typeof schema.toJSONSchema === "function"
+      ? schema.toJSONSchema({
+          target: "draft-07",
+          unrepresentable: "any",
+        })
+      : {
+          type: "object",
+          additionalProperties: true,
+        };
+  return {
+    schema: jsonSchema,
+    ...(options.uiHints ? { uiHints: options.uiHints } : {}),
+    runtime: {
+      safeParse: (value) => safeParseRuntimeSchema(schema, value, true),
+    },
+  };
+}
+
+const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
+  discord: {
+    id: "discord",
+    label: "Discord",
+    selectionLabel: "Discord (Bot API)",
+    docsPath: "/channels/discord",
+    docsLabel: "discord",
+    detailLabel: "Discord Bot",
+    systemImage: "gamecontroller",
+  },
+  matrix: {
+    id: "matrix",
+    label: "Matrix",
+    selectionLabel: "Matrix (plugin)",
+    docsPath: "/channels/matrix",
+    docsLabel: "matrix",
+    detailLabel: "Matrix",
+    systemImage: "message",
+  },
+  slack: {
+    id: "slack",
+    label: "Slack",
+    selectionLabel: "Slack (Socket Mode)",
+    docsPath: "/channels/slack",
+    docsLabel: "slack",
+    detailLabel: "Slack App",
+    systemImage: "bubble.left.and.bubble.right",
+  },
+  telegram: {
+    id: "telegram",
+    label: "Telegram",
+    selectionLabel: "Telegram (Bot API)",
+    docsPath: "/channels/telegram",
+    docsLabel: "telegram",
+    detailLabel: "Telegram Bot",
+    systemImage: "paperplane",
+  },
+  whatsapp: {
+    id: "whatsapp",
+    label: "WhatsApp",
+    selectionLabel: "WhatsApp (QR link)",
+    docsPath: "/channels/whatsapp",
+    docsLabel: "whatsapp",
+    detailLabel: "WhatsApp",
+    systemImage: "phone.bubble.left",
+  },
+});
+
+function getChatChannelMeta(id) {
+  const key = normalizeLowercaseStringOrEmpty(id);
+  return OPENZUES_CHAT_CHANNEL_META[key];
+}
+
+function applyAccountNameToChannelSection(params) {
+  return applySetupAccountNameToChannelSection(params || {});
+}
+
+function migrateBaseNameToDefaultAccount(params) {
+  return migrateSetupBaseNameToDefaultAccount(params || {});
+}
+
+function setAccountEnabledInConfigSection(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : {};
+  const hasAccounts = Boolean(base.accounts && typeof base.accounts === "object");
+  if (params.allowTopLevel && accountKey === DEFAULT_ACCOUNT_ID && !hasAccounts) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          enabled: params.enabled,
+        },
+      },
+    };
+  }
+  const accounts = hasAccounts ? base.accounts : {};
+  const existing = accounts[accountKey] && typeof accounts[accountKey] === "object"
+    ? accounts[accountKey]
+    : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: {
+        ...base,
+        accounts: {
+          ...accounts,
+          [accountKey]: {
+            ...existing,
+            enabled: params.enabled,
+          },
+        },
+      },
+    },
+  };
+}
+
+function deleteAccountFromConfigSection(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : undefined;
+  if (!base) {
+    return cfg;
+  }
+  const accounts = base.accounts && typeof base.accounts === "object" ? { ...base.accounts } : {};
+  if (accountKey !== DEFAULT_ACCOUNT_ID) {
+    delete accounts[accountKey];
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          accounts: Object.keys(accounts).length ? accounts : undefined,
+        },
+      },
+    };
+  }
+  if (Object.keys(accounts).length > 0) {
+    delete accounts[accountKey];
+    const nextBase = { ...base };
+    for (const field of params.clearBaseFields || []) {
+      if (field in nextBase) {
+        nextBase[field] = undefined;
+      }
+    }
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...nextBase,
+          accounts: Object.keys(accounts).length ? accounts : undefined,
+        },
+      },
+    };
+  }
+  const nextChannels = { ...channels };
+  delete nextChannels[params.sectionKey];
+  const nextCfg = { ...cfg };
+  if (Object.keys(nextChannels).length > 0) {
+    nextCfg.channels = nextChannels;
+  } else {
+    delete nextCfg.channels;
+  }
+  return nextCfg;
+}
+
+function clearAccountEntryFields(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const baseAccounts =
+    params.accounts && typeof params.accounts === "object" ? { ...params.accounts } : undefined;
+  if (!baseAccounts || !(accountKey in baseAccounts)) {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const entry = baseAccounts[accountKey];
+  if (!entry || typeof entry !== "object") {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const nextEntry = { ...entry };
+  const fields = Array.isArray(params.fields) ? params.fields : [];
+  if (!fields.some((field) => field in nextEntry)) {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const isValueSet =
+    typeof params.isValueSet === "function"
+      ? params.isValueSet
+      : (value) => (typeof value === "string" ? value.trim().length > 0 : Boolean(value));
+  let cleared = Boolean(params.markClearedOnFieldPresence);
+  for (const field of fields) {
+    if (!(field in nextEntry)) {
+      continue;
+    }
+    if (isValueSet(nextEntry[field])) {
+      cleared = true;
+    }
+    delete nextEntry[field];
+  }
+  if (Object.keys(nextEntry).length === 0) {
+    delete baseAccounts[accountKey];
+  } else {
+    baseAccounts[accountKey] = nextEntry;
+  }
+  return {
+    nextAccounts: Object.keys(baseAccounts).length > 0 ? baseAccounts : undefined,
+    changed: true,
+    cleared,
+  };
+}
+
+function createChannelPluginBase(params = {}) {
+  return {
+    id: params.id,
+    meta: {
+      ...(getChatChannelMeta(params.id) || {}),
+      ...(params.meta || {}),
+    },
+    ...(params.setupWizard ? { setupWizard: params.setupWizard } : {}),
+    ...(params.capabilities ? { capabilities: params.capabilities } : {}),
+    ...(params.commands ? { commands: params.commands } : {}),
+    ...(params.doctor ? { doctor: params.doctor } : {}),
+    ...(params.agentPrompt ? { agentPrompt: params.agentPrompt } : {}),
+    ...(params.streaming ? { streaming: params.streaming } : {}),
+    ...(params.reload ? { reload: params.reload } : {}),
+    ...(params.gatewayMethods ? { gatewayMethods: params.gatewayMethods } : {}),
+    ...(params.configSchema ? { configSchema: params.configSchema } : {}),
+    ...(params.config ? { config: params.config } : {}),
+    ...(params.security ? { security: params.security } : {}),
+    ...(params.groups ? { groups: params.groups } : {}),
+    setup: params.setup,
+  };
+}
+
+function createChatChannelPlugin(params = {}) {
+  const base = params.base || {};
+  return {
+    ...base,
+    conversationBindings: {
+      supportsCurrentConversationBinding: true,
+      ...(base.conversationBindings || {}),
+    },
+    ...(params.security ? { security: params.security } : {}),
+    ...(params.pairing ? { pairing: params.pairing } : {}),
+    ...(params.threading ? { threading: params.threading } : {}),
+    ...(params.outbound ? { outbound: params.outbound } : {}),
+  };
+}
+
+const channelPluginCommonRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  PAIRING_APPROVED_MESSAGE,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  clearAccountEntryFields,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  formatPairingApproveHint,
+  getChatChannelMeta,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  setAccountEnabledInConfigSection,
+};
+
+const coreRuntime = {
+  ...channelPluginCommonRuntime,
+  buildPluginConfigSchema,
+  createChannelPluginBase,
+  createChatChannelPlugin,
+  emptyChannelConfigSchema,
+  emptyPluginConfigSchema,
+  normalizeOptionalAccountId,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -34744,6 +35166,8 @@ const genericSdk = new Proxy(
     SILENT_REPLY_TOKEN,
     ToolPolicySchema,
     CODING_TOOL_TOKENS,
+    ...channelPluginCommonRuntime,
+    ...coreRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
     ...providerSelectionRuntime,
@@ -35681,6 +36105,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/talk-config-runtime"
   ) {
     return talkConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-plugin-common" ||
+    request === "@openclaw/plugin-sdk/channel-plugin-common"
+  ) {
+    return channelPluginCommonRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/core" ||
+    request === "@openclaw/plugin-sdk/core"
+  ) {
+    return coreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/routing" ||
