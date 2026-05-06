@@ -31,7 +31,8 @@ repo-wide percentage.
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
-verified in `147b0978` and counted with the SDK helper/runtime set above.
+verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
+verified in `884c9afb`; both are counted with the SDK helper/runtime set above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -119,7 +120,11 @@ CLI/runtime/theme/progress/home-path helper behavior is checkpointed in
 `src/plugin-sdk/memory-core-host-engine-qmd.ts`,
 `packages/memory-host-sdk/src/engine-qmd.ts`, and adjacent QMD
 parser/scope/process/session-file/query helpers is checkpointed in
-`147b0978`.
+`147b0978`; `memory-core-host-engine-storage` from
+`src/plugin-sdk/memory-core-host-engine-storage.ts`,
+`packages/memory-host-sdk/src/engine-storage.ts`, and adjacent internal,
+read-file, schema, sqlite, sqlite-vec, fs-utils, backend-config, and
+multimodal helper behavior is checkpointed in `884c9afb`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
