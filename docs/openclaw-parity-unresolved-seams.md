@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~78.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~78.7% overall, with a reasonable
   band of ~76-81%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -64,8 +64,8 @@ Current percentage rollup:
   entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
   provider-auth-login, provider-auth facade, provider web-search contract,
   provider web facade, device-bootstrap, runtime-store, runtime, and
-  directory-runtime, directory-config-runtime, thread-bindings-runtime, and
-  conversation-runtime helper slices.
+  directory-runtime, directory-config-runtime, thread-bindings-runtime,
+  conversation-runtime, and outbound-runtime helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7448,6 +7448,20 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   conversation-runtime pytest, adjacent helper proof, adjacent imported-plugin/
   runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
   `7c5271ba`.
+- Closed the imported OpenClaw plugin SDK outbound-runtime seam from
+  `src/plugin-sdk/outbound-runtime.ts`,
+  `src/channels/plugins/runtime-forwarders.ts`,
+  `src/infra/outbound/send-deps.ts`, `src/infra/outbound/identity.ts`,
+  `src/infra/outbound/reply-policy.ts`, `src/infra/outbound/sanitize-text.ts`,
+  `src/infra/outbound/session-context.ts`, `src/infra/outbound/payloads.ts`,
+  and `src/infra/outbound/deliver.ts`: native runtime entries can create
+  fakeable outbound delegates, resolve dynamic and legacy channel send
+  dependencies, normalize outbound identity/session context, sanitize
+  plain-text output, plan/project outbound payloads, and deliver through a
+  native fakeable dependency entry point. Repo-wide parity is now estimated at
+  ~78.7%. Verified with focused outbound-runtime pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `a0df1bba`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7456,8 +7470,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
   facade/provider-web-search-contract/provider-web facade/device-bootstrap
   runtime-store/runtime/directory-runtime/directory-config-runtime/
-  thread-bindings-runtime/conversation-runtime path, starting with the next
-  source-backed SDK helper subpath.
+  thread-bindings-runtime/conversation-runtime/outbound-runtime path, starting
+  with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
