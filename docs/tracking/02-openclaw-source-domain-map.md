@@ -33,8 +33,9 @@ repo-wide percentage.
 Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
 verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
-is verified in `fa5ad046`. All are counted with the SDK helper/runtime set
-above.
+is verified in `fa5ad046`; `@openclaw/memory-host-sdk/runtime` aggregate
+coverage is verified in `ebd215d5`. All are counted with the SDK helper/runtime
+set above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -130,7 +131,10 @@ multimodal helper behavior is checkpointed in `884c9afb`;
 `@openclaw/memory-host-sdk/engine` from
 `packages/memory-host-sdk/src/engine.ts`,
 `src/memory-host-sdk/engine.ts`, and package export behavior is checkpointed in
-`fa5ad046`.
+`fa5ad046`; `@openclaw/memory-host-sdk/runtime` from
+`packages/memory-host-sdk/src/runtime.ts`,
+`src/memory-host-sdk/runtime.ts`, and package export behavior is checkpointed
+in `ebd215d5`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
