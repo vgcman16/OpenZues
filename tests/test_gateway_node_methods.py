@@ -28282,6 +28282,339 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_files_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-runtime-files-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-runtime-files.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const runtimeFiles = require("openclaw/plugin-sdk/memory-core-host-runtime-files");
+const scopedRuntimeFiles = require("@openclaw/plugin-sdk/memory-core-host-runtime-files");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+function rel(value) {{
+  const relative = path.relative(workspaceDir, value).replace(/\\\\/g, "/");
+  return relative || ".";
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_runtime_files",
+      description: "Use OpenClaw memory-core-host-runtime-files SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        fs.mkdirSync(path.join(workspaceDir, "memory", "topics"), {{ recursive: true }});
+        fs.mkdirSync(path.join(workspaceDir, "extra"), {{ recursive: true }});
+        fs.mkdirSync(path.join(workspaceDir, "agent-extra"), {{ recursive: true }});
+        fs.mkdirSync(path.join(workspaceDir, "docs"), {{ recursive: true }});
+        fs.mkdirSync(
+          path.join(workspaceDir, ".openclaw-repair", "root-memory", "2026-05-06"),
+          {{ recursive: true }}
+        );
+        fs.writeFileSync(path.join(workspaceDir, "MEMORY.md"), "# Root", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "memory.md"), "# Legacy", "utf8");
+        fs.writeFileSync(
+          path.join(workspaceDir, "memory", "topics", "api.md"),
+          "line1\\nline2\\nline3\\nline4",
+          "utf8"
+        );
+        fs.writeFileSync(path.join(workspaceDir, "memory", "ignore.txt"), "ignore", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "extra", "note.md"), "# Extra\\nsecond", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "agent-extra", "agent.md"), "# Agent", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "docs", "guide.md"), "# Guide", "utf8");
+        fs.writeFileSync(
+          path.join(
+            workspaceDir,
+            ".openclaw-repair",
+            "root-memory",
+            "2026-05-06",
+            "memory.md"
+          ),
+          "# Archived",
+          "utf8"
+        );
+
+        const normalizedExtra = runtimeFiles
+          .normalizeExtraMemoryPaths(workspaceDir, [
+            " extra ",
+            "./extra",
+            path.join(workspaceDir, "extra"),
+            ""
+          ])
+          .map(rel);
+        const files = await runtimeFiles.listMemoryFiles(workspaceDir, [
+          "extra",
+          path.join(workspaceDir, "MEMORY.md"),
+          path.join(workspaceDir, ".openclaw-repair", "root-memory")
+        ]);
+        const relFiles = files.map(rel).sort();
+        const cfg = {{
+          agents: {{
+            defaults: {{
+              workspace: workspaceDir,
+              memorySearch: {{ extraPaths: ["extra"] }}
+            }},
+            list: [
+              {{
+                id: "My Agent",
+                workspace: workspaceDir,
+                memorySearch: {{ extraPaths: ["agent-extra"] }},
+                contextLimits: {{
+                  memoryGetDefaultLines: 2,
+                  memoryGetMaxChars: 200
+                }}
+              }}
+            ]
+          }},
+          memory: {{
+            backend: "qmd",
+            citations: "on",
+            qmd: {{
+              command: "\\"qmd custom\\" --flag",
+              includeDefaultMemory: true,
+              paths: [{{ path: "docs", name: "Workspace Docs", pattern: "**/*.md" }}],
+              searchMode: "query",
+              searchTool: " hybrid_search ",
+              sessions: {{ enabled: true, exportDir: "sessions", retentionDays: 30.7 }},
+              update: {{
+                interval: "10m",
+                debounceMs: 2000.7,
+                onBoot: false,
+                startup: "idle",
+                startupDelayMs: 1234.8,
+                waitForBootSync: true,
+                embedInterval: "2h",
+                commandTimeoutMs: 10000.9,
+                updateTimeoutMs: 20000.9,
+                embedTimeoutMs: 30000.9
+              }},
+              limits: {{
+                maxResults: 7.7,
+                maxSnippetChars: 111.9,
+                maxInjectedChars: 222.9,
+                timeoutMs: 333.9
+              }},
+              mcporter: {{
+                enabled: true,
+                serverName: " memory-qmd ",
+                startDaemon: false
+              }},
+              scope: {{ default: "allow" }}
+            }}
+          }}
+        }};
+        const read = await runtimeFiles.readAgentMemoryFile({{
+          cfg,
+          agentId: "my-agent",
+          relPath: "memory/topics/api.md",
+          from: 2
+        }});
+        const extraRead = await runtimeFiles.readAgentMemoryFile({{
+          cfg,
+          agentId: "my-agent",
+          relPath: "extra/note.md"
+        }});
+        const backend = runtimeFiles.resolveMemoryBackendConfig({{ cfg, agentId: "my-agent" }});
+        return {{
+          keys: Object.keys(runtimeFiles).sort(),
+          scopedType: typeof scopedRuntimeFiles.listMemoryFiles,
+          normalizedExtra,
+          relFiles,
+          read,
+          extraRead,
+          backend: {{
+            backend: backend.backend,
+            citations: backend.citations,
+            command: backend.qmd && backend.qmd.command,
+            searchMode: backend.qmd && backend.qmd.searchMode,
+            searchTool: backend.qmd && backend.qmd.searchTool,
+            collectionNames: backend.qmd && backend.qmd.collections.map((entry) => entry.name),
+            collections: backend.qmd && backend.qmd.collections.map((entry) => ({{
+              name: entry.name,
+              path: rel(entry.path),
+              pattern: entry.pattern,
+              kind: entry.kind
+            }})),
+            sessions: backend.qmd && {{
+              enabled: backend.qmd.sessions.enabled,
+              exportDir: rel(backend.qmd.sessions.exportDir),
+              retentionDays: backend.qmd.sessions.retentionDays
+            }},
+            update: backend.qmd && backend.qmd.update,
+            limits: backend.qmd && backend.qmd.limits,
+            mcporter: backend.qmd && backend.qmd.mcporter,
+            scope: backend.qmd && backend.qmd.scope
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-runtime-files-plugin",
+                    "name": "Memory Runtime Files Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-runtime-files.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.memory_core_host_runtime_files"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_runtime_files"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "listMemoryFiles",
+            "normalizeExtraMemoryPaths",
+            "readAgentMemoryFile",
+            "resolveMemoryBackendConfig",
+        ],
+        "scopedType": "function",
+        "normalizedExtra": ["extra"],
+        "relFiles": [
+            "MEMORY.md",
+            "extra/note.md",
+            "memory/topics/api.md",
+        ],
+        "read": {
+            "text": "line2\nline3\n\n[More content available. Use from=4 to continue.]",
+            "path": "memory/topics/api.md",
+            "from": 2,
+            "lines": 2,
+            "truncated": True,
+            "nextFrom": 4,
+        },
+        "extraRead": {
+            "text": "# Extra\nsecond",
+            "path": "extra/note.md",
+            "from": 1,
+            "lines": 2,
+        },
+        "backend": {
+            "backend": "qmd",
+            "citations": "on",
+            "command": "qmd custom",
+            "searchMode": "query",
+            "searchTool": "hybrid_search",
+            "collectionNames": [
+                "memory-root-my-agent",
+                "memory-dir-my-agent",
+                "workspace-docs-my-agent",
+                "custom-2-my-agent",
+                "custom-3-my-agent",
+            ],
+            "collections": [
+                {
+                    "name": "memory-root-my-agent",
+                    "path": ".",
+                    "pattern": "MEMORY.md",
+                    "kind": "memory",
+                },
+                {
+                    "name": "memory-dir-my-agent",
+                    "path": "memory",
+                    "pattern": "**/*.md",
+                    "kind": "memory",
+                },
+                {
+                    "name": "workspace-docs-my-agent",
+                    "path": "docs",
+                    "pattern": "**/*.md",
+                    "kind": "custom",
+                },
+                {
+                    "name": "custom-2-my-agent",
+                    "path": "extra",
+                    "pattern": "**/*.md",
+                    "kind": "custom",
+                },
+                {
+                    "name": "custom-3-my-agent",
+                    "path": "agent-extra",
+                    "pattern": "**/*.md",
+                    "kind": "custom",
+                },
+            ],
+            "sessions": {
+                "enabled": True,
+                "exportDir": "sessions",
+                "retentionDays": 30,
+            },
+            "update": {
+                "intervalMs": 600000,
+                "debounceMs": 2000,
+                "onBoot": False,
+                "startup": "idle",
+                "startupDelayMs": 1234,
+                "waitForBootSync": True,
+                "embedIntervalMs": 7200000,
+                "commandTimeoutMs": 10000,
+                "updateTimeoutMs": 20000,
+                "embedTimeoutMs": 30000,
+            },
+            "limits": {
+                "maxResults": 7,
+                "maxSnippetChars": 111,
+                "maxInjectedChars": 222,
+                "timeoutMs": 333,
+            },
+            "mcporter": {
+                "enabled": True,
+                "serverName": "memory-qmd",
+                "startDaemon": False,
+            },
+            "scope": {"default": "allow"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:
