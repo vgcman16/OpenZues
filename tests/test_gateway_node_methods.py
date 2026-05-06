@@ -29015,6 +29015,138 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_core_alias_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-core.cjs"
+    runtime_entry.write_text(
+        """
+const core = require("openclaw/plugin-sdk/memory-host-core");
+const scopedCore = require("@openclaw/plugin-sdk/memory-host-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_host_core",
+      description: "Use OpenClaw memory-host-core SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        core.clearMemoryPluginState();
+        core.registerMemoryCorpusSupplement("memory-host-core", {
+          async search({ query }) {
+            return [{ via: "memory-host-core", query }];
+          },
+          async get() {
+            return null;
+          }
+        });
+        const search = await scopedCore
+          .listMemoryCorpusSupplements()[0]
+          .supplement.search({ query: "needle" });
+        const result = {
+          selectedTypes: {
+            parseNonNegativeByteSize: typeof core.parseNonNegativeByteSize,
+            registerMemoryCorpusSupplement:
+              typeof scopedCore.registerMemoryCorpusSupplement,
+            resolveDefaultAgentId: typeof core.resolveDefaultAgentId
+          },
+          defaults: {
+            compactionFloor: core.DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR,
+            silentReply: scopedCore.SILENT_REPLY_TOKEN
+          },
+          bytes: [
+            core.parseNonNegativeByteSize("2kb"),
+            scopedCore.parseNonNegativeByteSize("1.25mb")
+          ],
+          defaultAgent: core.resolveDefaultAgentId({
+            agents: { list: [{ id: "Main Agent", default: true }] }
+          }),
+          parsedSession: scopedCore.parseAgentSessionKey(
+            "AGENT:Research:Hook:Webhook:42"
+          ),
+          stringParam: core.readStringParam({ message_id: "  msg-1  " }, "messageId"),
+          search
+        };
+        core.clearMemoryPluginState();
+        result.afterClear = scopedCore.listMemoryCorpusSupplements();
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-core-plugin",
+                    "name": "Memory Host Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_core"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "parseNonNegativeByteSize": "function",
+            "registerMemoryCorpusSupplement": "function",
+            "resolveDefaultAgentId": "function",
+        },
+        "defaults": {
+            "compactionFloor": 20000,
+            "silentReply": "NO_REPLY",
+        },
+        "bytes": [2048, 1310720],
+        "defaultAgent": "main-agent",
+        "parsedSession": {
+            "agentId": "research",
+            "rest": "hook:webhook:42",
+        },
+        "stringParam": "msg-1",
+        "search": [{"via": "memory-host-core", "query": "needle"}],
+        "afterClear": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:
