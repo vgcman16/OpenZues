@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~88.5% overall, with a reasonable band of ~78-89%.
+- Estimated repo-wide parity: ~88.6% overall, with a reasonable band of ~78-89%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -15146,6 +15146,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`177 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `4833176b`.
+- Imported OpenClaw plugin runtime entries now have the public `acp-runtime`
+  SDK facade from `src/plugin-sdk/acp-runtime.ts`,
+  `src/acp/control-plane/manager.ts`, and `src/acp/runtime/session-meta.ts`:
+  scoped and unscoped imports expose the ACP session-manager singleton,
+  test-helper proxy surface, ACP session-store entry reads, and the shared ACP
+  backend/error/reply-hook exports. This closes `OZ-PLUGIN-001YS`; repo-wide
+  parity is now estimated at ~88.6%. Remaining plugin SDK breadth stays on the
+  broader unresolved helper/runtime queue.
+- Verified the ACP runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_acp_runtime_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "acp_runtime_helpers or acp_runtime_backend or acpx"`
+  (`3 passed, 987 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`178 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `44166f55`.
 
 ## References
 
