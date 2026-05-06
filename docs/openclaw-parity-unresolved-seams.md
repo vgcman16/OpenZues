@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~81.6% overall, with a reasonable
-  band of ~78-83%.
+- Repo-wide OpenClaw parity is estimated at ~84.5% overall, with a reasonable
+  band of ~78-85%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -75,7 +75,18 @@ Current percentage rollup:
   GitHub Copilot token, channel plugin common/core, channel entry contract,
   channel config primitives/schema, runtime-env, channel-config-helpers,
   channel-config-writes, channel-lifecycle, exact channel-core,
-  channel-contract-testing, and channel-targets helper slices.
+  channel-contract-testing, channel-targets, channel-streaming,
+  channel-envelope, channel-mention-gating, channel-runtime-context,
+  channel-activity-runtime, inbound-envelope, channel-secret-basic-runtime, and
+  channel-secret-runtime, secret-file-runtime, secret-ref-runtime, and
+  secret-input-runtime, secret-input-schema, cron-store-runtime, and
+  file-access-runtime, logging-core, native-command-config-runtime, and
+  host-runtime, image-generation-core auth-runtime, model-session-runtime,
+  process-runtime command helper, run-command normalized helper,
+  string-coerce-runtime primitive helper, provider-auth-login runtime alias,
+  approval-auth-runtime helper, Telegram command config helper,
+  param-readers helper, provider-zai-endpoint helper, provider-env-vars
+  helper, and session-visibility helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7811,6 +7822,252 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-targets pytest, adjacent helper proof, adjacent imported-plugin
   runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
   `27bb6438`.
+- Closed the imported OpenClaw plugin SDK channel-streaming seam from
+  `src/plugin-sdk/channel-streaming.ts`: native runtime entries can import
+  streaming config object extraction, chunk-mode resolution, block-streaming
+  enablement/coalescing, preview chunk config, preview tool-progress defaults,
+  native transport flags, and preview stream-mode normalization through
+  scoped, unscoped, and generic SDK aliases. Repo-wide parity is now estimated
+  at ~81.7%. Verified with focused channel-streaming pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `9a9a6858`.
+- Closed the imported OpenClaw plugin SDK channel-envelope seam from
+  `src/plugin-sdk/channel-envelope.ts` and `src/auto-reply/envelope.ts`: native
+  runtime entries can import the exact `formatInboundEnvelope` and
+  `resolveEnvelopeFormatOptions` barrel through scoped and unscoped SDK
+  aliases without falling back to the broad SDK proxy. Repo-wide parity is now
+  estimated at ~81.8%. Verified with focused channel-envelope pytest, adjacent
+  helper proof, adjacent imported-plugin runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `782e2591`.
+- Closed the imported OpenClaw plugin SDK channel-mention-gating seam from
+  `src/plugin-sdk/channel-mention-gating.ts`: native runtime entries can import
+  the exact mention marker, mention regex/text utilities, and mention decision
+  helpers through scoped and unscoped SDK aliases without falling back to the
+  broad SDK proxy. Repo-wide parity is now estimated at ~81.9%. Verified with
+  focused channel-mention-gating pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `22e17bc5`.
+- Closed the imported OpenClaw plugin SDK channel-runtime-context seam from
+  `src/plugin-sdk/channel-runtime-context.ts` and
+  `src/infra/channel-runtime-context.ts`: native runtime entries can import the
+  exact register/get/watch runtime context helpers through scoped and unscoped
+  SDK aliases without falling back to the broad SDK proxy. Repo-wide parity is
+  now estimated at ~82.0%. Verified with focused channel-runtime-context pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `ced07255`.
+- Closed the imported OpenClaw plugin SDK channel-activity-runtime seam from
+  `src/plugin-sdk/channel-activity-runtime.ts` and
+  `src/infra/channel-activity.ts`: native runtime entries can import the exact
+  `recordChannelActivity` helper through scoped and unscoped SDK aliases
+  without falling back to the broad SDK proxy. Repo-wide parity is now estimated
+  at ~82.1%. Verified with focused channel-activity-runtime pytest, adjacent
+  helper proof, adjacent imported-plugin runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `89483357`.
+- Closed the imported OpenClaw plugin SDK inbound-envelope seam from
+  `src/plugin-sdk/inbound-envelope.ts`: native runtime entries can import the
+  exact inbound envelope builder helpers through scoped and unscoped SDK aliases
+  without falling back to the broad SDK proxy. Repo-wide parity is now estimated
+  at ~82.2%. Verified with focused inbound-envelope pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `d5ba314d`.
+- Closed the imported OpenClaw plugin SDK channel-secret-basic-runtime seam from
+  `src/plugin-sdk/channel-secret-basic-runtime.ts`,
+  `src/secrets/channel-secret-basic-runtime.ts`, and
+  `src/secrets/runtime-shared.ts`: native runtime entries can import the exact
+  channel/account surface helpers plus secret assignment/warning collectors
+  through scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~82.3%. Verified with focused channel-secret-basic-runtime pytest, adjacent
+  helper proof, adjacent imported-plugin runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `b2735360`.
+- Closed the imported OpenClaw plugin SDK channel-secret-runtime seam from
+  `src/plugin-sdk/channel-secret-runtime.ts`: native runtime entries can import
+  the exact combined basic-plus-TTS channel secret helper barrel through scoped
+  and unscoped SDK aliases. Repo-wide parity is now estimated at ~82.4%.
+  Verified with focused channel-secret-runtime pytest, adjacent helper proof,
+  adjacent imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `d192b523`.
+- Closed the imported OpenClaw plugin SDK secret-file-runtime seam from
+  `src/plugin-sdk/secret-file-runtime.ts` and `src/infra/secret-file.ts`:
+  native runtime entries can import the exact secret-file constants, sync
+  readers, try-read helper, and async private atomic writer through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~82.5%. Verified
+  with focused secret-file-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `fe13141a`.
+- Closed the imported OpenClaw plugin SDK secret-ref-runtime seam from
+  `src/plugin-sdk/secret-ref-runtime.ts` and `src/config/types.secrets.ts`:
+  native runtime entries can import the exact narrow `coerceSecretRef` helper
+  through scoped and unscoped SDK aliases instead of receiving the full SDK
+  root export. Repo-wide parity is now estimated at ~82.6%. Verified with
+  focused secret-ref-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `8b9f3671`.
+- Closed the imported OpenClaw plugin SDK secret-input-runtime seam from
+  `src/plugin-sdk/secret-input-runtime.ts`, `src/config/types.secrets.ts`, and
+  `src/gateway/resolve-configured-secret-input-string.ts`: native runtime
+  entries can import the exact SecretInput runtime helper barrel with
+  configured env-backed SecretRef resolution, fallback projection, required
+  SecretRef resolution, and scoped/unscoped aliases. Repo-wide parity is now
+  estimated at ~82.7%. Verified with focused secret-input-runtime pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `a3b36775`.
+- Closed the imported OpenClaw plugin SDK secret-input-schema seam from
+  `src/plugin-sdk/secret-input-schema.ts` and `src/plugin-sdk/secret-input.ts`:
+  native runtime entries can import the exact schema builder through scoped and
+  unscoped aliases and use the optional/array schema helpers re-exported from
+  the `secret-input` barrel. Repo-wide parity is now estimated at ~82.8%.
+  Verified with focused secret-input-schema pytest, adjacent helper proof,
+  adjacent imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `7935af8b`.
+- Closed the imported OpenClaw plugin SDK cron-store-runtime seam from
+  `src/plugin-sdk/cron-store-runtime.ts` and `src/cron/store.ts`: native runtime
+  entries can import cron store path resolution, missing-store loading, split
+  config/state persistence, and state merge-on-load helpers through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~82.9%. Verified
+  with focused cron-store-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `ded083a8`.
+- Closed the imported OpenClaw plugin SDK file-access-runtime seam from
+  `src/plugin-sdk/file-access-runtime.ts`, `src/infra/fs-safe.ts`, and
+  `src/infra/local-file-access.ts`: native runtime entries can import safe file
+  URL conversion, basename extraction, root-bounded file writes, and
+  root-bounded reads through scoped and unscoped SDK aliases. Repo-wide parity
+  is now estimated at ~83.0%. Verified with focused file-access-runtime pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `22e4455d`.
+- Closed the imported OpenClaw plugin SDK logging-core seam from
+  `src/plugin-sdk/logging-core.ts`, `src/logging/subsystem.ts`,
+  `src/logging/redact-identifier.ts`, and `src/logging/redact.ts`: native
+  runtime entries can import subsystem logger creation, deterministic
+  identifier redaction, and sensitive text redaction through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~83.1%. Verified
+  with focused logging-core pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `50142470`.
+- Closed the imported OpenClaw plugin SDK native-command-config-runtime seam
+  from `src/plugin-sdk/native-command-config-runtime.ts` and
+  `src/config/commands.ts`: native runtime entries can import native command
+  enablement, native skills enablement, and explicit-disable helpers through
+  scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~83.2%. Verified with focused native-command-config-runtime pytest, adjacent
+  helper proof, adjacent imported-plugin runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `d2898256`.
+- Closed the imported OpenClaw plugin SDK host-runtime seam from
+  `src/plugin-sdk/host-runtime.ts`, `src/infra/net/hostname.ts`, and
+  `src/infra/scp-host.ts`: native runtime entries can import hostname
+  normalization and SCP remote host token sanitization through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~83.3%. Verified
+  with focused host-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `355ebc11`.
+- Closed the imported OpenClaw plugin SDK image-generation-core auth-runtime
+  seam from `src/plugin-sdk/image-generation-core.auth.runtime.ts`: native
+  runtime entries can import the image-generation provider auth resolver
+  through scoped and unscoped SDK aliases without falling through to the
+  generic SDK object. Repo-wide parity is now estimated at ~83.4%. Verified
+  with focused image-generation-core auth-runtime pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `532fd8de`.
+- Closed the imported OpenClaw plugin SDK model-session-runtime seam from
+  `src/plugin-sdk/model-session-runtime.ts`, `src/config/agent-limits.ts`,
+  `src/channels/model-overrides.ts`, and `src/sessions/model-overrides.ts`:
+  native runtime entries can import agent concurrency default/clamping,
+  channel model override resolution, and session-entry model override mutation
+  through scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~83.5%. Verified with focused model-session-runtime pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `6f5096bc`.
+- Closed the first imported OpenClaw plugin SDK process-runtime command helper
+  seam from `src/plugin-sdk/process-runtime.ts`, `src/process/exec.ts`, and
+  `src/process/linux-oom-score.ts`: native runtime entries can import real
+  `runCommandWithTimeout`, `runExec`, command env/exit helpers, and child OOM
+  wrapper helpers through scoped and unscoped SDK aliases. Repo-wide parity is
+  now estimated at ~83.6%. Verified with focused process-runtime pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `b5f485b3`. Remaining
+  process-runtime depth is Windows npm/.cmd discovery, console encoding,
+  process-tree cleanup, and no-output edge-case breadth.
+- Closed the imported OpenClaw plugin SDK run-command helper seam from
+  `src/plugin-sdk/run-command.ts`: native runtime entries can require
+  `openclaw/plugin-sdk/run-command` and
+  `@openclaw/plugin-sdk/run-command`, call
+  `runPluginCommandWithTimeout`, and receive normalized
+  `{code, stdout, stderr}` results for success, nonzero exit, empty argv, and
+  timeout cases. Repo-wide parity is now estimated at ~83.7%. Verified with
+  focused run-command pytest, adjacent helper proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `96c11a19`.
+- Closed the imported OpenClaw plugin SDK string-coerce-runtime helper seam from
+  `src/plugin-sdk/string-coerce-runtime.ts`, `src/shared/string-coerce.ts`, and
+  `src/utils.ts`: native runtime entries can require scoped/unscoped string
+  coercion helpers and receive exact primitive normalization, stringified-id,
+  lowercase, read-string, non-empty, and record detection behavior. Repo-wide
+  parity is now estimated at ~83.8%. Verified with focused
+  string-coerce-runtime pytest, adjacent helper proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `70df7410`.
+- Closed the imported OpenClaw plugin SDK provider-auth-login runtime alias seam
+  from `src/plugin-sdk/provider-auth-login.runtime.ts`: native runtime entries
+  can require scoped/unscoped `.runtime` auth-login facades, receive the same
+  three login exports as `provider-auth-login`, and preserve the precise native
+  unavailable error for interactive login flows. Repo-wide parity is now
+  estimated at ~83.9%. Verified with focused provider-auth-login pytest,
+  adjacent provider-auth proof, adjacent imported-plugin proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `9c1a6b73`.
+- Closed the imported OpenClaw plugin SDK approval-auth-runtime helper seam from
+  `src/plugin-sdk/approval-auth-runtime.ts`, `approval-approvers.ts`, and
+  `approval-auth-helpers.ts`: native runtime entries can require scoped/
+  unscoped approval auth helpers, resolve explicit/inferred approvers with
+  OpenClaw dedupe ordering, authorize matching approvers, deny non-matching
+  approvers with upstream-shaped copy, and allow empty approver sets as the
+  same-chat fallback. Repo-wide parity is now estimated at ~84.0%. Verified
+  with focused approval-auth-runtime pytest, adjacent approval/provider-auth
+  proof, adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `6cda257f`.
+- Closed the imported OpenClaw plugin SDK Telegram command config helper seam
+  from `src/plugin-sdk/telegram-command-config.ts` and
+  `src/shared/custom-command-config.ts`: native runtime entries can require
+  scoped/unscoped Telegram command config helpers, share the Telegram command
+  name regex object, normalize slash command names/descriptions, and resolve
+  custom command validation issues for duplicate, missing, reserved, and
+  duplicate-disabled cases. Repo-wide parity is now estimated at ~84.1%.
+  Verified with focused Telegram command config pytest, adjacent command-config
+  proof, adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `bd248520`.
+- Closed the imported OpenClaw plugin SDK param-readers helper seam from
+  `src/plugin-sdk/param-readers.ts` and `src/agents/tools/common.ts`: native
+  runtime entries can require scoped/unscoped param readers and receive the four
+  OpenClaw helper exports with snake_case lookup, string/string-or-number,
+  number parsing, string-array filtering, and `ToolInputError` required-field
+  behavior. Repo-wide parity is now estimated at ~84.2%. Verified with focused
+  param-readers pytest, adjacent param/tool proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `e7166e23`.
+- Closed the imported OpenClaw plugin SDK provider-zai-endpoint helper seam
+  from `src/plugin-sdk/provider-zai-endpoint.ts` and
+  `src/plugins/provider-zai-endpoint.ts`: native runtime entries can require
+  scoped/unscoped Z.AI endpoint helpers, probe ordered global/cn/coding
+  candidates through fakeable fetch functions, return verified endpoint
+  metadata, and fall back from coding GLM-5.1 to GLM-4.7 when the first coding
+  probe fails. Repo-wide parity is now estimated at ~84.3%. Verified with
+  focused provider-zai-endpoint pytest, adjacent provider proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `b3d88717`.
+- Closed the imported OpenClaw plugin SDK provider-env-vars helper seam from
+  `src/plugin-sdk/provider-env-vars.ts` and `src/secrets/provider-env-vars.ts`:
+  native runtime entries can require scoped/unscoped provider env-var helpers,
+  resolve core plus bundled provider auth candidates, expose OpenClaw-style
+  MiniMax setup env overrides, protect prototype-chain lookups, and scrub env
+  maps case-insensitively while preserving unrelated bridge keys. Repo-wide
+  parity is now estimated at ~84.4%. Verified with focused provider-env-vars
+  pytest, adjacent provider proof, adjacent imported-plugin proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `10d34034`.
+- Closed the imported OpenClaw plugin SDK session-visibility helper seam from
+  `src/plugin-sdk/session-visibility.ts`: native runtime entries can require
+  scoped/unscoped session visibility helpers, resolve defaults and sandbox
+  clamps, enforce same-session/tree/cross-agent policy messages, apply
+  `tools.agentToAgent.allow` wildcard checks, and keep spawned-session listing
+  behind a fakeable gateway hook. Repo-wide parity is now estimated at ~84.5%.
+  Verified with focused session-visibility pytest, adjacent session proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `4e95bfcb`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7821,13 +8078,23 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime-store/runtime/directory-runtime/directory-config-runtime/
   thread-bindings-runtime/conversation-runtime/outbound-runtime/
   conversation-binding-runtime/session-binding-runtime/thread-bindings-session-runtime/
-  session-key-runtime/session-store-runtime/account-id/account-configured-ids/
+  session-key-runtime/session-store-runtime/session-visibility/
+  account-id/account-configured-ids/
   agent-media-payload/agent-config-primitives/acp-binding-resolve-runtime/
   anthropic-cli/anthropic-vertex-auth-presence/anthropic-vertex/xai-model-id/
   channel-pairing-paths/channel-inbound-roots/channel-location/state-paths/
   setup-adapter-runtime/channel-secret-tts-runtime/talk-config-runtime/
   github-copilot-token/channel-plugin-common/core/channel-core/
-  channel-contract-testing/channel-targets/channel-entry-contract/
+  channel-contract-testing/channel-targets/channel-streaming/channel-envelope/
+  channel-mention-gating/channel-runtime-context/channel-activity-runtime/
+  inbound-envelope/channel-secret-basic-runtime/channel-secret-runtime/
+  secret-file-runtime/secret-ref-runtime/secret-input-runtime/secret-input-schema/
+  cron-store-runtime/file-access-runtime/logging-core/
+  native-command-config-runtime/host-runtime/
+  image-generation-core.auth.runtime/model-session-runtime/process-runtime/
+  run-command/string-coerce-runtime/provider-auth-login.runtime/
+  approval-auth-runtime/telegram-command-config/approval-gateway-runtime/
+  param-readers/provider-zai-endpoint/provider-env-vars/channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.

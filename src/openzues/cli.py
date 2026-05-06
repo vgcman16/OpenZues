@@ -18033,8 +18033,10 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const util = require("util");
-const { pathToFileURL } = require("url");
+const { execFile, spawn } = require("child_process");
+const { fileURLToPath, pathToFileURL } = require("url");
 const Module = require("module");
+const execFileAsync = util.promisify(execFile);
 
 const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
@@ -21651,16 +21653,126 @@ async function resolveCopilotApiToken(params) {
   };
 }
 
-const PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+const CORE_PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
   anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
   openai: ["OPENAI_API_KEY"],
   voyage: ["VOYAGE_API_KEY"],
   cerebras: ["CEREBRAS_API_KEY"],
   "anthropic-openai": ["ANTHROPIC_API_KEY"],
   "qwen-dashscope": ["DASHSCOPE_API_KEY"],
+};
+
+const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+  brave: ["BRAVE_API_KEY"],
+  deepgram: ["DEEPGRAM_API_KEY"],
+  fal: ["FAL_KEY", "FAL_API_KEY"],
+  firecrawl: ["FIRECRAWL_API_KEY"],
+  "github-copilot": ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+  groq: ["GROQ_API_KEY"],
+  minimax: ["MINIMAX_CODE_PLAN_KEY", "MINIMAX_CODING_API_KEY", "MINIMAX_API_KEY"],
+  "minimax-portal": ["MINIMAX_OAUTH_TOKEN", "MINIMAX_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  perplexity: ["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
+  tavily: ["TAVILY_API_KEY"],
+  xai: ["XAI_API_KEY"],
+};
+
+const CORE_PROVIDER_SETUP_ENV_VAR_OVERRIDES = {
   minimax: ["MINIMAX_API_KEY"],
   "minimax-cn": ["MINIMAX_API_KEY"],
 };
+
+function uniqueTrimmedStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of Array.isArray(values) ? values : []) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+
+function mergeProviderEnvVarMaps(...maps) {
+  const out = Object.create(null);
+  for (const map of maps) {
+    if (!map || typeof map !== "object") {
+      continue;
+    }
+    for (const [provider, values] of Object.entries(map)) {
+      const providerId = String(provider || "").trim();
+      if (!providerId) {
+        continue;
+      }
+      const existing = Array.isArray(out[providerId]) ? out[providerId] : [];
+      const merged = uniqueTrimmedStrings([...existing, ...(Array.isArray(values) ? values : [])]);
+      if (merged.length > 0) {
+        out[providerId] = merged;
+      }
+    }
+  }
+  return out;
+}
+
+function resolveProviderAuthEnvVarCandidates() {
+  return mergeProviderEnvVarMaps(
+    BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES,
+    CORE_PROVIDER_AUTH_ENV_VAR_CANDIDATES,
+  );
+}
+
+function resolveProviderEnvVarMap() {
+  return {
+    ...resolveProviderAuthEnvVarCandidates(),
+    ...CORE_PROVIDER_SETUP_ENV_VAR_OVERRIDES,
+  };
+}
+
+const PROVIDER_AUTH_ENV_VAR_CANDIDATES = resolveProviderAuthEnvVarCandidates();
+
+function getProviderEnvVars(providerId) {
+  const providerKey = typeof providerId === "string" ? providerId.trim() : "";
+  if (!providerKey || providerKey === "__proto__" || providerKey === "constructor") {
+    return [];
+  }
+  const map = resolveProviderEnvVarMap();
+  const values = Object.prototype.hasOwnProperty.call(map, providerKey)
+    ? map[providerKey]
+    : undefined;
+  return Array.isArray(values) ? [...values] : [];
+}
+
+function listKnownProviderAuthEnvVarNames() {
+  return Array.from(
+    new Set([
+      ...Object.values(resolveProviderAuthEnvVarCandidates()).flat(),
+      ...Object.values(resolveProviderEnvVarMap()).flat(),
+    ]),
+  );
+}
+
+function omitEnvKeysCaseInsensitive(baseEnv, keys) {
+  const env = { ...(baseEnv || {}) };
+  const denied = new Set();
+  for (const key of Array.from(keys || [])) {
+    const normalized = String(key || "").trim();
+    if (normalized) {
+      denied.add(normalized.toUpperCase());
+    }
+  }
+  if (denied.size === 0) {
+    return env;
+  }
+  for (const actualKey of Object.keys(env)) {
+    if (denied.has(actualKey.toUpperCase())) {
+      delete env[actualKey];
+    }
+  }
+  return env;
+}
 
 function resolveEnvApiKey(provider, env = process.env, options = {}) {
   const normalized = normalizeOptionalLowercaseString(provider);
@@ -24191,9 +24303,494 @@ const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
 const ENV_SECRET_REF_ID_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const LEGACY_SECRETREF_ENV_MARKER_PREFIX = "secretref-env:";
 const ENV_SECRET_TEMPLATE_RE = /^\$\{([A-Z][A-Z0-9_]{0,127})\}$/;
+const SECRET_PROVIDER_ALIAS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const FILE_SECRET_REF_SEGMENT_PATTERN = /^(?:[^~]|~0|~1)*$/;
+const EXEC_SECRET_REF_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
 
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isValidFileSecretRefId(value) {
+  if (value === "value") {
+    return true;
+  }
+  if (typeof value !== "string" || !value.startsWith("/")) {
+    return false;
+  }
+  return value
+    .slice(1)
+    .split("/")
+    .every((segment) => FILE_SECRET_REF_SEGMENT_PATTERN.test(segment));
+}
+
+function isValidExecSecretRefId(value) {
+  if (typeof value !== "string" || !EXEC_SECRET_REF_ID_PATTERN.test(value)) {
+    return false;
+  }
+  return value.split("/").every((segment) => segment !== "." && segment !== "..");
+}
+
+function createSchemaResult(ok, data) {
+  if (ok) {
+    return { success: true, data };
+  }
+  return { success: false, error: { issues: [] } };
+}
+
+function validateSecretInputSchemaValue(value) {
+  if (typeof value === "string") {
+    return true;
+  }
+  if (!isRecord(value) || Object.keys(value).length !== 3) {
+    return false;
+  }
+  if (
+    typeof value.provider !== "string" ||
+    !SECRET_PROVIDER_ALIAS_PATTERN.test(value.provider)
+  ) {
+    return false;
+  }
+  if (value.source === "env") {
+    return typeof value.id === "string" && ENV_SECRET_REF_ID_RE.test(value.id);
+  }
+  if (value.source === "file") {
+    return isValidFileSecretRefId(value.id);
+  }
+  if (value.source === "exec") {
+    return isValidExecSecretRefId(value.id);
+  }
+  return false;
+}
+
+function buildSecretInputSchema() {
+  return {
+    safeParse(value) {
+      return createSchemaResult(validateSecretInputSchemaValue(value), value);
+    },
+    optional() {
+      const base = this;
+      return {
+        safeParse(value) {
+          if (value === undefined) {
+            return createSchemaResult(true, value);
+          }
+          return base.safeParse(value);
+        },
+      };
+    },
+  };
+}
+
+function buildOptionalSecretInputSchema() {
+  return buildSecretInputSchema().optional();
+}
+
+function buildSecretInputArraySchema() {
+  return {
+    safeParse(value) {
+      if (!Array.isArray(value)) {
+        return createSchemaResult(false, value);
+      }
+      const schema = buildSecretInputSchema();
+      return createSchemaResult(
+        value.every((entry) => schema.safeParse(entry).success),
+        value,
+      );
+    },
+  };
+}
+
+const serializedCronStoreCache = new Map();
+
+function resolveCronStorePath(storePath) {
+  if (typeof storePath === "string" && storePath.trim()) {
+    const raw = storePath.trim();
+    if (raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")) {
+      return path.resolve(path.join(os.homedir(), raw.slice(1)));
+    }
+    return path.resolve(raw);
+  }
+  return path.join(os.homedir(), ".openclaw", "cron", "jobs.json");
+}
+
+function resolveCronStatePath(storePath) {
+  return storePath.endsWith(".json")
+    ? storePath.replace(/\.json$/, "-state.json")
+    : `${storePath}-state.json`;
+}
+
+function readCronString(record, key) {
+  const value = record && record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readCronNumber(record, key) {
+  const value = record && record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function cronSchedulePayloadFromRecord(schedule) {
+  const rawKind = (readCronString(schedule, "kind") || "").toLowerCase();
+  const expr = readCronString(schedule, "expr") || readCronString(schedule, "cron");
+  const at = readCronString(schedule, "at");
+  const atMs = readCronNumber(schedule, "atMs");
+  const everyMs = readCronNumber(schedule, "everyMs");
+  const anchorMs = readCronNumber(schedule, "anchorMs");
+  const tz = readCronString(schedule, "tz");
+  const staggerMs = readCronNumber(schedule, "staggerMs");
+  const kind =
+    rawKind === "at" || rawKind === "every" || rawKind === "cron"
+      ? rawKind
+      : at || atMs !== undefined
+        ? "at"
+        : everyMs !== undefined
+          ? "every"
+          : expr
+            ? "cron"
+            : undefined;
+  if (kind === "at") {
+    if (at) {
+      return { kind: "at", at };
+    }
+    return atMs !== undefined ? { kind: "at", at: String(atMs) } : undefined;
+  }
+  if (kind === "every" && everyMs !== undefined) {
+    return { kind: "every", everyMs, ...(anchorMs !== undefined ? { anchorMs } : {}) };
+  }
+  if (kind === "cron" && expr) {
+    return {
+      kind: "cron",
+      expr,
+      ...(tz ? { tz } : {}),
+      ...(staggerMs !== undefined ? { staggerMs } : {}),
+    };
+  }
+  return undefined;
+}
+
+function tryCronScheduleIdentity(job) {
+  const schedule =
+    job && job.schedule && typeof job.schedule === "object" && !Array.isArray(job.schedule)
+      ? cronSchedulePayloadFromRecord(job.schedule)
+      : cronSchedulePayloadFromRecord(job || {});
+  if (!schedule) {
+    return undefined;
+  }
+  return JSON.stringify({
+    version: 1,
+    enabled: typeof job.enabled === "boolean" ? job.enabled : true,
+    schedule,
+  });
+}
+
+function stripRuntimeOnlyCronFields(store) {
+  return {
+    version: store.version,
+    jobs: (Array.isArray(store.jobs) ? store.jobs : []).map((job) => {
+      const { state: _state, updatedAtMs: _updatedAtMs, ...rest } = job || {};
+      return { ...rest, state: {} };
+    }),
+  };
+}
+
+function extractCronStateFile(store) {
+  const jobs = {};
+  for (const job of Array.isArray(store.jobs) ? store.jobs : []) {
+    if (!job || typeof job.id !== "string") {
+      continue;
+    }
+    jobs[job.id] = {
+      updatedAtMs: job.updatedAtMs,
+      scheduleIdentity: tryCronScheduleIdentity(job),
+      state: job.state && typeof job.state === "object" ? job.state : {},
+    };
+  }
+  return { version: 1, jobs };
+}
+
+async function loadCronStateFile(statePath) {
+  try {
+    const raw = await fs.promises.readFile(statePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      parsed.version !== 1 ||
+      !parsed.jobs ||
+      typeof parsed.jobs !== "object" ||
+      Array.isArray(parsed.jobs)
+    ) {
+      return null;
+    }
+    return { version: 1, jobs: parsed.jobs };
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
+}
+
+function cronHasInlineState(jobs) {
+  return jobs.some(
+    (job) =>
+      job &&
+      job.state &&
+      typeof job.state === "object" &&
+      !Array.isArray(job.state) &&
+      Object.keys(job.state).length > 0,
+  );
+}
+
+function backfillCronRuntimeFields(job) {
+  if (!job.state || typeof job.state !== "object") {
+    job.state = {};
+  }
+  if (typeof job.updatedAtMs !== "number") {
+    job.updatedAtMs = typeof job.createdAtMs === "number" ? job.createdAtMs : Date.now();
+  }
+}
+
+function mergeCronStateEntry(job, entry) {
+  job.updatedAtMs =
+    typeof entry.updatedAtMs === "number"
+      ? entry.updatedAtMs
+      : typeof job.updatedAtMs === "number"
+        ? job.updatedAtMs
+        : typeof job.createdAtMs === "number"
+          ? job.createdAtMs
+          : Date.now();
+  job.state = entry.state && typeof entry.state === "object" ? entry.state : {};
+  if (
+    typeof entry.scheduleIdentity === "string" &&
+    entry.scheduleIdentity !== tryCronScheduleIdentity(job)
+  ) {
+    job.state.nextRunAtMs = undefined;
+  }
+}
+
+async function loadCronStore(storePath) {
+  try {
+    const raw = await fs.promises.readFile(storePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const parsedRecord =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    const rawJobs = Array.isArray(parsedRecord.jobs) ? parsedRecord.jobs : [];
+    const store = {
+      version: 1,
+      jobs: rawJobs.filter(Boolean).map((job) => ({ ...job })),
+    };
+    const stateFile = await loadCronStateFile(resolveCronStatePath(storePath));
+    const hasLegacyInlineState = !stateFile && cronHasInlineState(rawJobs);
+    if (stateFile) {
+      for (const job of store.jobs) {
+        const entry = stateFile.jobs[job.id];
+        if (entry) {
+          mergeCronStateEntry(job, entry);
+        } else {
+          backfillCronRuntimeFields(job);
+        }
+      }
+    } else if (!hasLegacyInlineState) {
+      for (const job of store.jobs) {
+        backfillCronRuntimeFields(job);
+      }
+    }
+    for (const job of store.jobs) {
+      if (!job.state || typeof job.state !== "object") {
+        job.state = {};
+      }
+    }
+    serializedCronStoreCache.set(storePath, {
+      configJson: JSON.stringify(stripRuntimeOnlyCronFields(store), null, 2),
+      stateJson: JSON.stringify(extractCronStateFile(store), null, 2),
+      needsSplitMigration: hasLegacyInlineState,
+    });
+    return store;
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      serializedCronStoreCache.delete(storePath);
+      return { version: 1, jobs: [] };
+    }
+    throw err;
+  }
+}
+
+async function writeCronJsonFile(filePath, content) {
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.promises.chmod(dir, 0o700).catch(() => undefined);
+  const tmp = `${filePath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+  await fs.promises.writeFile(tmp, content, { encoding: "utf8", mode: 0o600 });
+  await fs.promises.rename(tmp, filePath).catch(async (err) => {
+    if (err && (err.code === "EPERM" || err.code === "EEXIST")) {
+      await fs.promises.copyFile(tmp, filePath);
+      await fs.promises.unlink(tmp).catch(() => undefined);
+      return;
+    }
+    throw err;
+  });
+  await fs.promises.chmod(filePath, 0o600).catch(() => undefined);
+}
+
+async function saveCronStore(storePath, store, opts) {
+  const normalizedStore = store || { version: 1, jobs: [] };
+  const configJson = JSON.stringify(stripRuntimeOnlyCronFields(normalizedStore), null, 2);
+  const stateJson = JSON.stringify(extractCronStateFile(normalizedStore), null, 2);
+  const statePath = resolveCronStatePath(storePath);
+  const cache = serializedCronStoreCache.get(storePath);
+  if (cache && cache.configJson === configJson && cache.stateJson === stateJson) {
+    return;
+  }
+  await writeCronJsonFile(statePath, stateJson);
+  if (!opts || opts.skipBackup !== true) {
+    await fs.promises.copyFile(storePath, `${storePath}.bak`).catch(() => undefined);
+  }
+  await writeCronJsonFile(storePath, configJson);
+  serializedCronStoreCache.set(storePath, {
+    configJson,
+    stateJson,
+    needsSplitMigration: false,
+  });
+}
+
+class SafeOpenError extends Error {
+  constructor(code, message, options) {
+    super(message, options);
+    this.name = "SafeOpenError";
+    this.code = code;
+  }
+}
+
+function ensureTrailingPathSeparator(value) {
+  return value.endsWith(path.sep) ? value : value + path.sep;
+}
+
+function isPathInsideRoot(rootDir, candidatePath) {
+  const relative = path.relative(rootDir, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function resolveFileAccessPathWithinRoot(params) {
+  let rootReal;
+  try {
+    rootReal = await fs.promises.realpath(params.rootDir);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new SafeOpenError("not-found", "root dir not found");
+    }
+    throw err;
+  }
+  const rootWithSep = ensureTrailingPathSeparator(rootReal);
+  const resolved = path.resolve(rootWithSep, params.relativePath || "");
+  if (!isPathInsideRoot(rootReal, resolved)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  return { rootReal, rootWithSep, resolved };
+}
+
+async function readFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolved.resolved);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new SafeOpenError("not-found", "file not found");
+    }
+    throw err;
+  }
+  if (!stat.isFile()) {
+    throw new SafeOpenError("not-file", "not a file");
+  }
+  if (params && params.maxBytes !== undefined && stat.size > params.maxBytes) {
+    throw new SafeOpenError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
+    );
+  }
+  const realPath = await fs.promises.realpath(resolved.resolved);
+  if (!isPathInsideRoot(resolved.rootReal, realPath)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  return {
+    buffer: await fs.promises.readFile(realPath),
+    realPath,
+    stat,
+  };
+}
+
+async function writeFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  await fs.promises.mkdir(path.dirname(resolved.resolved), { recursive: true });
+  const data = params && params.data !== undefined ? params.data : "";
+  await fs.promises.writeFile(resolved.resolved, data, {
+    encoding: (params && params.encoding) || undefined,
+    mode: 0o600,
+  });
+}
+
+function hasEncodedFileUrlSeparator(pathname) {
+  return /%(?:2f|5c)/i.test(pathname);
+}
+
+function isLocalFileUrlHost(hostname) {
+  const normalized = normalizeOptionalLowercaseString(hostname) || "";
+  return normalized === "" || normalized === "localhost";
+}
+
+function isWindowsNetworkPath(filePath) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const normalized = filePath.replace(/\//g, "\\");
+  return normalized.startsWith("\\\\?\\UNC\\") || normalized.startsWith("\\\\");
+}
+
+function safeFileURLToPath(fileUrl) {
+  let parsed;
+  try {
+    parsed = new URL(fileUrl);
+  } catch {
+    throw new Error(`Invalid file:// URL: ${fileUrl}`);
+  }
+  if (parsed.protocol !== "file:") {
+    throw new Error(`Invalid file:// URL: ${fileUrl}`);
+  }
+  if (!isLocalFileUrlHost(parsed.hostname)) {
+    throw new Error(`file:// URLs with remote hosts are not allowed: ${fileUrl}`);
+  }
+  if (hasEncodedFileUrlSeparator(parsed.pathname)) {
+    throw new Error(`file:// URLs cannot encode path separators: ${fileUrl}`);
+  }
+  const filePath = fileURLToPath(parsed);
+  if (isWindowsNetworkPath(filePath)) {
+    throw new Error(`Local file URL cannot use Windows network paths: ${filePath}`);
+  }
+  return filePath;
+}
+
+function basenameFromMediaSource(source) {
+  if (!source) {
+    return undefined;
+  }
+  if (source.startsWith("file://")) {
+    try {
+      return path.basename(safeFileURLToPath(source)) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (/^https?:\/\//i.test(source)) {
+    try {
+      return path.basename(new URL(source).pathname) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return path.basename(source) || undefined;
 }
 
 function isSecretRef(value) {
@@ -24269,6 +24866,18 @@ function coerceSecretRef(value, defaults) {
   return parseEnvTemplateSecretRef(value, defaults && defaults.env);
 }
 
+function resolveSecretInputRef(params) {
+  const explicitRef = coerceSecretRef(params && params.refValue, params && params.defaults);
+  const inlineRef = explicitRef
+    ? null
+    : coerceSecretRef(params && params.value, params && params.defaults);
+  return {
+    explicitRef,
+    inlineRef,
+    ref: explicitRef || inlineRef,
+  };
+}
+
 function normalizeSecretInputString(value) {
   if (typeof value !== "string") {
     return undefined;
@@ -24305,7 +24914,7 @@ function resolveSecretInputString(params) {
   if (normalized) {
     return { status: "available", value: normalized, ref: null };
   }
-  const ref = coerceSecretRef(params && params.value, params && params.defaults);
+  const ref = resolveSecretInputRef(params || {}).ref;
   if (!ref) {
     return { status: "missing", value: undefined, ref: null };
   }
@@ -24321,6 +24930,179 @@ function resolveSecretInputString(params) {
 function normalizeResolvedSecretInputString(params) {
   const resolved = resolveSecretInputString({ ...(params || {}), mode: "strict" });
   return resolved.status === "available" ? resolved.value : undefined;
+}
+
+function resolveDefaultSecretProviderAliasFromConfig(config, source) {
+  const defaults = config && config.secrets && config.secrets.defaults;
+  const configured =
+    source === "env"
+      ? defaults && defaults.env
+      : source === "file"
+        ? defaults && defaults.file
+        : defaults && defaults.exec;
+  if (typeof configured === "string" && configured.trim()) {
+    return configured.trim();
+  }
+  return DEFAULT_SECRET_PROVIDER_ALIAS;
+}
+
+function resolveConfiguredSecretProvider(ref, config) {
+  const providers = config && config.secrets && config.secrets.providers;
+  const providerConfig = providers && providers[ref.provider];
+  if (!providerConfig) {
+    if (
+      ref.source === "env" &&
+      ref.provider === resolveDefaultSecretProviderAliasFromConfig(config, "env")
+    ) {
+      return { source: "env" };
+    }
+    throw new Error(
+      `Secret provider "${ref.provider}" is not configured ` +
+        `(ref: ${ref.source}:${ref.provider}:${ref.id}).`,
+    );
+  }
+  if (providerConfig.source !== ref.source) {
+    throw new Error(
+      `Secret provider "${ref.provider}" has source "${providerConfig.source}" ` +
+        `but ref requests "${ref.source}".`,
+    );
+  }
+  return providerConfig;
+}
+
+function buildConfiguredSecretInputUnresolvedReason(params) {
+  if (params.style === "generic") {
+    return `${params.path} SecretRef is unresolved (${params.refLabel}).`;
+  }
+  if (params.kind === "non-string") {
+    return `${params.path} SecretRef resolved to a non-string value.`;
+  }
+  if (params.kind === "empty") {
+    return `${params.path} SecretRef resolved to an empty value.`;
+  }
+  return `${params.path} SecretRef is unresolved (${params.refLabel}).`;
+}
+
+async function resolveConfiguredSecretRefValue(ref, params) {
+  const providerConfig = resolveConfiguredSecretProvider(ref, params.config || {});
+  if (ref.source !== "env") {
+    throw new Error(`Secret source "${ref.source}" is unavailable in this runtime context.`);
+  }
+  const allowlist = Array.isArray(providerConfig.allowlist)
+    ? new Set(providerConfig.allowlist)
+    : null;
+  if (allowlist && !allowlist.has(ref.id)) {
+    throw new Error(
+      `Environment variable "${ref.id}" is not allowlisted in ` +
+        `secrets.providers.${ref.provider}.allowlist.`,
+    );
+  }
+  const env = (params && params.env) || {};
+  return env[ref.id];
+}
+
+async function resolveConfiguredSecretInputString(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  if (!ref) {
+    return { value: normalizeSecretInputString(params && params.value) };
+  }
+  const style = (params && params.unresolvedReasonStyle) || "generic";
+  const path = (params && params.path) || "secret";
+  const refLabel = formatSecretRefLabel(ref);
+  try {
+    const resolvedValue = await resolveConfiguredSecretRefValue(ref, {
+      config,
+      env: params && params.env,
+    });
+    if (typeof resolvedValue !== "string") {
+      return {
+        unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+          path,
+          style,
+          kind: "non-string",
+          refLabel,
+        }),
+      };
+    }
+    const trimmed = normalizeSecretInputString(resolvedValue);
+    if (!trimmed) {
+      return {
+        unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+          path,
+          style,
+          kind: "empty",
+          refLabel,
+        }),
+      };
+    }
+    return { value: trimmed };
+  } catch {
+    return {
+      unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+        path,
+        style,
+        kind: "unresolved",
+        refLabel,
+      }),
+    };
+  }
+}
+
+async function resolveConfiguredSecretInputWithFallback(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  const configValue = ref ? undefined : normalizeSecretInputString(params && params.value);
+  if (configValue) {
+    return { value: configValue, source: "config", secretRefConfigured: false };
+  }
+  if (!ref) {
+    const fallback = params && params.readFallback ? params.readFallback() : undefined;
+    if (fallback) {
+      return { value: fallback, source: "fallback", secretRefConfigured: false };
+    }
+    return { secretRefConfigured: false };
+  }
+  const resolved = await resolveConfiguredSecretInputString(params || {});
+  if (resolved.value) {
+    return { value: resolved.value, source: "secretRef", secretRefConfigured: true };
+  }
+  const fallback = params && params.readFallback ? params.readFallback() : undefined;
+  if (fallback) {
+    return { value: fallback, source: "fallback", secretRefConfigured: true };
+  }
+  return {
+    unresolvedRefReason: resolved.unresolvedRefReason,
+    secretRefConfigured: true,
+  };
+}
+
+async function resolveRequiredConfiguredSecretRefInputString(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  if (!ref) {
+    return undefined;
+  }
+  const resolved = await resolveConfiguredSecretInputString(params || {});
+  if (resolved.value) {
+    return resolved.value;
+  }
+  throw new Error(
+    resolved.unresolvedRefReason ||
+      `${(params && params.path) || "secret"} resolved to an empty value.`,
+  );
 }
 
 function pushSecretRuntimeWarning(context, warning) {
@@ -24440,6 +25222,230 @@ function collectNestedChannelTtsAssignments(params) {
       context: params.context,
       active,
       inactiveReason,
+    });
+  }
+}
+
+function hasOwnProperty(record, key) {
+  return Object.prototype.hasOwnProperty.call(record || {}, key);
+}
+
+function isEnabledFlag(value) {
+  if (!isRecord(value)) {
+    return true;
+  }
+  return value.enabled !== false;
+}
+
+function pushAssignment(context, assignment) {
+  if (!context || typeof context !== "object") {
+    return;
+  }
+  if (!Array.isArray(context.assignments)) {
+    context.assignments = [];
+  }
+  context.assignments.push(assignment);
+}
+
+function pushWarning(context, warning) {
+  pushSecretRuntimeWarning(context, warning);
+}
+
+function getChannelRecord(config, channelKey) {
+  const channels = config && config.channels;
+  if (!isRecord(channels)) {
+    return undefined;
+  }
+  const channel = channels[channelKey];
+  return isRecord(channel) ? channel : undefined;
+}
+
+function resolveChannelAccountSurface(channel) {
+  const channelEnabled = isEnabledFlag(channel);
+  const accounts = channel && channel.accounts;
+  if (!isRecord(accounts) || Object.keys(accounts).length === 0) {
+    return {
+      hasExplicitAccounts: false,
+      channelEnabled,
+      accounts: [{ accountId: "default", account: channel, enabled: channelEnabled }],
+    };
+  }
+  const accountEntries = [];
+  for (const [accountId, account] of Object.entries(accounts)) {
+    if (!isRecord(account)) {
+      continue;
+    }
+    accountEntries.push({
+      accountId,
+      account,
+      enabled: channelEnabled && isEnabledFlag(account),
+    });
+  }
+  return {
+    hasExplicitAccounts: true,
+    channelEnabled,
+    accounts: accountEntries,
+  };
+}
+
+function getChannelSurface(config, channelKey) {
+  const channel = getChannelRecord(config, channelKey);
+  if (!channel) {
+    return null;
+  }
+  return {
+    channel,
+    surface: resolveChannelAccountSurface(channel),
+  };
+}
+
+function isBaseFieldActiveForChannelSurface(surface, rootKey) {
+  if (!surface || !surface.channelEnabled) {
+    return false;
+  }
+  if (!surface.hasExplicitAccounts) {
+    return true;
+  }
+  return (surface.accounts || []).some(
+    ({ account, enabled }) => enabled && !hasOwnProperty(account, rootKey),
+  );
+}
+
+function normalizeSecretStringValue(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function hasConfiguredSecretInputValue(value, defaults) {
+  return normalizeSecretStringValue(value).length > 0 || coerceSecretRef(value, defaults) !== null;
+}
+
+function collectSimpleChannelFieldAssignments(params) {
+  collectSecretInputAssignment({
+    value: params.channel[params.field],
+    path: `channels.${params.channelKey}.${params.field}`,
+    expected: "string",
+    defaults: params.defaults,
+    context: params.context,
+    active: isBaseFieldActiveForChannelSurface(params.surface, params.field),
+    inactiveReason: params.topInactiveReason,
+    apply: (value) => {
+      params.channel[params.field] = value;
+    },
+  });
+  if (!params.surface || !params.surface.hasExplicitAccounts) {
+    return;
+  }
+  for (const { accountId, account, enabled } of params.surface.accounts || []) {
+    if (!hasOwnProperty(account, params.field)) {
+      continue;
+    }
+    collectSecretInputAssignment({
+      value: account[params.field],
+      path: `channels.${params.channelKey}.accounts.${accountId}.${params.field}`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: enabled,
+      inactiveReason: params.accountInactiveReason,
+      apply: (value) => {
+        account[params.field] = value;
+      },
+    });
+  }
+}
+
+function isConditionalTopLevelFieldActive(params) {
+  if (!params.surface || !params.surface.channelEnabled) {
+    return false;
+  }
+  if (!params.surface.hasExplicitAccounts) {
+    return params.activeWithoutAccounts;
+  }
+  return (params.surface.accounts || []).some(params.inheritedAccountActive);
+}
+
+function collectConditionalChannelFieldAssignments(params) {
+  collectSecretInputAssignment({
+    value: params.channel[params.field],
+    path: `channels.${params.channelKey}.${params.field}`,
+    expected: "string",
+    defaults: params.defaults,
+    context: params.context,
+    active: isConditionalTopLevelFieldActive({
+      surface: params.surface,
+      activeWithoutAccounts: params.topLevelActiveWithoutAccounts,
+      inheritedAccountActive: params.topLevelInheritedAccountActive,
+    }),
+    inactiveReason: params.topInactiveReason,
+    apply: (value) => {
+      params.channel[params.field] = value;
+    },
+  });
+  if (!params.surface || !params.surface.hasExplicitAccounts) {
+    return;
+  }
+  for (const entry of params.surface.accounts || []) {
+    if (!hasOwnProperty(entry.account, params.field)) {
+      continue;
+    }
+    collectSecretInputAssignment({
+      value: entry.account[params.field],
+      path: `channels.${params.channelKey}.accounts.${entry.accountId}.${params.field}`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: params.accountActive(entry),
+      inactiveReason:
+        typeof params.accountInactiveReason === "function"
+          ? params.accountInactiveReason(entry)
+          : params.accountInactiveReason,
+      apply: (value) => {
+        entry.account[params.field] = value;
+      },
+    });
+  }
+}
+
+function collectNestedChannelFieldAssignments(params) {
+  const topLevelNested = params.channel && params.channel[params.nestedKey];
+  if (isRecord(topLevelNested)) {
+    collectSecretInputAssignment({
+      value: topLevelNested[params.field],
+      path: `channels.${params.channelKey}.${params.nestedKey}.${params.field}`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: params.topLevelActive,
+      inactiveReason: params.topInactiveReason,
+      apply: (value) => {
+        topLevelNested[params.field] = value;
+      },
+    });
+  }
+  if (!params.surface || !params.surface.hasExplicitAccounts) {
+    return;
+  }
+  for (const entry of params.surface.accounts || []) {
+    const nested = entry.account && entry.account[params.nestedKey];
+    if (!isRecord(nested)) {
+      continue;
+    }
+    collectSecretInputAssignment({
+      value: nested[params.field],
+      path:
+        `channels.${params.channelKey}.accounts.${entry.accountId}.` +
+        `${params.nestedKey}.${params.field}`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: params.accountActive(entry),
+      inactiveReason:
+        typeof params.accountInactiveReason === "function"
+          ? params.accountInactiveReason(entry)
+          : params.accountInactiveReason,
+      apply: (value) => {
+        nested[params.field] = value;
+      },
     });
   }
 }
@@ -31228,6 +32234,20 @@ const textRuntime = {
   readStringValue,
 };
 
+const stringCoerceRuntime = {
+  hasNonEmptyString,
+  isRecord,
+  localeLowercasePreservingWhitespace,
+  lowercasePreservingWhitespace,
+  normalizeLowercaseStringOrEmpty,
+  normalizeNullableString,
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+  normalizeOptionalStringifiedId,
+  normalizeStringifiedOptionalString,
+  readStringValue,
+};
+
 const textAutolinkRuntime = {
   isAutoLinkedFileRef,
 };
@@ -31813,6 +32833,40 @@ function createSubsystemLogger(subsystem = "unknown") {
     },
   };
   return logger;
+}
+
+function sha256HexPrefix(value, len = 12) {
+  const safeLen = Number.isFinite(len) ? Math.max(1, Math.floor(len)) : 12;
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, safeLen);
+}
+
+function redactIdentifier(value, opts) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    return "-";
+  }
+  return `sha256:${sha256HexPrefix(trimmed, opts && opts.len !== undefined ? opts.len : 12)}`;
+}
+
+function maskSensitiveToken(token) {
+  if (token.length < 18) {
+    return "***";
+  }
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+function redactSensitiveText(text) {
+  if (!text) {
+    return text;
+  }
+  return String(text)
+    .replace(/(Authorization\s*[:=]\s*Bearer\s+)([A-Za-z0-9._\-+=]+)/gi, (_m, prefix, token) =>
+      `${prefix}${maskSensitiveToken(token)}`,
+    )
+    .replace(/\bBearer\s+([A-Za-z0-9._\-+=]{18,})\b/g, (_m, token) =>
+      `Bearer ${maskSensitiveToken(token)}`,
+    )
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, (_m, token) => maskSensitiveToken(token));
 }
 
 function runtimeForLogger(logger) {
@@ -33475,6 +34529,265 @@ const sessionKeyRuntime = {
   resolveAgentIdFromSessionKey,
 };
 
+let callGatewayForListSpawnedSessionVisibility = async () => ({ sessions: [] });
+
+const sessionVisibilityGatewayTesting = {
+  setCallGatewayForListSpawned(overrides) {
+    callGatewayForListSpawnedSessionVisibility =
+      typeof overrides === "function" ? overrides : async () => ({ sessions: [] });
+  },
+};
+
+async function listSpawnedSessionKeys(params = {}) {
+  const limit =
+    typeof params.limit === "number" && Number.isFinite(params.limit)
+      ? Math.max(1, Math.floor(params.limit))
+      : undefined;
+  try {
+    const list = await callGatewayForListSpawnedSessionVisibility({
+      method: "sessions.list",
+      params: {
+        includeGlobal: false,
+        includeUnknown: false,
+        ...(limit !== undefined ? { limit } : {}),
+        spawnedBy: params.requesterSessionKey,
+      },
+    });
+    const sessions = Array.isArray(list && list.sessions) ? list.sessions : [];
+    return new Set(
+      sessions
+        .map((entry) => normalizeOptionalString(entry && entry.key) || "")
+        .filter(Boolean),
+    );
+  } catch (_error) {
+    return new Set();
+  }
+}
+
+function resolveSessionToolsVisibility(cfg = {}) {
+  const raw =
+    cfg &&
+    cfg.tools &&
+    cfg.tools.sessions &&
+    cfg.tools.sessions.visibility;
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return ["self", "tree", "agent", "all"].includes(value) ? value : "tree";
+}
+
+function resolveSandboxSessionToolsVisibility(cfg = {}) {
+  const value =
+    cfg &&
+    cfg.agents &&
+    cfg.agents.defaults &&
+    cfg.agents.defaults.sandbox &&
+    cfg.agents.defaults.sandbox.sessionToolsVisibility;
+  return value === "all" ? "all" : "spawned";
+}
+
+function resolveEffectiveSessionToolsVisibility(params = {}) {
+  const visibility = resolveSessionToolsVisibility(params.cfg || {});
+  if (!params.sandboxed) {
+    return visibility;
+  }
+  const sandboxClamp = resolveSandboxSessionToolsVisibility(params.cfg || {});
+  if (sandboxClamp === "spawned" && visibility !== "tree") {
+    return "tree";
+  }
+  return visibility;
+}
+
+function createAgentToAgentPolicy(cfg = {}) {
+  const routingA2A = cfg && cfg.tools && cfg.tools.agentToAgent;
+  const enabled = Boolean(routingA2A && routingA2A.enabled === true);
+  const allowPatterns = Array.isArray(routingA2A && routingA2A.allow)
+    ? routingA2A.allow
+    : [];
+  const matchesAllow = (agentId) => {
+    if (allowPatterns.length === 0) {
+      return true;
+    }
+    return allowPatterns.some((pattern) => {
+      const raw = normalizeOptionalString(
+        typeof pattern === "string" ? pattern : String(pattern || ""),
+      );
+      if (!raw) {
+        return false;
+      }
+      if (raw === "*") {
+        return true;
+      }
+      if (!raw.includes("*")) {
+        return raw === agentId;
+      }
+      const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`, "i").test(agentId);
+    });
+  };
+  const isAllowed = (requesterAgentId, targetAgentId) => {
+    if (requesterAgentId === targetAgentId) {
+      return true;
+    }
+    if (!enabled) {
+      return false;
+    }
+    return matchesAllow(requesterAgentId) && matchesAllow(targetAgentId);
+  };
+  return { enabled, matchesAllow, isAllowed };
+}
+
+function sessionVisibilityActionPrefix(action) {
+  if (action === "history") {
+    return "Session history";
+  }
+  if (action === "send") {
+    return "Session send";
+  }
+  if (action === "status") {
+    return "Session status";
+  }
+  return "Session list";
+}
+
+function sessionVisibilityA2aDisabledMessage(action) {
+  if (action === "history") {
+    return (
+      "Agent-to-agent history is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "send") {
+    return (
+      "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent sends."
+    );
+  }
+  if (action === "status") {
+    return (
+      "Agent-to-agent status is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent access."
+    );
+  }
+  return (
+    "Agent-to-agent listing is disabled. Set tools.agentToAgent.enabled=true " +
+    "to allow cross-agent visibility."
+  );
+}
+
+function sessionVisibilityA2aDeniedMessage(action) {
+  if (action === "history") {
+    return "Agent-to-agent history denied by tools.agentToAgent.allow.";
+  }
+  if (action === "send") {
+    return "Agent-to-agent messaging denied by tools.agentToAgent.allow.";
+  }
+  if (action === "status") {
+    return "Agent-to-agent status denied by tools.agentToAgent.allow.";
+  }
+  return "Agent-to-agent listing denied by tools.agentToAgent.allow.";
+}
+
+function sessionVisibilityCrossMessage(action) {
+  if (action === "history") {
+    return (
+      "Session history visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "send") {
+    return (
+      "Session send visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "status") {
+    return (
+      "Session status visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  return (
+    "Session list visibility is restricted. Set tools.sessions.visibility=all " +
+    "to allow cross-agent access."
+  );
+}
+
+function createSessionVisibilityChecker(params = {}) {
+  const requesterAgentId = resolveAgentIdFromSessionKey(params.requesterSessionKey);
+  const spawnedKeys = params.spawnedKeys;
+  return {
+    check(targetSessionKey) {
+      const targetAgentId = resolveAgentIdFromSessionKey(targetSessionKey);
+      const action = params.action || "list";
+      if (targetAgentId !== requesterAgentId) {
+        if (params.visibility !== "all") {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityCrossMessage(action),
+          };
+        }
+        if (!params.a2aPolicy || params.a2aPolicy.enabled !== true) {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityA2aDisabledMessage(action),
+          };
+        }
+        if (!params.a2aPolicy.isAllowed(requesterAgentId, targetAgentId)) {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityA2aDeniedMessage(action),
+          };
+        }
+        return { allowed: true };
+      }
+      if (params.visibility === "self" && targetSessionKey !== params.requesterSessionKey) {
+        return {
+          allowed: false,
+          status: "forbidden",
+          error:
+            `${sessionVisibilityActionPrefix(action)} visibility is restricted to ` +
+            "the current session (tools.sessions.visibility=self).",
+        };
+      }
+      if (
+        params.visibility === "tree" &&
+        targetSessionKey !== params.requesterSessionKey &&
+        !(spawnedKeys && spawnedKeys.has(targetSessionKey))
+      ) {
+        return {
+          allowed: false,
+          status: "forbidden",
+          error:
+            `${sessionVisibilityActionPrefix(action)} visibility is restricted to ` +
+            "the current session tree (tools.sessions.visibility=tree).",
+        };
+      }
+      return { allowed: true };
+    },
+  };
+}
+
+async function createSessionVisibilityGuard(params = {}) {
+  const spawnedKeys =
+    params.visibility === "tree"
+      ? await listSpawnedSessionKeys({ requesterSessionKey: params.requesterSessionKey })
+      : null;
+  return createSessionVisibilityChecker({ ...params, spawnedKeys });
+}
+
+const sessionVisibilityRuntime = {
+  createAgentToAgentPolicy,
+  createSessionVisibilityChecker,
+  createSessionVisibilityGuard,
+  listSpawnedSessionKeys,
+  resolveEffectiveSessionToolsVisibility,
+  resolveSandboxSessionToolsVisibility,
+  resolveSessionToolsVisibility,
+  sessionVisibilityGatewayTesting,
+};
+
 function normalizeStoreSessionKey(sessionKey) {
   return normalizeLowercaseStringOrEmpty(sessionKey);
 }
@@ -34528,6 +35841,10 @@ const providerAuthRuntimeRuntime = {
   waitForLocalOAuthCallback,
 };
 
+const imageGenerationCoreAuthRuntime = {
+  resolveApiKeyForProvider,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -34550,6 +35867,210 @@ const providerAuthLoginRuntime = {
   githubCopilotLoginCommand: providerAuthLoginUnavailable,
   loginChutes: providerAuthLoginUnavailable,
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
+};
+
+const ZAI_CODING_GLOBAL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+const ZAI_CODING_CN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
+const ZAI_GLOBAL_BASE_URL = "https://api.z.ai/api/paas/v4";
+const ZAI_CN_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+
+async function probeZaiChatCompletions(params = {}) {
+  const fetchFn = params.fetchFn || globalThis.fetch;
+  if (typeof fetchFn !== "function") {
+    return { ok: false };
+  }
+  try {
+    const res = await fetchFn(`${params.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${params.apiKey || ""}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: params.modelId,
+        stream: false,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+    if (res && res.ok) {
+      return { ok: true };
+    }
+    return { ok: false, status: res && res.status };
+  } catch (_error) {
+    return { ok: false };
+  }
+}
+
+function getZaiProbeCandidates(endpoint) {
+  const general = [
+    {
+      endpoint: "global",
+      baseUrl: ZAI_GLOBAL_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on global endpoint.",
+    },
+    {
+      endpoint: "cn",
+      baseUrl: ZAI_CN_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on cn endpoint.",
+    },
+  ];
+  const codingGlm51 = [
+    {
+      endpoint: "coding-global",
+      baseUrl: ZAI_CODING_GLOBAL_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on coding-global endpoint.",
+    },
+    {
+      endpoint: "coding-cn",
+      baseUrl: ZAI_CODING_CN_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on coding-cn endpoint.",
+    },
+  ];
+  const codingFallback = [
+    {
+      endpoint: "coding-global",
+      baseUrl: ZAI_CODING_GLOBAL_BASE_URL,
+      modelId: "glm-4.7",
+      note:
+        "Coding Plan endpoint verified, but this key/plan does not expose " +
+        "GLM-5.1 there. Defaulting to GLM-4.7.",
+    },
+    {
+      endpoint: "coding-cn",
+      baseUrl: ZAI_CODING_CN_BASE_URL,
+      modelId: "glm-4.7",
+      note:
+        "Coding Plan CN endpoint verified, but this key/plan does not expose " +
+        "GLM-5.1 there. Defaulting to GLM-4.7.",
+    },
+  ];
+  switch (endpoint) {
+    case "global":
+      return general.filter((candidate) => candidate.endpoint === "global");
+    case "cn":
+      return general.filter((candidate) => candidate.endpoint === "cn");
+    case "coding-global":
+      return [
+        ...codingGlm51.filter((candidate) => candidate.endpoint === "coding-global"),
+        ...codingFallback.filter((candidate) => candidate.endpoint === "coding-global"),
+      ];
+    case "coding-cn":
+      return [
+        ...codingGlm51.filter((candidate) => candidate.endpoint === "coding-cn"),
+        ...codingFallback.filter((candidate) => candidate.endpoint === "coding-cn"),
+      ];
+    default:
+      return [...general, ...codingGlm51, ...codingFallback];
+  }
+}
+
+async function detectZaiEndpoint(params = {}) {
+  if (process.env.VITEST && typeof params.fetchFn !== "function") {
+    return null;
+  }
+  const timeoutMs = params.timeoutMs ?? 5000;
+  for (const candidate of getZaiProbeCandidates(params.endpoint)) {
+    const result = await probeZaiChatCompletions({
+      baseUrl: candidate.baseUrl,
+      apiKey: params.apiKey,
+      modelId: candidate.modelId,
+      timeoutMs,
+      fetchFn: params.fetchFn,
+    });
+    if (result.ok) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+const providerZaiEndpointRuntime = {
+  detectZaiEndpoint,
+};
+
+const providerEnvVarsRuntime = {
+  getProviderEnvVars,
+  listKnownProviderAuthEnvVarNames,
+  omitEnvKeysCaseInsensitive,
+  resolveProviderAuthEnvVarCandidates,
+};
+
+function dedupeDefinedStrings(values = []) {
+  const resolved = new Set();
+  for (const value of values) {
+    if (value) {
+      resolved.add(value);
+    }
+  }
+  return [...resolved];
+}
+
+function resolveApprovalApprovers(params = {}) {
+  const normalizeApprover =
+    typeof params.normalizeApprover === "function"
+      ? params.normalizeApprover
+      : (value) => normalizeOptionalString(value);
+  const explicit = dedupeDefinedStrings(
+    (Array.isArray(params.explicit) ? params.explicit : []).map((entry) =>
+      normalizeApprover(entry),
+    ),
+  );
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const allowFrom = Array.isArray(params.allowFrom) ? params.allowFrom : [];
+  const extraAllowFrom = Array.isArray(params.extraAllowFrom) ? params.extraAllowFrom : [];
+  const defaultTo = normalizeOptionalString(params.defaultTo);
+  const normalizeDefaultTo =
+    typeof params.normalizeDefaultTo === "function"
+      ? params.normalizeDefaultTo
+      : (value) => normalizeApprover(value);
+  return dedupeDefinedStrings([
+    ...allowFrom.map((entry) => normalizeApprover(entry)),
+    ...extraAllowFrom.map((entry) => normalizeApprover(entry)),
+    ...(defaultTo ? [normalizeDefaultTo(defaultTo)] : []),
+  ]);
+}
+
+function createResolvedApproverActionAuthAdapter(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+  const channelLabel = normalizeOptionalString(params.channelLabel) || "this channel";
+  return {
+    authorizeActorAction(actionParams = {}) {
+      const approvers = resolveApprovers({
+        cfg: actionParams.cfg,
+        accountId: actionParams.accountId,
+      });
+      if (!Array.isArray(approvers) || approvers.length === 0) {
+        return { authorized: true };
+      }
+      const normalizedSenderId =
+        actionParams.senderId != null ? normalizeSenderId(actionParams.senderId) : undefined;
+      if (normalizedSenderId && approvers.includes(normalizedSenderId)) {
+        return { authorized: true };
+      }
+      const approvalKind = normalizeOptionalString(actionParams.approvalKind) || "approval";
+      return {
+        authorized: false,
+        reason: `❌ You are not authorized to approve ${approvalKind} requests on ${channelLabel}.`,
+      };
+    },
+  };
+}
+
+const approvalAuthRuntime = {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
 };
 
 const providerAuthFacadeRuntime = {
@@ -34585,8 +36106,7 @@ const providerAuthFacadeRuntime = {
   isNonSecretApiKeyMarker: passthrough,
   isProviderApiKeyConfigured,
   isProviderAuthProfileConfigured,
-  listKnownProviderAuthEnvVarNames: () =>
-    Array.from(new Set(Object.values(PROVIDER_AUTH_ENV_VAR_CANDIDATES).flat())),
+  listKnownProviderAuthEnvVarNames,
   listProfilesForProvider: (store, provider) => {
     const normalized = resolveProviderIdForAuth(provider);
     const profiles = (store && store.profiles) || {};
@@ -34600,12 +36120,7 @@ const providerAuthFacadeRuntime = {
   normalizeOptionalSecretInput: normalizeSecretInput,
   normalizeSecretInput,
   normalizeSecretInputModeInput,
-  omitEnvKeysCaseInsensitive: (env, keys) => {
-    const denied = new Set(Array.from(keys || []).map((key) => String(key).toUpperCase()));
-    return Object.fromEntries(
-      Object.entries(env || {}).filter(([key]) => !denied.has(String(key).toUpperCase())),
-    );
-  },
+  omitEnvKeysCaseInsensitive,
   promptSecretRefForSetup,
   readClaudeCliCredentialsCached: () => undefined,
   removeProviderAuthProfilesWithLock: () => undefined,
@@ -36510,6 +38025,8 @@ function buildThreadAwareOutboundSessionRoute(params = {}) {
 }
 
 const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
+const PRIVATE_SECRET_DIR_MODE = 0o700;
+const PRIVATE_SECRET_FILE_MODE = 0o600;
 
 function loadSecretFileSync(filePath, label, options = {}) {
   const trimmedPath = String(filePath || "").trim();
@@ -36584,6 +38101,83 @@ function tryReadSecretFileSync(filePath, label, options = {}) {
   }
   const result = loadSecretFileSync(filePath, label, options);
   return result.ok ? result.secret : undefined;
+}
+
+function assertPrivateSecretPathWithinRoot(rootDir, targetPath) {
+  const relative = path.relative(rootDir, targetPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Private secret path must stay under ${rootDir}.`);
+  }
+}
+
+async function enforcePrivateSecretPathMode(resolvedPath, expectedMode) {
+  if (process.platform === "win32") {
+    return;
+  }
+  await fs.promises.chmod(resolvedPath, expectedMode);
+}
+
+async function ensurePrivateSecretDirectory(rootDir, targetDir) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedTarget = path.resolve(targetDir);
+  if (resolvedTarget !== resolvedRoot) {
+    assertPrivateSecretPathWithinRoot(resolvedRoot, resolvedTarget);
+  }
+  await fs.promises.mkdir(resolvedTarget, {
+    recursive: true,
+    mode: PRIVATE_SECRET_DIR_MODE,
+  });
+  const stat = await fs.promises.lstat(resolvedTarget);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Private secret directory ${resolvedTarget} must not be a symlink.`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Private secret directory ${resolvedTarget} must be a directory.`);
+  }
+  await enforcePrivateSecretPathMode(resolvedTarget, PRIVATE_SECRET_DIR_MODE);
+}
+
+async function writePrivateSecretFileAtomic(params) {
+  const resolvedRoot = path.resolve(params.rootDir);
+  const resolvedFile = path.resolve(params.filePath);
+  assertPrivateSecretPathWithinRoot(resolvedRoot, resolvedFile);
+  const parentDir = path.dirname(resolvedFile);
+  await ensurePrivateSecretDirectory(resolvedRoot, parentDir);
+  try {
+    const stat = await fs.promises.lstat(resolvedFile);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Private secret file ${resolvedFile} must not be a symlink.`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`Private secret file ${resolvedFile} must be a regular file.`);
+    }
+  } catch (error) {
+    if (!error || typeof error !== "object" || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const tempPath = path.join(
+    parentDir,
+    `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
+  let createdTemp = false;
+  try {
+    const handle = await fs.promises.open(tempPath, "wx", PRIVATE_SECRET_FILE_MODE);
+    createdTemp = true;
+    try {
+      await handle.writeFile(params.content);
+    } finally {
+      await handle.close();
+    }
+    await enforcePrivateSecretPathMode(tempPath, PRIVATE_SECRET_FILE_MODE);
+    await fs.promises.rename(tempPath, resolvedFile);
+    createdTemp = false;
+    await enforcePrivateSecretPathMode(resolvedFile, PRIVATE_SECRET_FILE_MODE);
+  } finally {
+    if (createdTemp) {
+      await fs.promises.unlink(tempPath).catch(() => undefined);
+    }
+  }
 }
 
 function defineChannelPluginEntry(options = {}) {
@@ -37273,6 +38867,168 @@ const channelStreamingRuntime = {
   resolveChannelStreamingPreviewToolProgress,
 };
 
+const channelEnvelopeRuntime = {
+  formatInboundEnvelope,
+  resolveEnvelopeFormatOptions,
+};
+
+const channelMentionGatingRuntime = {
+  CURRENT_MESSAGE_MARKER,
+  buildMentionRegexes,
+  implicitMentionKindWhen,
+  normalizeMentionText,
+  resolveInboundMentionDecision,
+  resolveMentionGating,
+  resolveMentionGatingWithBypass,
+};
+
+function resolveChannelRuntimeContextRegistry(params) {
+  const runtimeContexts =
+    params &&
+    params.channelRuntime &&
+    params.channelRuntime.runtimeContexts;
+  if (
+    runtimeContexts &&
+    typeof runtimeContexts.register === "function" &&
+    typeof runtimeContexts.get === "function" &&
+    typeof runtimeContexts.watch === "function"
+  ) {
+    return runtimeContexts;
+  }
+  return null;
+}
+
+function registerChannelRuntimeContext(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return null;
+  }
+  return runtimeContexts.register({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+    context: params && params.context,
+    abortSignal: params && params.abortSignal,
+  });
+}
+
+function getChannelRuntimeContext(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return undefined;
+  }
+  return runtimeContexts.get({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+  });
+}
+
+function watchChannelRuntimeContexts(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return null;
+  }
+  return runtimeContexts.watch({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+    onEvent: params && params.onEvent,
+  });
+}
+
+const channelRuntimeContextRuntime = {
+  getChannelRuntimeContext,
+  registerChannelRuntimeContext,
+  watchChannelRuntimeContexts,
+};
+
+const channelActivityRecords = new Map();
+
+function channelActivityKey(channel, accountId) {
+  return `${String(channel || "")}:${normalizeOptionalString(accountId) || "default"}`;
+}
+
+function recordChannelActivity(params) {
+  const key = channelActivityKey(params && params.channel, params && params.accountId);
+  const existing = channelActivityRecords.get(key) || { inboundAt: null, outboundAt: null };
+  const at = typeof (params && params.at) === "number" ? params.at : Date.now();
+  if (params && params.direction === "inbound") {
+    existing.inboundAt = at;
+  }
+  if (params && params.direction === "outbound") {
+    existing.outboundAt = at;
+  }
+  channelActivityRecords.set(key, existing);
+}
+
+const channelActivityRuntime = {
+  recordChannelActivity,
+};
+
+function createInboundEnvelopeBuilder(params) {
+  const storePath = params.resolveStorePath(params.sessionStore, {
+    agentId: params.route.agentId,
+  });
+  const envelopeOptions = params.resolveEnvelopeFormatOptions(params.cfg);
+  return (input) => {
+    const previousTimestamp = params.readSessionUpdatedAt({
+      storePath,
+      sessionKey: params.route.sessionKey,
+    });
+    const body = params.formatAgentEnvelope({
+      channel: input.channel,
+      from: input.from,
+      timestamp: input.timestamp,
+      previousTimestamp,
+      envelope: envelopeOptions,
+      body: input.body,
+    });
+    return { storePath, body };
+  };
+}
+
+function resolveInboundRouteEnvelopeBuilder(params) {
+  const route = params.resolveAgentRoute({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  const buildEnvelope = createInboundEnvelopeBuilder({
+    cfg: params.cfg,
+    route,
+    sessionStore: params.sessionStore,
+    resolveStorePath: params.resolveStorePath,
+    readSessionUpdatedAt: params.readSessionUpdatedAt,
+    resolveEnvelopeFormatOptions: params.resolveEnvelopeFormatOptions,
+    formatAgentEnvelope: params.formatAgentEnvelope,
+  });
+  return { route, buildEnvelope };
+}
+
+function resolveInboundRouteEnvelopeBuilderWithRuntime(params) {
+  return resolveInboundRouteEnvelopeBuilder({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+    resolveAgentRoute: (routeParams) =>
+      params.runtime.routing.resolveAgentRoute(routeParams),
+    sessionStore: params.sessionStore,
+    resolveStorePath: params.runtime.session.resolveStorePath,
+    readSessionUpdatedAt: params.runtime.session.readSessionUpdatedAt,
+    resolveEnvelopeFormatOptions: params.runtime.reply.resolveEnvelopeFormatOptions,
+    formatAgentEnvelope: params.runtime.reply.formatAgentEnvelope,
+  });
+}
+
+const inboundEnvelopeRuntime = {
+  createInboundEnvelopeBuilder,
+  resolveInboundRouteEnvelopeBuilder,
+  resolveInboundRouteEnvelopeBuilderWithRuntime,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -37764,6 +39520,139 @@ const nativeCommandRegistryRuntime = {
   listNativeCommandSpecsForConfig,
 };
 
+function resolveNativeCommandSetting(params = {}) {
+  const setting = params.providerSetting === undefined
+    ? params.globalSetting
+    : params.providerSetting;
+  if (setting === true) {
+    return true;
+  }
+  if (setting === false) {
+    return false;
+  }
+  return params.autoDefault === true;
+}
+
+function resolveNativeCommandsEnabled(params = {}) {
+  return resolveNativeCommandSetting(params);
+}
+
+function resolveNativeSkillsEnabled(params = {}) {
+  return resolveNativeCommandSetting(params);
+}
+
+function isNativeCommandsExplicitlyDisabled(params = {}) {
+  if (params.providerSetting === false) {
+    return true;
+  }
+  if (params.providerSetting === undefined) {
+    return params.globalSetting === false;
+  }
+  return false;
+}
+
+const nativeCommandConfigRuntime = {
+  isNativeCommandsExplicitlyDisabled,
+  resolveNativeCommandsEnabled,
+  resolveNativeSkillsEnabled,
+};
+
+const TELEGRAM_COMMAND_NAME_PATTERN = /^[a-z0-9_]{1,32}$/;
+
+function normalizeSlashCommandName(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const withoutSlash = trimmed.startsWith("/") ? trimmed.slice(1) : trimmed;
+  return normalizeLowercaseStringOrEmpty(withoutSlash).replace(/-/g, "_");
+}
+
+function normalizeCommandDescription(value) {
+  return String(value ?? "").trim();
+}
+
+function reservedCommandHas(reservedCommands, command) {
+  if (!reservedCommands) {
+    return false;
+  }
+  if (typeof reservedCommands.has === "function") {
+    return reservedCommands.has(command);
+  }
+  return Array.isArray(reservedCommands) && reservedCommands.includes(command);
+}
+
+function resolveTelegramCustomCommands(params = {}) {
+  const entries = Array.isArray(params.commands) ? params.commands : [];
+  const checkReserved = params.checkReserved !== false;
+  const checkDuplicates = params.checkDuplicates !== false;
+  const seen = new Set();
+  const resolved = [];
+  const issues = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index] || {};
+    const normalized = normalizeSlashCommandName(entry.command || "");
+    if (!normalized) {
+      issues.push({
+        index,
+        field: "command",
+        message: "Telegram custom command is missing a command name.",
+      });
+      continue;
+    }
+    if (!TELEGRAM_COMMAND_NAME_PATTERN.test(normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message:
+          `Telegram custom command "/${normalized}" is invalid ` +
+          "(use a-z, 0-9, underscore; max 32 chars).",
+      });
+      continue;
+    }
+    if (checkReserved && reservedCommandHas(params.reservedCommands, normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message: `Telegram custom command "/${normalized}" conflicts with a native command.`,
+      });
+      continue;
+    }
+    if (checkDuplicates && seen.has(normalized)) {
+      issues.push({
+        index,
+        field: "command",
+        message: `Telegram custom command "/${normalized}" is duplicated.`,
+      });
+      continue;
+    }
+    const description = normalizeCommandDescription(entry.description || "");
+    if (!description) {
+      issues.push({
+        index,
+        field: "description",
+        message: `Telegram custom command "/${normalized}" is missing a description.`,
+      });
+      continue;
+    }
+    if (checkDuplicates) {
+      seen.add(normalized);
+    }
+    resolved.push({ command: normalized, description });
+  }
+  return { commands: resolved, issues };
+}
+
+const telegramCommandConfigRuntime = {
+  TELEGRAM_COMMAND_NAME_PATTERN,
+  getTelegramCommandNamePattern() {
+    return TELEGRAM_COMMAND_NAME_PATTERN;
+  },
+  normalizeTelegramCommandDescription: normalizeCommandDescription,
+  normalizeTelegramCommandName: normalizeSlashCommandName,
+  resolveTelegramCustomCommands,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -37784,6 +39673,618 @@ const commandAuthRuntime = {
   shouldComputeCommandAuthorized,
   ...commandDetectionRuntime,
   ...commandPrimitivesRuntime,
+};
+
+const loggingCoreRuntime = {
+  createSubsystemLogger,
+  redactIdentifier,
+  redactSensitiveText,
+};
+
+const SCP_REMOTE_HOST_TOKEN = /^[A-Za-z0-9._-]+$/;
+const SCP_REMOTE_HOST_BRACKETED_IPV6 = /^\[[0-9A-Fa-f:.%]+\]$/;
+const SCP_REMOTE_HOST_WHITESPACE = /\s/;
+
+function hasScpRemoteHostControlOrWhitespace(value) {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f || SCP_REMOTE_HOST_WHITESPACE.test(char)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeHostRuntimeHostname(hostname) {
+  const normalized = normalizeLowercaseStringOrEmpty(hostname).replace(/\.$/, "");
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function normalizeScpRemoteHost(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (hasScpRemoteHostControlOrWhitespace(trimmed)) {
+    return undefined;
+  }
+  if (trimmed.startsWith("-") || trimmed.includes("/") || trimmed.includes("\\")) {
+    return undefined;
+  }
+
+  const firstAt = trimmed.indexOf("@");
+  const lastAt = trimmed.lastIndexOf("@");
+  let user;
+  let host = trimmed;
+
+  if (firstAt !== -1) {
+    if (firstAt !== lastAt || firstAt === 0 || firstAt === trimmed.length - 1) {
+      return undefined;
+    }
+    user = trimmed.slice(0, firstAt);
+    host = trimmed.slice(firstAt + 1);
+    if (!SCP_REMOTE_HOST_TOKEN.test(user)) {
+      return undefined;
+    }
+  }
+
+  if (!host || host.startsWith("-") || host.includes("@")) {
+    return undefined;
+  }
+  if (host.includes(":") && !SCP_REMOTE_HOST_BRACKETED_IPV6.test(host)) {
+    return undefined;
+  }
+  if (!SCP_REMOTE_HOST_TOKEN.test(host) && !SCP_REMOTE_HOST_BRACKETED_IPV6.test(host)) {
+    return undefined;
+  }
+
+  return user ? `${user}@${host}` : host;
+}
+
+const hostRuntime = {
+  normalizeHostname: normalizeHostRuntimeHostname,
+  normalizeScpRemoteHost,
+};
+
+function resolveAgentMaxConcurrent(cfg = {}) {
+  const raw = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.maxConcurrent;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(1, Math.floor(raw));
+  }
+  return 4;
+}
+
+function buildGenericParentOverrideCandidates(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return [];
+  }
+  for (const marker of [":channel:", ":group:", ":direct:"]) {
+    const index = normalizeLowercaseStringOrEmpty(raw).indexOf(marker);
+    if (index === -1) {
+      continue;
+    }
+    const conversation = raw.slice(index + marker.length);
+    const parsed = parseThreadSessionSuffix(conversation);
+    return buildChannelKeyCandidates(parsed.threadId ? parsed.baseSessionKey : conversation);
+  }
+  return [];
+}
+
+function buildModelSessionGroupCandidates(groupId) {
+  const raw = normalizeOptionalString(groupId);
+  if (!raw) {
+    return [];
+  }
+  const parentCandidates = [];
+  const topicIndex = normalizeLowercaseStringOrEmpty(raw).indexOf(":topic:");
+  if (topicIndex > 0) {
+    parentCandidates.push(raw.slice(0, topicIndex));
+  }
+  return buildChannelKeyCandidates(raw, ...parentCandidates);
+}
+
+function resolveModelSessionProviderEntries(modelByChannel, channel) {
+  const normalized =
+    normalizeMessageChannel(channel) || normalizeOptionalLowercaseString(channel) || "";
+  if (!modelByChannel || !normalized || typeof modelByChannel !== "object") {
+    return undefined;
+  }
+  if (modelByChannel[normalized] && typeof modelByChannel[normalized] === "object") {
+    return modelByChannel[normalized];
+  }
+  for (const [key, value] of Object.entries(modelByChannel)) {
+    const normalizedKey =
+      normalizeMessageChannel(key) || normalizeOptionalLowercaseString(key) || "";
+    if (normalizedKey === normalized && value && typeof value === "object") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function resolveChannelModelOverride(params = {}) {
+  const channel = normalizeOptionalString(params.channel);
+  if (!channel) {
+    return null;
+  }
+  const cfg = params.cfg || {};
+  const providerEntries = resolveModelSessionProviderEntries(
+    cfg.channels && cfg.channels.modelByChannel,
+    channel,
+  );
+  if (!providerEntries) {
+    return null;
+  }
+  const normalizedChannel =
+    normalizeMessageChannel(channel) || normalizeOptionalLowercaseString(channel) || "";
+  const directKeys = buildChannelKeyCandidates(
+    ...buildModelSessionGroupCandidates(params.groupId),
+    ...buildGenericParentOverrideCandidates(params.parentSessionKey),
+  );
+  const parentKeys = buildChannelKeyCandidates(
+    params.groupChannel,
+    typeof params.groupChannel === "string" ? params.groupChannel.replace(/^#/, "") : undefined,
+    typeof params.groupChannel === "string"
+      ? normalizeChannelSlug(params.groupChannel.replace(/^#/, ""))
+      : undefined,
+    params.groupSubject,
+    typeof params.groupSubject === "string" ? params.groupSubject.replace(/^#/, "") : undefined,
+    typeof params.groupSubject === "string"
+      ? normalizeChannelSlug(params.groupSubject.replace(/^#/, ""))
+      : undefined,
+  );
+  const match = resolveChannelEntryMatchWithFallback({
+    entries: providerEntries,
+    keys: directKeys,
+    parentKeys,
+    wildcardKey: "*",
+    normalizeKey: (value) => normalizeOptionalLowercaseString(value) || "",
+  });
+  const raw = match.entry || match.wildcardEntry;
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const model = normalizeOptionalString(raw);
+  if (!model) {
+    return null;
+  }
+  return {
+    channel: normalizedChannel,
+    model,
+    matchKey: match.matchKey,
+    matchSource: match.matchSource,
+  };
+}
+
+function applyModelOverrideToSessionEntry(params = {}) {
+  const entry = params.entry || {};
+  const selection = params.selection || {};
+  const profileOverride = params.profileOverride;
+  const profileOverrideSource = params.profileOverrideSource || "user";
+  const selectionSource = params.selectionSource || "user";
+  let updated = false;
+  let selectionUpdated = false;
+
+  if (selection.isDefault) {
+    if (entry.providerOverride) {
+      delete entry.providerOverride;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverride) {
+      delete entry.modelOverride;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverrideSource) {
+      delete entry.modelOverrideSource;
+      updated = true;
+    }
+  } else {
+    if (entry.providerOverride !== selection.provider) {
+      entry.providerOverride = selection.provider;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverride !== selection.model) {
+      entry.modelOverride = selection.model;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverrideSource !== selectionSource) {
+      entry.modelOverrideSource = selectionSource;
+      updated = true;
+    }
+  }
+
+  const runtimeModel = normalizeOptionalString(entry.model) || "";
+  const runtimeProvider = normalizeOptionalString(entry.modelProvider) || "";
+  const runtimePresent = runtimeModel.length > 0 || runtimeProvider.length > 0;
+  const runtimeAligned =
+    runtimeModel === selection.model &&
+    (runtimeProvider.length === 0 || runtimeProvider === selection.provider);
+  if (runtimePresent && (selectionUpdated || !runtimeAligned)) {
+    if (entry.model !== undefined) {
+      delete entry.model;
+      updated = true;
+    }
+    if (entry.modelProvider !== undefined) {
+      delete entry.modelProvider;
+      updated = true;
+    }
+  }
+
+  if (
+    entry.contextTokens !== undefined &&
+    (selectionUpdated || (runtimePresent && !runtimeAligned))
+  ) {
+    delete entry.contextTokens;
+    updated = true;
+  }
+
+  if (profileOverride) {
+    if (entry.authProfileOverride !== profileOverride) {
+      entry.authProfileOverride = profileOverride;
+      updated = true;
+    }
+    if (entry.authProfileOverrideSource !== profileOverrideSource) {
+      entry.authProfileOverrideSource = profileOverrideSource;
+      updated = true;
+    }
+    if (entry.authProfileOverrideCompactionCount !== undefined) {
+      delete entry.authProfileOverrideCompactionCount;
+      updated = true;
+    }
+  } else {
+    if (entry.authProfileOverride) {
+      delete entry.authProfileOverride;
+      updated = true;
+    }
+    if (entry.authProfileOverrideSource) {
+      delete entry.authProfileOverrideSource;
+      updated = true;
+    }
+    if (entry.authProfileOverrideCompactionCount !== undefined) {
+      delete entry.authProfileOverrideCompactionCount;
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    if (selectionUpdated && params.markLiveSwitchPending) {
+      entry.liveModelSwitchPending = true;
+    }
+    delete entry.fallbackNoticeSelectedModel;
+    delete entry.fallbackNoticeActiveModel;
+    delete entry.fallbackNoticeReason;
+    entry.updatedAt = Date.now();
+  }
+
+  return { updated };
+}
+
+const modelSessionRuntime = {
+  applyModelOverrideToSessionEntry,
+  resolveAgentMaxConcurrent,
+  resolveChannelModelOverride,
+};
+
+function shouldSpawnWithShell(params = {}) {
+  void params;
+  return false;
+}
+
+async function runExec(command, args = [], opts = 10000) {
+  const options = typeof opts === "number"
+    ? { timeout: opts, encoding: "utf8" }
+    : {
+        timeout: opts.timeoutMs,
+        maxBuffer: opts.maxBuffer,
+        cwd: opts.cwd,
+        encoding: "utf8",
+      };
+  const result = await execFileAsync(command, args, { ...options, windowsHide: true });
+  return { stdout: result.stdout || "", stderr: result.stderr || "" };
+}
+
+function resolveProcessExitCode(params = {}) {
+  if (params.explicitCode !== undefined && params.explicitCode !== null) {
+    return params.explicitCode;
+  }
+  if (params.childExitCode !== undefined && params.childExitCode !== null) {
+    return params.childExitCode;
+  }
+  if (
+    params.usesWindowsExitCodeShim &&
+    params.resolvedSignal == null &&
+    !params.timedOut &&
+    !params.noOutputTimedOut &&
+    !params.killIssuedByTimeout
+  ) {
+    return 0;
+  }
+  return null;
+}
+
+function resolveCommandEnv(params = {}) {
+  const baseEnv = params.baseEnv || process.env;
+  const merged = params.env ? { ...baseEnv, ...params.env } : { ...baseEnv };
+  const resolved = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== undefined) {
+      resolved[key] = String(value);
+    }
+  }
+  const argv = Array.isArray(params.argv) ? params.argv : [];
+  const command = path.basename(String(argv[0] || ""));
+  const script = String(argv[1] || "");
+  const suppressNpmFund =
+    command === "npm" ||
+    command === "npm.cmd" ||
+    command === "npm.exe" ||
+    ((command === "node" || command === "node.exe") && script.includes("npm-cli.js"));
+  if (suppressNpmFund) {
+    if (resolved.NPM_CONFIG_FUND == null) {
+      resolved.NPM_CONFIG_FUND = "false";
+    }
+    if (resolved.npm_config_fund == null) {
+      resolved.npm_config_fund = "false";
+    }
+  }
+  resolved.OPENCLAW_CLI = "1";
+  return resolved;
+}
+
+async function runCommandWithTimeout(argv = [], optionsOrTimeout = {}) {
+  const args = Array.isArray(argv) ? argv.slice() : [];
+  if (args.length === 0 || !args[0]) {
+    throw new Error("spawn argv cannot be empty");
+  }
+  const options = typeof optionsOrTimeout === "number"
+    ? { timeoutMs: optionsOrTimeout }
+    : optionsOrTimeout || {};
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(0, options.timeoutMs) : 10000;
+  const hasInput = options.input !== undefined;
+  const resolvedEnv = resolveCommandEnv({ argv: args, env: options.env });
+  const child = spawn(args[0], args.slice(1), {
+    cwd: options.cwd,
+    env: resolvedEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    windowsVerbatimArguments: options.windowsVerbatimArguments === true,
+  });
+
+  return await new Promise((resolve, reject) => {
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let settled = false;
+    let timedOut = false;
+    let noOutputTimedOut = false;
+    let killIssuedByTimeout = false;
+    let noOutputTimer = null;
+
+    const clearNoOutputTimer = () => {
+      if (noOutputTimer) {
+        clearTimeout(noOutputTimer);
+        noOutputTimer = null;
+      }
+    };
+    const killChild = () => {
+      if (settled || typeof child.kill !== "function") {
+        return;
+      }
+      killIssuedByTimeout = true;
+      child.kill("SIGKILL");
+    };
+    const armNoOutputTimer = () => {
+      if (
+        !Number.isFinite(options.noOutputTimeoutMs) ||
+        options.noOutputTimeoutMs <= 0 ||
+        settled
+      ) {
+        return;
+      }
+      clearNoOutputTimer();
+      noOutputTimer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        noOutputTimedOut = true;
+        killChild();
+      }, Math.floor(options.noOutputTimeoutMs));
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killChild();
+    }, timeoutMs);
+
+    armNoOutputTimer();
+    if (hasInput && child.stdin) {
+      child.stdin.on("error", () => {});
+      child.stdin.write(options.input || "");
+      child.stdin.end();
+    } else if (child.stdin) {
+      child.stdin.end();
+    }
+
+    child.stdout?.on("data", (chunk) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      armNoOutputTimer();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      armNoOutputTimer();
+    });
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearNoOutputTimer();
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearNoOutputTimer();
+      const termination = noOutputTimedOut
+        ? "no-output-timeout"
+        : timedOut
+          ? "timeout"
+          : signal != null
+            ? "signal"
+            : "exit";
+      const resolvedCode = resolveProcessExitCode({
+        explicitCode: code,
+        childExitCode: child.exitCode,
+        resolvedSignal: signal || child.signalCode || null,
+        usesWindowsExitCodeShim: false,
+        timedOut,
+        noOutputTimedOut,
+        killIssuedByTimeout,
+      });
+      resolve({
+        pid: child.pid || undefined,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        code: termination === "timeout" && resolvedCode === 0 ? 124 : resolvedCode,
+        signal: signal || child.signalCode || null,
+        killed: child.killed || killIssuedByTimeout,
+        termination,
+        noOutputTimedOut,
+      });
+    });
+  });
+}
+
+async function runPluginCommandWithTimeout(options = {}) {
+  const argv = Array.isArray(options.argv) ? options.argv.slice() : [];
+  const [command] = argv;
+  if (!command) {
+    return { code: 1, stdout: "", stderr: "command is required" };
+  }
+  try {
+    const result = await runCommandWithTimeout(argv, {
+      timeoutMs: options.timeoutMs,
+      cwd: options.cwd,
+      env: options.env,
+    });
+    const timedOut =
+      result.termination === "timeout" || result.termination === "no-output-timeout";
+    return {
+      code: result.code ?? 1,
+      stdout: result.stdout || "",
+      stderr: timedOut
+        ? result.stderr || `command timed out after ${options.timeoutMs}ms`
+        : result.stderr || "",
+    };
+  } catch (error) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: formatErrorMessage(error),
+    };
+  }
+}
+
+const CHILD_OOM_SCORE_ADJ_ENV_KEY = "OPENCLAW_CHILD_OOM_SCORE_ADJ";
+const OOM_SCORE_WRAP_SHELL = "/bin/sh";
+const OOM_SCORE_WRAP_SCRIPT =
+  'echo 1000 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"';
+const SHELL_INIT_ENV_KEYS = ["BASH_ENV", "ENV", "CDPATH"];
+
+function isChildOomWrapDisabled(value) {
+  switch (String(value || "").trim().toLowerCase()) {
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function shouldWrapChildForOomScore(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "linux") {
+    return false;
+  }
+  const env = options.env || process.env;
+  if (isChildOomWrapDisabled(env[CHILD_OOM_SCORE_ADJ_ENV_KEY])) {
+    return false;
+  }
+  if (typeof options.shellAvailable === "function") {
+    return options.shellAvailable();
+  }
+  try {
+    return fs.statSync(OOM_SCORE_WRAP_SHELL).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hardenShellEnv(baseEnv) {
+  const next = { ...(baseEnv || process.env) };
+  for (const key of SHELL_INIT_ENV_KEYS) {
+    delete next[key];
+  }
+  return next;
+}
+
+function prepareOomScoreAdjustedSpawn(command, args = [], options = {}) {
+  const copy = Array.isArray(args) ? args.slice() : [];
+  if (!command || String(command).startsWith("-") || !shouldWrapChildForOomScore(options)) {
+    return { command, args: copy, env: options.env, wrapped: false };
+  }
+  if (command === OOM_SCORE_WRAP_SHELL && copy[0] === "-c" && copy[1] === OOM_SCORE_WRAP_SCRIPT) {
+    return { command, args: copy, env: hardenShellEnv(options.env), wrapped: true };
+  }
+  return {
+    command: OOM_SCORE_WRAP_SHELL,
+    args: ["-c", OOM_SCORE_WRAP_SCRIPT, command, ...copy],
+    env: hardenShellEnv(options.env),
+    wrapped: true,
+  };
+}
+
+function wrapArgvForChildOomScoreRaise(argv = [], options = {}) {
+  const copy = Array.isArray(argv) ? argv.slice() : [];
+  if (copy.length === 0) {
+    return copy;
+  }
+  const prepared = prepareOomScoreAdjustedSpawn(copy[0] || "", copy.slice(1), options);
+  return [prepared.command, ...prepared.args];
+}
+
+function hardenedEnvForChildOomWrap(baseEnv, options = {}) {
+  if (!shouldWrapChildForOomScore(options)) {
+    return baseEnv;
+  }
+  return hardenShellEnv(baseEnv);
+}
+
+const processRuntime = {
+  hardenedEnvForChildOomWrap,
+  prepareOomScoreAdjustedSpawn,
+  resolveCommandEnv,
+  resolveProcessExitCode,
+  runCommandWithTimeout,
+  runExec,
+  shouldSpawnWithShell,
+  wrapArgvForChildOomScoreRaise,
+};
+
+const runCommandRuntime = {
+  runPluginCommandWithTimeout,
 };
 
 const channelSetupRuntime = {
@@ -37880,7 +40381,10 @@ const statePathsRuntime = {
 };
 
 const secretInputRuntime = {
+  buildOptionalSecretInputSchema,
   coerceSecretRef,
+  buildSecretInputArraySchema,
+  buildSecretInputSchema,
   hasConfiguredSecretInput,
   isSecretRef,
   normalizeResolvedSecretInputString,
@@ -37891,8 +40395,75 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const secretInputConfiguredRuntime = {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  resolveConfiguredSecretInputString,
+  resolveConfiguredSecretInputWithFallback,
+  resolveRequiredConfiguredSecretRefInputString,
+  resolveSecretInputString,
+};
+
+const secretInputSchemaRuntime = {
+  buildSecretInputSchema,
+};
+
+const cronStoreRuntime = {
+  loadCronStore,
+  resolveCronStorePath,
+  saveCronStore,
+};
+
+const fileAccessRuntime = {
+  basenameFromMediaSource,
+  readFileWithinRoot,
+  safeFileURLToPath,
+  writeFileWithinRoot,
+};
+
+const secretRefRuntime = {
+  coerceSecretRef,
+};
+
+const secretFileRuntime = {
+  DEFAULT_SECRET_FILE_MAX_BYTES,
+  PRIVATE_SECRET_DIR_MODE,
+  PRIVATE_SECRET_FILE_MODE,
+  loadSecretFileSync,
+  readSecretFileSync,
+  tryReadSecretFileSync,
+  writePrivateSecretFileAtomic,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
+};
+
+const channelSecretBasicRuntime = {
+  collectConditionalChannelFieldAssignments,
+  collectNestedChannelFieldAssignments,
+  collectSecretInputAssignment,
+  collectSimpleChannelFieldAssignments,
+  getChannelRecord,
+  getChannelSurface,
+  hasConfiguredSecretInputValue,
+  hasOwnProperty,
+  isBaseFieldActiveForChannelSurface,
+  isEnabledFlag,
+  isRecord,
+  normalizeSecretStringValue,
+  pushAssignment,
+  pushInactiveSurfaceWarning,
+  pushWarning,
+  resolveChannelAccountSurface,
+};
+
+const channelSecretRuntime = {
+  ...channelSecretBasicRuntime,
+  ...channelSecretTtsRuntime,
 };
 
 const talkConfigRuntime = {
@@ -37985,6 +40556,13 @@ const toolPayloadRuntime = {
 
 const booleanParamRuntime = {
   readBooleanParam,
+};
+
+const paramReadersRuntime = {
+  readNumberParam,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
 };
 
 const channelActionsRuntime = {
@@ -38141,6 +40719,11 @@ const genericSdk = new Proxy(
     ...channelContractTestingRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
+    ...channelEnvelopeRuntime,
+    ...channelMentionGatingRuntime,
+    ...channelRuntimeContextRuntime,
+    ...channelActivityRuntime,
+    ...inboundEnvelopeRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -38179,8 +40762,10 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
+    ...channelSecretRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
@@ -38482,6 +41067,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return textRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/string-coerce-runtime" ||
+    request === "@openclaw/plugin-sdk/string-coerce-runtime"
+  ) {
+    return stringCoerceRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/text-autolink-runtime" ||
     request === "@openclaw/plugin-sdk/text-autolink-runtime"
   ) {
@@ -38692,6 +41283,42 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return runtimeEnvRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/logging-core" ||
+    request === "@openclaw/plugin-sdk/logging-core"
+  ) {
+    return loggingCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/host-runtime" ||
+    request === "@openclaw/plugin-sdk/host-runtime"
+  ) {
+    return hostRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/model-session-runtime" ||
+    request === "@openclaw/plugin-sdk/model-session-runtime"
+  ) {
+    return modelSessionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/process-runtime" ||
+    request === "@openclaw/plugin-sdk/process-runtime"
+  ) {
+    return processRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/run-command" ||
+    request === "@openclaw/plugin-sdk/run-command"
+  ) {
+    return runCommandRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-auth-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-auth-runtime"
+  ) {
+    return approvalAuthRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/runtime" ||
     request === "@openclaw/plugin-sdk/runtime"
   ) {
@@ -38752,6 +41379,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return sessionStoreRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/session-visibility" ||
+    request === "@openclaw/plugin-sdk/session-visibility"
+  ) {
+    return sessionVisibilityRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||
     request === "@openclaw/plugin-sdk/outbound-runtime"
   ) {
@@ -38788,6 +41421,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerAuthRuntimeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/image-generation-core.auth.runtime" ||
+    request === "@openclaw/plugin-sdk/image-generation-core.auth.runtime"
+  ) {
+    return imageGenerationCoreAuthRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||
     request === "@openclaw/plugin-sdk/provider-auth-api-key"
   ) {
@@ -38798,6 +41437,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-login"
   ) {
     return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-auth-login.runtime" ||
+    request === "@openclaw/plugin-sdk/provider-auth-login.runtime"
+  ) {
+    return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-zai-endpoint" ||
+    request === "@openclaw/plugin-sdk/provider-zai-endpoint"
+  ) {
+    return providerZaiEndpointRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-env-vars" ||
+    request === "@openclaw/plugin-sdk/provider-env-vars"
+  ) {
+    return providerEnvVarsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth" ||
@@ -38974,6 +41631,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return nativeCommandRegistryRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/native-command-config-runtime" ||
+    request === "@openclaw/plugin-sdk/native-command-config-runtime"
+  ) {
+    return nativeCommandConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/telegram-command-config" ||
+    request === "@openclaw/plugin-sdk/telegram-command-config"
+  ) {
+    return telegramCommandConfigRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-status" ||
     request === "@openclaw/plugin-sdk/command-status"
   ) {
@@ -39076,10 +41745,58 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return secretInputRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/secret-input-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-input-runtime"
+  ) {
+    return secretInputConfiguredRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-input-schema" ||
+    request === "@openclaw/plugin-sdk/secret-input-schema"
+  ) {
+    return secretInputSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/cron-store-runtime" ||
+    request === "@openclaw/plugin-sdk/cron-store-runtime"
+  ) {
+    return cronStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/file-access-runtime" ||
+    request === "@openclaw/plugin-sdk/file-access-runtime"
+  ) {
+    return fileAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-ref-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-ref-runtime"
+  ) {
+    return secretRefRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-file-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-file-runtime"
+  ) {
+    return secretFileRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-secret-tts-runtime" ||
     request === "@openclaw/plugin-sdk/channel-secret-tts-runtime"
   ) {
     return channelSecretTtsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-secret-basic-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-secret-basic-runtime"
+  ) {
+    return channelSecretBasicRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-secret-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-secret-runtime"
+  ) {
+    return channelSecretRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/talk-config-runtime" ||
@@ -39170,6 +41887,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelStreamingRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/channel-envelope" ||
+    request === "@openclaw/plugin-sdk/channel-envelope"
+  ) {
+    return channelEnvelopeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-mention-gating" ||
+    request === "@openclaw/plugin-sdk/channel-mention-gating"
+  ) {
+    return channelMentionGatingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-runtime-context" ||
+    request === "@openclaw/plugin-sdk/channel-runtime-context"
+  ) {
+    return channelRuntimeContextRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-activity-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-activity-runtime"
+  ) {
+    return channelActivityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/inbound-envelope" ||
+    request === "@openclaw/plugin-sdk/inbound-envelope"
+  ) {
+    return inboundEnvelopeRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
     request === "@openclaw/plugin-sdk/channel-entry-contract"
   ) {
@@ -39224,6 +41971,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/boolean-param"
   ) {
     return booleanParamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/param-readers" ||
+    request === "@openclaw/plugin-sdk/param-readers"
+  ) {
+    return paramReadersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-actions" ||

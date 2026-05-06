@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~81.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~84.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -717,6 +717,134 @@ may lag behind this tracker.
   allowed sender matching, channel id/slug normalization, unresolved target
   fallback rows, and optional-token target resolution.
   - Status: checkpointed in `27bb6438`
+
+- [x] Imported plugin SDK channel-streaming shim for streaming config object
+  extraction, chunk-mode resolution, block-streaming enablement/coalescing,
+  preview chunk config, preview tool-progress defaults, native transport flags,
+  and preview stream-mode normalization.
+  - Status: checkpointed in `9a9a6858`
+
+- [x] Imported plugin SDK channel-envelope shim for inbound envelope
+  formatting and envelope option helpers.
+  - Status: checkpointed in `782e2591`
+
+- [x] Imported plugin SDK channel-mention-gating shim for mention marker,
+  mention regex/text utilities, and mention decision helpers.
+  - Status: checkpointed in `22e17bc5`
+
+- [x] Imported plugin SDK channel-runtime-context shim for register/get/watch
+  runtime context helpers.
+  - Status: checkpointed in `ced07255`
+
+- [x] Imported plugin SDK channel-activity-runtime shim for
+  `recordChannelActivity`.
+  - Status: checkpointed in `89483357`
+
+- [x] Imported plugin SDK inbound-envelope shim for route/envelope builder
+  helpers.
+  - Status: checkpointed in `d5ba314d`
+
+- [x] Imported plugin SDK channel-secret-basic-runtime shim for channel/account
+  surface helpers and secret assignment/warning collectors.
+  - Status: checkpointed in `b2735360`
+
+- [x] Imported plugin SDK channel-secret-runtime shim for the combined
+  basic-plus-TTS channel secret helper barrel.
+  - Status: checkpointed in `d192b523`
+
+- [x] Imported plugin SDK secret-file-runtime shim for constants, sync
+  readers, try-read behavior, and async private atomic writes.
+  - Status: checkpointed in `fe13141a`
+
+- [x] Imported plugin SDK secret-ref-runtime shim for the narrow
+  `coerceSecretRef` helper barrel.
+  - Status: checkpointed in `8b9f3671`
+
+- [x] Imported plugin SDK secret-input-runtime shim for configured
+  env-backed SecretRef resolution, fallback projection, and required SecretRef
+  runtime helpers.
+  - Status: checkpointed in `a3b36775`
+
+- [x] Imported plugin SDK secret-input-schema shim plus `secret-input` schema
+  builder re-exports for shared SecretInput validation helpers.
+  - Status: checkpointed in `7935af8b`
+
+- [x] Imported plugin SDK cron-store-runtime shim for cron store path
+  resolution, split config/state persistence, and state merge-on-load helpers.
+  - Status: checkpointed in `ded083a8`
+
+- [x] Imported plugin SDK file-access-runtime shim for safe file URL handling,
+  basename extraction, root-bounded writes, and root-bounded reads.
+  - Status: checkpointed in `22e4455d`
+
+- [x] Imported plugin SDK logging-core shim for subsystem logger creation,
+  deterministic identifier redaction, and sensitive text redaction.
+  - Status: checkpointed in `50142470`
+
+- [x] Imported plugin SDK native-command-config-runtime shim for native
+  command/skills enablement and explicit-disable helpers.
+  - Status: checkpointed in `d2898256`
+
+- [x] Imported plugin SDK host-runtime shim for hostname normalization and SCP
+  remote host token sanitization helpers.
+  - Status: checkpointed in `355ebc11`
+
+- [x] Imported plugin SDK image-generation-core auth-runtime shim for the
+  image-generation provider auth resolver alias.
+  - Status: checkpointed in `532fd8de`
+
+- [x] Imported plugin SDK model-session-runtime shim for agent concurrency,
+  channel model override resolution, and session-entry model override mutation.
+  - Status: checkpointed in `6f5096bc`
+
+- [x] Imported plugin SDK process-runtime command helper shim for
+  `runCommandWithTimeout`, command env/exit helpers, and child OOM wrapper
+  helpers.
+  - Status: checkpointed in `b5f485b3`; deeper process-runtime breadth remains
+    open
+
+- [x] Imported plugin SDK run-command normalized helper shim for
+  `runPluginCommandWithTimeout`.
+  - Status: checkpointed in `96c11a19`; deeper process/runtime breadth remains
+    open
+
+- [x] Imported plugin SDK string-coerce-runtime helper shim for primitive
+  normalization and record detection helpers.
+  - Status: checkpointed in `70df7410`; deeper SDK/runtime breadth remains open
+
+- [x] Imported plugin SDK provider-auth-login runtime alias for the `.runtime`
+  facade.
+  - Status: checkpointed in `9c1a6b73`; deeper provider-auth runtime breadth
+    remains open
+
+- [x] Imported plugin SDK approval-auth-runtime helper shim for approver
+  resolution and action authorization.
+  - Status: checkpointed in `6cda257f`; deeper approval gateway runtime breadth
+    remains open
+
+- [x] Imported plugin SDK Telegram command config helper shim for slash command
+  regex, normalization, and validation.
+  - Status: checkpointed in `bd248520`; deeper provider command/runtime breadth
+    remains open
+
+- [x] Imported plugin SDK param-readers helper shim for common tool parameter
+  coercion.
+  - Status: checkpointed in `e7166e23`; deeper SDK/runtime breadth remains open
+
+- [x] Imported plugin SDK provider-zai-endpoint helper shim for fakeable Z.AI
+  endpoint probing and coding fallback metadata.
+  - Status: checkpointed in `b3d88717`; deeper provider runtime breadth remains
+    open
+
+- [x] Imported plugin SDK provider-env-vars helper shim for provider auth env
+  candidates, setup env overrides, and case-insensitive env scrubbing.
+  - Status: checkpointed in `10d34034`; deeper provider/runtime breadth remains
+    open
+
+- [x] Imported plugin SDK session-visibility helper shim for session visibility
+  defaults, sandbox clamps, A2A policy checks, and policy error messages.
+  - Status: checkpointed in `4e95bfcb`; gateway-backed spawned listing depth
+    remains open
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
