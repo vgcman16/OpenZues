@@ -27896,6 +27896,143 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_secret_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-secret.cjs"
+    runtime_entry.write_text(
+        """
+const secretRuntime = require("openclaw/plugin-sdk/memory-core-host-secret");
+const scopedSecretRuntime = require("@openclaw/plugin-sdk/memory-core-host-secret");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_secret",
+      description: "Use OpenClaw memory-core-host-secret SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const previous = process.env.MEMORY_CORE_HOST_SECRET;
+        process.env.MEMORY_CORE_HOST_SECRET = "  resolved-from-env  ";
+        let missing = "";
+        try {
+          secretRuntime.resolveMemorySecretInputString({
+            value: {
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_MISSING"
+            },
+            path: "agents.main.memorySearch.remote.apiKey"
+          });
+        } catch (err) {
+          missing = String(err && err.message ? err.message : err);
+        }
+        const result = {
+          keys: Object.keys(secretRuntime).sort(),
+          scopedType: typeof scopedSecretRuntime.resolveMemorySecretInputString,
+          configured: [
+            secretRuntime.hasConfiguredMemorySecretInput(undefined),
+            secretRuntime.hasConfiguredMemorySecretInput("  inline-secret  "),
+            secretRuntime.hasConfiguredMemorySecretInput({
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_SECRET"
+            }),
+            secretRuntime.hasConfiguredMemorySecretInput("${MEMORY_CORE_HOST_SECRET}"),
+            secretRuntime.hasConfiguredMemorySecretInput("secretref-env:MEMORY_CORE_HOST_SECRET")
+          ],
+          inline: secretRuntime.resolveMemorySecretInputString({
+            value: "  inline-secret  ",
+            path: "agents.main.memorySearch.remote.apiKey"
+          }),
+          env: secretRuntime.resolveMemorySecretInputString({
+            value: {
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_SECRET"
+            },
+            path: "agents.main.memorySearch.remote.apiKey"
+          }),
+          missing
+        };
+        if (previous === undefined) {
+          delete process.env.MEMORY_CORE_HOST_SECRET;
+        } else {
+          process.env.MEMORY_CORE_HOST_SECRET = previous;
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-secret-plugin",
+                    "name": "Memory Secret Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-secret.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_secret"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_secret"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hasConfiguredMemorySecretInput",
+            "resolveMemorySecretInputString",
+        ],
+        "scopedType": "function",
+        "configured": [False, True, True, True, True],
+        "inline": "inline-secret",
+        "env": "resolved-from-env",
+        "missing": (
+            'agents.main.memorySearch.remote.apiKey: unresolved SecretRef '
+            '"env:default:MEMORY_CORE_HOST_MISSING". Resolve this command '
+            "against an active gateway runtime snapshot before reading it."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

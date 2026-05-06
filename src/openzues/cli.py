@@ -26456,7 +26456,10 @@ function coerceSecretRef(value, defaults) {
           : (defaults && defaults.exec) || DEFAULT_SECRET_PROVIDER_ALIAS;
     return { source: value.source, provider, id: value.id };
   }
-  return parseEnvTemplateSecretRef(value, defaults && defaults.env);
+  return (
+    parseEnvTemplateSecretRef(value, defaults && defaults.env) ||
+    parseLegacySecretRefEnvMarker(value, defaults && defaults.env)
+  );
 }
 
 function resolveSecretInputRef(params) {
@@ -46924,6 +46927,30 @@ const memoryCoreHostMultimodalRuntime = {
   normalizeMemoryMultimodalSettings,
 };
 
+function hasConfiguredMemorySecretInput(value) {
+  return hasConfiguredSecretInput(value);
+}
+
+function resolveMemorySecretInputString(params = {}) {
+  const ref = resolveSecretInputRef({ value: params.value }).ref;
+  if (ref && ref.source === "env") {
+    const env = isRecord(params.env) ? params.env : process.env;
+    const envValue = normalizeSecretInputString(env && env[ref.id]);
+    if (envValue) {
+      return envValue;
+    }
+  }
+  return normalizeResolvedSecretInputString({
+    value: params.value,
+    path: params.path,
+  });
+}
+
+const memoryCoreHostSecretRuntime = {
+  hasConfiguredMemorySecretInput,
+  resolveMemorySecretInputString,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -48139,6 +48166,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-host-query"
   ) {
     return memoryCoreHostQueryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-secret" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-secret"
+  ) {
+    return memoryCoreHostSecretRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
