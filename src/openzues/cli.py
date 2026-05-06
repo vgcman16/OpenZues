@@ -19058,6 +19058,114 @@ function generateHexPkceVerifierChallenge() {
   return { verifier, challenge: createPkceChallenge(verifier) };
 }
 
+const RUNTIME_CONFIG_SNAPSHOT_STATE_KEY = Symbol.for("openclaw.runtimeConfigSnapshot.state");
+
+function getRuntimeConfigSnapshotState() {
+  return resolveGlobalSingleton(RUNTIME_CONFIG_SNAPSHOT_STATE_KEY, () => ({
+    runtimeConfigSnapshot: null,
+    runtimeConfigSourceSnapshot: null,
+  }));
+}
+
+function isConfigRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stableConfigStringify(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) || "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableConfigStringify(entry)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableConfigStringify(value[key])}`)
+    .join(",")}}`;
+}
+
+function configSnapshotsMatch(left, right) {
+  if (left === right) {
+    return true;
+  }
+  try {
+    return stableConfigStringify(left) === stableConfigStringify(right);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveInitialRuntimeConfig() {
+  const pluginContext = isConfigRecord(context.plugin) ? context.plugin : {};
+  if (isConfigRecord(context.config)) {
+    return context.config;
+  }
+  if (isConfigRecord(pluginContext.config)) {
+    return pluginContext.config;
+  }
+  if (isConfigRecord(context.rawConfig)) {
+    return context.rawConfig;
+  }
+  if (isConfigRecord(pluginContext.rawConfig)) {
+    return pluginContext.rawConfig;
+  }
+  return {};
+}
+
+function setRuntimeConfigSnapshot(config, sourceConfig) {
+  const state = getRuntimeConfigSnapshotState();
+  state.runtimeConfigSnapshot = config || {};
+  state.runtimeConfigSourceSnapshot = sourceConfig || null;
+}
+
+function clearRuntimeConfigSnapshot() {
+  const state = getRuntimeConfigSnapshotState();
+  state.runtimeConfigSnapshot = null;
+  state.runtimeConfigSourceSnapshot = null;
+}
+
+function getRuntimeConfigSnapshot() {
+  return getRuntimeConfigSnapshotState().runtimeConfigSnapshot;
+}
+
+function getRuntimeConfigSourceSnapshot() {
+  return getRuntimeConfigSnapshotState().runtimeConfigSourceSnapshot;
+}
+
+function getRuntimeConfig() {
+  const state = getRuntimeConfigSnapshotState();
+  if (!state.runtimeConfigSnapshot) {
+    setRuntimeConfigSnapshot(resolveInitialRuntimeConfig());
+  }
+  return getRuntimeConfigSnapshot();
+}
+
+function clearConfigCache() {
+  return undefined;
+}
+
+function selectApplicableRuntimeConfig(params = {}) {
+  const runtimeConfig = params.runtimeConfig || null;
+  if (!runtimeConfig) {
+    return params.inputConfig;
+  }
+  const inputConfig = params.inputConfig;
+  if (!inputConfig) {
+    return runtimeConfig;
+  }
+  if (inputConfig === runtimeConfig) {
+    return inputConfig;
+  }
+  const runtimeSourceConfig = params.runtimeSourceConfig || null;
+  if (!runtimeSourceConfig) {
+    return runtimeConfig;
+  }
+  if (configSnapshotsMatch(inputConfig, runtimeSourceConfig)) {
+    return runtimeConfig;
+  }
+  return inputConfig;
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -33386,6 +33494,16 @@ const oauthUtilsRuntime = {
   toFormUrlEncoded,
 };
 
+const runtimeConfigSnapshotRuntime = {
+  clearConfigCache,
+  clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+  selectApplicableRuntimeConfig,
+  setRuntimeConfigSnapshot,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -44188,6 +44306,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return oauthUtilsRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/runtime-config-snapshot" ||
+    request === "@openclaw/plugin-sdk/runtime-config-snapshot"
+  ) {
+    return runtimeConfigSnapshotRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
@@ -45408,6 +45532,18 @@ async function activatePlugin(plugin) {
       factory: isFactory ? definition : undefined,
       factoryTool: isFactory,
       runtimeEntrySource: entryPath,
+      config:
+        context.config && typeof context.config === "object"
+          ? context.config
+          : undefined,
+      rawConfig:
+        context.rawConfig && typeof context.rawConfig === "object"
+          ? context.rawConfig
+          : undefined,
+      activationSourceConfig:
+        context.activationSourceConfig && typeof context.activationSourceConfig === "object"
+          ? context.activationSourceConfig
+          : undefined,
       description:
         metadata && typeof metadata === "object" && typeof metadata.description === "string"
           ? metadata.description
@@ -45519,7 +45655,7 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
             context_path = tmp_path / "context.json"
             loader_path.write_text(_NATIVE_PLUGIN_RUNTIME_LOADER_JS, encoding="utf-8")
             context_path.write_text(
-                json.dumps({"plugins": plugins}, default=str),
+                json.dumps(context, default=str),
                 encoding="utf-8",
             )
             completed = subprocess.run(
@@ -45642,6 +45778,11 @@ def _native_plugin_runtime_specs_from_loader_payload(
         runtime_entry_source = _optional_cli_string(
             entry.get("runtimeEntrySource", entry.get("runtime_entry_source"))
         )
+        config_payload = entry.get("config")
+        raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        activation_source_config_payload = entry.get(
+            "activationSourceConfig", entry.get("activation_source_config")
+        )
         raw_names = entry.get("names")
         names = _string_list_or_none(raw_names)
         if not names:
@@ -45664,6 +45805,14 @@ def _native_plugin_runtime_specs_from_loader_payload(
             }
             if runtime_entry_source is not None:
                 plugin_context["runtimeEntrySource"] = runtime_entry_source
+            if isinstance(config_payload, Mapping):
+                plugin_context["config"] = dict(config_payload)
+            if isinstance(raw_config_payload, Mapping):
+                plugin_context["rawConfig"] = dict(raw_config_payload)
+            if isinstance(activation_source_config_payload, Mapping):
+                plugin_context["activationSourceConfig"] = dict(
+                    activation_source_config_payload
+                )
             executor = (
                 _native_plugin_runtime_executor_factory(
                     plugin=plugin_context,

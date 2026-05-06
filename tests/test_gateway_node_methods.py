@@ -30738,6 +30738,196 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_config_snapshot_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-config-snapshot.cjs"
+    runtime_entry.write_text(
+        """
+const snapshot = require("openclaw/plugin-sdk/runtime-config-snapshot");
+const scopedSnapshot = require("@openclaw/plugin-sdk/runtime-config-snapshot");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.config_snapshot",
+      description: "Use OpenClaw runtime-config-snapshot SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(snapshot).sort();
+        if (!keys.includes("setRuntimeConfigSnapshot")) {
+          return {
+            keys,
+            scopedType: typeof scopedSnapshot.selectApplicableRuntimeConfig
+          };
+        }
+        snapshot.clearRuntimeConfigSnapshot();
+        const beforeSnapshot = snapshot.getRuntimeConfigSnapshot() || null;
+        const beforeSource = snapshot.getRuntimeConfigSourceSnapshot() || null;
+        const runtimeConfig = snapshot.getRuntimeConfig();
+        const loadedSnapshot = snapshot.getRuntimeConfigSnapshot();
+        const sourceAfterLoad = snapshot.getRuntimeConfigSourceSnapshot() || null;
+        const runtimeV2 = {
+          assistantName: "Runtime V2",
+          nested: { value: 2, order: ["b", "a"] }
+        };
+        const sourceV1 = {
+          assistantName: "Runtime Source",
+          nested: { order: ["b", "a"], value: 1 }
+        };
+        scopedSnapshot.setRuntimeConfigSnapshot(runtimeV2, sourceV1);
+        const snapshotAfterSet = snapshot.getRuntimeConfigSnapshot();
+        const sourceAfterSet = snapshot.getRuntimeConfigSourceSnapshot();
+        const selectedNoInput = snapshot.selectApplicableRuntimeConfig({
+          runtimeConfig: snapshot.getRuntimeConfigSnapshot()
+        });
+        const selectedMatchingSource = snapshot.selectApplicableRuntimeConfig({
+          inputConfig: {
+            nested: { value: 1, order: ["b", "a"] },
+            assistantName: "Runtime Source"
+          },
+          runtimeConfig: snapshot.getRuntimeConfigSnapshot(),
+          runtimeSourceConfig: snapshot.getRuntimeConfigSourceSnapshot()
+        });
+        const staleInput = { assistantName: "Stale", nested: { value: 99 } };
+        const selectedStale = snapshot.selectApplicableRuntimeConfig({
+          inputConfig: staleInput,
+          runtimeConfig: snapshot.getRuntimeConfigSnapshot(),
+          runtimeSourceConfig: snapshot.getRuntimeConfigSourceSnapshot()
+        });
+        const cacheClearResult = snapshot.clearConfigCache() || null;
+        const afterCacheClear = snapshot.getRuntimeConfigSnapshot();
+        snapshot.clearRuntimeConfigSnapshot();
+        return {
+          keys,
+          scopedType: typeof scopedSnapshot.selectApplicableRuntimeConfig,
+          beforeSnapshot,
+          beforeSource,
+          runtimeConfig,
+          loadedSnapshot,
+          sourceAfterLoad,
+          snapshotAfterSet,
+          sourceAfterSet,
+          selectedNoInput,
+          selectedMatchingSource,
+          selectedStale,
+          cacheClearResult,
+          afterCacheClear,
+          afterClear: snapshot.getRuntimeConfigSnapshot() || null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-snapshot-plugin",
+                    "name": "Runtime Config Snapshot Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ],
+            "config": {
+                "assistantName": "Runtime Config",
+                "nested": {"value": 1},
+            },
+            "rawConfig": {
+                "assistantName": "Raw Config",
+                "nested": {"value": 0},
+            },
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-runtime-config-snapshot-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.config_snapshot"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.config_snapshot"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "clearConfigCache",
+            "clearRuntimeConfigSnapshot",
+            "getRuntimeConfig",
+            "getRuntimeConfigSnapshot",
+            "getRuntimeConfigSourceSnapshot",
+            "selectApplicableRuntimeConfig",
+            "setRuntimeConfigSnapshot",
+        ],
+        "scopedType": "function",
+        "beforeSnapshot": None,
+        "beforeSource": None,
+        "runtimeConfig": {
+            "assistantName": "Runtime Config",
+            "nested": {"value": 1},
+        },
+        "loadedSnapshot": {
+            "assistantName": "Runtime Config",
+            "nested": {"value": 1},
+        },
+        "sourceAfterLoad": None,
+        "snapshotAfterSet": {
+            "assistantName": "Runtime V2",
+            "nested": {"value": 2, "order": ["b", "a"]},
+        },
+        "sourceAfterSet": {
+            "assistantName": "Runtime Source",
+            "nested": {"order": ["b", "a"], "value": 1},
+        },
+        "selectedNoInput": {
+            "assistantName": "Runtime V2",
+            "nested": {"value": 2, "order": ["b", "a"]},
+        },
+        "selectedMatchingSource": {
+            "assistantName": "Runtime V2",
+            "nested": {"value": 2, "order": ["b", "a"]},
+        },
+        "selectedStale": {"assistantName": "Stale", "nested": {"value": 99}},
+        "cacheClearResult": None,
+        "afterCacheClear": {
+            "assistantName": "Runtime V2",
+            "nested": {"value": 2, "order": ["b", "a"]},
+        },
+        "afterClear": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
