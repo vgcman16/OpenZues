@@ -22566,6 +22566,137 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secret_file_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secret-file.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const secretFile = require("openclaw/plugin-sdk/secret-file-runtime");
+const scopedSecretFile = require("@openclaw/plugin-sdk/secret-file-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_file",
+      description: "Use OpenClaw secret file SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const root = path.join(__dirname, "private-root");
+        const plainPath = path.join(__dirname, "plain.secret");
+        fs.writeFileSync(plainPath, "  s3cr3t  \\n", "utf8");
+        const emptyPath = path.join(__dirname, "empty.secret");
+        fs.writeFileSync(emptyPath, "  \\n", "utf8");
+        const nestedPath = path.join(root, "nested", "token.secret");
+        await secretFile.writePrivateSecretFileAtomic({
+          rootDir: root,
+          filePath: nestedPath,
+          content: "written-secret\\n"
+        });
+        const outsideError = await secretFile.writePrivateSecretFileAtomic({
+          rootDir: root,
+          filePath: path.join(root, "..", "outside.secret"),
+          content: "nope"
+        }).then(
+          () => null,
+          (error) => String(error.message || error)
+        );
+        const empty = secretFile.loadSecretFileSync(emptyPath, "empty");
+        return {
+          keys: Object.keys(secretFile).sort(),
+          scopedType: typeof scopedSecretFile.writePrivateSecretFileAtomic,
+          constants: [
+            secretFile.DEFAULT_SECRET_FILE_MAX_BYTES,
+            secretFile.PRIVATE_SECRET_DIR_MODE,
+            secretFile.PRIVATE_SECRET_FILE_MODE
+          ],
+          read: [
+            secretFile.loadSecretFileSync(plainPath, "plain").ok,
+            secretFile.readSecretFileSync(plainPath, "plain"),
+            secretFile.tryReadSecretFileSync(plainPath, "plain"),
+            secretFile.tryReadSecretFileSync("", "plain") ?? null,
+            empty.ok,
+            empty.message.endsWith("is empty.")
+          ],
+          written: secretFile.readSecretFileSync(nestedPath, "written"),
+          outsideError: outsideError &&
+            outsideError.startsWith("Private secret path must stay under")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-file-plugin",
+                    "name": "Runtime Secret File Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-secret-file.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_file"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_file"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_SECRET_FILE_MAX_BYTES",
+            "PRIVATE_SECRET_DIR_MODE",
+            "PRIVATE_SECRET_FILE_MODE",
+            "loadSecretFileSync",
+            "readSecretFileSync",
+            "tryReadSecretFileSync",
+            "writePrivateSecretFileAtomic",
+        ],
+        "scopedType": "function",
+        "constants": [16384, 448, 384],
+        "read": [True, "s3cr3t", "s3cr3t", None, False, True],
+        "written": "written-secret",
+        "outsideError": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

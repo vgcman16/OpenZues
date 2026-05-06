@@ -36734,6 +36734,8 @@ function buildThreadAwareOutboundSessionRoute(params = {}) {
 }
 
 const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
+const PRIVATE_SECRET_DIR_MODE = 0o700;
+const PRIVATE_SECRET_FILE_MODE = 0o600;
 
 function loadSecretFileSync(filePath, label, options = {}) {
   const trimmedPath = String(filePath || "").trim();
@@ -36808,6 +36810,83 @@ function tryReadSecretFileSync(filePath, label, options = {}) {
   }
   const result = loadSecretFileSync(filePath, label, options);
   return result.ok ? result.secret : undefined;
+}
+
+function assertPrivateSecretPathWithinRoot(rootDir, targetPath) {
+  const relative = path.relative(rootDir, targetPath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Private secret path must stay under ${rootDir}.`);
+  }
+}
+
+async function enforcePrivateSecretPathMode(resolvedPath, expectedMode) {
+  if (process.platform === "win32") {
+    return;
+  }
+  await fs.promises.chmod(resolvedPath, expectedMode);
+}
+
+async function ensurePrivateSecretDirectory(rootDir, targetDir) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedTarget = path.resolve(targetDir);
+  if (resolvedTarget !== resolvedRoot) {
+    assertPrivateSecretPathWithinRoot(resolvedRoot, resolvedTarget);
+  }
+  await fs.promises.mkdir(resolvedTarget, {
+    recursive: true,
+    mode: PRIVATE_SECRET_DIR_MODE,
+  });
+  const stat = await fs.promises.lstat(resolvedTarget);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Private secret directory ${resolvedTarget} must not be a symlink.`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Private secret directory ${resolvedTarget} must be a directory.`);
+  }
+  await enforcePrivateSecretPathMode(resolvedTarget, PRIVATE_SECRET_DIR_MODE);
+}
+
+async function writePrivateSecretFileAtomic(params) {
+  const resolvedRoot = path.resolve(params.rootDir);
+  const resolvedFile = path.resolve(params.filePath);
+  assertPrivateSecretPathWithinRoot(resolvedRoot, resolvedFile);
+  const parentDir = path.dirname(resolvedFile);
+  await ensurePrivateSecretDirectory(resolvedRoot, parentDir);
+  try {
+    const stat = await fs.promises.lstat(resolvedFile);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Private secret file ${resolvedFile} must not be a symlink.`);
+    }
+    if (!stat.isFile()) {
+      throw new Error(`Private secret file ${resolvedFile} must be a regular file.`);
+    }
+  } catch (error) {
+    if (!error || typeof error !== "object" || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const tempPath = path.join(
+    parentDir,
+    `.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
+  let createdTemp = false;
+  try {
+    const handle = await fs.promises.open(tempPath, "wx", PRIVATE_SECRET_FILE_MODE);
+    createdTemp = true;
+    try {
+      await handle.writeFile(params.content);
+    } finally {
+      await handle.close();
+    }
+    await enforcePrivateSecretPathMode(tempPath, PRIVATE_SECRET_FILE_MODE);
+    await fs.promises.rename(tempPath, resolvedFile);
+    createdTemp = false;
+    await enforcePrivateSecretPathMode(resolvedFile, PRIVATE_SECRET_FILE_MODE);
+  } finally {
+    if (createdTemp) {
+      await fs.promises.unlink(tempPath).catch(() => undefined);
+    }
+  }
 }
 
 function defineChannelPluginEntry(options = {}) {
@@ -38277,6 +38356,16 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const secretFileRuntime = {
+  DEFAULT_SECRET_FILE_MAX_BYTES,
+  PRIVATE_SECRET_DIR_MODE,
+  PRIVATE_SECRET_FILE_MODE,
+  loadSecretFileSync,
+  readSecretFileSync,
+  tryReadSecretFileSync,
+  writePrivateSecretFileAtomic,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
@@ -38594,6 +38683,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
     ...channelSecretRuntime,
@@ -39490,6 +39580,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-file-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-file-runtime"
+  ) {
+    return secretFileRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-secret-tts-runtime" ||
