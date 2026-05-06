@@ -25608,6 +25608,12 @@ function createSimpleSchema(validate, options = {}) {
     optional() {
       return createOptionalSchema(schema);
     },
+    catchall() {
+      return schema;
+    },
+    toJSONSchema() {
+      return options.jsonSchema || {};
+    },
   };
   return schema;
 }
@@ -25636,6 +25642,9 @@ function createOptionalSchema(innerSchema) {
     optional() {
       return schema;
     },
+    toJSONSchema() {
+      return typeof innerSchema.toJSONSchema === "function" ? innerSchema.toJSONSchema() : {};
+    },
   };
   return schema;
 }
@@ -25643,14 +25652,14 @@ function createOptionalSchema(innerSchema) {
 function createStringSchema() {
   return createSimpleSchema(
     (value) => (typeof value === "string" ? undefined : "Expected string"),
-    { typeName: "ZodString" },
+    { typeName: "ZodString", jsonSchema: { type: "string" } },
   );
 }
 
 function createBooleanSchema() {
   return createSimpleSchema(
     (value) => (typeof value === "boolean" ? undefined : "Expected boolean"),
-    { typeName: "ZodBoolean" },
+    { typeName: "ZodBoolean", jsonSchema: { type: "boolean" } },
   );
 }
 
@@ -25671,7 +25680,7 @@ function createNumberSchema(options = {}) {
       }
       return undefined;
     },
-    { typeName: "ZodNumber" },
+    { typeName: "ZodNumber", jsonSchema: { type: "number" } },
   );
 }
 
@@ -25679,7 +25688,7 @@ function createEnumSchema(values) {
   const allowed = new Set(enumValuesFrom(values));
   return createSimpleSchema(
     (value) => (allowed.has(value) ? undefined : "Invalid enum value"),
-    { typeName: "ZodEnum" },
+    { typeName: "ZodEnum", jsonSchema: { type: "string", enum: [...allowed] } },
   );
 }
 
@@ -25687,8 +25696,114 @@ function createRecordSchema() {
   return createSimpleSchema(
     (value) =>
       value && typeof value === "object" && !Array.isArray(value) ? undefined : "Expected object",
-    { typeName: "ZodRecord" },
+    { typeName: "ZodRecord", jsonSchema: { type: "object", additionalProperties: true } },
   );
+}
+
+function createArraySchema(itemSchema) {
+  return createSimpleSchema(
+    (value) => {
+      if (!Array.isArray(value)) {
+        return "Expected array";
+      }
+      for (const item of value) {
+        const result =
+          itemSchema && typeof itemSchema.safeParse === "function"
+            ? itemSchema.safeParse(item)
+            : { success: true };
+        if (!result.success) {
+          return result.error && result.error.issues && result.error.issues[0]
+            ? result.error.issues[0].message
+            : "Invalid array item";
+        }
+      }
+      return undefined;
+    },
+    {
+      typeName: "ZodArray",
+      jsonSchema: {
+        type: "array",
+        items:
+          itemSchema && typeof itemSchema.toJSONSchema === "function"
+            ? itemSchema.toJSONSchema()
+            : {},
+      },
+    },
+  );
+}
+
+function createStrictObjectSchema(shape, options = {}) {
+  const keys = Object.keys(shape || {});
+  const schema = {
+    _def: {
+      typeName: "ZodObject",
+      shape,
+    },
+    safeParse(value) {
+      if (value === undefined && options.optional) {
+        return makeSchemaResult(true, undefined);
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return makeSchemaResult(false, value, "Expected object");
+      }
+      for (const key of Object.keys(value)) {
+        if (!Object.prototype.hasOwnProperty.call(shape, key)) {
+          return makeSchemaResult(false, value, `Unrecognized key: ${key}`);
+        }
+      }
+      for (const key of keys) {
+        if (value[key] === undefined) {
+          continue;
+        }
+        const fieldSchema = shape[key];
+        const result =
+          fieldSchema && typeof fieldSchema.safeParse === "function"
+            ? fieldSchema.safeParse(value[key])
+            : { success: true };
+        if (!result.success) {
+          const issue =
+            result.error && result.error.issues && result.error.issues[0]
+              ? result.error.issues[0]
+              : { message: "Invalid object field" };
+          return makeSchemaResult(false, value, issue.message);
+        }
+      }
+      return makeSchemaResult(true, value);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return createOptionalSchema(schema);
+    },
+    extend(extraShape) {
+      return createStrictObjectSchema({ ...shape, ...(extraShape || {}) }, options);
+    },
+    catchall() {
+      return schema;
+    },
+    toJSONSchema() {
+      const properties = {};
+      for (const [key, fieldSchema] of Object.entries(shape || {})) {
+        properties[key] =
+          fieldSchema && typeof fieldSchema.toJSONSchema === "function"
+            ? fieldSchema.toJSONSchema()
+            : {};
+      }
+      return {
+        type: "object",
+        additionalProperties: false,
+        properties,
+      };
+    },
+  };
+  return schema;
 }
 
 function createToolPolicySchema() {
@@ -34272,6 +34387,106 @@ function buildChannelConfigSchema(schema, options = {}) {
   };
 }
 
+const AllowFromEntrySchema = createSimpleSchema(
+  (value) =>
+    typeof value === "string" || typeof value === "number"
+      ? undefined
+      : "Expected string or number",
+  {
+    typeName: "ZodUnion",
+    jsonSchema: { anyOf: [{ type: "string" }, { type: "number" }] },
+  },
+);
+const AllowFromListSchema = createOptionalSchema(createArraySchema(AllowFromEntrySchema));
+const DmPolicySchema = createEnumSchema(["pairing", "allowlist", "open", "disabled"]);
+const GroupPolicySchema = createEnumSchema(["open", "disabled", "allowlist"]);
+const ContextVisibilityModeSchema = createEnumSchema(["all", "allowlist", "allowlist_quote"]);
+const MarkdownTableModeSchema = createEnumSchema(["off", "bullets", "code", "block"]);
+const MarkdownConfigSchema = createOptionalSchema(
+  createStrictObjectSchema({
+    tables: createOptionalSchema(MarkdownTableModeSchema),
+  }),
+);
+const BlockStreamingCoalesceSchema = createStrictObjectSchema({
+  minChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  maxChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  idleMs: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+});
+const DmConfigSchema = createStrictObjectSchema({
+  historyLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+});
+
+function buildNestedDmConfigSchema(extraShape) {
+  return createOptionalSchema(
+    createStrictObjectSchema({
+      enabled: createOptionalSchema(createBooleanSchema()),
+      policy: createOptionalSchema(DmPolicySchema),
+      allowFrom: AllowFromListSchema,
+      ...(extraShape || {}),
+    }),
+  );
+}
+
+function buildCatchallMultiAccountChannelSchema(accountSchema) {
+  if (!accountSchema || typeof accountSchema.extend !== "function") {
+    return accountSchema;
+  }
+  return accountSchema.extend({
+    accounts: createOptionalSchema(createRecordSchema().catchall(accountSchema)),
+    defaultAccount: createOptionalSchema(createStringSchema()),
+  });
+}
+
+function requireOpenAllowFrom(params = {}) {
+  if (params.policy !== "open") {
+    return;
+  }
+  const allowFrom = normalizeStringEntries(params.allowFrom || []);
+  if (allowFrom.includes("*")) {
+    return;
+  }
+  if (params.ctx && typeof params.ctx.addIssue === "function") {
+    params.ctx.addIssue({
+      code: "custom",
+      path: Array.isArray(params.path) ? params.path : [],
+      message: params.message || 'policy "open" requires allowFrom to include "*"',
+    });
+  }
+}
+
+const channelConfigPrimitivesRuntime = {
+  AllowFromListSchema,
+  BlockStreamingCoalesceSchema,
+  DmConfigSchema,
+  DmPolicySchema,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  ReplyRuntimeConfigSchemaShape,
+  buildCatchallMultiAccountChannelSchema,
+  buildChannelConfigSchema,
+  buildNestedDmConfigSchema,
+  requireOpenAllowFrom,
+};
+
+const channelConfigSchemaRuntime = {
+  ...channelConfigPrimitivesRuntime,
+  ContextVisibilityModeSchema,
+  ToolPolicySchema,
+};
+
+const providerChannelConfigSchema = createRecordSchema();
+const bundledChannelConfigSchemaRuntime = {
+  ...channelConfigSchemaRuntime,
+  DiscordConfigSchema: providerChannelConfigSchema,
+  GoogleChatConfigSchema: providerChannelConfigSchema,
+  IMessageConfigSchema: providerChannelConfigSchema,
+  MSTeamsConfigSchema: providerChannelConfigSchema,
+  SignalConfigSchema: providerChannelConfigSchema,
+  SlackConfigSchema: providerChannelConfigSchema,
+  TelegramConfigSchema: providerChannelConfigSchema,
+  WhatsAppConfigSchema: providerChannelConfigSchema,
+};
+
 const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
   discord: {
     id: "discord",
@@ -35371,6 +35586,8 @@ const genericSdk = new Proxy(
     CODING_TOOL_TOKENS,
     ...channelPluginCommonRuntime,
     ...coreRuntime,
+    ...channelConfigSchemaRuntime,
+    ...bundledChannelConfigSchemaRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -36321,6 +36538,26 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/core"
   ) {
     return coreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-primitives" ||
+    request === "@openclaw/plugin-sdk/channel-config-primitives"
+  ) {
+    return channelConfigPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-schema" ||
+    request === "@openclaw/plugin-sdk/channel-config-schema"
+  ) {
+    return channelConfigSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bundled-channel-config-schema" ||
+    request === "@openclaw/plugin-sdk/bundled-channel-config-schema" ||
+    request === "openclaw/plugin-sdk/channel-config-schema-legacy" ||
+    request === "@openclaw/plugin-sdk/channel-config-schema-legacy"
+  ) {
+    return bundledChannelConfigSchemaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

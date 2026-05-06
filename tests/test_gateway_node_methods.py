@@ -14764,6 +14764,369 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_primitives_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-primitives.cjs"
+    runtime_entry.write_text(
+        """
+const primitives = require("openclaw/plugin-sdk/channel-config-primitives");
+const scopedPrimitives = require("@openclaw/plugin-sdk/channel-config-primitives");
+const channelSchema = require("openclaw/plugin-sdk/channel-config-schema");
+const bundled = require("openclaw/plugin-sdk/bundled-channel-config-schema");
+const legacy = require("openclaw/plugin-sdk/channel-config-schema-legacy");
+
+function summarize(result) {
+  return {
+    success: result.success,
+    data: result.success ? result.data : undefined,
+    message: result.error && result.error.issues && result.error.issues[0]
+      ? result.error.issues[0].message
+      : result.issues && result.issues[0]
+        ? result.issues[0].message
+        : null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_primitives",
+      description: "Use OpenClaw channel config primitive SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const ctxIssues = [];
+        primitives.requireOpenAllowFrom({
+          policy: "open",
+          allowFrom: ["admin"],
+          ctx: { addIssue(issue) { ctxIssues.push(issue); } },
+          path: ["dm", "allowFrom"],
+          message: "open policy requires wildcard"
+        });
+        const wildcardIssues = [];
+        primitives.requireOpenAllowFrom({
+          policy: "open",
+          allowFrom: ["*"],
+          ctx: { addIssue(issue) { wildcardIssues.push(issue); } },
+          path: ["dm", "allowFrom"],
+          message: "open policy requires wildcard"
+        });
+        const nestedDm = primitives.buildNestedDmConfigSchema();
+        const catchall = primitives.buildCatchallMultiAccountChannelSchema({
+          extend(shape) {
+            return {
+              kind: "extended-account-schema",
+              keys: Object.keys(shape).sort(),
+              accountType: typeof shape.accounts,
+              defaultType: typeof shape.defaultAccount
+            };
+          }
+        });
+        const fakeSchema = {
+          safeParse(value) {
+            if (value && value.ok === true) {
+              return { success: true, data: { ok: true } };
+            }
+            return {
+              success: false,
+              error: { issues: [{ path: ["ok"], message: "missing ok" }] }
+            };
+          },
+          toJSONSchema(options) {
+            return {
+              type: "object",
+              properties: { ok: { type: "boolean" } },
+              required: ["ok"],
+              target: options && options.target
+            };
+          }
+        };
+        const built = primitives.buildChannelConfigSchema(fakeSchema, {
+          uiHints: { ok: { control: "switch" } }
+        });
+        return {
+          primitiveKeys: Object.keys(primitives).sort(),
+          schemaKeys: Object.keys(channelSchema).sort(),
+          bundledKeys: Object.keys(bundled).sort(),
+          legacyKeys: Object.keys(legacy).sort(),
+          scopedBuildType: typeof scopedPrimitives.buildChannelConfigSchema,
+          policies: {
+            dmPairing: summarize(primitives.DmPolicySchema.safeParse("pairing")),
+            dmInvalid: summarize(primitives.DmPolicySchema.safeParse("restricted")),
+            groupAllowlist: summarize(primitives.GroupPolicySchema.safeParse("allowlist")),
+            groupInvalid: summarize(primitives.GroupPolicySchema.safeParse("restrict-senders")),
+            contextQuote: summarize(
+              channelSchema.ContextVisibilityModeSchema.safeParse("allowlist_quote")
+            )
+          },
+          markdown: {
+            undefinedValue: summarize(primitives.MarkdownConfigSchema.safeParse(undefined)),
+            tableCode: summarize(primitives.MarkdownConfigSchema.safeParse({ tables: "code" })),
+            tableInvalid: summarize(primitives.MarkdownConfigSchema.safeParse({ tables: "grid" }))
+          },
+          blockStreaming: {
+            valid: summarize(
+              primitives.BlockStreamingCoalesceSchema.safeParse({
+                minChars: 3,
+                maxChars: 10,
+                idleMs: 0
+              })
+            ),
+            invalid: summarize(
+              primitives.BlockStreamingCoalesceSchema.safeParse({ minChars: 0 })
+            )
+          },
+          dmConfig: {
+            valid: summarize(primitives.DmConfigSchema.safeParse({ historyLimit: 0 })),
+            invalid: summarize(primitives.DmConfigSchema.safeParse({ historyLimit: -1 }))
+          },
+          nestedDm: {
+            undefinedValue: summarize(nestedDm.safeParse(undefined)),
+            valid: summarize(
+              nestedDm.safeParse({ enabled: true, policy: "allowlist", allowFrom: ["admin", 42] })
+            ),
+            invalidPolicy: summarize(nestedDm.safeParse({ policy: "restricted" }))
+          },
+          allowFrom: {
+            schemaValid: summarize(primitives.AllowFromListSchema.safeParse(["admin", 42])),
+            schemaInvalid: summarize(primitives.AllowFromListSchema.safeParse([{}])),
+            issue: ctxIssues[0],
+            wildcardIssueCount: wildcardIssues.length
+          },
+          catchall,
+          builtConfig: {
+            schema: built.schema,
+            uiHints: built.uiHints,
+            valid: summarize(built.runtime.safeParse({ ok: true })),
+            invalid: summarize(built.runtime.safeParse({}))
+          },
+          providerSchemaTypes: {
+            telegram: typeof bundled.TelegramConfigSchema.safeParse,
+            whatsapp: typeof bundled.WhatsAppConfigSchema.safeParse,
+            legacyTelegram: typeof legacy.TelegramConfigSchema.safeParse
+          },
+          toolPolicy: {
+            valid: summarize(channelSchema.ToolPolicySchema.safeParse({ allow: ["chat.send"] })),
+            conflict: summarize(
+              channelSchema.ToolPolicySchema.safeParse({
+                allow: ["chat.send"],
+                alsoAllow: ["tools.exec"]
+              })
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-primitives-plugin",
+                    "name": "Runtime Channel Config Primitives Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-primitives.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_primitives"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_primitives"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "primitiveKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GroupPolicySchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "schemaKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GroupPolicySchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "ToolPolicySchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "bundledKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DiscordConfigSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GoogleChatConfigSchema",
+            "GroupPolicySchema",
+            "IMessageConfigSchema",
+            "MSTeamsConfigSchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "SignalConfigSchema",
+            "SlackConfigSchema",
+            "TelegramConfigSchema",
+            "ToolPolicySchema",
+            "WhatsAppConfigSchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "legacyKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DiscordConfigSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GoogleChatConfigSchema",
+            "GroupPolicySchema",
+            "IMessageConfigSchema",
+            "MSTeamsConfigSchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "SignalConfigSchema",
+            "SlackConfigSchema",
+            "TelegramConfigSchema",
+            "ToolPolicySchema",
+            "WhatsAppConfigSchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "scopedBuildType": "function",
+        "policies": {
+            "dmPairing": {"success": True, "data": "pairing", "message": None},
+            "dmInvalid": {"success": False, "message": "Invalid enum value"},
+            "groupAllowlist": {"success": True, "data": "allowlist", "message": None},
+            "groupInvalid": {"success": False, "message": "Invalid enum value"},
+            "contextQuote": {"success": True, "data": "allowlist_quote", "message": None},
+        },
+        "markdown": {
+            "undefinedValue": {"success": True, "message": None},
+            "tableCode": {"success": True, "data": {"tables": "code"}, "message": None},
+            "tableInvalid": {"success": False, "message": "Invalid enum value"},
+        },
+        "blockStreaming": {
+            "valid": {
+                "success": True,
+                "data": {"minChars": 3, "maxChars": 10, "idleMs": 0},
+                "message": None,
+            },
+            "invalid": {"success": False, "message": "Number must be greater than 0"},
+        },
+        "dmConfig": {
+            "valid": {"success": True, "data": {"historyLimit": 0}, "message": None},
+            "invalid": {
+                "success": False,
+                "message": "Number must be greater than or equal to 0",
+            },
+        },
+        "nestedDm": {
+            "undefinedValue": {"success": True, "message": None},
+            "valid": {
+                "success": True,
+                "data": {"enabled": True, "policy": "allowlist", "allowFrom": ["admin", 42]},
+                "message": None,
+            },
+            "invalidPolicy": {"success": False, "message": "Invalid enum value"},
+        },
+        "allowFrom": {
+            "schemaValid": {"success": True, "data": ["admin", 42], "message": None},
+            "schemaInvalid": {"success": False, "message": "Expected string or number"},
+            "issue": {
+                "code": "custom",
+                "path": ["dm", "allowFrom"],
+                "message": "open policy requires wildcard",
+            },
+            "wildcardIssueCount": 0,
+        },
+        "catchall": {
+            "kind": "extended-account-schema",
+            "keys": ["accounts", "defaultAccount"],
+            "accountType": "object",
+            "defaultType": "object",
+        },
+        "builtConfig": {
+            "schema": {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "target": "draft-07",
+            },
+            "uiHints": {"ok": {"control": "switch"}},
+            "valid": {"success": True, "data": {"ok": True}, "message": None},
+            "invalid": {"success": False, "message": "missing ok"},
+        },
+        "providerSchemaTypes": {
+            "telegram": "function",
+            "whatsapp": "function",
+            "legacyTelegram": "function",
+        },
+        "toolPolicy": {
+            "valid": {"success": True, "data": {"allow": ["chat.send"]}, "message": None},
+            "conflict": {
+                "success": False,
+                "message": (
+                    "tools policy cannot set both allow and alsoAllow in the same scope "
+                    "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)"
+                ),
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
     tmp_path,
 ) -> None:
