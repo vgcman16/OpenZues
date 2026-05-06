@@ -18033,7 +18033,7 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const util = require("util");
-const { pathToFileURL } = require("url");
+const { fileURLToPath, pathToFileURL } = require("url");
 const Module = require("module");
 
 const contextPath = process.argv[2];
@@ -24542,6 +24542,143 @@ async function saveCronStore(storePath, store, opts) {
     stateJson,
     needsSplitMigration: false,
   });
+}
+
+class SafeOpenError extends Error {
+  constructor(code, message, options) {
+    super(message, options);
+    this.name = "SafeOpenError";
+    this.code = code;
+  }
+}
+
+function ensureTrailingPathSeparator(value) {
+  return value.endsWith(path.sep) ? value : value + path.sep;
+}
+
+function isPathInsideRoot(rootDir, candidatePath) {
+  const relative = path.relative(rootDir, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function resolveFileAccessPathWithinRoot(params) {
+  let rootReal;
+  try {
+    rootReal = await fs.promises.realpath(params.rootDir);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new SafeOpenError("not-found", "root dir not found");
+    }
+    throw err;
+  }
+  const rootWithSep = ensureTrailingPathSeparator(rootReal);
+  const resolved = path.resolve(rootWithSep, params.relativePath || "");
+  if (!isPathInsideRoot(rootReal, resolved)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  return { rootReal, rootWithSep, resolved };
+}
+
+async function readFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolved.resolved);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      throw new SafeOpenError("not-found", "file not found");
+    }
+    throw err;
+  }
+  if (!stat.isFile()) {
+    throw new SafeOpenError("not-file", "not a file");
+  }
+  if (params && params.maxBytes !== undefined && stat.size > params.maxBytes) {
+    throw new SafeOpenError(
+      "too-large",
+      `file exceeds limit of ${params.maxBytes} bytes (got ${stat.size})`,
+    );
+  }
+  const realPath = await fs.promises.realpath(resolved.resolved);
+  if (!isPathInsideRoot(resolved.rootReal, realPath)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  return {
+    buffer: await fs.promises.readFile(realPath),
+    realPath,
+    stat,
+  };
+}
+
+async function writeFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  await fs.promises.mkdir(path.dirname(resolved.resolved), { recursive: true });
+  const data = params && params.data !== undefined ? params.data : "";
+  await fs.promises.writeFile(resolved.resolved, data, {
+    encoding: (params && params.encoding) || undefined,
+    mode: 0o600,
+  });
+}
+
+function hasEncodedFileUrlSeparator(pathname) {
+  return /%(?:2f|5c)/i.test(pathname);
+}
+
+function isLocalFileUrlHost(hostname) {
+  const normalized = normalizeOptionalLowercaseString(hostname) || "";
+  return normalized === "" || normalized === "localhost";
+}
+
+function isWindowsNetworkPath(filePath) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const normalized = filePath.replace(/\//g, "\\");
+  return normalized.startsWith("\\\\?\\UNC\\") || normalized.startsWith("\\\\");
+}
+
+function safeFileURLToPath(fileUrl) {
+  let parsed;
+  try {
+    parsed = new URL(fileUrl);
+  } catch {
+    throw new Error(`Invalid file:// URL: ${fileUrl}`);
+  }
+  if (parsed.protocol !== "file:") {
+    throw new Error(`Invalid file:// URL: ${fileUrl}`);
+  }
+  if (!isLocalFileUrlHost(parsed.hostname)) {
+    throw new Error(`file:// URLs with remote hosts are not allowed: ${fileUrl}`);
+  }
+  if (hasEncodedFileUrlSeparator(parsed.pathname)) {
+    throw new Error(`file:// URLs cannot encode path separators: ${fileUrl}`);
+  }
+  const filePath = fileURLToPath(parsed);
+  if (isWindowsNetworkPath(filePath)) {
+    throw new Error(`Local file URL cannot use Windows network paths: ${filePath}`);
+  }
+  return filePath;
+}
+
+function basenameFromMediaSource(source) {
+  if (!source) {
+    return undefined;
+  }
+  if (source.startsWith("file://")) {
+    try {
+      return path.basename(safeFileURLToPath(source)) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  if (/^https?:\/\//i.test(source)) {
+    try {
+      return path.basename(new URL(source).pathname) || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return path.basename(source) || undefined;
 }
 
 function isSecretRef(value) {
@@ -38914,6 +39051,13 @@ const cronStoreRuntime = {
   saveCronStore,
 };
 
+const fileAccessRuntime = {
+  basenameFromMediaSource,
+  readFileWithinRoot,
+  safeFileURLToPath,
+  writeFileWithinRoot,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -40160,6 +40304,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/cron-store-runtime"
   ) {
     return cronStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/file-access-runtime" ||
+    request === "@openclaw/plugin-sdk/file-access-runtime"
+  ) {
+    return fileAccessRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

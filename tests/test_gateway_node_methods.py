@@ -23191,6 +23191,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_file_access_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-file-access.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const fileAccess = require("openclaw/plugin-sdk/file-access-runtime");
+const scopedFileAccess = require("@openclaw/plugin-sdk/file-access-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.file_access",
+      description: "Use OpenClaw file-access runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const rootDir = path.join(__dirname, "workspace");
+        fs.mkdirSync(rootDir, { recursive: true });
+        await fileAccess.writeFileWithinRoot({
+          rootDir,
+          relativePath: "nested/out.txt",
+          data: "hello",
+          encoding: "utf8"
+        });
+        const read = await fileAccess.readFileWithinRoot({
+          rootDir,
+          relativePath: "nested/out.txt",
+          maxBytes: 64
+        });
+        const outsideError = await fileAccess.readFileWithinRoot({
+          rootDir,
+          relativePath: "../outside.txt"
+        }).then(
+          () => null,
+          (error) => ({ name: error.name, code: error.code, message: error.message })
+        );
+        const fileUrl = pathToFileURL(path.join(rootDir, "nested", "out.txt")).href;
+        const encodedError = (() => {
+          try {
+            fileAccess.safeFileURLToPath("file:///tmp/a%2Fb.txt");
+            return null;
+          } catch (error) {
+            return String(error.message || error);
+          }
+        })();
+        return {
+          keys: Object.keys(fileAccess).sort(),
+          scopedType: typeof scopedFileAccess.readFileWithinRoot,
+          read: {
+            text: read.buffer.toString("utf8"),
+            basename: path.basename(read.realPath),
+            size: read.stat.size
+          },
+          exists: fs.existsSync(path.join(rootDir, "nested", "out.txt")),
+          localPathBasename: path.basename(fileAccess.safeFileURLToPath(fileUrl)),
+          basenames: [
+            fileAccess.basenameFromMediaSource(fileUrl),
+            fileAccess.basenameFromMediaSource("https://example.com/a/b/c.png"),
+            fileAccess.basenameFromMediaSource("relative/name.mp3")
+          ],
+          outsideError,
+          encodedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-file-access-plugin",
+                    "name": "Runtime File Access Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-file-access.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.file_access"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.file_access"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "basenameFromMediaSource",
+            "readFileWithinRoot",
+            "safeFileURLToPath",
+            "writeFileWithinRoot",
+        ],
+        "scopedType": "function",
+        "read": {"text": "hello", "basename": "out.txt", "size": 5},
+        "exists": True,
+        "localPathBasename": "out.txt",
+        "basenames": ["out.txt", "c.png", "name.mp3"],
+        "outsideError": {
+            "name": "SafeOpenError",
+            "code": "outside-workspace",
+            "message": "file is outside workspace root",
+        },
+        "encodedError": "file:// URLs cannot encode path separators: file:///tmp/a%2Fb.txt",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
