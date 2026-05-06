@@ -7250,6 +7250,95 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_roots_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound-roots.cjs"
+    runtime_entry.write_text(
+        """
+const inboundRoots = require("openclaw/plugin-sdk/channel-inbound-roots");
+const scopedInboundRoots = require("@openclaw/plugin-sdk/channel-inbound-roots");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound_roots",
+      description: "Use OpenClaw channel-inbound-roots SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(inboundRoots).sort(),
+          merged: inboundRoots.mergeInboundPathRoots(
+            ["C:\\\\tmp\\\\*", "/var/data", "/", "relative", "/var/data"],
+            ["/mnt/*/media", "/var/data"]
+          ),
+          scoped: scopedInboundRoots.mergeInboundPathRoots(["/srv/media"], ["/srv/media/cache"]),
+          genericType: typeof genericSdk.mergeInboundPathRoots
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-roots-plugin",
+                    "name": "Runtime Channel Inbound Roots Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-inbound-roots.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_inbound_roots"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_inbound_roots"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["mergeInboundPathRoots"],
+        "merged": ["C:/tmp/*", "/var/data", "/mnt/*/media"],
+        "scoped": ["/srv/media", "/srv/media/cache"],
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_route_helpers(
     tmp_path,
 ) -> None:
