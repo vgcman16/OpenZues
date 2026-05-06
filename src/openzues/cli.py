@@ -48262,6 +48262,35 @@ const memoryCoreHostRuntimeCoreRuntime = {
   resolveStateDir,
 };
 
+function getMemoryHostSearchRuntime() {
+  const registration = getMemoryRuntimeCoreState().capability;
+  return registration &&
+    registration.capability &&
+    registration.capability.runtime
+    ? registration.capability.runtime
+    : null;
+}
+
+async function getActiveMemorySearchManager(params = {}) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (!runtime || typeof runtime.getMemorySearchManager !== "function") {
+    return { manager: null, error: "memory plugin unavailable" };
+  }
+  return await runtime.getMemorySearchManager(params);
+}
+
+async function closeActiveMemorySearchManagers(_cfg) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (runtime && typeof runtime.closeAllMemorySearchManagers === "function") {
+    await runtime.closeAllMemorySearchManagers();
+  }
+}
+
+const memoryHostSearchRuntime = {
+  closeActiveMemorySearchManagers,
+  getActiveMemorySearchManager,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -49497,6 +49526,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-markdown"
   ) {
     return memoryHostMarkdownRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-search" ||
+    request === "@openclaw/plugin-sdk/memory-host-search"
+  ) {
+    return memoryHostSearchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||

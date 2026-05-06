@@ -28417,6 +28417,141 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_search_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-search.cjs"
+    runtime_entry.write_text(
+        """
+const core = require("openclaw/plugin-sdk/memory-core-host-runtime-core");
+const search = require("openclaw/plugin-sdk/memory-host-search");
+const scopedSearch = require("@openclaw/plugin-sdk/memory-host-search");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_host_search",
+      description: "Use OpenClaw memory-host-search SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        core.clearMemoryPluginState();
+        let closed = 0;
+        const cfg = { agents: { list: [{ id: "main" }, { id: "beta" }] } };
+        core.registerMemoryCapability("memory-runtime", {
+          runtime: {
+            async getMemorySearchManager(params) {
+              return {
+                manager: {
+                  id: "manager",
+                  agentId: params.agentId,
+                  purpose: params.purpose ?? "default",
+                  agentCount: params.cfg.agents.list.length
+                }
+              };
+            },
+            resolveMemoryBackendConfig() {
+              return { backend: "builtin" };
+            },
+            async closeAllMemorySearchManagers() {
+              closed += 1;
+            }
+          }
+        });
+        const active = await search.getActiveMemorySearchManager({
+          cfg,
+          agentId: "beta",
+          purpose: "status"
+        });
+        await scopedSearch.closeActiveMemorySearchManagers(cfg);
+        core.clearMemoryPluginState();
+        const unavailable = await search.getActiveMemorySearchManager({
+          cfg: {},
+          agentId: "main"
+        });
+        return {
+          keys: Object.keys(search).sort(),
+          scopedType: typeof scopedSearch.getActiveMemorySearchManager,
+          active,
+          closed,
+          unavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-search-plugin",
+                    "name": "Memory Host Search Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-search.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_search"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_search"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "closeActiveMemorySearchManagers",
+            "getActiveMemorySearchManager",
+        ],
+        "scopedType": "function",
+        "active": {
+            "manager": {
+                "id": "manager",
+                "agentId": "beta",
+                "purpose": "status",
+                "agentCount": 2,
+            }
+        },
+        "closed": 1,
+        "unavailable": {
+            "manager": None,
+            "error": "memory plugin unavailable",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_status_helpers(
     tmp_path,
 ) -> None:
