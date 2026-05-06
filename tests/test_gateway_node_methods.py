@@ -24034,6 +24034,129 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_run_command_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-run-command.cjs"
+    runtime_entry.write_text(
+        """
+const runCommand = require("openclaw/plugin-sdk/run-command");
+const scopedRunCommand = require("@openclaw/plugin-sdk/run-command");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.run_command",
+      description: "Use OpenClaw run-command SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const success = await runCommand.runPluginCommandWithTimeout({
+          argv: [
+            process.execPath,
+            "-e",
+            "process.stdout.write('ok'); process.stderr.write('warn')"
+          ],
+          timeoutMs: 2000
+        });
+        const failed = await runCommand.runPluginCommandWithTimeout({
+          argv: [
+            process.execPath,
+            "-e",
+            "process.stderr.write('bad'); process.exit(3)"
+          ],
+          timeoutMs: 2000
+        });
+        const timeout = await runCommand.runPluginCommandWithTimeout({
+          argv: [process.execPath, "-e", "setTimeout(() => {}, 500)"],
+          timeoutMs: 50
+        });
+        const missing = await runCommand.runPluginCommandWithTimeout({
+          argv: [],
+          timeoutMs: 50
+        });
+        return {
+          keys: Object.keys(runCommand).sort(),
+          scopedType: typeof scopedRunCommand.runPluginCommandWithTimeout,
+          success,
+          failed,
+          timeout,
+          missing
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-run-command-plugin",
+                    "name": "Runtime Run Command Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-run-command.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.run_command"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.run_command"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == ["runPluginCommandWithTimeout"]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["success"] == {
+        "code": 0,
+        "stdout": "ok",
+        "stderr": "warn",
+    }
+    assert payload["result"]["failed"] == {
+        "code": 3,
+        "stdout": "",
+        "stderr": "bad",
+    }
+    assert payload["result"]["timeout"]["code"] != 0
+    assert payload["result"]["timeout"]["stdout"] == ""
+    assert "command timed out after 50ms" in payload["result"]["timeout"]["stderr"]
+    assert payload["result"]["missing"] == {
+        "code": 1,
+        "stdout": "",
+        "stderr": "command is required",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
     tmp_path,
 ) -> None:

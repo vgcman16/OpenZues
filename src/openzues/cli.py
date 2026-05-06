@@ -39488,6 +39488,36 @@ async function runCommandWithTimeout(argv = [], optionsOrTimeout = {}) {
   });
 }
 
+async function runPluginCommandWithTimeout(options = {}) {
+  const argv = Array.isArray(options.argv) ? options.argv.slice() : [];
+  const [command] = argv;
+  if (!command) {
+    return { code: 1, stdout: "", stderr: "command is required" };
+  }
+  try {
+    const result = await runCommandWithTimeout(argv, {
+      timeoutMs: options.timeoutMs,
+      cwd: options.cwd,
+      env: options.env,
+    });
+    const timedOut =
+      result.termination === "timeout" || result.termination === "no-output-timeout";
+    return {
+      code: result.code ?? 1,
+      stdout: result.stdout || "",
+      stderr: timedOut
+        ? result.stderr || `command timed out after ${options.timeoutMs}ms`
+        : result.stderr || "",
+    };
+  } catch (error) {
+    return {
+      code: 1,
+      stdout: "",
+      stderr: formatErrorMessage(error),
+    };
+  }
+}
+
 const CHILD_OOM_SCORE_ADJ_ENV_KEY = "OPENCLAW_CHILD_OOM_SCORE_ADJ";
 const OOM_SCORE_WRAP_SHELL = "/bin/sh";
 const OOM_SCORE_WRAP_SCRIPT =
@@ -39574,6 +39604,10 @@ const processRuntime = {
   runExec,
   shouldSpawnWithShell,
   wrapArgvForChildOomScoreRaise,
+};
+
+const runCommandRuntime = {
+  runPluginCommandWithTimeout,
 };
 
 const channelSetupRuntime = {
@@ -40581,6 +40615,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/process-runtime"
   ) {
     return processRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/run-command" ||
+    request === "@openclaw/plugin-sdk/run-command"
+  ) {
+    return runCommandRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
