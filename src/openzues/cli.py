@@ -34529,6 +34529,265 @@ const sessionKeyRuntime = {
   resolveAgentIdFromSessionKey,
 };
 
+let callGatewayForListSpawnedSessionVisibility = async () => ({ sessions: [] });
+
+const sessionVisibilityGatewayTesting = {
+  setCallGatewayForListSpawned(overrides) {
+    callGatewayForListSpawnedSessionVisibility =
+      typeof overrides === "function" ? overrides : async () => ({ sessions: [] });
+  },
+};
+
+async function listSpawnedSessionKeys(params = {}) {
+  const limit =
+    typeof params.limit === "number" && Number.isFinite(params.limit)
+      ? Math.max(1, Math.floor(params.limit))
+      : undefined;
+  try {
+    const list = await callGatewayForListSpawnedSessionVisibility({
+      method: "sessions.list",
+      params: {
+        includeGlobal: false,
+        includeUnknown: false,
+        ...(limit !== undefined ? { limit } : {}),
+        spawnedBy: params.requesterSessionKey,
+      },
+    });
+    const sessions = Array.isArray(list && list.sessions) ? list.sessions : [];
+    return new Set(
+      sessions
+        .map((entry) => normalizeOptionalString(entry && entry.key) || "")
+        .filter(Boolean),
+    );
+  } catch (_error) {
+    return new Set();
+  }
+}
+
+function resolveSessionToolsVisibility(cfg = {}) {
+  const raw =
+    cfg &&
+    cfg.tools &&
+    cfg.tools.sessions &&
+    cfg.tools.sessions.visibility;
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return ["self", "tree", "agent", "all"].includes(value) ? value : "tree";
+}
+
+function resolveSandboxSessionToolsVisibility(cfg = {}) {
+  const value =
+    cfg &&
+    cfg.agents &&
+    cfg.agents.defaults &&
+    cfg.agents.defaults.sandbox &&
+    cfg.agents.defaults.sandbox.sessionToolsVisibility;
+  return value === "all" ? "all" : "spawned";
+}
+
+function resolveEffectiveSessionToolsVisibility(params = {}) {
+  const visibility = resolveSessionToolsVisibility(params.cfg || {});
+  if (!params.sandboxed) {
+    return visibility;
+  }
+  const sandboxClamp = resolveSandboxSessionToolsVisibility(params.cfg || {});
+  if (sandboxClamp === "spawned" && visibility !== "tree") {
+    return "tree";
+  }
+  return visibility;
+}
+
+function createAgentToAgentPolicy(cfg = {}) {
+  const routingA2A = cfg && cfg.tools && cfg.tools.agentToAgent;
+  const enabled = Boolean(routingA2A && routingA2A.enabled === true);
+  const allowPatterns = Array.isArray(routingA2A && routingA2A.allow)
+    ? routingA2A.allow
+    : [];
+  const matchesAllow = (agentId) => {
+    if (allowPatterns.length === 0) {
+      return true;
+    }
+    return allowPatterns.some((pattern) => {
+      const raw = normalizeOptionalString(
+        typeof pattern === "string" ? pattern : String(pattern || ""),
+      );
+      if (!raw) {
+        return false;
+      }
+      if (raw === "*") {
+        return true;
+      }
+      if (!raw.includes("*")) {
+        return raw === agentId;
+      }
+      const escaped = raw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`, "i").test(agentId);
+    });
+  };
+  const isAllowed = (requesterAgentId, targetAgentId) => {
+    if (requesterAgentId === targetAgentId) {
+      return true;
+    }
+    if (!enabled) {
+      return false;
+    }
+    return matchesAllow(requesterAgentId) && matchesAllow(targetAgentId);
+  };
+  return { enabled, matchesAllow, isAllowed };
+}
+
+function sessionVisibilityActionPrefix(action) {
+  if (action === "history") {
+    return "Session history";
+  }
+  if (action === "send") {
+    return "Session send";
+  }
+  if (action === "status") {
+    return "Session status";
+  }
+  return "Session list";
+}
+
+function sessionVisibilityA2aDisabledMessage(action) {
+  if (action === "history") {
+    return (
+      "Agent-to-agent history is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "send") {
+    return (
+      "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent sends."
+    );
+  }
+  if (action === "status") {
+    return (
+      "Agent-to-agent status is disabled. Set tools.agentToAgent.enabled=true " +
+      "to allow cross-agent access."
+    );
+  }
+  return (
+    "Agent-to-agent listing is disabled. Set tools.agentToAgent.enabled=true " +
+    "to allow cross-agent visibility."
+  );
+}
+
+function sessionVisibilityA2aDeniedMessage(action) {
+  if (action === "history") {
+    return "Agent-to-agent history denied by tools.agentToAgent.allow.";
+  }
+  if (action === "send") {
+    return "Agent-to-agent messaging denied by tools.agentToAgent.allow.";
+  }
+  if (action === "status") {
+    return "Agent-to-agent status denied by tools.agentToAgent.allow.";
+  }
+  return "Agent-to-agent listing denied by tools.agentToAgent.allow.";
+}
+
+function sessionVisibilityCrossMessage(action) {
+  if (action === "history") {
+    return (
+      "Session history visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "send") {
+    return (
+      "Session send visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  if (action === "status") {
+    return (
+      "Session status visibility is restricted. Set tools.sessions.visibility=all " +
+      "to allow cross-agent access."
+    );
+  }
+  return (
+    "Session list visibility is restricted. Set tools.sessions.visibility=all " +
+    "to allow cross-agent access."
+  );
+}
+
+function createSessionVisibilityChecker(params = {}) {
+  const requesterAgentId = resolveAgentIdFromSessionKey(params.requesterSessionKey);
+  const spawnedKeys = params.spawnedKeys;
+  return {
+    check(targetSessionKey) {
+      const targetAgentId = resolveAgentIdFromSessionKey(targetSessionKey);
+      const action = params.action || "list";
+      if (targetAgentId !== requesterAgentId) {
+        if (params.visibility !== "all") {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityCrossMessage(action),
+          };
+        }
+        if (!params.a2aPolicy || params.a2aPolicy.enabled !== true) {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityA2aDisabledMessage(action),
+          };
+        }
+        if (!params.a2aPolicy.isAllowed(requesterAgentId, targetAgentId)) {
+          return {
+            allowed: false,
+            status: "forbidden",
+            error: sessionVisibilityA2aDeniedMessage(action),
+          };
+        }
+        return { allowed: true };
+      }
+      if (params.visibility === "self" && targetSessionKey !== params.requesterSessionKey) {
+        return {
+          allowed: false,
+          status: "forbidden",
+          error:
+            `${sessionVisibilityActionPrefix(action)} visibility is restricted to ` +
+            "the current session (tools.sessions.visibility=self).",
+        };
+      }
+      if (
+        params.visibility === "tree" &&
+        targetSessionKey !== params.requesterSessionKey &&
+        !(spawnedKeys && spawnedKeys.has(targetSessionKey))
+      ) {
+        return {
+          allowed: false,
+          status: "forbidden",
+          error:
+            `${sessionVisibilityActionPrefix(action)} visibility is restricted to ` +
+            "the current session tree (tools.sessions.visibility=tree).",
+        };
+      }
+      return { allowed: true };
+    },
+  };
+}
+
+async function createSessionVisibilityGuard(params = {}) {
+  const spawnedKeys =
+    params.visibility === "tree"
+      ? await listSpawnedSessionKeys({ requesterSessionKey: params.requesterSessionKey })
+      : null;
+  return createSessionVisibilityChecker({ ...params, spawnedKeys });
+}
+
+const sessionVisibilityRuntime = {
+  createAgentToAgentPolicy,
+  createSessionVisibilityChecker,
+  createSessionVisibilityGuard,
+  listSpawnedSessionKeys,
+  resolveEffectiveSessionToolsVisibility,
+  resolveSandboxSessionToolsVisibility,
+  resolveSessionToolsVisibility,
+  sessionVisibilityGatewayTesting,
+};
+
 function normalizeStoreSessionKey(sessionKey) {
   return normalizeLowercaseStringOrEmpty(sessionKey);
 }
@@ -41118,6 +41377,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/session-store-runtime"
   ) {
     return sessionStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-visibility" ||
+    request === "@openclaw/plugin-sdk/session-visibility"
+  ) {
+    return sessionVisibilityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||

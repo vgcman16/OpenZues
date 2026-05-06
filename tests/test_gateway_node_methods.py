@@ -18165,6 +18165,195 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_visibility_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-visibility.cjs"
+    runtime_entry.write_text(
+        """
+const visibility = require("openclaw/plugin-sdk/session-visibility");
+const scopedVisibility = require("@openclaw/plugin-sdk/session-visibility");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_visibility",
+      description: "Use OpenClaw session visibility SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const a2aDefault = visibility.createAgentToAgentPolicy({});
+        const a2aAllowed = visibility.createAgentToAgentPolicy({
+          tools: { agentToAgent: { enabled: true, allow: ["ops-*", "main"] } }
+        });
+        const treeChecker = visibility.createSessionVisibilityChecker({
+          action: "history",
+          requesterSessionKey: "agent:main:main",
+          visibility: "tree",
+          a2aPolicy: a2aDefault,
+          spawnedKeys: new Set(["agent:main:subagent:worker-1"])
+        });
+        const selfChecker = visibility.createSessionVisibilityChecker({
+          action: "send",
+          requesterSessionKey: "agent:main:main",
+          visibility: "self",
+          a2aPolicy: a2aDefault,
+          spawnedKeys: null
+        });
+        const crossChecker = visibility.createSessionVisibilityChecker({
+          action: "status",
+          requesterSessionKey: "agent:main:main",
+          visibility: "tree",
+          a2aPolicy: a2aAllowed,
+          spawnedKeys: new Set()
+        });
+        const allChecker = visibility.createSessionVisibilityChecker({
+          action: "list",
+          requesterSessionKey: "agent:main:main",
+          visibility: "all",
+          a2aPolicy: a2aAllowed,
+          spawnedKeys: null
+        });
+        return {
+          keys: Object.keys(visibility).sort(),
+          scopedType: typeof scopedVisibility.createSessionVisibilityChecker,
+          defaults: [
+            visibility.resolveSessionToolsVisibility({}),
+            visibility.resolveSessionToolsVisibility({
+              tools: { sessions: { visibility: "invalid" } }
+            }),
+            visibility.resolveSessionToolsVisibility({
+              tools: { sessions: { visibility: "ALL" } }
+            }),
+            visibility.resolveSandboxSessionToolsVisibility({}),
+            visibility.resolveEffectiveSessionToolsVisibility({
+              cfg: {
+                tools: { sessions: { visibility: "all" } },
+                agents: { defaults: { sandbox: { sessionToolsVisibility: "spawned" } } }
+              },
+              sandboxed: true
+            }),
+            visibility.resolveEffectiveSessionToolsVisibility({
+              cfg: {
+                tools: { sessions: { visibility: "all" } },
+                agents: { defaults: { sandbox: { sessionToolsVisibility: "all" } } }
+              },
+              sandboxed: true
+            })
+          ],
+          a2a: [
+            a2aDefault.enabled,
+            a2aDefault.isAllowed("main", "main"),
+            a2aDefault.isAllowed("main", "ops"),
+            a2aAllowed.isAllowed("main", "ops-a"),
+            a2aAllowed.isAllowed("guest", "ops-a")
+          ],
+          treeAllowed: treeChecker.check("agent:main:subagent:worker-1"),
+          treeDenied: treeChecker.check("agent:main:forum:room-2"),
+          selfDenied: selfChecker.check("agent:main:forum:room-1"),
+          crossDenied: crossChecker.check("agent:ops:main"),
+          allAllowed: allChecker.check("agent:ops-a:main"),
+          testingType: typeof visibility.sessionVisibilityGatewayTesting
+            .setCallGatewayForListSpawned
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "session-visibility-plugin",
+                    "name": "Session Visibility Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-session-visibility.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_visibility"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.session_visibility"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createAgentToAgentPolicy",
+            "createSessionVisibilityChecker",
+            "createSessionVisibilityGuard",
+            "listSpawnedSessionKeys",
+            "resolveEffectiveSessionToolsVisibility",
+            "resolveSandboxSessionToolsVisibility",
+            "resolveSessionToolsVisibility",
+            "sessionVisibilityGatewayTesting",
+        ],
+        "scopedType": "function",
+        "defaults": ["tree", "tree", "all", "spawned", "tree", "all"],
+        "a2a": [False, True, False, True, False],
+        "treeAllowed": {"allowed": True},
+        "treeDenied": {
+            "allowed": False,
+            "status": "forbidden",
+            "error": (
+                "Session history visibility is restricted to the current session tree "
+                "(tools.sessions.visibility=tree)."
+            ),
+        },
+        "selfDenied": {
+            "allowed": False,
+            "status": "forbidden",
+            "error": (
+                "Session send visibility is restricted to the current session "
+                "(tools.sessions.visibility=self)."
+            ),
+        },
+        "crossDenied": {
+            "allowed": False,
+            "status": "forbidden",
+            "error": (
+                "Session status visibility is restricted. Set "
+                "tools.sessions.visibility=all to allow cross-agent access."
+            ),
+        },
+        "allAllowed": {"allowed": True},
+        "testingType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_session_store_runtime_helpers(
     tmp_path,
 ) -> None:
