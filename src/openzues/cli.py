@@ -37667,9 +37667,41 @@ function createChannelApprovalNativeRuntimeAdapter(spec = {}) {
   return runtime;
 }
 
+function createChannelApprovalHandler(adapter = {}) {
+  const runtime = adapter.runtime || {};
+  const content = adapter.content || {};
+  const transport = adapter.transport || {};
+  const lifecycle = adapter.lifecycle || {};
+  return createChannelNativeApprovalRuntime({
+    label: runtime.label,
+    clientDisplayName: runtime.clientDisplayName,
+    cfg: runtime.cfg,
+    gatewayUrl: runtime.gatewayUrl,
+    eventKinds: runtime.eventKinds,
+    channel: runtime.channel,
+    channelLabel: runtime.channelLabel,
+    accountId: runtime.accountId,
+    nativeAdapter: runtime.nativeAdapter,
+    resolveApprovalKind: runtime.resolveApprovalKind,
+    isConfigured: runtime.isConfigured,
+    shouldHandle: runtime.shouldHandle,
+    nowMs: runtime.nowMs,
+    buildPendingContent: content.buildPendingContent,
+    prepareTarget: transport.prepareTarget,
+    deliverTarget: transport.deliverTarget,
+    onDeliveryError: lifecycle.onDeliveryError,
+    onDuplicateSkipped: lifecycle.onDuplicateSkipped,
+    onDelivered: lifecycle.onDelivered,
+    finalizeResolved: lifecycle.finalizeResolved,
+    finalizeExpired: lifecycle.finalizeExpired,
+    onStopped: lifecycle.onStopped,
+  });
+}
+
 const approvalHandlerRuntime = new Proxy(
   {
     CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+    createChannelApprovalHandler,
     createChannelApprovalNativeRuntimeAdapter,
     createLazyChannelApprovalNativeRuntimeAdapter,
     resolveApprovalOverGateway,
