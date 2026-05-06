@@ -45,8 +45,10 @@ checkpointed in `fceeecc8`; `config-schema` from
 from `src/plugin-sdk/entrypoints.ts` and
 `scripts/lib/plugin-sdk-entrypoints.json` is checkpointed in `bd810f14`;
 `diffs` from `src/plugin-sdk/diffs.ts` is checkpointed in `008c6120`; `acpx`
-from `src/plugin-sdk/acpx.ts` is checkpointed in `c7541c95`. Count all with the
-plugin/extension system row above.
+from `src/plugin-sdk/acpx.ts` is checkpointed in `c7541c95`;
+`acp-runtime-backend` from `src/plugin-sdk/acp-runtime-backend.ts` is
+checkpointed in `4833176b`. Count all with the plugin/extension system row
+above.
 
 ## How To Use This Map
 
