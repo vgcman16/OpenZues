@@ -32401,6 +32401,136 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_diffs_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-diffs.cjs"
+    runtime_entry.write_text(
+        """
+const diffs = require("openclaw/plugin-sdk/diffs");
+const scopedDiffs = require("@openclaw/plugin-sdk/diffs");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.diffs",
+      description: "Use OpenClaw diffs SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        let schemaCalls = 0;
+        const schema = { tag: "schema" };
+        const entry = diffs.definePluginEntry({
+          id: "diffs-test",
+          name: "Diffs Test",
+          description: "Diff helper proof",
+          configSchema() {
+            schemaCalls += 1;
+            return schema;
+          },
+          register() {}
+        });
+        const firstSchema = entry.configSchema;
+        const secondSchema = entry.configSchema;
+        const defaultEntry = diffs.definePluginEntry({
+          id: "diffs-default",
+          name: "Diffs Default",
+          description: "Default config schema proof",
+          register() {}
+        });
+        return {
+          keys: Object.keys(diffs).sort(),
+          scopedType: typeof scopedDiffs.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            schemaCalls,
+            sameSchema: firstSchema === secondSchema,
+            registerType: typeof entry.register
+          },
+          defaultConfig: [
+            defaultEntry.configSchema.safeParse(undefined).success,
+            defaultEntry.configSchema.safeParse({}).success,
+            defaultEntry.configSchema.safeParse({ unexpected: true }).success
+          ],
+          tmpDirSuffix: diffs.resolvePreferredOpenClawTmpDir({
+            tmpdir: () => "C:/runtime-temp"
+          }).replace(/\\\\/g, "/")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-diffs-plugin",
+                    "name": "Runtime Diffs Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-diffs-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.diffs"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.diffs", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry", "resolvePreferredOpenClawTmpDir"],
+        "scopedType": "function",
+        "entry": {
+            "id": "diffs-test",
+            "name": "Diffs Test",
+            "description": "Diff helper proof",
+            "schemaCalls": 1,
+            "sameSchema": True,
+            "registerType": "function",
+        },
+        "defaultConfig": [True, True, False],
+        "tmpDirSuffix": "C:/runtime-temp/openclaw",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

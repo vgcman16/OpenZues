@@ -21767,14 +21767,16 @@ function applyProviderNativeStreamingUsageCompat(params) {
 }
 
 function definePluginEntry(options) {
-  const schema = options.configSchema || {};
+  const getConfigSchema = createCachedLazyValueGetter(
+    options.configSchema || emptyPluginConfigSchema,
+  );
   return {
     id: options.id,
     name: options.name,
     description: options.description,
     ...(options.kind ? { kind: options.kind } : {}),
     get configSchema() {
-      return typeof schema === "function" ? schema() : schema;
+      return getConfigSchema();
     },
     register: options.register || (() => {}),
   };
@@ -34326,6 +34328,11 @@ const configSchemaRuntime = {
   validateJsonSchemaValue,
 };
 
+const diffsRuntime = {
+  definePluginEntry,
+  resolvePreferredOpenClawTmpDir,
+};
+
 const pluginSdkEntrypoints = [
   "index",
   "core",
@@ -45589,6 +45596,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/entrypoints"
   ) {
     return entrypointsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/diffs" ||
+    request === "@openclaw/plugin-sdk/diffs"
+  ) {
+    return diffsRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;
