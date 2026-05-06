@@ -36560,6 +36560,154 @@ const channelCoreRuntime = {
   tryReadSecretFileSync,
 };
 
+const channelContractRuntime = Object.freeze({});
+
+function resolveChannelTurnDispatchCountsForContract(result) {
+  return {
+    tool: 0,
+    block: 0,
+    final: 0,
+    ...((result && typeof result === "object" && result.counts) || {}),
+  };
+}
+
+function hasVisibleChannelTurnDispatchForContract(result, signals = {}) {
+  const counts = resolveChannelTurnDispatchCountsForContract(result);
+  return (
+    signals.observedReplyDelivery === true ||
+    signals.fallbackDelivered === true ||
+    signals.deliverySummaryDelivered === true ||
+    (result && result.queuedFinal === true) ||
+    counts.tool > 0 ||
+    counts.block > 0 ||
+    counts.final > 0
+  );
+}
+
+function hasFinalChannelTurnDispatchForContract(result, signals = {}) {
+  const counts = resolveChannelTurnDispatchCountsForContract(result);
+  return (
+    signals.fallbackDelivered === true ||
+    signals.deliverySummaryDelivered === true ||
+    (result && result.queuedFinal === true) ||
+    counts.final > 0
+  );
+}
+
+function assertChannelContract(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function validateSenderIdentityForContract(ctx = {}) {
+  const issues = [];
+  const chatType = normalizeChatType(ctx.ChatType);
+  const isDirect = chatType === "direct";
+  const senderId = normalizeOptionalString(ctx.SenderId) || "";
+  const senderName = normalizeOptionalString(ctx.SenderName) || "";
+  const senderUsername = normalizeOptionalString(ctx.SenderUsername) || "";
+  const senderE164 = normalizeOptionalString(ctx.SenderE164) || "";
+  if (!isDirect && !senderId && !senderName && !senderUsername && !senderE164) {
+    issues.push("missing sender identity (SenderId/SenderName/SenderUsername/SenderE164)");
+  }
+  if (senderE164 && !/^\+\d{3,}$/u.test(senderE164)) {
+    issues.push(`invalid SenderE164: ${senderE164}`);
+  }
+  if (senderUsername) {
+    if (senderUsername.includes("@")) {
+      issues.push(`SenderUsername should not include "@": ${senderUsername}`);
+    }
+    if (/\s/u.test(senderUsername)) {
+      issues.push(`SenderUsername should not include whitespace: ${senderUsername}`);
+    }
+  }
+  if (ctx.SenderId != null && !senderId) {
+    issues.push("SenderId is set but empty");
+  }
+  return issues;
+}
+
+function expectChannelInboundContextContract(ctx = {}) {
+  const issues = validateSenderIdentityForContract(ctx);
+  assertChannelContract(
+    issues.length === 0,
+    `expected valid channel inbound context; ${issues.join("; ")}`,
+  );
+  for (const field of ["Body", "BodyForAgent", "BodyForCommands"]) {
+    assertChannelContract(
+      typeof ctx[field] === "string",
+      `expected channel inbound context ${field} to be string`,
+    );
+  }
+  const chatType = normalizeChatType(ctx.ChatType);
+  if (chatType && chatType !== "direct") {
+    const label = normalizeOptionalString(ctx.ConversationLabel) || resolveConversationLabel(ctx);
+    assertChannelContract(
+      Boolean(label),
+      "expected group channel inbound context to include conversation label",
+    );
+  }
+}
+
+function expectChannelTurnDispatchResultContract(result, expected = {}) {
+  const visible = hasVisibleChannelTurnDispatchForContract(result);
+  assertChannelContract(
+    visible === expected.visible,
+    `expected channel turn visible dispatch to be ${String(expected.visible)}`,
+  );
+  if (expected.final !== undefined) {
+    const final = hasFinalChannelTurnDispatchForContract(result);
+    assertChannelContract(
+      final === expected.final,
+      `expected channel turn final dispatch to be ${String(expected.final)}`,
+    );
+  }
+  if (expected.counts && typeof expected.counts === "object") {
+    const counts = resolveChannelTurnDispatchCountsForContract(result);
+    for (const [kind, count] of Object.entries(expected.counts)) {
+      assertChannelContract(
+        counts[kind] === count,
+        `expected channel turn dispatch count ${kind} to be ${String(count)}`,
+      );
+    }
+  }
+}
+
+function primeChannelOutboundSendMock(sendMock, fallbackResult, sendResults = []) {
+  sendMock.mockReset();
+  if (!Array.isArray(sendResults) || sendResults.length === 0) {
+    sendMock.mockResolvedValue(fallbackResult);
+    return;
+  }
+  for (const result of sendResults) {
+    sendMock.mockResolvedValueOnce(result);
+  }
+}
+
+function buildDispatchInboundCaptureMock(actual, setCtx) {
+  const dispatchInboundMessage = async (params = {}) => {
+    setCtx(params.ctx);
+    return { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } };
+  };
+  return {
+    ...(actual || {}),
+    dispatchInboundMessage,
+    dispatchInboundMessageWithDispatcher: dispatchInboundMessage,
+    dispatchInboundMessageWithBufferedDispatcher: dispatchInboundMessage,
+  };
+}
+
+function installChannelOutboundPayloadContractSuite() {}
+
+const channelContractTestingRuntime = {
+  buildDispatchInboundCaptureMock,
+  expectChannelInboundContextContract,
+  expectChannelTurnDispatchResultContract,
+  installChannelOutboundPayloadContractSuite,
+  primeChannelOutboundSendMock,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -37425,6 +37573,7 @@ const genericSdk = new Proxy(
     ...channelConfigHelpersRuntime,
     ...channelLifecycleRuntime,
     ...channelCoreRuntime,
+    ...channelContractTestingRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -38428,6 +38577,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-core"
   ) {
     return channelCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-contract" ||
+    request === "@openclaw/plugin-sdk/channel-contract"
+  ) {
+    return channelContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-contract-testing" ||
+    request === "@openclaw/plugin-sdk/channel-contract-testing"
+  ) {
+    return channelContractTestingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

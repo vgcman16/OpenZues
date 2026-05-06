@@ -20684,6 +20684,210 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_contract_testing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-contract-testing.cjs"
+    runtime_entry.write_text(
+        """
+const contract = require("openclaw/plugin-sdk/channel-contract");
+const testing = require("openclaw/plugin-sdk/channel-contract-testing");
+const scopedTesting = require("@openclaw/plugin-sdk/channel-contract-testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_contract_testing",
+      description: "Use OpenClaw channel contract testing SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        testing.expectChannelTurnDispatchResultContract(
+          {
+            queuedFinal: false,
+            counts: { tool: 0, block: 1, final: 0 },
+          },
+          {
+            visible: true,
+            final: false,
+            counts: { block: 1 },
+          },
+        );
+        let dispatchError = "";
+        try {
+          testing.expectChannelTurnDispatchResultContract(
+            { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } },
+            { visible: true },
+          );
+        } catch (error) {
+          dispatchError = error.message;
+        }
+
+        testing.expectChannelInboundContextContract({
+          Body: "hello",
+          BodyForAgent: "hello agent",
+          BodyForCommands: "hello command",
+          ChatType: "group",
+          ConversationLabel: "Project Room",
+          SenderId: "u-1",
+          SenderName: "Ada",
+          SenderUsername: "ada",
+        });
+        let inboundError = "";
+        try {
+          testing.expectChannelInboundContextContract({
+            Body: "hello",
+            BodyForAgent: "hello agent",
+            BodyForCommands: "hello command",
+            ChatType: "group",
+          });
+        } catch (error) {
+          inboundError = error.message;
+        }
+
+        const sendMock = {
+          resetCount: 0,
+          resolved: [],
+          once: [],
+          mockReset() {
+            this.resetCount += 1;
+            this.resolved = [];
+            this.once = [];
+          },
+          mockResolvedValue(value) {
+            this.resolved.push(value);
+          },
+          mockResolvedValueOnce(value) {
+            this.once.push(value);
+          },
+        };
+        testing.primeChannelOutboundSendMock(
+          sendMock,
+          { messageId: "fallback" },
+          [{ messageId: "first" }, { messageId: "second" }],
+        );
+
+        const captured = [];
+        const wrapped = testing.buildDispatchInboundCaptureMock(
+          { kind: "actual" },
+          (ctx) => captured.push(ctx),
+        );
+        const dispatchResult = await wrapped.dispatchInboundMessage({
+          ctx: { Body: "captured" },
+        });
+        const bufferedResult = await wrapped.dispatchInboundMessageWithBufferedDispatcher({
+          ctx: { Body: "buffered" },
+        });
+
+        return {
+          keys: Object.keys(testing).sort(),
+          contractKeys: Object.keys(contract).sort(),
+          scopedType: typeof scopedTesting.expectChannelInboundContextContract,
+          dispatchError,
+          inboundError,
+          sendMock: {
+            resetCount: sendMock.resetCount,
+            resolved: sendMock.resolved,
+            once: sendMock.once,
+          },
+          wrapped: {
+            kind: wrapped.kind,
+            sameDispatcher:
+              wrapped.dispatchInboundMessage ===
+              wrapped.dispatchInboundMessageWithDispatcher,
+            sameBuffered:
+              wrapped.dispatchInboundMessage ===
+              wrapped.dispatchInboundMessageWithBufferedDispatcher,
+          },
+          captured,
+          dispatchResult,
+          bufferedResult,
+          installerType: typeof testing.installChannelOutboundPayloadContractSuite,
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-contract-testing-plugin",
+                    "name": "Runtime Channel Contract Testing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-contract-testing.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_contract_testing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_contract_testing"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildDispatchInboundCaptureMock",
+            "expectChannelInboundContextContract",
+            "expectChannelTurnDispatchResultContract",
+            "installChannelOutboundPayloadContractSuite",
+            "primeChannelOutboundSendMock",
+        ],
+        "contractKeys": [],
+        "scopedType": "function",
+        "dispatchError": "expected channel turn visible dispatch to be true",
+        "inboundError": (
+            "expected valid channel inbound context; missing sender identity "
+            "(SenderId/SenderName/SenderUsername/SenderE164)"
+        ),
+        "sendMock": {
+            "resetCount": 1,
+            "resolved": [],
+            "once": [{"messageId": "first"}, {"messageId": "second"}],
+        },
+        "wrapped": {"kind": "actual", "sameDispatcher": True, "sameBuffered": True},
+        "captured": [{"Body": "captured"}, {"Body": "buffered"}],
+        "dispatchResult": {"queuedFinal": False, "counts": {"tool": 0, "block": 0, "final": 0}},
+        "bufferedResult": {"queuedFinal": False, "counts": {"tool": 0, "block": 0, "final": 0}},
+        "installerType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
