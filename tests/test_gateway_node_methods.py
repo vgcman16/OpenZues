@@ -14509,6 +14509,312 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_delivery_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-delivery.cjs"
+    runtime_entry.write_text(
+        """
+const delivery = require("openclaw/plugin-sdk/approval-delivery-helpers");
+const scopedDelivery = require("@openclaw/plugin-sdk/approval-delivery-helpers");
+const runtimeDelivery = require("openclaw/plugin-sdk/approval-delivery-runtime");
+
+const adapter = delivery.createApproverRestrictedNativeApprovalAdapter({
+  channel: "telegram",
+  channelLabel: "Telegram",
+  listAccountIds: () => ["dm-only", "channel-only", "disabled", "no-approvers"],
+  hasApprovers: ({ accountId }) => accountId !== "no-approvers",
+  isExecAuthorizedSender: ({ senderId }) => senderId === "exec-owner",
+  isPluginAuthorizedSender: ({ senderId }) => senderId === "plugin-owner",
+  isNativeDeliveryEnabled: ({ accountId }) => accountId !== "disabled",
+  resolveNativeDeliveryMode: ({ accountId }) =>
+    accountId === "channel-only" ? "channel" : "dm",
+  resolveOriginTarget: () => ({ to: "origin-chat" }),
+  resolveApproverDmTargets: () => [{ to: "approver-1" }]
+});
+
+const suppressingAdapter = delivery.createApproverRestrictedNativeApprovalAdapter({
+  channel: "telegram",
+  channelLabel: "Telegram",
+  listAccountIds: () => [],
+  hasApprovers: () => true,
+  isExecAuthorizedSender: () => true,
+  isNativeDeliveryEnabled: ({ accountId }) => accountId === "topic-1",
+  resolveNativeDeliveryMode: () => "both",
+  requireMatchingTurnSourceChannel: true,
+  resolveSuppressionAccountId: ({ request }) =>
+    request.request.turnSourceAccountId.trim() || undefined
+});
+
+const nativeRuntime = { id: "native-runtime" };
+const capability = delivery.createApproverRestrictedNativeApprovalCapability({
+  channel: "matrix",
+  channelLabel: "Matrix",
+  describeExecApprovalSetup: ({ channel, channelLabel, accountId }) =>
+    `${channelLabel}:${channel}:${accountId || "default"}:setup`,
+  listAccountIds: () => ["work"],
+  hasApprovers: () => true,
+  isExecAuthorizedSender: ({ senderId }) => senderId === "@owner:example.com",
+  isNativeDeliveryEnabled: () => true,
+  resolveNativeDeliveryMode: () => "dm",
+  resolveApproverDmTargets: () => [{ to: "user:@owner:example.com" }],
+  nativeRuntime
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_delivery",
+      description: "Use OpenClaw approval delivery helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const split = delivery.splitChannelApprovalCapability(capability);
+        const canonical = delivery.createChannelApprovalCapability({
+          delivery: { marker: "top" },
+          approvals: {
+            delivery: { marker: "legacy" },
+            nativeRuntime: { id: "legacy-runtime" },
+            native: { marker: "legacy-native" }
+          }
+        });
+        const legacy = delivery.createChannelApprovalCapability({
+          approvals: { delivery: { marker: "legacy-only" } }
+        });
+        const approvalRequest = {
+          id: "approval-1",
+          request: { command: "pwd" },
+          createdAtMs: 0,
+          expiresAtMs: 10000
+        };
+        const suppress = suppressingAdapter.delivery.shouldSuppressForwardingFallback;
+        return {
+          keys: Object.keys(delivery).sort(),
+          scopedType: typeof scopedDelivery.createChannelApprovalCapability,
+          runtimeType: typeof runtimeDelivery.createApproverRestrictedNativeApprovalAdapter,
+          auth: [
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "exec-owner",
+              action: "approve",
+              approvalKind: "exec"
+            }),
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "plugin-owner",
+              action: "approve",
+              approvalKind: "plugin"
+            }),
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "someone-else",
+              action: "approve",
+              approvalKind: "plugin"
+            })
+          ],
+          availability: [
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "dm-only",
+              action: "approve"
+            }),
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "no-approvers",
+              action: "approve"
+            }),
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "disabled",
+              action: "approve"
+            }),
+            adapter.auth.getExecInitiatingSurfaceState({
+              cfg: {},
+              accountId: "disabled",
+              action: "approve"
+            })
+          ],
+          dmRoute: adapter.delivery.hasConfiguredDmRoute({ cfg: {} }),
+          nativeCapabilities: adapter.native.describeDeliveryCapabilities({
+            cfg: {},
+            accountId: "channel-only",
+            approvalKind: "exec",
+            request: approvalRequest
+          }),
+          suppression: [
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "telegram", accountId: "wrong" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: " topic-1 "
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "telegram", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "slack",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "slack", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "plugin",
+              target: { channel: "telegram", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            })
+          ],
+          split: {
+            authType: typeof split.auth.authorizeActorAction,
+            deliveryRoute: split.delivery.hasConfiguredDmRoute({ cfg: {} }),
+            setup: split.describeExecApprovalSetup({
+              channel: "matrix",
+              channelLabel: "Matrix",
+              accountId: "ops"
+            }),
+            nativeRuntimeId: split.nativeRuntime.id,
+            preferredSurface: split.native.describeDeliveryCapabilities({
+              cfg: {},
+              accountId: "work",
+              approvalKind: "exec",
+              request: approvalRequest
+            }).preferredSurface
+          },
+          surfaces: {
+            canonicalDelivery: canonical.delivery.marker,
+            canonicalNativeRuntime: canonical.nativeRuntime.id,
+            canonicalNative: canonical.native.marker,
+            legacyDelivery: legacy.delivery.marker
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-delivery-plugin",
+                    "name": "Runtime Approval Delivery Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-delivery.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_delivery"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_delivery"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createApproverRestrictedNativeApprovalAdapter",
+            "createApproverRestrictedNativeApprovalCapability",
+            "createChannelApprovalCapability",
+            "splitChannelApprovalCapability",
+        ],
+        "scopedType": "function",
+        "runtimeType": "function",
+        "auth": [
+            {"authorized": True},
+            {"authorized": True},
+            {
+                "authorized": False,
+                "reason": "âŒ You are not authorized to approve plugin requests on Telegram.",
+            },
+        ],
+        "availability": [
+            {"kind": "enabled"},
+            {"kind": "disabled"},
+            {"kind": "enabled"},
+            {"kind": "disabled"},
+        ],
+        "dmRoute": True,
+        "nativeCapabilities": {
+            "enabled": True,
+            "preferredSurface": "origin",
+            "supportsOriginSurface": True,
+            "supportsApproverDmSurface": True,
+            "notifyOriginWhenDmOnly": False,
+        },
+        "suppression": [True, False, False, True],
+        "split": {
+            "authType": "function",
+            "deliveryRoute": True,
+            "setup": "Matrix:matrix:ops:setup",
+            "nativeRuntimeId": "native-runtime",
+            "preferredSurface": "approver-dm",
+        },
+        "surfaces": {
+            "canonicalDelivery": "top",
+            "canonicalNativeRuntime": "legacy-runtime",
+            "canonicalNative": "legacy-native",
+            "legacyDelivery": "legacy-only",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

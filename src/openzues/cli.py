@@ -36761,6 +36761,202 @@ const approvalClientHelpersRuntime = {
   matchesApprovalRequestFilters,
 };
 
+function createChannelApprovalCapability(params = {}) {
+  const approvals = params.approvals || {};
+  return {
+    authorizeActorAction: params.authorizeActorAction,
+    getActionAvailabilityState: params.getActionAvailabilityState,
+    getExecInitiatingSurfaceState: params.getExecInitiatingSurfaceState,
+    resolveApproveCommandBehavior: params.resolveApproveCommandBehavior,
+    describeExecApprovalSetup: params.describeExecApprovalSetup,
+    delivery: params.delivery ?? approvals.delivery,
+    nativeRuntime: params.nativeRuntime ?? approvals.nativeRuntime,
+    render: params.render ?? approvals.render,
+    native: params.native ?? approvals.native,
+  };
+}
+
+function splitChannelApprovalCapability(capability = {}) {
+  return {
+    auth: {
+      authorizeActorAction: capability.authorizeActorAction,
+      getActionAvailabilityState: capability.getActionAvailabilityState,
+      getExecInitiatingSurfaceState: capability.getExecInitiatingSurfaceState,
+      resolveApproveCommandBehavior: capability.resolveApproveCommandBehavior,
+    },
+    delivery: capability.delivery,
+    nativeRuntime: capability.nativeRuntime,
+    render: capability.render,
+    native: capability.native,
+    describeExecApprovalSetup: capability.describeExecApprovalSetup,
+  };
+}
+
+function buildApprovalAvailabilityState(enabled) {
+  return enabled ? { kind: "enabled" } : { kind: "disabled" };
+}
+
+function normalizeApprovalDeliveryMode(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "channel" || normalized === "both" ? normalized : "dm";
+}
+
+function normalizeApprovalPreferredSurface(mode) {
+  const normalized = normalizeApprovalDeliveryMode(mode);
+  return normalized === "channel"
+    ? "origin"
+    : normalized === "dm"
+      ? "approver-dm"
+      : "both";
+}
+
+function buildApproverRestrictedNativeApprovalCapability(params = {}) {
+  const channel = normalizeMessageChannel(params.channel) || params.channel;
+  const channelLabel = normalizeOptionalString(params.channelLabel) || channel || "this channel";
+  const listAccountIds =
+    typeof params.listAccountIds === "function" ? params.listAccountIds : () => [];
+  const hasApprovers =
+    typeof params.hasApprovers === "function" ? params.hasApprovers : () => false;
+  const isExecAuthorizedSender =
+    typeof params.isExecAuthorizedSender === "function"
+      ? params.isExecAuthorizedSender
+      : () => false;
+  const isPluginAuthorizedSender =
+    typeof params.isPluginAuthorizedSender === "function"
+      ? params.isPluginAuthorizedSender
+      : isExecAuthorizedSender;
+  const isNativeDeliveryEnabled =
+    typeof params.isNativeDeliveryEnabled === "function"
+      ? params.isNativeDeliveryEnabled
+      : () => false;
+  const resolveNativeDeliveryMode =
+    typeof params.resolveNativeDeliveryMode === "function"
+      ? params.resolveNativeDeliveryMode
+      : () => "dm";
+
+  const hasConfiguredApprovers = (input = {}) =>
+    Boolean(hasApprovers({ cfg: input.cfg, accountId: input.accountId }));
+  const isExecInitiatingSurfaceEnabled = (input = {}) =>
+    hasConfiguredApprovers(input) &&
+    Boolean(isNativeDeliveryEnabled({ cfg: input.cfg, accountId: input.accountId }));
+  const getExecInitiatingSurfaceState = (input = {}) =>
+    buildApprovalAvailabilityState(isExecInitiatingSurfaceEnabled(input));
+
+  return createChannelApprovalCapability({
+    authorizeActorAction(actionParams = {}) {
+      const approvalKind =
+        normalizeOptionalString(actionParams.approvalKind) === "plugin" ? "plugin" : "exec";
+      const authorized =
+        approvalKind === "plugin"
+          ? isPluginAuthorizedSender({
+              cfg: actionParams.cfg,
+              accountId: actionParams.accountId,
+              senderId: actionParams.senderId,
+            })
+          : isExecAuthorizedSender({
+              cfg: actionParams.cfg,
+              accountId: actionParams.accountId,
+              senderId: actionParams.senderId,
+            });
+      return authorized
+        ? { authorized: true }
+        : {
+            authorized: false,
+            reason:
+              `âŒ You are not authorized to approve ${approvalKind} ` +
+              `requests on ${channelLabel}.`,
+          };
+    },
+    getActionAvailabilityState(input = {}) {
+      return buildApprovalAvailabilityState(hasConfiguredApprovers(input));
+    },
+    getExecInitiatingSurfaceState,
+    describeExecApprovalSetup: params.describeExecApprovalSetup,
+    delivery: {
+      hasConfiguredDmRoute(input = {}) {
+        return listAccountIds(input.cfg).some((accountId) => {
+          if (!hasConfiguredApprovers({ cfg: input.cfg, accountId })) {
+            return false;
+          }
+          if (!isNativeDeliveryEnabled({ cfg: input.cfg, accountId })) {
+            return false;
+          }
+          const mode = normalizeApprovalDeliveryMode(
+            resolveNativeDeliveryMode({ cfg: input.cfg, accountId }),
+          );
+          return mode === "dm" || mode === "both";
+        });
+      },
+      shouldSuppressForwardingFallback(input = {}) {
+        const targetChannel =
+          normalizeMessageChannel(input.target && input.target.channel) ||
+          (input.target && input.target.channel);
+        if (targetChannel !== channel) {
+          return false;
+        }
+        if (params.requireMatchingTurnSourceChannel) {
+          const turnSourceChannel = normalizeMessageChannel(
+            input.request && input.request.request
+              ? input.request.request.turnSourceChannel
+              : undefined,
+          );
+          if (turnSourceChannel !== channel) {
+            return false;
+          }
+        }
+        const resolvedAccountId =
+          typeof params.resolveSuppressionAccountId === "function"
+            ? params.resolveSuppressionAccountId(input)
+            : undefined;
+        const rawAccountId =
+          resolvedAccountId === undefined
+            ? input.target && input.target.accountId
+            : resolvedAccountId;
+        const accountId = normalizeOptionalString(rawAccountId);
+        return Boolean(isNativeDeliveryEnabled({ cfg: input.cfg, accountId }));
+      },
+    },
+    native:
+      typeof params.resolveOriginTarget === "function" ||
+      typeof params.resolveApproverDmTargets === "function"
+        ? {
+            describeDeliveryCapabilities(input = {}) {
+              return {
+                enabled: isExecInitiatingSurfaceEnabled(input),
+                preferredSurface: normalizeApprovalPreferredSurface(
+                  resolveNativeDeliveryMode({ cfg: input.cfg, accountId: input.accountId }),
+                ),
+                supportsOriginSurface: typeof params.resolveOriginTarget === "function",
+                supportsApproverDmSurface:
+                  typeof params.resolveApproverDmTargets === "function",
+                notifyOriginWhenDmOnly: params.notifyOriginWhenDmOnly ?? false,
+              };
+            },
+            resolveOriginTarget: params.resolveOriginTarget,
+            resolveApproverDmTargets: params.resolveApproverDmTargets,
+          }
+        : undefined,
+    nativeRuntime: params.nativeRuntime,
+  });
+}
+
+function createApproverRestrictedNativeApprovalAdapter(params = {}) {
+  return splitChannelApprovalCapability(
+    buildApproverRestrictedNativeApprovalCapability(params),
+  );
+}
+
+function createApproverRestrictedNativeApprovalCapability(params = {}) {
+  return buildApproverRestrictedNativeApprovalCapability(params);
+}
+
+const approvalDeliveryHelpersRuntime = {
+  createApproverRestrictedNativeApprovalAdapter,
+  createApproverRestrictedNativeApprovalCapability,
+  createChannelApprovalCapability,
+  splitChannelApprovalCapability,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42027,6 +42223,14 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-client-helpers"
   ) {
     return approvalClientHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-delivery-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-delivery-helpers" ||
+    request === "openclaw/plugin-sdk/approval-delivery-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-delivery-runtime"
+  ) {
+    return approvalDeliveryHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
