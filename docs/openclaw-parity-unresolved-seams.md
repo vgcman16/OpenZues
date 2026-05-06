@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~81.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~81.3% overall, with a reasonable
   band of ~78-83%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -73,8 +73,8 @@ Current percentage rollup:
   channel pairing path, channel inbound roots, channel location, state path,
   setup adapter runtime, channel secret TTS runtime, talk config runtime,
   GitHub Copilot token, channel plugin common/core, channel entry contract,
-  channel config primitives/schema, runtime-env, channel-config-helpers, and
-  channel-config-writes helper slices.
+  channel config primitives/schema, runtime-env, channel-config-helpers,
+  channel-config-writes, and channel-lifecycle helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7758,6 +7758,22 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~81.2%. Verified with focused channel-config-writes pytest,
   adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
   and `mypy`; source/test checkpointed in `7b668b3c`.
+- Closed the imported OpenClaw plugin SDK channel-lifecycle seam from
+  `src/plugin-sdk/channel-lifecycle.ts`,
+  `src/plugin-sdk/channel-lifecycle.core.ts`,
+  `src/channels/draft-preview-finalizer.ts`,
+  `src/channels/draft-stream-controls.ts`,
+  `src/channels/draft-stream-loop.ts`,
+  `src/channels/run-state-machine.ts`, and
+  `src/channels/transport/stall-watchdog.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/channel-lifecycle`, receiving account status
+  sinks, abort/passive/server lifecycle waiters, run-state and keyed run
+  queues, finalizable draft stream controls, preview finalization helpers, and
+  armable stall watchdogs through scoped, unscoped, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~81.3%. Verified with focused
+  channel-lifecycle pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `d3bc5720`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7775,7 +7791,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   setup-adapter-runtime/channel-secret-tts-runtime/talk-config-runtime/
   github-copilot-token/channel-plugin-common/core/channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
-  channel-config-helpers/channel-config-writes path,
+  channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
