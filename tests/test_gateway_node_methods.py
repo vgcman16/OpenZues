@@ -28615,6 +28615,131 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_files_alias_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-host-files-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-files.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const files = require("openclaw/plugin-sdk/memory-host-files");
+const scopedFiles = require("@openclaw/plugin-sdk/memory-host-files");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+function rel(value) {{
+  const relative = path.relative(workspaceDir, value).replace(/\\\\/g, "/");
+  return relative || ".";
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_host_files",
+      description: "Use OpenClaw memory-host-files SDK alias shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        fs.mkdirSync(path.join(workspaceDir, "memory"), {{ recursive: true }});
+        fs.mkdirSync(path.join(workspaceDir, "extra"), {{ recursive: true }});
+        fs.writeFileSync(path.join(workspaceDir, "MEMORY.md"), "# Root", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "memory", "note.md"), "one\\ntwo", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "extra", "extra.md"), "alpha", "utf8");
+        const listed = await files.listMemoryFiles(workspaceDir, ["extra"]);
+        const read = await files.readAgentMemoryFile({{
+          cfg: {{
+            agents: {{
+              defaults: {{
+                workspace: workspaceDir,
+                memorySearch: {{ extraPaths: ["extra"] }},
+                contextLimits: {{ memoryGetDefaultLines: 1 }}
+              }}
+            }}
+          }},
+          agentId: "main",
+          relPath: "extra/extra.md"
+        }});
+        return {{
+          keys: Object.keys(files).sort(),
+          scopedType: typeof scopedFiles.resolveMemoryBackendConfig,
+          normalizedExtra: files.normalizeExtraMemoryPaths(workspaceDir, [" ./extra "]).map(rel),
+          listed: listed.map(rel).sort(),
+          read
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-files-plugin",
+                    "name": "Memory Host Files Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-files.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_files"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_files"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "listMemoryFiles",
+            "normalizeExtraMemoryPaths",
+            "readAgentMemoryFile",
+            "resolveMemoryBackendConfig",
+        ],
+        "scopedType": "function",
+        "normalizedExtra": ["extra"],
+        "listed": ["MEMORY.md", "extra/extra.md", "memory/note.md"],
+        "read": {
+            "text": "alpha",
+            "path": "extra/extra.md",
+            "from": 1,
+            "lines": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

@@ -49158,6 +49158,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return memoryCoreHostRuntimeFilesRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/memory-host-files" ||
+    request === "@openclaw/plugin-sdk/memory-host-files"
+  ) {
+    return memoryCoreHostRuntimeFilesRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/runtime-env" ||
     request === "@openclaw/plugin-sdk/runtime-env"
   ) {
