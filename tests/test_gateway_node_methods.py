@@ -9305,6 +9305,99 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_pairing_paths_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-pairing-paths.cjs"
+    runtime_entry.write_text(
+        """
+const pairingPaths = require("openclaw/plugin-sdk/channel-pairing-paths");
+const scopedPairingPaths = require("@openclaw/plugin-sdk/channel-pairing-paths");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_pairing_paths",
+      description: "Use OpenClaw channel-pairing-paths SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(pairingPaths).sort(),
+          pathTail: pairingPaths.resolveChannelAllowFromPath(
+            "Telegram",
+            { OPENCLAW_OAUTH_DIR: "/tmp/oauth" },
+            "Work/Profile"
+          ).replace(/\\\\/g, "/"),
+          scopedTail: scopedPairingPaths.resolveChannelAllowFromPath(
+            "NextCloud Talk",
+            { OPENCLAW_STATE_DIR: "/tmp/state" }
+          ).replace(/\\\\/g, "/"),
+          genericType: typeof genericSdk.resolveChannelAllowFromPath
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-pairing-paths-plugin",
+                    "name": "Runtime Channel Pairing Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-pairing-paths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_pairing_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_pairing_paths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveChannelAllowFromPath"],
+        "pathTail": "/tmp/oauth/telegram-work_profile-allowFrom.json",
+        "scopedTail": "/tmp/state/credentials/nextcloud talk-allowFrom.json",
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_auth_helpers(
     tmp_path,
 ) -> None:

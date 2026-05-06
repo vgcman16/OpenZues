@@ -33812,6 +33812,10 @@ const channelPairingRuntime = {
   resolveChannelAllowFromPath,
 };
 
+const channelPairingPathsRuntime = {
+  resolveChannelAllowFromPath,
+};
+
 const commandStatusRuntime = {
   buildCommandsMessage,
   buildCommandsMessagePaginated,
@@ -34960,6 +34964,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-pairing"
   ) {
     return channelPairingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-pairing-paths" ||
+    request === "@openclaw/plugin-sdk/channel-pairing-paths"
+  ) {
+    return channelPairingPathsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-auth" ||
