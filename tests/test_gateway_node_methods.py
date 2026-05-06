@@ -14336,6 +14336,137 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_zai_endpoint_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-zai-endpoint.cjs"
+    runtime_entry.write_text(
+        """
+const zai = require("openclaw/plugin-sdk/provider-zai-endpoint");
+const scopedZai = require("@openclaw/plugin-sdk/provider-zai-endpoint");
+
+function response(ok, status = 200) {
+  return {
+    ok,
+    status,
+    async json() {
+      return { error: { code: "unauthorized", message: "nope" } };
+    }
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_zai_endpoint",
+      description: "Use OpenClaw provider Z.AI endpoint SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const codingModels = [];
+        const coding = await zai.detectZaiEndpoint({
+          apiKey: "demo",
+          endpoint: "coding-global",
+          fetchFn: async (_url, init) => {
+            const body = JSON.parse(init.body);
+            codingModels.push(body.model);
+            return response(body.model === "glm-4.7");
+          }
+        });
+        const cn = await zai.detectZaiEndpoint({
+          apiKey: "demo",
+          endpoint: "cn",
+          fetchFn: async () => response(true)
+        });
+        const missed = await zai.detectZaiEndpoint({
+          apiKey: "demo",
+          fetchFn: async () => response(false, 401)
+        });
+        return {
+          keys: Object.keys(zai).sort(),
+          scopedType: typeof scopedZai.detectZaiEndpoint,
+          coding,
+          codingModels,
+          cn,
+          missed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-zai-endpoint-plugin",
+                    "name": "Runtime Provider ZAI Endpoint Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-zai-endpoint.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_zai_endpoint"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_zai_endpoint"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["detectZaiEndpoint"],
+        "scopedType": "function",
+        "coding": {
+            "endpoint": "coding-global",
+            "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+            "modelId": "glm-4.7",
+            "note": (
+                "Coding Plan endpoint verified, but this key/plan does not expose "
+                "GLM-5.1 there. Defaulting to GLM-4.7."
+            ),
+        },
+        "codingModels": ["glm-5.1", "glm-4.7"],
+        "cn": {
+            "endpoint": "cn",
+            "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+            "modelId": "glm-5.1",
+            "note": "Verified GLM-5.1 on cn endpoint.",
+        },
+        "missed": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:

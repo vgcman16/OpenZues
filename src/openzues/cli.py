@@ -35500,6 +35500,130 @@ const providerAuthLoginRuntime = {
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
 };
 
+const ZAI_CODING_GLOBAL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+const ZAI_CODING_CN_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
+const ZAI_GLOBAL_BASE_URL = "https://api.z.ai/api/paas/v4";
+const ZAI_CN_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
+
+async function probeZaiChatCompletions(params = {}) {
+  const fetchFn = params.fetchFn || globalThis.fetch;
+  if (typeof fetchFn !== "function") {
+    return { ok: false };
+  }
+  try {
+    const res = await fetchFn(`${params.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${params.apiKey || ""}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: params.modelId,
+        stream: false,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+    if (res && res.ok) {
+      return { ok: true };
+    }
+    return { ok: false, status: res && res.status };
+  } catch (_error) {
+    return { ok: false };
+  }
+}
+
+function getZaiProbeCandidates(endpoint) {
+  const general = [
+    {
+      endpoint: "global",
+      baseUrl: ZAI_GLOBAL_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on global endpoint.",
+    },
+    {
+      endpoint: "cn",
+      baseUrl: ZAI_CN_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on cn endpoint.",
+    },
+  ];
+  const codingGlm51 = [
+    {
+      endpoint: "coding-global",
+      baseUrl: ZAI_CODING_GLOBAL_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on coding-global endpoint.",
+    },
+    {
+      endpoint: "coding-cn",
+      baseUrl: ZAI_CODING_CN_BASE_URL,
+      modelId: "glm-5.1",
+      note: "Verified GLM-5.1 on coding-cn endpoint.",
+    },
+  ];
+  const codingFallback = [
+    {
+      endpoint: "coding-global",
+      baseUrl: ZAI_CODING_GLOBAL_BASE_URL,
+      modelId: "glm-4.7",
+      note:
+        "Coding Plan endpoint verified, but this key/plan does not expose " +
+        "GLM-5.1 there. Defaulting to GLM-4.7.",
+    },
+    {
+      endpoint: "coding-cn",
+      baseUrl: ZAI_CODING_CN_BASE_URL,
+      modelId: "glm-4.7",
+      note:
+        "Coding Plan CN endpoint verified, but this key/plan does not expose " +
+        "GLM-5.1 there. Defaulting to GLM-4.7.",
+    },
+  ];
+  switch (endpoint) {
+    case "global":
+      return general.filter((candidate) => candidate.endpoint === "global");
+    case "cn":
+      return general.filter((candidate) => candidate.endpoint === "cn");
+    case "coding-global":
+      return [
+        ...codingGlm51.filter((candidate) => candidate.endpoint === "coding-global"),
+        ...codingFallback.filter((candidate) => candidate.endpoint === "coding-global"),
+      ];
+    case "coding-cn":
+      return [
+        ...codingGlm51.filter((candidate) => candidate.endpoint === "coding-cn"),
+        ...codingFallback.filter((candidate) => candidate.endpoint === "coding-cn"),
+      ];
+    default:
+      return [...general, ...codingGlm51, ...codingFallback];
+  }
+}
+
+async function detectZaiEndpoint(params = {}) {
+  if (process.env.VITEST && typeof params.fetchFn !== "function") {
+    return null;
+  }
+  const timeoutMs = params.timeoutMs ?? 5000;
+  for (const candidate of getZaiProbeCandidates(params.endpoint)) {
+    const result = await probeZaiChatCompletions({
+      baseUrl: candidate.baseUrl,
+      apiKey: params.apiKey,
+      modelId: candidate.modelId,
+      timeoutMs,
+      fetchFn: params.fetchFn,
+    });
+    if (result.ok) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+const providerZaiEndpointRuntime = {
+  detectZaiEndpoint,
+};
+
 function dedupeDefinedStrings(values = []) {
   const resolved = new Set();
   for (const value of values) {
@@ -40943,6 +41067,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-login.runtime"
   ) {
     return providerAuthLoginRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-zai-endpoint" ||
+    request === "@openclaw/plugin-sdk/provider-zai-endpoint"
+  ) {
+    return providerZaiEndpointRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth" ||
