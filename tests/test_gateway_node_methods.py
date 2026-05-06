@@ -31832,6 +31832,111 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_cli_backend_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-cli-backend.cjs"
+    runtime_entry.write_text(
+        """
+const cliBackend = require("openclaw/plugin-sdk/cli-backend");
+const scopedCliBackend = require("@openclaw/plugin-sdk/cli-backend");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.cli_backend",
+      description: "Use OpenClaw cli-backend SDK shim",
+      parameters: { type: "object", properties: {} },
+      execute() {
+        return {
+          keys: Object.keys(cliBackend).sort(),
+          fresh: cliBackend.CLI_FRESH_WATCHDOG_DEFAULTS,
+          resume: scopedCliBackend.CLI_RESUME_WATCHDOG_DEFAULTS,
+          sameFreshShape:
+            cliBackend.CLI_FRESH_WATCHDOG_DEFAULTS.minMs <
+            cliBackend.CLI_FRESH_WATCHDOG_DEFAULTS.maxMs,
+          sameResumeShape:
+            scopedCliBackend.CLI_RESUME_WATCHDOG_DEFAULTS.minMs <
+            scopedCliBackend.CLI_RESUME_WATCHDOG_DEFAULTS.maxMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-cli-backend-plugin",
+                    "name": "Runtime CLI Backend Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-cli-backend.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.cli_backend"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.cli_backend", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CLI_FRESH_WATCHDOG_DEFAULTS",
+            "CLI_RESUME_WATCHDOG_DEFAULTS",
+        ],
+        "fresh": {
+            "noOutputTimeoutRatio": 0.8,
+            "minMs": 180_000,
+            "maxMs": 600_000,
+        },
+        "resume": {
+            "noOutputTimeoutRatio": 0.3,
+            "minMs": 60_000,
+            "maxMs": 180_000,
+        },
+        "sameFreshShape": True,
+        "sameResumeShape": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

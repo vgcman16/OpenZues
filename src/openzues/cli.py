@@ -34180,6 +34180,23 @@ const fetchRuntime = {
   wrapFetchWithAbortSignal,
 };
 
+const CLI_FRESH_WATCHDOG_DEFAULTS = Object.freeze({
+  noOutputTimeoutRatio: 0.8,
+  minMs: 180000,
+  maxMs: 600000,
+});
+
+const CLI_RESUME_WATCHDOG_DEFAULTS = Object.freeze({
+  noOutputTimeoutRatio: 0.3,
+  minMs: 60000,
+  maxMs: 180000,
+});
+
+const cliBackendRuntime = {
+  CLI_FRESH_WATCHDOG_DEFAULTS,
+  CLI_RESUME_WATCHDOG_DEFAULTS,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -45033,6 +45050,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/fetch-runtime"
   ) {
     return fetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/cli-backend" ||
+    request === "@openclaw/plugin-sdk/cli-backend"
+  ) {
+    return cliBackendRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
