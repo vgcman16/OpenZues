@@ -19568,6 +19568,174 @@ async function detectMime(opts) {
   return undefined;
 }
 
+const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
+const MEDIA_FILE_MODE = 0o644;
+
+function formatMediaLimitMb(maxBytes) {
+  return `${(maxBytes / (1024 * 1024)).toFixed(0)}MB`;
+}
+
+function resolveMediaDir() {
+  return path.join(resolveStateDir(), "media");
+}
+
+function resolveMediaSubdir(subdir, caller) {
+  if (typeof subdir !== "string") {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  if (!subdir || subdir === ".") {
+    return "";
+  }
+  if (
+    subdir.includes("\0") ||
+    path.isAbsolute(subdir) ||
+    path.posix.isAbsolute(subdir) ||
+    path.win32.isAbsolute(subdir)
+  ) {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  const segments = subdir.split(/[\\/]+/u);
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  return path.join(...segments);
+}
+
+function resolveMediaScopedDir(subdir, caller) {
+  const mediaDir = resolveMediaDir();
+  const safeSubdir = resolveMediaSubdir(subdir, caller);
+  const dir = safeSubdir ? path.join(mediaDir, safeSubdir) : mediaDir;
+  const relative = path.relative(mediaDir, dir);
+  if (relative && (relative === ".." || relative.startsWith(`..${path.sep}`))) {
+    throw new Error(`${caller}: media subdir escapes media directory: ${JSON.stringify(subdir)}`);
+  }
+  return dir;
+}
+
+function sanitizeMediaFilename(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed
+    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 60);
+}
+
+function safeOriginalFilenameExtension(originalFilename) {
+  if (!originalFilename) {
+    return undefined;
+  }
+  const ext = path.extname(originalFilename).toLowerCase();
+  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : undefined;
+}
+
+function buildSavedMediaId(params) {
+  if (!params.originalFilename) {
+    return params.ext ? `${params.baseId}${params.ext}` : params.baseId;
+  }
+  const base = path.parse(params.originalFilename).name;
+  const sanitized = sanitizeMediaFilename(base);
+  return sanitized
+    ? `${sanitized}---${params.baseId}${params.ext}`
+    : `${params.baseId}${params.ext}`;
+}
+
+function buildSavedMediaResult(params) {
+  return {
+    id: params.id,
+    path: path.join(params.dir, params.id),
+    size: params.size,
+    contentType: params.contentType,
+  };
+}
+
+async function retryMediaAfterRecreatingDir(dir, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") {
+      throw err;
+    }
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    return run();
+  }
+}
+
+async function writeSavedMediaBuffer(params) {
+  const dest = path.join(params.dir, params.id);
+  await retryMediaAfterRecreatingDir(params.dir, async () => {
+    const tempDest = path.join(params.dir, `.${params.id}.${crypto.randomUUID()}.tmp`);
+    try {
+      await fs.promises.writeFile(tempDest, params.buffer, { mode: MEDIA_FILE_MODE });
+      const handle = await fs.promises.open(tempDest, "r");
+      try {
+        await handle.sync().catch((err) => {
+          if (!err || (err.code !== "EPERM" && err.code !== "EINVAL")) {
+            throw err;
+          }
+        });
+      } finally {
+        await handle.close();
+      }
+      await fs.promises.rename(tempDest, dest);
+    } catch (err) {
+      await fs.promises.rm(tempDest, { force: true }).catch(() => {});
+      throw err;
+    }
+  });
+  return dest;
+}
+
+async function saveMediaBuffer(
+  buffer,
+  contentType,
+  subdir = "inbound",
+  maxBytes = MEDIA_MAX_BYTES,
+  originalFilename,
+) {
+  const mediaBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (mediaBuffer.byteLength > maxBytes) {
+    throw new Error(`Media exceeds ${formatMediaLimitMb(maxBytes)} limit`);
+  }
+  const dir = resolveMediaScopedDir(subdir, "saveMediaBuffer");
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const baseId = crypto.randomUUID();
+  const contentTypeBase = String(contentType || "").split(";")[0];
+  const headerExt = extensionForMime(normalizeOptionalString(contentTypeBase));
+  const mime = await detectMime({ buffer: mediaBuffer, headerMime: contentType });
+  const ext =
+    headerExt ?? extensionForMime(mime) ?? safeOriginalFilenameExtension(originalFilename) ?? "";
+  const id = buildSavedMediaId({ baseId, ext, originalFilename });
+  await writeSavedMediaBuffer({ dir, id, buffer: mediaBuffer });
+  return buildSavedMediaResult({ dir, id, size: mediaBuffer.byteLength, contentType: mime });
+}
+
+async function resolveMediaBufferPath(id, subdir = "inbound") {
+  if (!id || id.includes("/") || id.includes("\\") || id.includes("\0") || id === "..") {
+    throw new Error(`resolveMediaBufferPath: unsafe media ID: ${JSON.stringify(id)}`);
+  }
+  const dir = resolveMediaScopedDir(subdir, "resolveMediaBufferPath");
+  const resolved = path.join(dir, id);
+  if (!resolved.startsWith(dir + path.sep) && resolved !== dir) {
+    throw new Error(`resolveMediaBufferPath: path escapes media directory: ${JSON.stringify(id)}`);
+  }
+  const stat = await fs.promises.lstat(resolved);
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `resolveMediaBufferPath: refusing to follow symlink for media ID: ${JSON.stringify(id)}`,
+    );
+  }
+  if (!stat.isFile()) {
+    throw new Error(
+      `resolveMediaBufferPath: media ID does not resolve to a file: ${JSON.stringify(id)}`,
+    );
+  }
+  return resolved;
+}
+
 function parseFiniteNumber(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -33584,6 +33752,11 @@ const mediaMimeRuntime = {
   normalizeMimeType,
 };
 
+const mediaStoreRuntime = {
+  resolveMediaBufferPath,
+  saveMediaBuffer,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -44399,6 +44572,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/media-mime"
   ) {
     return mediaMimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-store" ||
+    request === "@openclaw/plugin-sdk/media-store"
+  ) {
+    return mediaStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||

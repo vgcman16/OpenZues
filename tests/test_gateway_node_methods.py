@@ -31190,6 +31190,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_media_store_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-media-store.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const mediaStore = require("openclaw/plugin-sdk/media-store");
+const scopedMediaStore = require("@openclaw/plugin-sdk/media-store");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.media_store",
+      description: "Use OpenClaw media-store SDK shim",
+      parameters: {
+        type: "object",
+        properties: { stateDir: { type: "string" } }
+      },
+      async execute(_toolCallId, args) {
+        process.env.OPENCLAW_STATE_DIR = args.stateDir;
+        const keys = Object.keys(mediaStore).sort();
+        if (!keys.includes("saveMediaBuffer")) {
+          return {
+            keys,
+            scopedType: typeof scopedMediaStore.resolveMediaBufferPath
+          };
+        }
+        const pngBytes = Buffer.from([
+          0x89, 0x50, 0x4e, 0x47,
+          0x0d, 0x0a, 0x1a, 0x0a
+        ]);
+        const saved = await mediaStore.saveMediaBuffer(
+          pngBytes,
+          "image/png; charset=utf-8",
+          "inbound",
+          1024,
+          "Photo Upload!!.png"
+        );
+        const resolved = await scopedMediaStore.resolveMediaBufferPath(
+          saved.id,
+          "inbound"
+        );
+        let unsafeError = null;
+        try {
+          await mediaStore.resolveMediaBufferPath("../bad.png", "inbound");
+        } catch (error) {
+          unsafeError = error.message;
+        }
+        let oversizedError = null;
+        try {
+          await mediaStore.saveMediaBuffer(Buffer.alloc(5), "text/plain", "inbound", 3);
+        } catch (error) {
+          oversizedError = error.message;
+        }
+        return {
+          keys,
+          scopedType: typeof scopedMediaStore.resolveMediaBufferPath,
+          saved: {
+            id: saved.id,
+            idPattern: /^Photo_Upload---[a-f0-9-]{36}\\.png$/.test(saved.id),
+            pathRelative: path.relative(args.stateDir, saved.path),
+            size: saved.size,
+            contentType: saved.contentType,
+            fileBytes: Array.from(fs.readFileSync(saved.path))
+          },
+          resolvedRelative: path.relative(args.stateDir, resolved),
+          samePath: resolved === saved.path,
+          unsafeError,
+          oversizedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-media-store-plugin",
+                    "name": "Runtime Media Store Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-media-store-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.media_store"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    state_dir = tmp_path / "openclaw-state"
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.media_store",
+            "args": {"stateDir": str(state_dir)},
+        },
+    )
+
+    assert payload["ok"] is True
+    saved_id = payload["result"].get("saved", {}).get("id", "<missing>")
+    media_relative = str(Path("media") / "inbound" / saved_id)
+    assert payload["result"] == {
+        "keys": ["resolveMediaBufferPath", "saveMediaBuffer"],
+        "scopedType": "function",
+        "saved": {
+            "id": saved_id,
+            "idPattern": True,
+            "pathRelative": media_relative,
+            "size": 8,
+            "contentType": "image/png",
+            "fileBytes": [137, 80, 78, 71, 13, 10, 26, 10],
+        },
+        "resolvedRelative": media_relative,
+        "samePath": True,
+        "unsafeError": 'resolveMediaBufferPath: unsafe media ID: "../bad.png"',
+        "oversizedError": "Media exceeds 0MB limit",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
