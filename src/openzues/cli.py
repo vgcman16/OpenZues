@@ -38300,6 +38300,11 @@ const channelSecretBasicRuntime = {
   resolveChannelAccountSurface,
 };
 
+const channelSecretRuntime = {
+  ...channelSecretBasicRuntime,
+  ...channelSecretTtsRuntime,
+};
+
 const talkConfigRuntime = {
   resolveActiveTalkProviderConfig,
 };
@@ -38591,7 +38596,7 @@ const genericSdk = new Proxy(
     ...runtimeStoreRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
-    ...channelSecretBasicRuntime,
+    ...channelSecretRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
@@ -39497,6 +39502,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-secret-basic-runtime"
   ) {
     return channelSecretBasicRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-secret-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-secret-runtime"
+  ) {
+    return channelSecretRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/talk-config-runtime" ||

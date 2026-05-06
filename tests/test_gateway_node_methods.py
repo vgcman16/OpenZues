@@ -22433,6 +22433,139 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_secret_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-secret.cjs"
+    runtime_entry.write_text(
+        """
+const secretRuntime = require("openclaw/plugin-sdk/channel-secret-runtime");
+const scopedSecretRuntime = require("@openclaw/plugin-sdk/channel-secret-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_secret",
+      description: "Use OpenClaw channel secret SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const channel = {
+          enabled: true,
+          nested: { tts: { providers: { openai: { apiKey: "${TOP_TTS}" } } } },
+          accounts: {
+            main: {
+              enabled: true,
+              nested: { tts: { providers: { openai: { apiKey: "${MAIN_TTS}" } } } }
+            }
+          }
+        };
+        const surface = secretRuntime.resolveChannelAccountSurface(channel);
+        const context = { assignments: [], warnings: [], warningKeys: new Set() };
+        secretRuntime.collectNestedChannelTtsAssignments({
+          channelKey: "telegram",
+          nestedKey: "nested",
+          channel,
+          surface,
+          defaults: { env: "default" },
+          context,
+          topLevelActive: true,
+          topInactiveReason: "top inactive",
+          accountActive: (entry) => entry.enabled,
+          accountInactiveReason: "account inactive"
+        });
+        return {
+          keys: Object.keys(secretRuntime).sort(),
+          scopedTypes: [
+            typeof scopedSecretRuntime.resolveChannelAccountSurface,
+            typeof scopedSecretRuntime.collectNestedChannelTtsAssignments
+          ],
+          surface: [surface.hasExplicitAccounts, surface.accounts.length],
+          assignments: context.assignments.map((assignment) => assignment.path)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-secret-plugin",
+                    "name": "Runtime Channel Secret Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-secret.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_secret"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_secret"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "collectConditionalChannelFieldAssignments",
+            "collectNestedChannelFieldAssignments",
+            "collectNestedChannelTtsAssignments",
+            "collectSecretInputAssignment",
+            "collectSimpleChannelFieldAssignments",
+            "getChannelRecord",
+            "getChannelSurface",
+            "hasConfiguredSecretInputValue",
+            "hasOwnProperty",
+            "isBaseFieldActiveForChannelSurface",
+            "isEnabledFlag",
+            "isRecord",
+            "normalizeSecretStringValue",
+            "pushAssignment",
+            "pushInactiveSurfaceWarning",
+            "pushWarning",
+            "resolveChannelAccountSurface",
+        ],
+        "scopedTypes": ["function", "function"],
+        "surface": [True, 1],
+        "assignments": [
+            "channels.telegram.nested.tts.providers.openai.apiKey",
+            "channels.telegram.accounts.main.nested.tts.providers.openai.apiKey",
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
