@@ -23333,6 +23333,120 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_logging_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-logging-core.cjs"
+    runtime_entry.write_text(
+        """
+const loggingCore = require("openclaw/plugin-sdk/logging-core");
+const scopedLoggingCore = require("@openclaw/plugin-sdk/logging-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.logging_core",
+      description: "Use OpenClaw logging-core SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const logger = loggingCore.createSubsystemLogger("plugins/demo");
+        const child = logger.child("worker");
+        const secret = "Authorization: Bearer sk-1234567890abcdefghijklmnop";
+        const redacted = loggingCore.redactSensitiveText(secret);
+        return {
+          keys: Object.keys(loggingCore).sort(),
+          scopedType: typeof scopedLoggingCore.redactSensitiveText,
+          identifier: loggingCore.redactIdentifier("customer-123", { len: 8 }),
+          emptyIdentifier: loggingCore.redactIdentifier("   "),
+          redacted: {
+            changed: redacted !== secret,
+            leaked: redacted.includes("1234567890abcdefghijklmnop"),
+            prefixKept: redacted.includes("sk-123")
+          },
+          logger: {
+            subsystem: logger.subsystem,
+            childSubsystem: child.subsystem,
+            methods: [
+              typeof logger.info,
+              typeof logger.warn,
+              typeof logger.error,
+              typeof logger.raw
+            ]
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-logging-core-plugin",
+                    "name": "Runtime Logging Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-logging-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.logging_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.logging_core"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createSubsystemLogger",
+            "redactIdentifier",
+            "redactSensitiveText",
+        ],
+        "scopedType": "function",
+        "identifier": "sha256:a28b5da3",
+        "emptyIdentifier": "-",
+        "redacted": {"changed": True, "leaked": False, "prefixKept": True},
+        "logger": {
+            "subsystem": "plugins/demo",
+            "childSubsystem": "plugins/demo/worker",
+            "methods": ["function", "function", "function", "function"],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

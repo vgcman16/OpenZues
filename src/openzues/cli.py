@@ -32709,6 +32709,40 @@ function createSubsystemLogger(subsystem = "unknown") {
   return logger;
 }
 
+function sha256HexPrefix(value, len = 12) {
+  const safeLen = Number.isFinite(len) ? Math.max(1, Math.floor(len)) : 12;
+  return crypto.createHash("sha256").update(String(value)).digest("hex").slice(0, safeLen);
+}
+
+function redactIdentifier(value, opts) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) {
+    return "-";
+  }
+  return `sha256:${sha256HexPrefix(trimmed, opts && opts.len !== undefined ? opts.len : 12)}`;
+}
+
+function maskSensitiveToken(token) {
+  if (token.length < 18) {
+    return "***";
+  }
+  return `${token.slice(0, 6)}...${token.slice(-4)}`;
+}
+
+function redactSensitiveText(text) {
+  if (!text) {
+    return text;
+  }
+  return String(text)
+    .replace(/(Authorization\s*[:=]\s*Bearer\s+)([A-Za-z0-9._\-+=]+)/gi, (_m, prefix, token) =>
+      `${prefix}${maskSensitiveToken(token)}`,
+    )
+    .replace(/\bBearer\s+([A-Za-z0-9._\-+=]{18,})\b/g, (_m, token) =>
+      `Bearer ${maskSensitiveToken(token)}`,
+    )
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, (_m, token) => maskSensitiveToken(token));
+}
+
 function runtimeForLogger(logger) {
   const resolved = logger || createSubsystemLogger("runtime");
   return createLoggerBackedRuntime({
@@ -38921,6 +38955,12 @@ const commandAuthRuntime = {
   ...commandPrimitivesRuntime,
 };
 
+const loggingCoreRuntime = {
+  createSubsystemLogger,
+  redactIdentifier,
+  redactSensitiveText,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -39902,6 +39942,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-env"
   ) {
     return runtimeEnvRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/logging-core" ||
+    request === "@openclaw/plugin-sdk/logging-core"
+  ) {
+    return loggingCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
