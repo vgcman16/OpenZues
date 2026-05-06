@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~79.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~79.1% overall, with a reasonable
   band of ~77-82%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -66,8 +66,8 @@ Current percentage rollup:
   provider web facade, device-bootstrap, runtime-store, runtime, and
   directory-runtime, directory-config-runtime, thread-bindings-runtime,
   conversation-runtime, outbound-runtime, conversation-binding-runtime,
-  session-binding/session-key runtime alias, and session-store runtime helper
-  slices.
+  session-binding/session-key runtime alias, session-store runtime, and
+  account-id/configured-id subpath helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7503,6 +7503,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   now estimated at ~79.0%. Verified with focused session-store-runtime pytest,
   adjacent helper proof, adjacent imported-plugin/runtime proof, `ruff check`,
   and `mypy`; source/test checkpointed in `06e04786`.
+- Closed the imported OpenClaw plugin SDK account-id/configured-id subpath seam
+  from `src/plugin-sdk/account-id.ts`, `src/routing/account-id.ts`, and
+  `src/plugin-sdk/account-configured-ids.ts`: native runtime entries can import
+  slim `openclaw/plugin-sdk/account-id` and
+  `openclaw/plugin-sdk/account-configured-ids` barrels, receive only the
+  upstream-exported default/normalize/list helpers, and avoid the generic SDK
+  catch-all surface for these narrow modules. Repo-wide parity is now estimated
+  at ~79.1%. Verified with focused account-id subpath pytest, adjacent helper
+  proof, adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `2e012bc2`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7513,8 +7523,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   runtime-store/runtime/directory-runtime/directory-config-runtime/
   thread-bindings-runtime/conversation-runtime/outbound-runtime/
   conversation-binding-runtime/session-binding-runtime/thread-bindings-session-runtime/
-  session-key-runtime/session-store-runtime path, starting with the next
-  source-backed SDK helper subpath.
+  session-key-runtime/session-store-runtime/account-id/account-configured-ids
+  path, starting with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
