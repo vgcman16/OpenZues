@@ -18331,6 +18331,118 @@ function filterSupplementalContextItems(params) {
   };
 }
 
+const HEARTBEAT_EVENT_STATE_KEY = Symbol.for("openclaw.heartbeatEvents.state");
+const HEARTBEAT_DEFAULT_VISIBILITY = {
+  showOk: false,
+  showAlerts: true,
+  useIndicator: true,
+};
+
+function getHeartbeatEventState() {
+  return resolveGlobalSingleton(HEARTBEAT_EVENT_STATE_KEY, () => ({
+    lastHeartbeat: null,
+    listeners: new Set(),
+  }));
+}
+
+function resolveIndicatorType(status) {
+  switch (status) {
+    case "ok-empty":
+    case "ok-token":
+      return "ok";
+    case "sent":
+      return "alert";
+    case "failed":
+      return "error";
+    case "skipped":
+      return undefined;
+    default:
+      throw new Error("Unsupported heartbeat status");
+  }
+}
+
+function emitHeartbeatEvent(evt) {
+  const state = getHeartbeatEventState();
+  const enriched = { ts: Date.now(), ...evt };
+  state.lastHeartbeat = enriched;
+  for (const listener of Array.from(state.listeners)) {
+    try {
+      listener(enriched);
+    } catch (_error) {
+      // Listener failures are isolated by OpenClaw's listener helper.
+    }
+  }
+}
+
+function onHeartbeatEvent(listener) {
+  const state = getHeartbeatEventState();
+  state.listeners.add(listener);
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+function getLastHeartbeatEvent() {
+  return getHeartbeatEventState().lastHeartbeat;
+}
+
+function resetHeartbeatEventsForTest() {
+  const state = getHeartbeatEventState();
+  state.lastHeartbeat = null;
+  state.listeners.clear();
+}
+
+function resolveHeartbeatVisibility(params) {
+  const cfg = (params && params.cfg) || {};
+  const channel = params && params.channel;
+  const channels = cfg.channels || {};
+  if (channel === "webchat") {
+    const channelDefaults = channels.defaults && channels.defaults.heartbeat;
+    return {
+      showOk: channelDefaults && channelDefaults.showOk !== undefined
+        ? channelDefaults.showOk
+        : HEARTBEAT_DEFAULT_VISIBILITY.showOk,
+      showAlerts: channelDefaults && channelDefaults.showAlerts !== undefined
+        ? channelDefaults.showAlerts
+        : HEARTBEAT_DEFAULT_VISIBILITY.showAlerts,
+      useIndicator: channelDefaults && channelDefaults.useIndicator !== undefined
+        ? channelDefaults.useIndicator
+        : HEARTBEAT_DEFAULT_VISIBILITY.useIndicator,
+    };
+  }
+  const channelDefaults = channels.defaults && channels.defaults.heartbeat;
+  const channelCfg = channels[channel];
+  const perChannel = channelCfg && channelCfg.heartbeat;
+  const accountCfg =
+    params && params.accountId && channelCfg && channelCfg.accounts
+      ? channelCfg.accounts[params.accountId]
+      : undefined;
+  const perAccount = accountCfg && accountCfg.heartbeat;
+  return {
+    showOk: perAccount && perAccount.showOk !== undefined
+      ? perAccount.showOk
+      : perChannel && perChannel.showOk !== undefined
+        ? perChannel.showOk
+        : channelDefaults && channelDefaults.showOk !== undefined
+          ? channelDefaults.showOk
+          : HEARTBEAT_DEFAULT_VISIBILITY.showOk,
+    showAlerts: perAccount && perAccount.showAlerts !== undefined
+      ? perAccount.showAlerts
+      : perChannel && perChannel.showAlerts !== undefined
+        ? perChannel.showAlerts
+        : channelDefaults && channelDefaults.showAlerts !== undefined
+          ? channelDefaults.showAlerts
+          : HEARTBEAT_DEFAULT_VISIBILITY.showAlerts,
+    useIndicator: perAccount && perAccount.useIndicator !== undefined
+      ? perAccount.useIndicator
+      : perChannel && perChannel.useIndicator !== undefined
+        ? perChannel.useIndicator
+        : channelDefaults && channelDefaults.useIndicator !== undefined
+          ? channelDefaults.useIndicator
+          : HEARTBEAT_DEFAULT_VISIBILITY.useIndicator,
+  };
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32614,6 +32726,15 @@ const contextVisibilityRuntime = {
   shouldIncludeSupplementalContext,
 };
 
+const heartbeatRuntime = {
+  emitHeartbeatEvent,
+  getLastHeartbeatEvent,
+  onHeartbeatEvent,
+  resetHeartbeatEventsForTest,
+  resolveHeartbeatVisibility,
+  resolveIndicatorType,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43384,6 +43505,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/context-visibility-runtime"
   ) {
     return contextVisibilityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/heartbeat-runtime" ||
+    request === "@openclaw/plugin-sdk/heartbeat-runtime"
+  ) {
+    return heartbeatRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||

@@ -29824,6 +29824,193 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_heartbeat_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-heartbeat.cjs"
+    runtime_entry.write_text(
+        """
+const heartbeat = require("openclaw/plugin-sdk/heartbeat-runtime");
+const scopedHeartbeat = require("@openclaw/plugin-sdk/heartbeat-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.heartbeat",
+      description: "Use OpenClaw heartbeat-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        heartbeat.resetHeartbeatEventsForTest();
+        const seen = [];
+        const unsubscribe = heartbeat.onHeartbeatEvent((event) => {
+          seen.push(`${event.status}:${event.ts}:${event.preview || ""}`);
+        });
+        heartbeat.onHeartbeatEvent(() => {
+          throw new Error("listener boom");
+        });
+        const originalNow = Date.now;
+        Date.now = () => 1234567890;
+        try {
+          scopedHeartbeat.emitHeartbeatEvent({
+            status: "ok-token",
+            preview: "pong",
+            channel: "slack"
+          });
+        } finally {
+          Date.now = originalNow;
+        }
+        const lastBeforeUnsubscribe = heartbeat.getLastHeartbeatEvent();
+        unsubscribe();
+        scopedHeartbeat.emitHeartbeatEvent({ status: "failed", reason: "offline" });
+        const lastAfterUnsubscribe = heartbeat.getLastHeartbeatEvent();
+        const accountVisibility = heartbeat.resolveHeartbeatVisibility({
+          cfg: {
+            channels: {
+              defaults: {
+                heartbeat: { showOk: false, showAlerts: true, useIndicator: true }
+              },
+              telegram: {
+                heartbeat: { showOk: false, showAlerts: false },
+                accounts: {
+                  primary: { heartbeat: { showOk: true, showAlerts: true } }
+                }
+              }
+            }
+          },
+          channel: "telegram",
+          accountId: "primary"
+        });
+        const webchatVisibility = heartbeat.resolveHeartbeatVisibility({
+          cfg: {
+            channels: {
+              defaults: {
+                heartbeat: { showOk: true, showAlerts: false, useIndicator: false }
+              },
+              webchat: {
+                heartbeat: { showOk: false, showAlerts: true, useIndicator: true }
+              }
+            }
+          },
+          channel: "webchat",
+          accountId: "ignored"
+        });
+        heartbeat.resetHeartbeatEventsForTest();
+        return {
+          keys: Object.keys(heartbeat).sort(),
+          scopedType: typeof scopedHeartbeat.resolveHeartbeatVisibility,
+          indicatorTypes: {
+            okEmpty: heartbeat.resolveIndicatorType("ok-empty"),
+            okToken: heartbeat.resolveIndicatorType("ok-token"),
+            sent: heartbeat.resolveIndicatorType("sent"),
+            failed: heartbeat.resolveIndicatorType("failed"),
+            skipped: heartbeat.resolveIndicatorType("skipped") || null
+          },
+          seen,
+          lastBeforeUnsubscribe,
+          lastAfterUnsubscribe,
+          accountVisibility,
+          webchatVisibility,
+          resetLast: heartbeat.getLastHeartbeatEvent()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-heartbeat-plugin",
+                    "name": "Runtime Heartbeat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-heartbeat-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.heartbeat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.heartbeat"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "emitHeartbeatEvent",
+            "getLastHeartbeatEvent",
+            "onHeartbeatEvent",
+            "resetHeartbeatEventsForTest",
+            "resolveHeartbeatVisibility",
+            "resolveIndicatorType",
+        ],
+        "scopedType": "function",
+        "indicatorTypes": {
+            "okEmpty": "ok",
+            "okToken": "ok",
+            "sent": "alert",
+            "failed": "error",
+            "skipped": None,
+        },
+        "seen": ["ok-token:1234567890:pong"],
+        "lastBeforeUnsubscribe": {
+            "ts": 1234567890,
+            "status": "ok-token",
+            "preview": "pong",
+            "channel": "slack",
+        },
+        "lastAfterUnsubscribe": {
+            "ts": payload["result"]["lastAfterUnsubscribe"]["ts"],
+            "status": "failed",
+            "reason": "offline",
+        },
+        "accountVisibility": {
+            "showOk": True,
+            "showAlerts": True,
+            "useIndicator": True,
+        },
+        "webchatVisibility": {
+            "showOk": True,
+            "showAlerts": False,
+            "useIndicator": False,
+        },
+        "resetLast": None,
+    }
+    assert isinstance(payload["result"]["lastAfterUnsubscribe"]["ts"], int)
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
