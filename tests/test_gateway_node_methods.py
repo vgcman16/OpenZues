@@ -29505,6 +29505,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_poll_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-poll-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const poll = require("openclaw/plugin-sdk/poll-runtime");
+const scopedPoll = require("@openclaw/plugin-sdk/poll-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.poll",
+      description: "Use OpenClaw poll-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const errors = [];
+        for (const input of [
+          { question: "  ", options: ["a", "b"] },
+          { question: "q", options: ["only"] },
+          { question: "q", options: ["a", "b", "c"], maxSelections: 4 },
+          { question: "q", options: ["a", "b"], durationSeconds: 10, durationHours: 1 }
+        ]) {
+          try {
+            poll.normalizePollInput(input, { maxOptions: 2 });
+          } catch (error) {
+            errors.push(error.message);
+          }
+        }
+        return {
+          keys: Object.keys(poll).sort(),
+          scopedType: typeof scopedPoll.normalizePollInput,
+          maxSelections: [
+            poll.resolvePollMaxSelections(3, true),
+            poll.resolvePollMaxSelections(3, false),
+            poll.resolvePollMaxSelections(1, true)
+          ],
+          normalized: poll.normalizePollInput(
+            {
+              question: "  Choose one  ",
+              options: ["  Alpha  ", "", "Beta"],
+              maxSelections: 1.9,
+              durationSeconds: 90.8
+            },
+            { maxOptions: 2 }
+          ),
+          hours: [
+            poll.normalizePollDurationHours(undefined, { defaultHours: 24, maxHours: 48 }),
+            poll.normalizePollDurationHours(0, { defaultHours: 24, maxHours: 48 }),
+            poll.normalizePollDurationHours(99.9, { defaultHours: 24, maxHours: 48 })
+          ],
+          errors
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-poll-plugin",
+                    "name": "Runtime Poll Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-poll-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.poll"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.poll"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "normalizePollDurationHours",
+            "normalizePollInput",
+            "resolvePollMaxSelections",
+        ],
+        "scopedType": "function",
+        "maxSelections": [3, 1, 2],
+        "normalized": {
+            "question": "Choose one",
+            "options": ["Alpha", "Beta"],
+            "maxSelections": 1,
+            "durationSeconds": 90,
+        },
+        "hours": [24, 1, 48],
+        "errors": [
+            "Poll question is required",
+            "Poll requires at least 2 options",
+            "Poll supports at most 2 options",
+            "durationSeconds and durationHours are mutually exclusive",
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_media_mime_helpers(
     tmp_path,
 ) -> None:

@@ -26558,6 +26558,74 @@ function resolvePollMaxSelections(optionCount, allowMultiselect) {
   return allowMultiselect ? Math.max(2, optionCount) : 1;
 }
 
+function normalizePollInput(input = {}, options = {}) {
+  const question = String(input.question || "").trim();
+  if (!question) {
+    throw new Error("Poll question is required");
+  }
+  const pollOptions = (Array.isArray(input.options) ? input.options : []).map((option) =>
+    String(option || "").trim(),
+  );
+  const cleaned = pollOptions.filter(Boolean);
+  if (cleaned.length < 2) {
+    throw new Error("Poll requires at least 2 options");
+  }
+  if (options.maxOptions !== undefined && cleaned.length > options.maxOptions) {
+    throw new Error(`Poll supports at most ${options.maxOptions} options`);
+  }
+  const maxSelectionsRaw = input.maxSelections;
+  const maxSelections =
+    typeof maxSelectionsRaw === "number" && Number.isFinite(maxSelectionsRaw)
+      ? Math.floor(maxSelectionsRaw)
+      : 1;
+  if (maxSelections < 1) {
+    throw new Error("maxSelections must be at least 1");
+  }
+  if (maxSelections > cleaned.length) {
+    throw new Error("maxSelections cannot exceed option count");
+  }
+  const durationSecondsRaw = input.durationSeconds;
+  const durationSeconds =
+    typeof durationSecondsRaw === "number" && Number.isFinite(durationSecondsRaw)
+      ? Math.floor(durationSecondsRaw)
+      : undefined;
+  if (durationSeconds !== undefined && durationSeconds < 1) {
+    throw new Error("durationSeconds must be at least 1");
+  }
+  const durationHoursRaw = input.durationHours;
+  const durationHours =
+    typeof durationHoursRaw === "number" && Number.isFinite(durationHoursRaw)
+      ? Math.floor(durationHoursRaw)
+      : undefined;
+  if (durationHours !== undefined && durationHours < 1) {
+    throw new Error("durationHours must be at least 1");
+  }
+  if (durationSeconds !== undefined && durationHours !== undefined) {
+    throw new Error("durationSeconds and durationHours are mutually exclusive");
+  }
+  return {
+    question,
+    options: cleaned,
+    maxSelections,
+    ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    ...(durationHours !== undefined ? { durationHours } : {}),
+  };
+}
+
+function normalizePollDurationHours(value, options = {}) {
+  const defaultHours =
+    typeof options.defaultHours === "number" && Number.isFinite(options.defaultHours)
+      ? Math.floor(options.defaultHours)
+      : 1;
+  const maxHours =
+    typeof options.maxHours === "number" && Number.isFinite(options.maxHours)
+      ? Math.floor(options.maxHours)
+      : defaultHours;
+  const base =
+    typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : defaultHours;
+  return Math.min(Math.max(base, 1), maxHours);
+}
+
 function enumValuesFrom(values) {
   if (Array.isArray(values)) {
     return values;
@@ -32429,6 +32497,12 @@ const lazyValueRuntime = {
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
+};
+
+const pollRuntime = {
+  normalizePollDurationHours,
+  normalizePollInput,
+  resolvePollMaxSelections,
 };
 
 const commandDetectionRuntime = {
@@ -43178,6 +43252,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
     return commandPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/poll-runtime" ||
+    request === "@openclaw/plugin-sdk/poll-runtime"
+  ) {
+    return pollRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-detection" ||
