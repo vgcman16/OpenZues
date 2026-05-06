@@ -33863,6 +33863,252 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-setup.cjs"
+    runtime_entry.write_text(
+        """
+const providerSetup = require("openclaw/plugin-sdk/provider-setup");
+const selfHosted = require("@openclaw/plugin-sdk/self-hosted-provider-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_setup",
+      description: "Use OpenClaw provider setup SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const defaulted = providerSetup.applyProviderDefaultModel(
+          { agents: { defaults: { model: { fallbacks: ["openai/gpt-4.1"] } } } },
+          "local/llama"
+        );
+        const localModels = await providerSetup.discoverOpenAICompatibleLocalModels({
+          baseUrl: "http://localhost:1234/v1",
+          label: "Local",
+          env: { VITEST: "1" }
+        });
+        const existingDiscovery = await providerSetup
+          .discoverOpenAICompatibleSelfHostedProvider({
+            ctx: {
+              config: { models: { providers: { local: {} } } },
+              resolveProviderApiKey() {
+                return { apiKey: "env:LOCAL" };
+              }
+            },
+            providerId: "local",
+            async buildProvider() {
+              return { label: "Local" };
+            }
+          });
+        const discovered = await providerSetup.discoverOpenAICompatibleSelfHostedProvider({
+          ctx: {
+            config: {},
+            resolveProviderApiKey() {
+              return { apiKey: "env:LOCAL", discoveryApiKey: "secret" };
+            }
+          },
+          providerId: "local",
+          async buildProvider({ apiKey }) {
+            return {
+              label: "Local",
+              discoveryKey: apiKey,
+              baseUrl: "http://localhost:1234/v1"
+            };
+          }
+        });
+        const missingEvents = [];
+        const missingConfig = await selfHosted
+          .configureOpenAICompatibleSelfHostedProviderNonInteractive({
+            ctx: {
+              authChoice: "custom",
+              config: {},
+              opts: {},
+              runtime: {
+                error(message) { missingEvents.push(["error", message]); },
+                exit(code) { missingEvents.push(["exit", code]); },
+                log(message) { missingEvents.push(["log", message]); }
+              },
+              async resolveApiKey() {
+                return { value: "sk-local" };
+              },
+              toApiKeyCredential() {
+                return { type: "api_key", provider: "local", key: "sk-local" };
+              }
+            },
+            providerId: "local",
+            providerLabel: "Local",
+            defaultBaseUrl: "http://localhost:1234/v1",
+            defaultApiKeyEnvVar: "LOCAL_API_KEY",
+            modelPlaceholder: "llama-3"
+          });
+        const successEvents = [];
+        const configured = await providerSetup
+          .configureOpenAICompatibleSelfHostedProviderNonInteractive({
+            ctx: {
+              authChoice: "custom",
+              agentDir: "agent",
+              config: {},
+              opts: {
+                customApiKey: "sk-local",
+                customBaseUrl: "http://localhost:1234/v1/",
+                customModelId: "llama-3"
+              },
+              runtime: {
+                error(message) { successEvents.push(["error", message]); },
+                exit(code) { successEvents.push(["exit", code]); },
+                log(message) { successEvents.push(["log", message]); }
+              },
+              async resolveApiKey({ flagValue }) {
+                return { source: "flag", value: flagValue };
+              },
+              toApiKeyCredential({ provider, resolved }) {
+                return { type: "api_key", provider, key: resolved.value };
+              }
+            },
+            providerId: "local",
+            providerLabel: "Local",
+            defaultBaseUrl: "http://localhost:1234/v1",
+            defaultApiKeyEnvVar: "LOCAL_API_KEY",
+            modelPlaceholder: "llama-3",
+            input: ["text", "image"],
+            reasoning: true,
+            contextWindow: 4096,
+            maxTokens: 1024
+          });
+        return {
+          keys: Object.keys(providerSetup).sort(),
+          scopedType: typeof selfHosted.applyProviderDefaultModel,
+          defaults: [
+            providerSetup.SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+            providerSetup.SELF_HOSTED_DEFAULT_MAX_TOKENS,
+            providerSetup.SELF_HOSTED_DEFAULT_COST
+          ],
+          defaulted,
+          localModels,
+          existingDiscovery,
+          discovered,
+          missing: [missingConfig, missingEvents],
+          configured,
+          successEvents,
+          genericLeak: typeof providerSetup.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "provider-setup-plugin",
+                    "name": "Provider Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-provider-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.provider_setup", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["defaults"] == [
+        128_000,
+        8192,
+        {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    ]
+    assert result["defaulted"]["agents"]["defaults"]["model"] == {
+        "fallbacks": ["openai/gpt-4.1"],
+        "primary": "local/llama",
+    }
+    assert result["localModels"] == []
+    assert result["existingDiscovery"] is None
+    assert result["discovered"] == {
+        "provider": {
+            "label": "Local",
+            "discoveryKey": "secret",
+            "baseUrl": "http://localhost:1234/v1",
+            "apiKey": "env:LOCAL",
+        }
+    }
+    assert result["missing"][0] is None
+    assert result["missing"][1][0][0] == "error"
+    assert "Missing --custom-model-id" in result["missing"][1][0][1]
+    assert result["missing"][1][1] == ["exit", 1]
+    configured = result["configured"]
+    assert configured["models"]["providers"]["local"] == {
+        "baseUrl": "http://localhost:1234/v1",
+        "api": "openai-completions",
+        "apiKey": "LOCAL_API_KEY",
+        "models": [
+            {
+                "id": "llama-3",
+                "name": "llama-3",
+                "reasoning": True,
+                "input": ["text", "image"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 4096,
+                "maxTokens": 1024,
+            }
+        ],
+    }
+    assert configured["auth"]["profiles"]["local:default"] == {
+        "provider": "local",
+        "mode": "api_key",
+    }
+    assert configured["agents"]["defaults"]["model"]["primary"] == "local/llama-3"
+    assert result["successEvents"] == [["log", "Default Local model: llama-3"]]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "SELF_HOSTED_DEFAULT_CONTEXT_WINDOW",
+        "applyProviderDefaultModel",
+        "configureOpenAICompatibleSelfHostedProviderNonInteractive",
+        "discoverOpenAICompatibleLocalModels",
+        "discoverOpenAICompatibleSelfHostedProvider",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

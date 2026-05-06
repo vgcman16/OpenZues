@@ -35104,6 +35104,317 @@ const runtimeDoctorRuntime = {
   removePluginFromConfig,
 };
 
+const SELF_HOSTED_DEFAULT_CONTEXT_WINDOW = 128000;
+const SELF_HOSTED_DEFAULT_MAX_TOKENS = 8192;
+const SELF_HOSTED_DEFAULT_COST = Object.freeze({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+
+function normalizeOptionalSecretInput(value) {
+  return normalizeStringifiedOptionalString(value);
+}
+
+function applyProviderDefaultModel(cfg = {}, modelRef) {
+  const existingModel = cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model;
+  const fallbacks =
+    existingModel && typeof existingModel === "object" && "fallbacks" in existingModel
+      ? existingModel.fallbacks
+      : undefined;
+  return {
+    ...cfg,
+    agents: {
+      ...(cfg.agents || {}),
+      defaults: {
+        ...((cfg.agents && cfg.agents.defaults) || {}),
+        model: {
+          ...(fallbacks ? { fallbacks } : {}),
+          primary: modelRef,
+        },
+      },
+    },
+  };
+}
+
+function isReasoningModelHeuristic(modelId) {
+  return /r1|reasoning|think|reason/i.test(String(modelId || ""));
+}
+
+async function discoverOpenAICompatibleLocalModels(params = {}) {
+  const env = params.env || process.env;
+  if (env.VITEST || env.NODE_ENV === "test") {
+    return [];
+  }
+  const baseUrl = String(params.baseUrl || "").trim().replace(/\/+$/, "");
+  if (!baseUrl) {
+    return [];
+  }
+  const url = `${baseUrl}/models`;
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    return [];
+  }
+  try {
+    const apiKey = normalizeOptionalString(params.apiKey);
+    const response = await fetchImpl(url, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    });
+    if (!response || response.ok !== true) {
+      return [];
+    }
+    const data = await response.json();
+    const models = Array.isArray(data && data.data) ? data.data : [];
+    return models
+      .map((model) => ({ id: normalizeOptionalString(model && model.id) || "" }))
+      .filter((model) => Boolean(model.id))
+      .map((model) => ({
+        id: model.id,
+        name: model.id,
+        reasoning: isReasoningModelHeuristic(model.id),
+        input: ["text"],
+        cost: SELF_HOSTED_DEFAULT_COST,
+        contextWindow: params.contextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: params.maxTokens || SELF_HOSTED_DEFAULT_MAX_TOKENS,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function buildOpenAICompatibleSelfHostedProviderConfig(params = {}) {
+  const modelRef = `${params.providerId}/${params.modelId}`;
+  const profileId = `${params.providerId}:default`;
+  return {
+    config: {
+      ...(params.cfg || {}),
+      models: {
+        ...((params.cfg && params.cfg.models) || {}),
+        mode: (params.cfg && params.cfg.models && params.cfg.models.mode) || "merge",
+        providers: {
+          ...((params.cfg && params.cfg.models && params.cfg.models.providers) || {}),
+          [params.providerId]: {
+            baseUrl: params.baseUrl,
+            api: "openai-completions",
+            apiKey: params.providerApiKey,
+            models: [
+              {
+                id: params.modelId,
+                name: params.modelId,
+                reasoning: params.reasoning || false,
+                input: params.input || ["text"],
+                cost: SELF_HOSTED_DEFAULT_COST,
+                contextWindow: params.contextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+                maxTokens: params.maxTokens || SELF_HOSTED_DEFAULT_MAX_TOKENS,
+              },
+            ],
+          },
+        },
+      },
+    },
+    modelId: params.modelId,
+    modelRef,
+    profileId,
+  };
+}
+
+async function promptAndConfigureOpenAICompatibleSelfHostedProvider(params = {}) {
+  const baseUrlRaw = await params.prompter.text({
+    message: `${params.providerLabel} base URL`,
+    initialValue: params.defaultBaseUrl,
+    placeholder: params.defaultBaseUrl,
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const apiKeyRaw = await params.prompter.text({
+    message: `${params.providerLabel} API key`,
+    placeholder: "sk-... (or any non-empty string)",
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const modelIdRaw = await params.prompter.text({
+    message: `${params.providerLabel} model`,
+    placeholder: params.modelPlaceholder,
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const baseUrl = String(baseUrlRaw || "").trim().replace(/\/+$/, "");
+  const apiKey = normalizeStringifiedOptionalString(apiKeyRaw) || "";
+  const modelId = normalizeStringifiedOptionalString(modelIdRaw) || "";
+  const credential = {
+    type: "api_key",
+    provider: params.providerId,
+    key: apiKey,
+  };
+  const configured = buildOpenAICompatibleSelfHostedProviderConfig({
+    cfg: params.cfg || {},
+    providerId: params.providerId,
+    baseUrl,
+    providerApiKey: params.defaultApiKeyEnvVar,
+    modelId,
+    input: params.input,
+    reasoning: params.reasoning,
+    contextWindow: params.contextWindow,
+    maxTokens: params.maxTokens,
+  });
+  return {
+    config: configured.config,
+    credential,
+    modelId: configured.modelId,
+    modelRef: configured.modelRef,
+    profileId: configured.profileId,
+  };
+}
+
+function buildSelfHostedProviderAuthResult(result) {
+  return {
+    profiles: [
+      {
+        profileId: result.profileId,
+        credential: result.credential,
+      },
+    ],
+    configPatch: result.config,
+    defaultModel: result.modelRef,
+  };
+}
+
+async function promptAndConfigureOpenAICompatibleSelfHostedProviderAuth(params = {}) {
+  const result = await promptAndConfigureOpenAICompatibleSelfHostedProvider(params);
+  return buildSelfHostedProviderAuthResult(result);
+}
+
+async function discoverOpenAICompatibleSelfHostedProvider(params = {}) {
+  const ctx = params.ctx || {};
+  if (
+    ctx.config &&
+    ctx.config.models &&
+    ctx.config.models.providers &&
+    ctx.config.models.providers[params.providerId]
+  ) {
+    return null;
+  }
+  const resolved =
+    typeof ctx.resolveProviderApiKey === "function"
+      ? ctx.resolveProviderApiKey(params.providerId)
+      : {};
+  if (!resolved || !resolved.apiKey) {
+    return null;
+  }
+  const provider =
+    typeof params.buildProvider === "function"
+      ? await params.buildProvider({ apiKey: resolved.discoveryApiKey })
+      : {};
+  return {
+    provider: {
+      ...provider,
+      apiKey: resolved.apiKey,
+    },
+  };
+}
+
+function buildMissingNonInteractiveModelIdMessage(params = {}) {
+  return [
+    `Missing --custom-model-id for --auth-choice ${params.authChoice}.`,
+    `Pass the ${params.providerLabel} model id to use, for example ${params.modelPlaceholder}.`,
+  ].join("\n");
+}
+
+function applySelfHostedAuthProfileConfig(cfg = {}, params = {}) {
+  return {
+    ...cfg,
+    auth: {
+      ...(cfg.auth || {}),
+      profiles: {
+        ...((cfg.auth && cfg.auth.profiles) || {}),
+        [params.profileId]: {
+          provider: params.provider,
+          mode: params.mode,
+          ...(params.email ? { email: params.email } : {}),
+          ...(params.displayName ? { displayName: params.displayName } : {}),
+        },
+      },
+    },
+  };
+}
+
+async function configureOpenAICompatibleSelfHostedProviderNonInteractive(params = {}) {
+  const ctx = params.ctx || {};
+  const opts = ctx.opts || {};
+  const baseUrl = (
+    normalizeOptionalSecretInput(opts.customBaseUrl) || params.defaultBaseUrl
+  ).replace(/\/+$/, "");
+  const modelId = normalizeOptionalSecretInput(opts.customModelId);
+  if (!modelId) {
+    if (ctx.runtime && typeof ctx.runtime.error === "function") {
+      ctx.runtime.error(
+        buildMissingNonInteractiveModelIdMessage({
+          authChoice: ctx.authChoice,
+          providerLabel: params.providerLabel,
+          modelPlaceholder: params.modelPlaceholder,
+        }),
+      );
+    }
+    if (ctx.runtime && typeof ctx.runtime.exit === "function") {
+      ctx.runtime.exit(1);
+    }
+    return null;
+  }
+  const resolved =
+    typeof ctx.resolveApiKey === "function"
+      ? await ctx.resolveApiKey({
+          provider: params.providerId,
+          flagValue: normalizeOptionalSecretInput(opts.customApiKey),
+          flagName: "--custom-api-key",
+          envVar: params.defaultApiKeyEnvVar,
+          envVarName: params.defaultApiKeyEnvVar,
+        })
+      : null;
+  if (!resolved) {
+    return null;
+  }
+  const credential =
+    typeof ctx.toApiKeyCredential === "function"
+      ? ctx.toApiKeyCredential({
+          provider: params.providerId,
+          resolved,
+        })
+      : null;
+  if (!credential) {
+    return null;
+  }
+  const configured = buildOpenAICompatibleSelfHostedProviderConfig({
+    cfg: ctx.config || {},
+    providerId: params.providerId,
+    baseUrl,
+    providerApiKey: params.defaultApiKeyEnvVar,
+    modelId,
+    input: params.input,
+    reasoning: params.reasoning,
+    contextWindow: params.contextWindow,
+    maxTokens: params.maxTokens,
+  });
+  const withProfile = applySelfHostedAuthProfileConfig(configured.config, {
+    profileId: configured.profileId,
+    provider: params.providerId,
+    mode: "api_key",
+  });
+  if (ctx.runtime && typeof ctx.runtime.log === "function") {
+    ctx.runtime.log(`Default ${params.providerLabel} model: ${modelId}`);
+  }
+  return applyProviderDefaultModel(withProfile, configured.modelRef);
+}
+
+const providerSetupRuntime = {
+  SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+  SELF_HOSTED_DEFAULT_COST,
+  SELF_HOSTED_DEFAULT_MAX_TOKENS,
+  applyProviderDefaultModel,
+  configureOpenAICompatibleSelfHostedProviderNonInteractive,
+  discoverOpenAICompatibleLocalModels,
+  discoverOpenAICompatibleSelfHostedProvider,
+  promptAndConfigureOpenAICompatibleSelfHostedProvider,
+  promptAndConfigureOpenAICompatibleSelfHostedProviderAuth,
+};
+
 const configSchemaRuntime = {
   OpenClawSchema,
   validateJsonSchemaValue,
@@ -46720,6 +47031,14 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-fetch"
   ) {
     return runtimeFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-setup" ||
+    request === "@openclaw/plugin-sdk/provider-setup" ||
+    request === "openclaw/plugin-sdk/self-hosted-provider-setup" ||
+    request === "@openclaw/plugin-sdk/self-hosted-provider-setup"
+  ) {
+    return providerSetupRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-doctor" ||
