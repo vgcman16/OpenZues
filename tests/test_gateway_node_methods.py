@@ -32205,6 +32205,202 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_entrypoints_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-entrypoints.cjs"
+    runtime_entry.write_text(
+        """
+const entrypoints = require("openclaw/plugin-sdk/entrypoints");
+const scopedEntryPoints = require("@openclaw/plugin-sdk/entrypoints");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.entrypoints",
+      description: "Use OpenClaw entrypoints SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const sources = entrypoints.buildPluginSdkEntrySources();
+        const customSources = entrypoints.buildPluginSdkEntrySources([
+          "index",
+          "config-schema"
+        ]);
+        const specifiers = entrypoints.buildPluginSdkSpecifiers();
+        const packageExports = entrypoints.buildPluginSdkPackageExports();
+        const artifacts = entrypoints.listPluginSdkDistArtifacts();
+        return {
+          keys: Object.keys(entrypoints).sort(),
+          scopedType: typeof scopedEntryPoints.buildPluginSdkSpecifiers,
+          counts: {
+            entrypoints: entrypoints.pluginSdkEntrypoints.length,
+            subpaths: entrypoints.pluginSdkSubpaths.length,
+            specifiers: specifiers.length,
+            exports: Object.keys(packageExports).length,
+            artifacts: artifacts.length
+          },
+          first: entrypoints.pluginSdkEntrypoints.slice(0, 5),
+          last: entrypoints.pluginSdkEntrypoints.slice(-5),
+          indexExcluded: !entrypoints.pluginSdkSubpaths.includes("index"),
+          configSchemaIncluded: entrypoints.pluginSdkSubpaths.includes("config-schema"),
+          facadeEntrypoints: entrypoints.supportedBundledFacadeSdkEntrypoints,
+          publicOwnedHasMemory: entrypoints.publicPluginOwnedSdkEntrypoints.includes(
+            "memory-host-search"
+          ),
+          reserved: entrypoints.reservedBundledPluginSdkEntrypoints,
+          specifierSamples: [
+            specifiers[0],
+            specifiers[specifiers.indexOf("openclaw/plugin-sdk/config-schema")],
+            specifiers[specifiers.length - 1]
+          ],
+          sources: {
+            index: sources.index,
+            configSchema: sources["config-schema"],
+            custom: customSources
+          },
+          exports: {
+            index: packageExports["./plugin-sdk"],
+            configSchema: packageExports["./plugin-sdk/config-schema"]
+          },
+          artifactSamples: [
+            artifacts[0],
+            artifacts[1],
+            artifacts[artifacts.length - 2],
+            artifacts[artifacts.length - 1]
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-entrypoints-plugin",
+                    "name": "Runtime Entrypoints Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-entrypoints-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.entrypoints"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.entrypoints", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildPluginSdkEntrySources",
+            "buildPluginSdkPackageExports",
+            "buildPluginSdkSpecifiers",
+            "listPluginSdkDistArtifacts",
+            "pluginSdkEntrypoints",
+            "pluginSdkSubpaths",
+            "publicPluginOwnedSdkEntrypoints",
+            "reservedBundledPluginSdkEntrypoints",
+            "supportedBundledFacadeSdkEntrypoints",
+        ],
+        "scopedType": "function",
+        "counts": {
+            "entrypoints": 294,
+            "subpaths": 293,
+            "specifiers": 294,
+            "exports": 294,
+            "artifacts": 588,
+        },
+        "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
+        "last": [
+            "webhook-request-guards",
+            "webhook-path",
+            "web-media",
+            "zalouser",
+            "zod",
+        ],
+        "indexExcluded": True,
+        "configSchemaIncluded": True,
+        "facadeEntrypoints": [
+            "discord",
+            "lmstudio",
+            "lmstudio-runtime",
+            "memory-core-engine-runtime",
+            "qa-runner-runtime",
+            "telegram-account",
+            "tts-runtime",
+            "zalouser",
+        ],
+        "publicOwnedHasMemory": True,
+        "reserved": [],
+        "specifierSamples": [
+            "openclaw/plugin-sdk",
+            "openclaw/plugin-sdk/config-schema",
+            "openclaw/plugin-sdk/zod",
+        ],
+        "sources": {
+            "index": "src/plugin-sdk/index.ts",
+            "configSchema": "src/plugin-sdk/config-schema.ts",
+            "custom": {
+                "index": "src/plugin-sdk/index.ts",
+                "config-schema": "src/plugin-sdk/config-schema.ts",
+            },
+        },
+        "exports": {
+            "index": {
+                "types": "./dist/plugin-sdk/index.d.ts",
+                "default": "./dist/plugin-sdk/index.js",
+            },
+            "configSchema": {
+                "types": "./dist/plugin-sdk/config-schema.d.ts",
+                "default": "./dist/plugin-sdk/config-schema.js",
+            },
+        },
+        "artifactSamples": [
+            "dist/plugin-sdk/index.js",
+            "dist/plugin-sdk/index.d.ts",
+            "dist/plugin-sdk/zod.js",
+            "dist/plugin-sdk/zod.d.ts",
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
