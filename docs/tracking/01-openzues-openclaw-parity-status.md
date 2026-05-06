@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~87.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~87.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -979,6 +979,11 @@ may lag behind this tracker.
   public/internal event dispatch with trust metadata, reset helpers, and W3C
   traceparent helpers.
   - Status: checkpointed in `095e35fc`
+
+- [x] Imported plugin SDK system-event-runtime shim for session-keyed ephemeral
+  system-event queueing, duplicate suppression, cloned peeks, delivery-context
+  normalization, and reset helpers.
+  - Status: checkpointed in `5c49a1be`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
