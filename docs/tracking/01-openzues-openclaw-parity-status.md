@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~86.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~86.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -933,6 +933,11 @@ may lag behind this tracker.
   resolved payloads, `execApproval` channel data, and aggregate
   `approval-runtime` re-export coverage.
   - Status: checkpointed in `d6bb4129`
+
+- [x] Imported plugin SDK approval-client-runtime alias shim for the exact
+  runtime subpath re-exporting approval client enablement, target matching,
+  request filters, profiles, and reply metadata.
+  - Status: checkpointed in `f24a7746`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
