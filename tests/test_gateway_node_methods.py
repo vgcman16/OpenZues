@@ -31344,6 +31344,228 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_security_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-browser-security-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const security = require("openclaw/plugin-sdk/browser-security-runtime");
+const scopedSecurity = require("@openclaw/plugin-sdk/browser-security-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_security",
+      description: "Use OpenClaw browser-security-runtime SDK shim",
+      parameters: {
+        type: "object",
+        properties: {
+          rootDir: { type: "string" },
+          sourcePath: { type: "string" }
+        }
+      },
+      async execute(_toolCallId, args) {
+        const keys = Object.keys(security).sort();
+        if (!keys.includes("safeEqualSecret")) {
+          return {
+            keys,
+            scopedType: typeof scopedSecurity.hasProxyEnvConfigured
+          };
+        }
+        fs.mkdirSync(args.rootDir, { recursive: true });
+        fs.writeFileSync(args.sourcePath, "copied payload", "utf8");
+        await security.writeFileFromPathWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "nested/copied.txt",
+          sourcePath: args.sourcePath
+        });
+        const opened = await scopedSecurity.openFileWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "nested/copied.txt",
+          rejectHardlinks: false
+        });
+        const copied = fs.readFileSync(opened.realPath, "utf8");
+        await opened.handle.close();
+        await security.ensurePortAvailable(0);
+        const coded = new Error("coded");
+        coded.code = "E_TEST";
+        return {
+          keys,
+          scopedType: typeof scopedSecurity.hasProxyEnvConfigured,
+          proxy: {
+            upper: security.hasProxyEnvConfigured({ HTTP_PROXY: " http://proxy.test " }),
+            blank: security.hasProxyEnvConfigured({ HTTPS_PROXY: "   " })
+          },
+          secret: {
+            match: security.safeEqualSecret("token", "token"),
+            mismatch: security.safeEqualSecret("token", "other"),
+            missing: security.safeEqualSecret(null, "token")
+          },
+          file: {
+            copied,
+            code: opened.stat.isFile() ? null : "not-file",
+            inside: security.isPathInside(args.rootDir, opened.realPath),
+            outside: security.isPathInside(args.rootDir, path.dirname(args.rootDir)),
+            notFound: security.isNotFoundPathError({ code: "ENOENT" })
+          },
+          ssrf: {
+            blockedLocalhost: security.isBlockedHostnameOrIp("localhost"),
+            allowPrivate: security.isPrivateNetworkAllowedByPolicy({
+              allowPrivateNetwork: true
+            }),
+            wildcard: security.matchesHostnameAllowlist("api.example.com", [
+              "*.example.com"
+            ]),
+            normalized: security.normalizeHostname("[Example.COM.]")
+          },
+          pinned: await security.resolvePinnedHostnameWithPolicy("example.com", {
+            lookupFn: async () => [{ address: "93.184.216.34", family: 4 }]
+          }),
+          errors: {
+            code: security.extractErrorCode(coded),
+            message: security.formatErrorMessage(new Error("outer", {
+              cause: new Error("inner")
+            }))
+          },
+          utility: {
+            tokenLength: security.generateSecureToken(6).length,
+            tmpDirType: typeof security.resolvePreferredOpenClawTmpDir(),
+            loggerType: typeof security.createSubsystemLogger("browser").info,
+            redactedType: typeof security.redactSensitiveText("token"),
+            wrappedIncludes: security.wrapExternalContent("hello", {
+              source: "web_fetch"
+            }).includes("hello"),
+            safeOpenName: security.SafeOpenError.name,
+            ssrfBlockedName: security.SsrFBlockedError.name
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-security-plugin",
+                    "name": "Runtime Browser Security Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-browser-security-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_security"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.browser_security",
+            "args": {
+                "rootDir": str(tmp_path / "browser-security-root"),
+                "sourcePath": str(tmp_path / "browser-security-source.txt"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "SafeOpenError",
+            "SsrFBlockedError",
+            "createSubsystemLogger",
+            "ensurePortAvailable",
+            "extractErrorCode",
+            "formatErrorMessage",
+            "generateSecureToken",
+            "hasConfiguredSecretInput",
+            "hasProxyEnvConfigured",
+            "isBlockedHostnameOrIp",
+            "isNotFoundPathError",
+            "isPathInside",
+            "isPrivateNetworkAllowedByPolicy",
+            "matchesHostnameAllowlist",
+            "normalizeHostname",
+            "openFileWithinRoot",
+            "redactSensitiveText",
+            "resolvePinnedHostnameWithPolicy",
+            "resolvePreferredOpenClawTmpDir",
+            "safeEqualSecret",
+            "wrapExternalContent",
+            "writeFileFromPathWithinRoot",
+        ],
+        "scopedType": "function",
+        "proxy": {"upper": True, "blank": False},
+        "secret": {"match": True, "mismatch": False, "missing": False},
+        "file": {
+            "copied": "copied payload",
+            "code": None,
+            "inside": True,
+            "outside": False,
+            "notFound": True,
+        },
+        "ssrf": {
+            "blockedLocalhost": True,
+            "allowPrivate": True,
+            "wildcard": True,
+            "normalized": "example.com",
+        },
+        "pinned": {
+            "hostname": "example.com",
+            "addresses": ["93.184.216.34"],
+        },
+        "errors": {"code": "E_TEST", "message": "outer | inner"},
+        "utility": {
+            "tokenLength": 8,
+            "tmpDirType": "string",
+            "loggerType": "function",
+            "redactedType": "string",
+            "wrappedIncludes": True,
+            "safeOpenName": "SafeOpenError",
+            "ssrfBlockedName": "SsrFBlockedError",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -20544,6 +20544,84 @@ async function fetchWithBearerAuthScopeFallback(params) {
   return firstAttempt;
 }
 
+const PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+];
+
+function hasProxyEnvConfigured(env = process.env) {
+  for (const key of PROXY_ENV_KEYS) {
+    const value = env && env[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function padSecretBytes(bytes, length) {
+  if (bytes.length === length) {
+    return bytes;
+  }
+  const padded = Buffer.alloc(length);
+  bytes.copy(padded);
+  return padded;
+}
+
+function safeEqualSecret(provided, expected) {
+  if (typeof provided !== "string" || typeof expected !== "string") {
+    return false;
+  }
+  const providedBytes = Buffer.from(provided, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  const byteLength = Math.max(providedBytes.length, expectedBytes.length);
+  if (byteLength === 0) {
+    return true;
+  }
+  return (
+    crypto.timingSafeEqual(
+      padSecretBytes(providedBytes, byteLength),
+      padSecretBytes(expectedBytes, byteLength),
+    ) && providedBytes.length === expectedBytes.length
+  );
+}
+
+function ensurePortAvailable(port) {
+  return new Promise((resolve, reject) => {
+    const net = require("net");
+    const server = net.createServer();
+    let settled = false;
+    const finish = (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
+    server.once("error", (err) => {
+      if (err && err.code === "EADDRINUSE") {
+        const portError = new Error(`Port ${port} is already in use.`);
+        portError.name = "PortInUseError";
+        portError.port = port;
+        finish(portError);
+        return;
+      }
+      finish(err);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close((err) => finish(err));
+    });
+  });
+}
+
 function asNullableRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -20681,6 +20759,13 @@ function normalizeHostnameAllowlist(values) {
 
 function isPrivateNetworkAllowedByPolicy(policy) {
   return policy && (policy.dangerouslyAllowPrivateNetwork === true || policy.allowPrivateNetwork);
+}
+
+class SsrFBlockedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SsrFBlockedError";
+  }
 }
 
 function isHostnameAllowedByPattern(hostname, pattern) {
@@ -25815,6 +25900,10 @@ class SafeOpenError extends Error {
   }
 }
 
+function isNotFoundPathError(value) {
+  return Boolean(value && (value.code === "ENOENT" || value.code === "ENOTDIR"));
+}
+
 function ensureTrailingPathSeparator(value) {
   return value.endsWith(path.sep) ? value : value + path.sep;
 }
@@ -25824,12 +25913,16 @@ function isPathInsideRoot(rootDir, candidatePath) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function isPathInside(root, target) {
+  return isPathInsideRoot(path.resolve(root), path.resolve(target));
+}
+
 async function resolveFileAccessPathWithinRoot(params) {
   let rootReal;
   try {
     rootReal = await fs.promises.realpath(params.rootDir);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (isNotFoundPathError(err)) {
       throw new SafeOpenError("not-found", "root dir not found");
     }
     throw err;
@@ -25842,13 +25935,35 @@ async function resolveFileAccessPathWithinRoot(params) {
   return { rootReal, rootWithSep, resolved };
 }
 
+async function openFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolved.resolved);
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new SafeOpenError("not-found", "file not found");
+    }
+    throw err;
+  }
+  if (!stat.isFile()) {
+    throw new SafeOpenError("not-file", "not a file");
+  }
+  const realPath = await fs.promises.realpath(resolved.resolved);
+  if (!isPathInsideRoot(resolved.rootReal, realPath)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  const handle = await fs.promises.open(realPath, "r");
+  return { handle, realPath, stat };
+}
+
 async function readFileWithinRoot(params) {
   const resolved = await resolveFileAccessPathWithinRoot(params || {});
   let stat;
   try {
     stat = await fs.promises.stat(resolved.resolved);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (isNotFoundPathError(err)) {
       throw new SafeOpenError("not-found", "file not found");
     }
     throw err;
@@ -25880,6 +25995,17 @@ async function writeFileWithinRoot(params) {
   await fs.promises.writeFile(resolved.resolved, data, {
     encoding: (params && params.encoding) || undefined,
     mode: 0o600,
+  });
+}
+
+async function writeFileFromPathWithinRoot(params) {
+  const sourcePath = path.resolve(params.sourcePath);
+  const data = await fs.promises.readFile(sourcePath);
+  await writeFileWithinRoot({
+    rootDir: params.rootDir,
+    relativePath: params.relativePath,
+    data,
+    encoding: undefined,
   });
 }
 
@@ -43829,6 +43955,31 @@ const fileAccessRuntime = {
   writeFileWithinRoot,
 };
 
+const browserSecurityRuntime = {
+  SafeOpenError,
+  SsrFBlockedError,
+  createSubsystemLogger,
+  ensurePortAvailable,
+  extractErrorCode,
+  formatErrorMessage,
+  generateSecureToken,
+  hasConfiguredSecretInput,
+  hasProxyEnvConfigured,
+  isBlockedHostnameOrIp,
+  isNotFoundPathError,
+  isPathInside,
+  isPrivateNetworkAllowedByPolicy,
+  matchesHostnameAllowlist,
+  normalizeHostname,
+  openFileWithinRoot,
+  redactSensitiveText,
+  resolvePinnedHostnameWithPolicy,
+  resolvePreferredOpenClawTmpDir,
+  safeEqualSecret,
+  wrapExternalContent,
+  writeFileFromPathWithinRoot,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -45332,6 +45483,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/file-access-runtime"
   ) {
     return fileAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-security-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-security-runtime"
+  ) {
+    return browserSecurityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
