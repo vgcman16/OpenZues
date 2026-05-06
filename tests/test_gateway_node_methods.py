@@ -36359,6 +36359,413 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_engine_embeddings_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-engine-embeddings.cjs"
+    runtime_entry.write_text(
+        """
+const embeddings = require("openclaw/plugin-sdk/memory-core-host-engine-embeddings");
+const scopedEmbeddings = require("@openclaw/plugin-sdk/memory-core-host-engine-embeddings");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_engine_embeddings",
+      description: "Use OpenClaw memory-core-host-engine-embeddings SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        embeddings.clearMemoryEmbeddingProviders();
+        embeddings.registerMemoryEmbeddingProvider({
+          id: "demo",
+          defaultModel: "demo-model",
+          transport: "remote",
+          authProviderId: "demo-auth",
+          create: async () => ({ provider: null })
+        }, { ownerPluginId: "plugin-a" });
+
+        const remaining = new Set(["0", "1", "2"]);
+        const errors = [];
+        const byCustomId = new Map();
+        embeddings.applyEmbeddingBatchOutputLine({
+          line: {
+            custom_id: "0",
+            response: { status_code: 200, body: { data: [{ embedding: [3, 4] }] } }
+          },
+          remaining,
+          errors,
+          byCustomId
+        });
+        embeddings.applyEmbeddingBatchOutputLine({
+          line: {
+            custom_id: "1",
+            response: { status_code: 500, body: { error: { message: "bad batch" } } }
+          },
+          remaining,
+          errors,
+          byCustomId
+        });
+
+        const terminalErrors = [];
+        try {
+          await embeddings.throwIfBatchTerminalFailure({
+            provider: "openai",
+            status: { id: "batch-1", status: "failed", error_file_id: "err-1" },
+            readError: async () => "remote detail"
+          });
+        } catch (err) {
+          terminalErrors.push(String(err && err.message ? err.message : err));
+        }
+        try {
+          await scopedEmbeddings.resolveCompletedBatchResult({
+            provider: "openai",
+            status: { id: "batch-2", status: "in_progress" },
+            wait: false,
+            waitForBatch: async () => ({ outputFileId: "late" })
+          });
+        } catch (err) {
+          terminalErrors.push(String(err && err.message ? err.message : err));
+        }
+
+        const grouped = await embeddings.runEmbeddingBatchGroups({
+          requests: ["a", "bb", "ccc"],
+          maxRequests: 2,
+          wait: true,
+          pollIntervalMs: 1,
+          timeoutMs: 10,
+          concurrency: 1,
+          debugLabel: "embedding batch",
+          runGroup: async ({ group, groupIndex, byCustomId }) => {
+            group.forEach((value, index) => {
+              byCustomId.set(`${groupIndex}:${index}`, [value.length, groupIndex]);
+            });
+          }
+        });
+
+        const remoteProvider = embeddings.createRemoteEmbeddingProvider({
+          id: "remote-demo",
+          client: {
+            baseUrl: "https://example.test/v1/",
+            headers: { Authorization: "Bearer token" },
+            model: "remote-model",
+            fetchImpl: async () => ({
+              ok: true,
+              status: 200,
+              async json() {
+                return { data: [{ embedding: [0, 2] }, { embedding: [0, 4] }] };
+              }
+            })
+          },
+          errorPrefix: "remote embeddings"
+        });
+
+        let localError = "";
+        try {
+          await embeddings.createLocalEmbeddingProvider({ local: { modelPath: "model.gguf" } });
+        } catch (err) {
+          localError = String(err && err.message ? err.message : err);
+        }
+
+        const headers = embeddings.buildBatchHeaders(
+          { headers: { "X-Test": "1" } },
+          { json: true }
+        );
+        const plainHeaders = embeddings.buildBatchHeaders(
+          { headers: { "Content-Type": "application/json", "X-Test": "1" } },
+          { json: false }
+        );
+        const groupOptions = embeddings.buildEmbeddingBatchGroupOptions({
+          requests: ["a", "b"],
+          wait: true,
+          pollIntervalMs: 5,
+          timeoutMs: 50,
+          concurrency: 2
+        }, { maxRequests: 20, debugLabel: "openai batch" });
+
+        return {
+          keys: Object.keys(embeddings).sort(),
+          scopedType: typeof scopedEmbeddings.createRemoteEmbeddingProvider,
+          constants: {
+            defaultModel: embeddings.DEFAULT_LOCAL_MODEL,
+            endpoint: embeddings.EMBEDDING_BATCH_ENDPOINT
+          },
+          vectors: {
+            normalized: embeddings.sanitizeAndNormalizeEmbedding([3, 4, Infinity]),
+            mapped: embeddings.mapBatchEmbeddingsByIndex(byCustomId, 3)
+          },
+          inputs: {
+            utf8: embeddings.estimateUtf8Bytes("é"),
+            structured: embeddings.estimateStructuredEmbeddingInputBytes({
+              text: "ignored",
+              parts: [
+                { type: "text", text: "hi" },
+                { type: "inline-data", mimeType: "image/png", data: "abc" }
+              ]
+            }),
+            hasInline: embeddings.hasNonTextEmbeddingParts({
+              text: "caption",
+              parts: [{ type: "inline-data", mimeType: "image/png", data: "abc" }]
+            }),
+            textOnly: embeddings.hasNonTextEmbeddingParts({
+              text: "caption",
+              parts: [{ type: "text", text: "caption" }]
+            })
+          },
+          model: {
+            normalized: embeddings.normalizeEmbeddingModelWithPrefixes({
+              model: "text-embedding-3-small",
+              defaultModel: "fallback",
+              prefixes: ["text-embedding-"]
+            }),
+            fallback: embeddings.normalizeEmbeddingModelWithPrefixes({
+              model: "   ",
+              defaultModel: "fallback",
+              prefixes: ["text-embedding-"]
+            })
+          },
+          registry: {
+            providers: embeddings.listMemoryEmbeddingProviders().map((provider) => ({
+              id: provider.id,
+              defaultModel: provider.defaultModel,
+              transport: provider.transport,
+              authProviderId: provider.authProviderId
+            })),
+            registered: embeddings.listRegisteredMemoryEmbeddingProviders().map((entry) => ({
+              id: entry.adapter.id,
+              ownerPluginId: entry.ownerPluginId
+            })),
+            adapters: embeddings.listRegisteredMemoryEmbeddingProviderAdapters().map(
+              (adapter) => adapter.id
+            ),
+            found: embeddings.getMemoryEmbeddingProvider("demo").id
+          },
+          batch: {
+            remaining: Array.from(remaining).sort(),
+            errors,
+            byCustomId: Array.from(byCustomId.entries()),
+            extracted: embeddings.extractBatchErrorMessage([
+              { response: { body: { error: { message: "inner" } } } }
+            ]),
+            unavailable: embeddings.formatUnavailableBatchError(new Error("gone")),
+            baseUrl: embeddings.normalizeBatchBaseUrl({ baseUrl: "https://example.test/v1/" }),
+            headers,
+            plainHeaders,
+            completion: embeddings.resolveBatchCompletionFromStatus({
+              provider: "openai",
+              batchId: "batch-3",
+              status: { output_file_id: "out-1", error_file_id: "err-2" }
+            }),
+            groupOptions: {
+              maxRequests: groupOptions.maxRequests,
+              debugLabel: groupOptions.debugLabel,
+              concurrency: groupOptions.concurrency
+            },
+            grouped: Array.from(grouped.entries()),
+            terminalErrors
+          },
+          multimodal: {
+            imageExtensions: embeddings.getMemoryMultimodalExtensions("image").slice(0, 3),
+            glob: embeddings.buildCaseInsensitiveExtensionGlob(".JpG"),
+            image: embeddings.classifyMemoryMultimodalPath("photo.JPG", {
+              enabled: true,
+              modalities: ["image"],
+              maxFileBytes: 1024
+            }),
+            disabled: embeddings.classifyMemoryMultimodalPath("photo.JPG", {
+              enabled: false,
+              modalities: ["image"],
+              maxFileBytes: 1024
+            })
+          },
+          remote: {
+            id: remoteProvider.id,
+            model: remoteProvider.model,
+            query: await remoteProvider.embedQuery("hello"),
+            batch: await remoteProvider.embedBatch(["hello", "world"])
+          },
+          localError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-host-engine-embeddings-plugin",
+                    "name": "Memory Core Host Engine Embeddings Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-memory-core-host-engine-embeddings.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {
+                        "allow": ["runtime.memory_core_host_engine_embeddings"]
+                    }
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_engine_embeddings"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_LOCAL_MODEL",
+            "EMBEDDING_BATCH_ENDPOINT",
+            "applyEmbeddingBatchOutputLine",
+            "buildBatchHeaders",
+            "buildCaseInsensitiveExtensionGlob",
+            "buildEmbeddingBatchGroupOptions",
+            "buildRemoteBaseUrlPolicy",
+            "classifyMemoryMultimodalPath",
+            "clearMemoryEmbeddingProviders",
+            "createLocalEmbeddingProvider",
+            "createRemoteEmbeddingProvider",
+            "debugEmbeddingsLog",
+            "enforceEmbeddingMaxInputTokens",
+            "estimateStructuredEmbeddingInputBytes",
+            "estimateUtf8Bytes",
+            "extractBatchErrorMessage",
+            "fetchRemoteEmbeddingVectors",
+            "formatUnavailableBatchError",
+            "getMemoryEmbeddingProvider",
+            "getMemoryMultimodalExtensions",
+            "hasNonTextEmbeddingParts",
+            "isMissingEmbeddingApiKeyError",
+            "listMemoryEmbeddingProviders",
+            "listRegisteredMemoryEmbeddingProviderAdapters",
+            "listRegisteredMemoryEmbeddingProviders",
+            "mapBatchEmbeddingsByIndex",
+            "normalizeBatchBaseUrl",
+            "normalizeEmbeddingModelWithPrefixes",
+            "postJsonWithRetry",
+            "registerMemoryEmbeddingProvider",
+            "resolveBatchCompletionFromStatus",
+            "resolveCompletedBatchResult",
+            "resolveRemoteEmbeddingBearerClient",
+            "resolveRemoteEmbeddingClient",
+            "runEmbeddingBatchGroups",
+            "sanitizeAndNormalizeEmbedding",
+            "sanitizeEmbeddingCacheHeaders",
+            "throwIfBatchTerminalFailure",
+            "uploadBatchJsonlFile",
+            "withRemoteHttpResponse",
+        ],
+        "scopedType": "function",
+        "constants": {
+            "defaultModel": (
+                "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/"
+                "embeddinggemma-300m-qat-Q8_0.gguf"
+            ),
+            "endpoint": "/v1/embeddings",
+        },
+        "vectors": {"normalized": [0.6, 0.8, 0], "mapped": [[3, 4], [], []]},
+        "inputs": {
+            "utf8": 2,
+            "structured": 14,
+            "hasInline": True,
+            "textOnly": False,
+        },
+        "model": {"normalized": "3-small", "fallback": "fallback"},
+        "registry": {
+            "providers": [
+                {
+                    "id": "demo",
+                    "defaultModel": "demo-model",
+                    "transport": "remote",
+                    "authProviderId": "demo-auth",
+                }
+            ],
+            "registered": [{"id": "demo", "ownerPluginId": "plugin-a"}],
+            "adapters": ["demo"],
+            "found": "demo",
+        },
+        "batch": {
+            "remaining": ["2"],
+            "errors": ["1: bad batch"],
+            "byCustomId": [["0", [3, 4]]],
+            "extracted": "inner",
+            "unavailable": "error file unavailable: gone",
+            "baseUrl": "https://example.test/v1",
+            "headers": {"X-Test": "1", "Content-Type": "application/json"},
+            "plainHeaders": {"X-Test": "1"},
+            "completion": {"outputFileId": "out-1", "errorFileId": "err-2"},
+            "groupOptions": {
+                "maxRequests": 20,
+                "debugLabel": "openai batch",
+                "concurrency": 2,
+            },
+            "grouped": [
+                ["0:0", [1, 0]],
+                ["0:1", [2, 0]],
+                ["1:0", [3, 1]],
+            ],
+            "terminalErrors": [
+                "openai batch batch-1 failed: remote detail",
+                (
+                    "openai batch batch-2 submitted; enable remote.batch.wait "
+                    "to await completion"
+                ),
+            ],
+        },
+        "multimodal": {
+            "imageExtensions": [".jpg", ".jpeg", ".png"],
+            "glob": "*.[jJ][pP][gG]",
+            "image": "image",
+            "disabled": None,
+        },
+        "remote": {
+            "id": "remote-demo",
+            "model": "remote-model",
+            "query": [0, 2],
+            "batch": [[0, 2], [0, 4]],
+        },
+        "localError": (
+            "local memory embedding provider unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:

@@ -48465,6 +48465,735 @@ const memoryCoreEngineRuntime = {
   repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
 };
 
+const MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL =
+  "hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf";
+const MEMORY_CORE_HOST_ENGINE_BATCH_ENDPOINT = "/v1/embeddings";
+const memoryCoreHostEngineEmbeddingProviders = new Map();
+const MEMORY_CORE_HOST_ENGINE_TERMINAL_BATCH_STATES = new Set([
+  "failed",
+  "expired",
+  "cancelled",
+  "canceled",
+]);
+const MEMORY_CORE_HOST_ENGINE_MULTIMODAL_SPECS = {
+  image: {
+    extensions: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"],
+  },
+  audio: {
+    extensions: [".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac"],
+  },
+};
+
+function memoryCoreHostEngineUnavailableError(label) {
+  return new Error(`${label} unavailable in OpenZues plugin runtime.`);
+}
+
+function estimateMemoryCoreHostEngineUtf8Bytes(text) {
+  const value = String(text || "");
+  return value ? Buffer.byteLength(value, "utf8") : 0;
+}
+
+function estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes(input = {}) {
+  const parts = Array.isArray(input.parts) ? input.parts : [];
+  if (parts.length === 0) {
+    return estimateMemoryCoreHostEngineUtf8Bytes(input.text);
+  }
+  return parts.reduce((total, part) => {
+    if (part && part.type === "text") {
+      return total + estimateMemoryCoreHostEngineUtf8Bytes(part.text);
+    }
+    if (part && part.type === "inline-data") {
+      return (
+        total +
+        estimateMemoryCoreHostEngineUtf8Bytes(part.mimeType) +
+        estimateMemoryCoreHostEngineUtf8Bytes(part.data)
+      );
+    }
+    return total;
+  }, 0);
+}
+
+function hasMemoryCoreHostEngineNonTextEmbeddingParts(input) {
+  return Array.isArray(input && input.parts)
+    ? input.parts.some((part) => part && part.type === "inline-data")
+    : false;
+}
+
+function sanitizeAndNormalizeMemoryCoreHostEngineEmbedding(vector = []) {
+  const sanitized = Array.from(vector, (value) => (Number.isFinite(value) ? value : 0));
+  const magnitude = Math.sqrt(
+    sanitized.reduce((sum, value) => sum + value * value, 0)
+  );
+  if (magnitude < 1e-10) {
+    return sanitized;
+  }
+  return sanitized.map((value) => value / magnitude);
+}
+
+function normalizeMemoryCoreHostEngineEmbeddingModelWithPrefixes(params = {}) {
+  const trimmed = String(params.model || "").trim();
+  if (!trimmed) {
+    return params.defaultModel;
+  }
+  for (const prefix of Array.isArray(params.prefixes) ? params.prefixes : []) {
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length);
+    }
+  }
+  return trimmed;
+}
+
+async function createMemoryCoreHostEngineLocalEmbeddingProvider(_options = {}) {
+  throw memoryCoreHostEngineUnavailableError("local memory embedding provider");
+}
+
+function clearMemoryCoreHostEngineEmbeddingProviders() {
+  memoryCoreHostEngineEmbeddingProviders.clear();
+}
+
+function registerMemoryCoreHostEngineEmbeddingProvider(adapter, options = {}) {
+  if (!adapter || typeof adapter.id !== "string" || !adapter.id.trim()) {
+    throw new TypeError("memory embedding provider adapter id is required");
+  }
+  memoryCoreHostEngineEmbeddingProviders.set(adapter.id, {
+    adapter,
+    ownerPluginId: normalizeOptionalString(options.ownerPluginId),
+  });
+}
+
+function listRegisteredMemoryCoreHostEngineEmbeddingProviders() {
+  return Array.from(memoryCoreHostEngineEmbeddingProviders.values());
+}
+
+function listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters() {
+  return listRegisteredMemoryCoreHostEngineEmbeddingProviders().map((entry) => entry.adapter);
+}
+
+function resolveMemoryCoreHostEngineConfiguredProviderApiId(providerId, cfg) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(providerId);
+  const providerConfig =
+    providers[providerId] ||
+    Object.entries(providers).find(
+      ([candidateId]) => normalizeProviderId(candidateId) === normalized
+    )?.[1];
+  const api = normalizeOptionalString(providerConfig && providerConfig.api);
+  const normalizedApi = normalizeProviderId(api);
+  return normalizedApi && normalizedApi !== normalized ? normalizedApi : undefined;
+}
+
+function resolveMemoryCoreHostEngineEmbeddingProviderLookupIds(id, cfg) {
+  const ids = [id];
+  const apiId = resolveMemoryCoreHostEngineConfiguredProviderApiId(id, cfg);
+  if (apiId && !ids.some((candidateId) => normalizeProviderId(candidateId) === apiId)) {
+    ids.push(apiId);
+  }
+  return ids;
+}
+
+function getMemoryCoreHostEngineEmbeddingProvider(id, cfg) {
+  for (const candidateId of resolveMemoryCoreHostEngineEmbeddingProviderLookupIds(id, cfg)) {
+    const registered = memoryCoreHostEngineEmbeddingProviders.get(candidateId);
+    if (registered) {
+      return registered.adapter;
+    }
+  }
+  return undefined;
+}
+
+function listMemoryCoreHostEngineEmbeddingProviders(_cfg) {
+  return listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters();
+}
+
+function extractMemoryCoreHostEngineBatchErrorMessage(lines = []) {
+  for (const line of lines) {
+    if (line && line.error && typeof line.error.message === "string") {
+      return line.error.message;
+    }
+    const body = line && line.response && line.response.body;
+    if (typeof body === "string" && body) {
+      return body;
+    }
+    if (body && typeof body === "object" && body.error && typeof body.error.message === "string") {
+      return body.error.message;
+    }
+  }
+  return undefined;
+}
+
+function formatMemoryCoreHostEngineUnavailableBatchError(error) {
+  const message = formatErrorMessage(error);
+  return message ? `error file unavailable: ${message}` : undefined;
+}
+
+function applyMemoryCoreHostEngineEmbeddingBatchOutputLine(params = {}) {
+  const line = params.line || {};
+  const customId = line.custom_id;
+  if (!customId) {
+    return;
+  }
+  params.remaining && params.remaining.delete(customId);
+  const errorMessage = line.error && line.error.message;
+  if (errorMessage) {
+    params.errors && params.errors.push(`${customId}: ${errorMessage}`);
+    return;
+  }
+  const response = line.response;
+  const statusCode = (response && response.status_code) || 0;
+  if (statusCode >= 400) {
+    const body = response && response.body;
+    const messageFromObject =
+      body && typeof body === "object" && body.error ? body.error.message : undefined;
+    const messageFromString = typeof body === "string" ? body : undefined;
+    params.errors &&
+      params.errors.push(
+        `${customId}: ${messageFromObject || messageFromString || "unknown error"}`
+      );
+    return;
+  }
+  const body = response && response.body;
+  const data = body && typeof body === "object" && Array.isArray(body.data) ? body.data : [];
+  const embedding = (data[0] && data[0].embedding) || [];
+  if (embedding.length === 0) {
+    params.errors && params.errors.push(`${customId}: empty embedding`);
+    return;
+  }
+  params.byCustomId && params.byCustomId.set(customId, embedding);
+}
+
+function normalizeMemoryCoreHostEngineBatchBaseUrl(client = {}) {
+  return client.baseUrl ? String(client.baseUrl).replace(/\/$/, "") : "";
+}
+
+function buildMemoryCoreHostEngineBatchHeaders(client = {}, params = {}) {
+  const headers = { ...(client.headers || {}) };
+  if (params.json) {
+    if (!headers["Content-Type"] && !headers["content-type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+  } else {
+    delete headers["Content-Type"];
+    delete headers["content-type"];
+  }
+  return headers;
+}
+
+function isMissingMemoryCoreHostEngineEmbeddingApiKeyError(error) {
+  return error instanceof Error && error.message.includes("No API key found for provider");
+}
+
+function sanitizeMemoryCoreHostEngineEmbeddingCacheHeaders(headers = {}, excludedHeaderNames = []) {
+  const excluded = new Set(
+    excludedHeaderNames.map((name) => normalizeLowercaseStringOrEmpty(name))
+  );
+  return Object.entries(headers)
+    .filter(([key]) => !excluded.has(normalizeLowercaseStringOrEmpty(key)))
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => [key, value]);
+}
+
+function mapMemoryCoreHostEngineBatchEmbeddingsByIndex(byCustomId, count) {
+  const embeddings = [];
+  for (let index = 0; index < count; index += 1) {
+    embeddings.push((byCustomId && byCustomId.get(String(index))) || []);
+  }
+  return embeddings;
+}
+
+function resolveMemoryCoreHostEngineBatchCompletionFromStatus(params = {}) {
+  const status = params.status || {};
+  const outputFileId = status.output_file_id;
+  if (!outputFileId) {
+    throw new Error(
+      `${params.provider} batch ${params.batchId} completed without output file`
+    );
+  }
+  return {
+    outputFileId,
+    ...(status.error_file_id ? { errorFileId: status.error_file_id } : {}),
+  };
+}
+
+async function throwIfMemoryCoreHostEngineBatchTerminalFailure(params = {}) {
+  const status = params.status || {};
+  const state = status.status || "unknown";
+  if (!MEMORY_CORE_HOST_ENGINE_TERMINAL_BATCH_STATES.has(state)) {
+    return;
+  }
+  const detail =
+    status.error_file_id && typeof params.readError === "function"
+      ? await params.readError(status.error_file_id)
+      : undefined;
+  throw new Error(
+    `${params.provider} batch ${status.id || "<unknown>"} ${state}${detail ? `: ${detail}` : ""}`
+  );
+}
+
+async function resolveMemoryCoreHostEngineCompletedBatchResult(params = {}) {
+  const status = params.status || {};
+  const batchId = status.id || "<unknown>";
+  if (!params.wait && status.status !== "completed") {
+    throw new Error(
+      `${params.provider} batch ${batchId} submitted; enable remote.batch.wait to await completion`
+    );
+  }
+  const completed =
+    status.status === "completed"
+      ? resolveMemoryCoreHostEngineBatchCompletionFromStatus({
+          provider: params.provider,
+          batchId,
+          status,
+        })
+      : await params.waitForBatch();
+  if (!completed || !completed.outputFileId) {
+    throw new Error(`${params.provider} batch ${batchId} completed without output file`);
+  }
+  return completed;
+}
+
+function splitMemoryCoreHostEngineBatchRequests(requests, maxRequests) {
+  if (requests.length <= maxRequests) {
+    return [requests];
+  }
+  const groups = [];
+  for (let index = 0; index < requests.length; index += maxRequests) {
+    groups.push(requests.slice(index, index + maxRequests));
+  }
+  return groups;
+}
+
+async function runMemoryCoreHostEngineEmbeddingBatchGroups(params = {}) {
+  const requests = Array.isArray(params.requests) ? params.requests : [];
+  if (requests.length === 0) {
+    return new Map();
+  }
+  const maxRequests =
+    Number.isFinite(params.maxRequests) && params.maxRequests > 0
+      ? Math.floor(params.maxRequests)
+      : requests.length;
+  const groups = splitMemoryCoreHostEngineBatchRequests(requests, maxRequests);
+  const byCustomId = new Map();
+  const tasks = groups.map((group, groupIndex) => async () => {
+    await params.runGroup({ group, groupIndex, groups: groups.length, byCustomId });
+  });
+  const concurrency =
+    Number.isFinite(params.concurrency) && params.concurrency > 0
+      ? Math.min(tasks.length, Math.floor(params.concurrency))
+      : 1;
+  params.debug &&
+    params.debug(params.debugLabel, {
+      requests: requests.length,
+      groups: groups.length,
+      wait: Boolean(params.wait),
+      concurrency,
+      pollIntervalMs: params.pollIntervalMs,
+      timeoutMs: params.timeoutMs,
+    });
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tasks.length) {
+      const task = tasks[cursor];
+      cursor += 1;
+      await task();
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return byCustomId;
+}
+
+function buildMemoryCoreHostEngineEmbeddingBatchGroupOptions(params = {}, options = {}) {
+  return {
+    requests: params.requests,
+    maxRequests: options.maxRequests,
+    wait: params.wait,
+    pollIntervalMs: params.pollIntervalMs,
+    timeoutMs: params.timeoutMs,
+    concurrency: params.concurrency,
+    debug: params.debug,
+    debugLabel: options.debugLabel,
+  };
+}
+
+function buildMemoryCoreHostEngineRemoteBaseUrlPolicy(baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    return { allowedHostname: parsed.hostname.toLowerCase().replace(/\.+$/, "") };
+  } catch {
+    return undefined;
+  }
+}
+
+async function withMemoryCoreHostEngineRemoteHttpResponse(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    throw memoryCoreHostEngineUnavailableError("remote memory embedding fetch");
+  }
+  const response = await fetchImpl(params.url, params.init);
+  return await params.onResponse(response);
+}
+
+async function postMemoryCoreHostEngineJson(params = {}) {
+  return await withMemoryCoreHostEngineRemoteHttpResponse({
+    url: params.url,
+    ssrfPolicy: params.ssrfPolicy,
+    fetchImpl: params.fetchImpl,
+    init: {
+      method: "POST",
+      headers: params.headers,
+      body: JSON.stringify(params.body),
+    },
+    onResponse: async (response) => {
+      if (!response || !response.ok) {
+        const text =
+          response && typeof response.text === "function" ? await response.text() : "";
+        const error = new Error(`${params.errorPrefix}: ${response?.status || 0} ${text}`);
+        if (params.attachStatus) {
+          error.status = response && response.status;
+        }
+        throw error;
+      }
+      const payload = await response.json();
+      return typeof params.parse === "function" ? await params.parse(payload) : payload;
+    },
+  });
+}
+
+async function postMemoryCoreHostEngineJsonWithRetry(params = {}) {
+  const retry = params.retryImpl;
+  const run = async () =>
+    await postMemoryCoreHostEngineJson({
+      ...params,
+      attachStatus: true,
+      parse: async (payload) => payload,
+    });
+  if (typeof retry === "function") {
+    return await retry(run, {
+      attempts: 3,
+      minDelayMs: 300,
+      maxDelayMs: 2000,
+      jitter: 0.2,
+      shouldRetry: (error) => error && (error.status === 429 || error.status >= 500),
+    });
+  }
+  return await run();
+}
+
+async function fetchMemoryCoreHostEngineRemoteEmbeddingVectors(params = {}) {
+  return await postMemoryCoreHostEngineJson({
+    url: params.url,
+    headers: params.headers,
+    ssrfPolicy: params.ssrfPolicy,
+    fetchImpl: params.fetchImpl,
+    body: params.body,
+    errorPrefix: params.errorPrefix,
+    parse: (payload) => {
+      const data = Array.isArray(payload && payload.data) ? payload.data : [];
+      return data.map((entry) => entry.embedding || []);
+    },
+  });
+}
+
+function createMemoryCoreHostEngineRemoteEmbeddingProvider(params = {}) {
+  const client = params.client || {};
+  const url = `${String(client.baseUrl || "").replace(/\/$/, "")}/embeddings`;
+  const embed = async (input) => {
+    if (!Array.isArray(input) || input.length === 0) {
+      return [];
+    }
+    return await fetchMemoryCoreHostEngineRemoteEmbeddingVectors({
+      url,
+      headers: client.headers || {},
+      ssrfPolicy: client.ssrfPolicy,
+      fetchImpl: client.fetchImpl,
+      body: { model: client.model, input },
+      errorPrefix: params.errorPrefix,
+    });
+  };
+  return {
+    id: params.id,
+    model: client.model,
+    ...(typeof params.maxInputTokens === "number"
+      ? { maxInputTokens: params.maxInputTokens }
+      : {}),
+    embedQuery: async (text) => {
+      const vectors = await embed([text]);
+      return vectors[0] || [];
+    },
+    embedBatch: embed,
+  };
+}
+
+function resolveMemoryCoreHostEngineSecretInputString(value) {
+  if (typeof value === "string") {
+    return normalizeOptionalString(value);
+  }
+  if (value && typeof value === "object") {
+    return normalizeOptionalString(value.value || value.literal || value.env);
+  }
+  return undefined;
+}
+
+function resolveMemoryCoreHostEngineProviderConfig(provider, config = {}) {
+  const providers = config.models && config.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  const normalized = normalizeProviderId(provider);
+  return (
+    providers[provider] ||
+    Object.entries(providers).find(
+      ([candidateId]) => normalizeProviderId(candidateId) === normalized
+    )?.[1]
+  );
+}
+
+async function resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient(params = {}) {
+  const options = params.options || {};
+  const remote = options.remote || {};
+  const providerConfig = resolveMemoryCoreHostEngineProviderConfig(
+    params.provider,
+    options.config || {}
+  );
+  const apiKey =
+    resolveMemoryCoreHostEngineSecretInputString(remote.apiKey) ||
+    normalizeOptionalString(providerConfig && providerConfig.apiKey);
+  if (!apiKey) {
+    throw new Error(`No API key found for provider ${params.provider}`);
+  }
+  const baseUrl =
+    normalizeOptionalString(remote.baseUrl) ||
+    normalizeOptionalString(providerConfig && providerConfig.baseUrl) ||
+    params.defaultBaseUrl;
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    ...((providerConfig && providerConfig.headers) || {}),
+    ...(remote.headers || {}),
+  };
+  try {
+    const parsed = new URL(baseUrl);
+    if (
+      normalizeProviderId(params.provider) === "openai" &&
+      parsed.hostname.toLowerCase().replace(/\.+$/, "") === "api.openai.com"
+    ) {
+      headers.originator = "openclaw";
+      headers["User-Agent"] = process.env.OPENCLAW_VERSION
+        ? `openclaw/${process.env.OPENCLAW_VERSION}`
+        : "openclaw";
+      if (process.env.OPENCLAW_VERSION) {
+        headers.version = process.env.OPENCLAW_VERSION;
+      }
+    }
+  } catch {
+    // Leave non-URL base strings to the eventual fetch path, matching the loose SDK boundary.
+  }
+  return {
+    baseUrl,
+    headers,
+    ssrfPolicy: buildMemoryCoreHostEngineRemoteBaseUrlPolicy(baseUrl),
+  };
+}
+
+async function resolveMemoryCoreHostEngineRemoteEmbeddingClient(params = {}) {
+  const bearer = await resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient({
+    provider: params.provider,
+    options: params.options,
+    defaultBaseUrl: params.defaultBaseUrl,
+  });
+  return {
+    ...bearer,
+    model: params.normalizeModel(params.options.model),
+  };
+}
+
+async function uploadMemoryCoreHostEngineBatchJsonlFile(_params = {}) {
+  throw memoryCoreHostEngineUnavailableError("memory embedding batch upload");
+}
+
+function debugMemoryCoreHostEngineEmbeddingsLog(message, meta) {
+  const value = normalizeLowercaseStringOrEmpty(process.env.OPENCLAW_DEBUG_MEMORY_EMBEDDINGS);
+  if (!["1", "on", "true", "yes"].includes(value)) {
+    return;
+  }
+  const suffix = meta ? ` ${JSON.stringify(meta)}` : "";
+  process.stderr.write(`${message}${suffix}\n`);
+}
+
+function resolveMemoryCoreHostEngineProviderMaxInputTokens(provider = {}) {
+  return typeof provider.maxInputTokens === "number" && provider.maxInputTokens > 0
+    ? Math.floor(provider.maxInputTokens)
+    : 8192;
+}
+
+function splitMemoryCoreHostEngineTextToUtf8Limit(text, maxUtf8Bytes) {
+  const value = String(text || "");
+  if (maxUtf8Bytes <= 0 || estimateMemoryCoreHostEngineUtf8Bytes(value) <= maxUtf8Bytes) {
+    return [value];
+  }
+  const parts = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    let low = cursor + 1;
+    let high = Math.min(value.length, cursor + maxUtf8Bytes);
+    let best = cursor;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const bytes = estimateMemoryCoreHostEngineUtf8Bytes(value.slice(cursor, mid));
+      if (bytes <= maxUtf8Bytes) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    if (best <= cursor) {
+      best = Math.min(value.length, cursor + 1);
+    }
+    if (
+      best < value.length &&
+      best > cursor &&
+      value.charCodeAt(best - 1) >= 0xd800 &&
+      value.charCodeAt(best - 1) <= 0xdbff &&
+      value.charCodeAt(best) >= 0xdc00 &&
+      value.charCodeAt(best) <= 0xdfff
+    ) {
+      best -= 1;
+    }
+    const part = value.slice(cursor, best);
+    if (!part) {
+      break;
+    }
+    parts.push(part);
+    cursor = best;
+  }
+  return parts;
+}
+
+function hashMemoryCoreHostEngineText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function enforceMemoryCoreHostEngineEmbeddingMaxInputTokens(
+  provider,
+  chunks = [],
+  hardMaxInputTokens
+) {
+  const providerMaxInputTokens = resolveMemoryCoreHostEngineProviderMaxInputTokens(provider);
+  const maxInputTokens =
+    typeof hardMaxInputTokens === "number" && hardMaxInputTokens > 0
+      ? Math.min(providerMaxInputTokens, hardMaxInputTokens)
+      : providerMaxInputTokens;
+  const out = [];
+  for (const chunk of chunks) {
+    if (hasMemoryCoreHostEngineNonTextEmbeddingParts(chunk && chunk.embeddingInput)) {
+      out.push(chunk);
+      continue;
+    }
+    const text = String((chunk && chunk.text) || "");
+    if (estimateMemoryCoreHostEngineUtf8Bytes(text) <= maxInputTokens) {
+      out.push(chunk);
+      continue;
+    }
+    for (const part of splitMemoryCoreHostEngineTextToUtf8Limit(text, maxInputTokens)) {
+      out.push({
+        startLine: chunk.startLine,
+        endLine: chunk.endLine,
+        text: part,
+        hash: hashMemoryCoreHostEngineText(part),
+        embeddingInput: { text: part },
+      });
+    }
+  }
+  return out;
+}
+
+function getMemoryCoreHostEngineMultimodalExtensions(modality) {
+  const spec = MEMORY_CORE_HOST_ENGINE_MULTIMODAL_SPECS[modality];
+  return spec ? spec.extensions : [];
+}
+
+function buildMemoryCoreHostEngineCaseInsensitiveExtensionGlob(extension) {
+  const normalized = normalizeLowercaseStringOrEmpty(extension).replace(/^\./, "");
+  if (!normalized) {
+    return "*";
+  }
+  const parts = Array.from(
+    normalized,
+    (char) => `[${char.toLowerCase()}${char.toUpperCase()}]`
+  );
+  return `*.${parts.join("")}`;
+}
+
+function classifyMemoryCoreHostEngineMultimodalPath(filePath, settings = {}) {
+  if (
+    !settings.enabled ||
+    !Array.isArray(settings.modalities) ||
+    settings.modalities.length === 0
+  ) {
+    return null;
+  }
+  const lower = normalizeLowercaseStringOrEmpty(filePath);
+  for (const modality of settings.modalities) {
+    for (const extension of getMemoryCoreHostEngineMultimodalExtensions(modality)) {
+      if (lower.endsWith(extension)) {
+        return modality;
+      }
+    }
+  }
+  return null;
+}
+
+const memoryCoreHostEngineEmbeddingsRuntime = {
+  DEFAULT_LOCAL_MODEL: MEMORY_CORE_HOST_ENGINE_DEFAULT_LOCAL_MODEL,
+  EMBEDDING_BATCH_ENDPOINT: MEMORY_CORE_HOST_ENGINE_BATCH_ENDPOINT,
+  applyEmbeddingBatchOutputLine: applyMemoryCoreHostEngineEmbeddingBatchOutputLine,
+  buildBatchHeaders: buildMemoryCoreHostEngineBatchHeaders,
+  buildCaseInsensitiveExtensionGlob: buildMemoryCoreHostEngineCaseInsensitiveExtensionGlob,
+  buildEmbeddingBatchGroupOptions: buildMemoryCoreHostEngineEmbeddingBatchGroupOptions,
+  buildRemoteBaseUrlPolicy: buildMemoryCoreHostEngineRemoteBaseUrlPolicy,
+  classifyMemoryMultimodalPath: classifyMemoryCoreHostEngineMultimodalPath,
+  clearMemoryEmbeddingProviders: clearMemoryCoreHostEngineEmbeddingProviders,
+  createLocalEmbeddingProvider: createMemoryCoreHostEngineLocalEmbeddingProvider,
+  createRemoteEmbeddingProvider: createMemoryCoreHostEngineRemoteEmbeddingProvider,
+  debugEmbeddingsLog: debugMemoryCoreHostEngineEmbeddingsLog,
+  enforceEmbeddingMaxInputTokens: enforceMemoryCoreHostEngineEmbeddingMaxInputTokens,
+  estimateStructuredEmbeddingInputBytes:
+    estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes,
+  estimateUtf8Bytes: estimateMemoryCoreHostEngineUtf8Bytes,
+  extractBatchErrorMessage: extractMemoryCoreHostEngineBatchErrorMessage,
+  fetchRemoteEmbeddingVectors: fetchMemoryCoreHostEngineRemoteEmbeddingVectors,
+  formatUnavailableBatchError: formatMemoryCoreHostEngineUnavailableBatchError,
+  getMemoryEmbeddingProvider: getMemoryCoreHostEngineEmbeddingProvider,
+  getMemoryMultimodalExtensions: getMemoryCoreHostEngineMultimodalExtensions,
+  hasNonTextEmbeddingParts: hasMemoryCoreHostEngineNonTextEmbeddingParts,
+  isMissingEmbeddingApiKeyError: isMissingMemoryCoreHostEngineEmbeddingApiKeyError,
+  listMemoryEmbeddingProviders: listMemoryCoreHostEngineEmbeddingProviders,
+  listRegisteredMemoryEmbeddingProviderAdapters:
+    listRegisteredMemoryCoreHostEngineEmbeddingProviderAdapters,
+  listRegisteredMemoryEmbeddingProviders:
+    listRegisteredMemoryCoreHostEngineEmbeddingProviders,
+  mapBatchEmbeddingsByIndex: mapMemoryCoreHostEngineBatchEmbeddingsByIndex,
+  normalizeBatchBaseUrl: normalizeMemoryCoreHostEngineBatchBaseUrl,
+  normalizeEmbeddingModelWithPrefixes:
+    normalizeMemoryCoreHostEngineEmbeddingModelWithPrefixes,
+  postJsonWithRetry: postMemoryCoreHostEngineJsonWithRetry,
+  registerMemoryEmbeddingProvider: registerMemoryCoreHostEngineEmbeddingProvider,
+  resolveBatchCompletionFromStatus: resolveMemoryCoreHostEngineBatchCompletionFromStatus,
+  resolveCompletedBatchResult: resolveMemoryCoreHostEngineCompletedBatchResult,
+  resolveRemoteEmbeddingBearerClient:
+    resolveMemoryCoreHostEngineRemoteEmbeddingBearerClient,
+  resolveRemoteEmbeddingClient: resolveMemoryCoreHostEngineRemoteEmbeddingClient,
+  runEmbeddingBatchGroups: runMemoryCoreHostEngineEmbeddingBatchGroups,
+  sanitizeAndNormalizeEmbedding: sanitizeAndNormalizeMemoryCoreHostEngineEmbedding,
+  sanitizeEmbeddingCacheHeaders: sanitizeMemoryCoreHostEngineEmbeddingCacheHeaders,
+  throwIfBatchTerminalFailure: throwIfMemoryCoreHostEngineBatchTerminalFailure,
+  uploadBatchJsonlFile: uploadMemoryCoreHostEngineBatchJsonlFile,
+  withRemoteHttpResponse: withMemoryCoreHostEngineRemoteHttpResponse,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -49712,6 +50441,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-engine-runtime"
   ) {
     return memoryCoreEngineRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-embeddings" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-embeddings"
+  ) {
+    return memoryCoreHostEngineEmbeddingsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
