@@ -13887,6 +13887,8 @@ const approvalAuth = require("openclaw/plugin-sdk/approval-auth-runtime");
 const scopedApprovalAuth = require("@openclaw/plugin-sdk/approval-auth-runtime");
 const approvalApprovers = require("openclaw/plugin-sdk/approval-approvers");
 const scopedApprovalApprovers = require("@openclaw/plugin-sdk/approval-approvers");
+const approvalAuthHelpers = require("openclaw/plugin-sdk/approval-auth-helpers");
+const scopedApprovalAuthHelpers = require("@openclaw/plugin-sdk/approval-auth-helpers");
 
 function normalizeApprover(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -13919,11 +13921,33 @@ module.exports = {
           action: "approve",
           approvalKind: "plugin"
         });
+        const implicit = implicitAdapter.authorizeActorAction({
+          cfg: {},
+          senderId: "anyone",
+          action: "approve",
+          approvalKind: "exec"
+        });
+        const helperAdapter = approvalAuthHelpers.createResolvedApproverActionAuthAdapter({
+          channelLabel: "Matrix",
+          normalizeSenderId: normalizeApprover,
+          resolveApprovers() {
+            return ["owner"];
+          }
+        });
+        const helperDenied = helperAdapter.authorizeActorAction({
+          cfg: {},
+          senderId: "other",
+          action: "approve",
+          approvalKind: "exec"
+        });
         return {
           keys: Object.keys(approvalAuth).sort(),
           scopedType: typeof scopedApprovalAuth.resolveApprovalApprovers,
           approverKeys: Object.keys(approvalApprovers).sort(),
           approverScopedType: typeof scopedApprovalApprovers.resolveApprovalApprovers,
+          helperKeys: Object.keys(approvalAuthHelpers).sort(),
+          helperScopedType:
+            typeof scopedApprovalAuthHelpers.isImplicitSameChatApprovalAuthorization,
           explicit: approvalAuth.resolveApprovalApprovers({
             explicit: [" Alice ", "alice", 42, ""],
             allowFrom: ["bob"],
@@ -13956,12 +13980,27 @@ module.exports = {
             denied.reason.includes("plugin"),
             denied.reason.includes("Telegram")
           ],
-          implicit: implicitAdapter.authorizeActorAction({
-            cfg: {},
-            senderId: "anyone",
-            action: "approve",
-            approvalKind: "exec"
-          })
+          implicit,
+          implicitMarker: [
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization(implicit),
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization({ ...implicit }),
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization(
+              adapter.authorizeActorAction({
+                cfg: {},
+                senderId: " Alice ",
+                action: "approve",
+                approvalKind: "exec"
+              })
+            )
+          ],
+          helperDenied: {
+            authorized: helperDenied.authorized,
+            reasonIncludes: [
+              helperDenied.reason.includes("not authorized"),
+              helperDenied.reason.includes("exec"),
+              helperDenied.reason.includes("Matrix")
+            ]
+          }
         };
       }
     });
@@ -14023,6 +14062,11 @@ module.exports = {
         "scopedType": "function",
         "approverKeys": ["resolveApprovalApprovers"],
         "approverScopedType": "function",
+        "helperKeys": [
+            "createResolvedApproverActionAuthAdapter",
+            "isImplicitSameChatApprovalAuthorization",
+        ],
+        "helperScopedType": "function",
         "explicit": ["alice", "42"],
         "inferred": ["bob", "carol", "dave"],
         "approverSubpath": ["erin", "frank", "grace"],
@@ -14033,6 +14077,8 @@ module.exports = {
         },
         "deniedReasonIncludes": [True, True, True],
         "implicit": {"authorized": True},
+        "implicitMarker": [True, False, False],
+        "helperDenied": {"authorized": False, "reasonIncludes": [True, True, True]},
     }
 
 

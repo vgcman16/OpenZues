@@ -36207,6 +36207,22 @@ function resolveApprovalApprovers(params = {}) {
   ]);
 }
 
+const IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION = Symbol(
+  "openclaw.implicitSameChatApprovalAuthorization",
+);
+
+function markImplicitSameChatApprovalAuthorization(result) {
+  Object.defineProperty(result, IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION, {
+    value: true,
+    enumerable: false,
+  });
+  return result;
+}
+
+function isImplicitSameChatApprovalAuthorization(result) {
+  return Boolean(result && result[IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION]);
+}
+
 function createResolvedApproverActionAuthAdapter(params = {}) {
   const normalizeSenderId =
     typeof params.normalizeSenderId === "function"
@@ -36222,7 +36238,7 @@ function createResolvedApproverActionAuthAdapter(params = {}) {
         accountId: actionParams.accountId,
       });
       if (!Array.isArray(approvers) || approvers.length === 0) {
-        return { authorized: true };
+        return markImplicitSameChatApprovalAuthorization({ authorized: true });
       }
       const normalizedSenderId =
         actionParams.senderId != null ? normalizeSenderId(actionParams.senderId) : undefined;
@@ -36245,6 +36261,11 @@ const approvalAuthRuntime = {
 
 const approvalApproversRuntime = {
   resolveApprovalApprovers,
+};
+
+const approvalAuthHelpersRuntime = {
+  createResolvedApproverActionAuthAdapter,
+  isImplicitSameChatApprovalAuthorization,
 };
 
 const DEFAULT_EXEC_APPROVAL_DECISIONS = ["allow-once", "allow-always", "deny"];
@@ -43397,6 +43418,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-approvers"
   ) {
     return approvalApproversRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-auth-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-auth-helpers"
+  ) {
+    return approvalAuthHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/approval-reply-runtime" ||
