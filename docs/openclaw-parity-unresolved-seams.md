@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~85.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~85.8% overall, with a reasonable
   band of ~78-86%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -8216,6 +8216,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   approval proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
   source/test checkpointed in `e23b4e9e`. The higher-level capability handler
   wrapper remains open.
+- Closed the imported OpenClaw plugin SDK
+  `createChannelApprovalHandlerFromCapability` seam from
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can turn a
+  channel approval capability's native adapter/runtime into a handler, build
+  pending/resolved/expired approval views, deliver and bind pending entries,
+  call loaded observe hooks with unwrapped entries, unbind on resolution, apply
+  final update/delete/clear-actions results, and return `null` when a
+  capability has no native runtime. Repo-wide parity is now estimated at
+  ~85.8%. Verified with focused approval-handler capability pytest, adjacent
+  approval proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `6ea77847`. Native expiration scheduling remains
+  open.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
