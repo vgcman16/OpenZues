@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~89.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~89.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1077,6 +1077,12 @@ may lag behind this tracker.
   discovery guards, provider discovery projection, interactive auth-result
   helpers, and non-interactive model/auth-profile/default-model config updates.
   - Status: checkpointed in `25ad92b6`
+
+- [x] Imported plugin SDK LM Studio runtime shim for default constants,
+  server/inference base URL normalization, provider config normalization,
+  auth-header construction, loaded context-window resolution, reasoning
+  capability/compat projection, and model wire entry mapping.
+  - Status: checkpointed in `6f11c3fa`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
