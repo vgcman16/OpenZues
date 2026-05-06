@@ -21767,14 +21767,16 @@ function applyProviderNativeStreamingUsageCompat(params) {
 }
 
 function definePluginEntry(options) {
-  const schema = options.configSchema || {};
+  const getConfigSchema = createCachedLazyValueGetter(
+    options.configSchema || emptyPluginConfigSchema,
+  );
   return {
     id: options.id,
     name: options.name,
     description: options.description,
     ...(options.kind ? { kind: options.kind } : {}),
     get configSchema() {
-      return typeof schema === "function" ? schema() : schema;
+      return getConfigSchema();
     },
     register: options.register || (() => {}),
   };
@@ -34321,9 +34323,2223 @@ const cliBackendRuntime = {
   CLI_RESUME_WATCHDOG_DEFAULTS,
 };
 
+const CLI_PREFIX_RE = /^(?:pnpm|npm|bunx|npx)\s+openclaw\b|^openclaw\b/;
+const CLI_CONTAINER_FLAG_RE = /(?:^|\s)--container(?:\s|=|$)/;
+const CLI_PROFILE_FLAG_RE = /(?:^|\s)--profile(?:\s|=|$)/;
+const CLI_DEV_FLAG_RE = /(?:^|\s)--dev(?:\s|$)/;
+const CLI_UPDATE_COMMAND_RE =
+  /^(?:pnpm|npm|bunx|npx)\s+openclaw\b.*(?:^|\s)update(?:\s|$)|^openclaw\b.*(?:^|\s)update(?:\s|$)/;
+const CLI_CONTAINER_HINT_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const CLI_PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const CLI_DURATION_MULTIPLIERS = Object.freeze({
+  ms: 1,
+  s: 1000,
+  m: 60000,
+  h: 3600000,
+  d: 86400000,
+});
+
+function normalizeCliProfileName(raw) {
+  const profile = normalizeOptionalString(raw);
+  if (!profile) {
+    return null;
+  }
+  if (normalizeLowercaseStringOrEmpty(profile) === "default") {
+    return null;
+  }
+  return CLI_PROFILE_NAME_RE.test(profile) ? profile : null;
+}
+
+function formatOpenClawCliCommand(command, env = process.env) {
+  const normalizedCommand = String(command || "");
+  const rawContainer = normalizeOptionalString(env.OPENCLAW_CONTAINER_HINT);
+  const container =
+    rawContainer && CLI_CONTAINER_HINT_RE.test(rawContainer) ? rawContainer : undefined;
+  const profile = normalizeCliProfileName(env.OPENCLAW_PROFILE);
+  if (!container && !profile) {
+    return normalizedCommand;
+  }
+  if (!CLI_PREFIX_RE.test(normalizedCommand)) {
+    return normalizedCommand;
+  }
+  const additions = [];
+  if (
+    container &&
+    !CLI_CONTAINER_FLAG_RE.test(normalizedCommand) &&
+    !CLI_UPDATE_COMMAND_RE.test(normalizedCommand)
+  ) {
+    additions.push(`--container ${container}`);
+  }
+  if (
+    !container &&
+    profile &&
+    !CLI_PROFILE_FLAG_RE.test(normalizedCommand) &&
+    !CLI_DEV_FLAG_RE.test(normalizedCommand)
+  ) {
+    additions.push(`--profile ${profile}`);
+  }
+  if (additions.length === 0) {
+    return normalizedCommand;
+  }
+  return normalizedCommand.replace(CLI_PREFIX_RE, (match) => `${match} ${additions.join(" ")}`);
+}
+
+function parseDurationMs(raw, opts = {}) {
+  const trimmed = normalizeLowercaseStringOrEmpty(normalizeOptionalString(raw) || "");
+  if (!trimmed) {
+    throw new Error("invalid duration (empty)");
+  }
+  const single = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/.exec(trimmed);
+  if (single) {
+    const value = Number(single[1]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const unit = single[2] || opts.defaultUnit || "ms";
+    const multiplier = CLI_DURATION_MULTIPLIERS[unit];
+    if (!multiplier) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const ms = Math.round(value * multiplier);
+    if (!Number.isFinite(ms)) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    return ms;
+  }
+  let totalMs = 0;
+  let consumed = 0;
+  const tokenRe = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/g;
+  for (const match of trimmed.matchAll(tokenRe)) {
+    const full = match[0];
+    const valueRaw = match[1];
+    const unitRaw = match[2];
+    const index = match.index ?? -1;
+    if (!full || !valueRaw || !unitRaw || index < 0 || index !== consumed) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const value = Number(valueRaw);
+    const multiplier = CLI_DURATION_MULTIPLIERS[unitRaw];
+    if (!Number.isFinite(value) || value < 0 || !multiplier) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    totalMs += value * multiplier;
+    consumed += full.length;
+  }
+  if (consumed !== trimmed.length || consumed === 0) {
+    throw new Error(`invalid duration: ${raw}`);
+  }
+  const ms = Math.round(totalMs);
+  if (!Number.isFinite(ms)) {
+    throw new Error(`invalid duration: ${raw}`);
+  }
+  return ms;
+}
+
+function getCliOptionSource(command, name) {
+  if (!command || typeof command.getOptionValueSource !== "function") {
+    return undefined;
+  }
+  return command.getOptionValueSource(name);
+}
+
+function inheritOptionFromParent(command, name) {
+  if (!command) {
+    return undefined;
+  }
+  const childSource = getCliOptionSource(command, name);
+  if (childSource && childSource !== "default") {
+    return undefined;
+  }
+  let depth = 0;
+  let ancestor = command.parent;
+  while (ancestor && depth < 2) {
+    const source = getCliOptionSource(ancestor, name);
+    if (source && source !== "default") {
+      const opts = typeof ancestor.opts === "function" ? ancestor.opts() : {};
+      return opts ? opts[name] : undefined;
+    }
+    depth += 1;
+    ancestor = ancestor.parent;
+  }
+  return undefined;
+}
+
+function formatHelpExamples(examples, inline = false) {
+  return (examples || [])
+    .map(([command, description]) => {
+      const formattedCommand = cliTheme.command(command);
+      if (inline) {
+        return description
+          ? `  ${formattedCommand} ${cliTheme.muted(`# ${description}`)}`
+          : `  ${formattedCommand}`;
+      }
+      return `  ${formattedCommand}\n    ${cliTheme.muted(description)}`;
+    })
+    .join("\n");
+}
+
+async function runCommandWithRuntime(runtime, action, onError) {
+  try {
+    await action();
+  } catch (err) {
+    if (onError) {
+      onError(err);
+      return;
+    }
+    runtime.error(String(err));
+    runtime.exit(1);
+  }
+}
+
+function getCommandGroupNames(entry) {
+  return entry.names || (entry.placeholders || []).map((placeholder) => placeholder.name);
+}
+
+function findCommandGroupEntry(entries, name) {
+  return (entries || []).find((entry) => getCommandGroupNames(entry).includes(name));
+}
+
+function registerCommandGroups(program, entries, params = {}) {
+  if (params.eager) {
+    for (const entry of entries || []) {
+      entry.register(program);
+    }
+    return;
+  }
+  if (params.primary && params.registerPrimaryOnly) {
+    const entry = findCommandGroupEntry(entries, params.primary);
+    if (entry) {
+      entry.register(program);
+    }
+    return;
+  }
+  for (const entry of entries || []) {
+    entry.register(program);
+  }
+}
+
+function isTruthyCliEnvValue(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return Boolean(
+    normalized && normalized !== "0" && normalized !== "false" && normalized !== "off",
+  );
+}
+
+function shouldEagerRegisterSubcommands(env = process.env) {
+  return isTruthyCliEnvValue(env.OPENCLAW_DISABLE_LAZY_SUBCOMMANDS);
+}
+
+function consumeCliRootOptionToken(args, index) {
+  const arg = args[index];
+  if (!arg || arg === "--" || !arg.startsWith("-")) {
+    return 0;
+  }
+  const flag = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
+  const booleanFlags = new Set([
+    "--debug",
+    "--dev",
+    "--help",
+    "--json",
+    "--no-color",
+    "--quiet",
+    "--verbose",
+    "--version",
+    "-h",
+    "-V",
+    "-v",
+  ]);
+  const valueFlags = new Set([
+    "--config",
+    "--container",
+    "--data-dir",
+    "--profile",
+    "--state-dir",
+  ]);
+  if (booleanFlags.has(flag)) {
+    return 1;
+  }
+  if (!valueFlags.has(flag)) {
+    return 0;
+  }
+  if (arg.includes("=")) {
+    return arg.slice(arg.indexOf("=") + 1).trim() ? 1 : 0;
+  }
+  const next = args[index + 1];
+  return next && !next.startsWith("-") ? 2 : 0;
+}
+
+function getCliCommandPathWithRootOptions(argv, depth = 2) {
+  const args = (argv || []).slice(2);
+  const commandPath = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      continue;
+    }
+    if (arg === "--") {
+      break;
+    }
+    const consumed = consumeCliRootOptionToken(args, index);
+    if (consumed > 0) {
+      index += consumed - 1;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      continue;
+    }
+    commandPath.push(arg);
+    if (commandPath.length >= depth) {
+      break;
+    }
+  }
+  return commandPath;
+}
+
+function hasCliHelpOrVersion(argv) {
+  return (argv || []).slice(2).some((arg) =>
+    arg === "-h" ||
+      arg === "--help" ||
+      arg === "-V" ||
+      arg === "--version" ||
+      arg === "-v" ||
+      arg === "help",
+  );
+}
+
+function isCliRootHelpInvocation(argv) {
+  const commandPath = getCliCommandPathWithRootOptions(argv, 1);
+  if (commandPath.length > 0) {
+    return false;
+  }
+  return (argv || []).slice(2).some((arg) => arg === "-h" || arg === "--help");
+}
+
+function resolveCliArgvInvocation(argv) {
+  const normalizedArgv = Array.isArray(argv) ? argv : [];
+  const commandPath = getCliCommandPathWithRootOptions(normalizedArgv, 2);
+  return {
+    argv: normalizedArgv,
+    commandPath,
+    primary: commandPath[0] || null,
+    hasHelpOrVersion: hasCliHelpOrVersion(normalizedArgv),
+    isRootHelpInvocation: isCliRootHelpInvocation(normalizedArgv),
+  };
+}
+
+function waitForever() {
+  const interval = setInterval(() => {}, 1000000);
+  if (typeof interval.unref === "function") {
+    interval.unref();
+  }
+  return new Promise(() => {});
+}
+
+function note(message, title) {
+  return undefined;
+}
+
+const cliTheme = Object.freeze({
+  accent: (value) => String(value),
+  accentBright: (value) => String(value),
+  accentDim: (value) => String(value),
+  info: (value) => String(value),
+  success: (value) => String(value),
+  warn: (value) => String(value),
+  error: (value) => String(value),
+  muted: (value) => String(value),
+  heading: (value) => String(value),
+  command: (value) => String(value),
+  option: (value) => String(value),
+});
+
+function stylePromptTitle(title) {
+  return title === undefined ? undefined : String(title);
+}
+
+const cliRuntime = {
+  VERSION: "unknown",
+  formatCliCommand: formatOpenClawCliCommand,
+  formatHelpExamples,
+  inheritOptionFromParent,
+  note,
+  parseDurationMs,
+  registerCommandGroups,
+  resolveCliArgvInvocation,
+  runCommandWithRuntime,
+  shouldEagerRegisterSubcommands,
+  stylePromptTitle,
+  theme: cliTheme,
+  waitForever,
+};
+
+function hasLegacyAccountStreamingAliases(value, match) {
+  const accounts = asObjectRecord(value);
+  if (!accounts) {
+    return false;
+  }
+  return Object.values(accounts).some((account) => match(account));
+}
+
+function ensureLegacyNestedRecord(owner, key) {
+  const existing = asObjectRecord(owner[key]);
+  return existing ? { ...existing } : {};
+}
+
+function normalizeLegacyStreamingAliases(params = {}) {
+  const entry = asObjectRecord(params.entry) || {};
+  const beforeStreaming = entry.streaming;
+  const hadLegacyStreamMode = entry.streamMode !== undefined;
+  const hasLegacyFlatFields =
+    entry.chunkMode !== undefined ||
+    entry.blockStreaming !== undefined ||
+    entry.blockStreamingCoalesce !== undefined ||
+    (params.includePreviewChunk === true && entry.draftChunk !== undefined) ||
+    entry.nativeStreaming !== undefined;
+  const shouldNormalize =
+    hadLegacyStreamMode ||
+    typeof beforeStreaming === "boolean" ||
+    typeof beforeStreaming === "string" ||
+    hasLegacyFlatFields;
+  if (!shouldNormalize) {
+    return { entry, changed: false };
+  }
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = String(params.pathPrefix || "");
+  let updated = { ...entry };
+  let changed = false;
+  const streaming = ensureLegacyNestedRecord(updated, "streaming");
+  const block = ensureLegacyNestedRecord(streaming, "block");
+  const preview = ensureLegacyNestedRecord(streaming, "preview");
+  if (
+    (hadLegacyStreamMode ||
+      typeof beforeStreaming === "boolean" ||
+      typeof beforeStreaming === "string") &&
+    streaming.mode === undefined
+  ) {
+    streaming.mode = params.resolvedMode;
+    changes.push(`Moved ${pathPrefix}.streaming to ${pathPrefix}.streaming.mode.`);
+    changed = true;
+  }
+  if (hadLegacyStreamMode) {
+    delete updated.streamMode;
+    changed = true;
+  }
+  if (updated.chunkMode !== undefined && streaming.chunkMode === undefined) {
+    streaming.chunkMode = updated.chunkMode;
+    delete updated.chunkMode;
+    changes.push(`Moved ${pathPrefix}.chunkMode to ${pathPrefix}.streaming.chunkMode.`);
+    changed = true;
+  }
+  if (updated.blockStreaming !== undefined && block.enabled === undefined) {
+    block.enabled = updated.blockStreaming;
+    delete updated.blockStreaming;
+    changes.push(`Moved ${pathPrefix}.blockStreaming to streaming.block.enabled.`);
+    changed = true;
+  }
+  if (
+    params.includePreviewChunk === true &&
+    updated.draftChunk !== undefined &&
+    preview.chunk === undefined
+  ) {
+    preview.chunk = updated.draftChunk;
+    delete updated.draftChunk;
+    changes.push(`Moved ${pathPrefix}.draftChunk to streaming.preview.chunk.`);
+    changed = true;
+  }
+  if (updated.blockStreamingCoalesce !== undefined && block.coalesce === undefined) {
+    block.coalesce = updated.blockStreamingCoalesce;
+    delete updated.blockStreamingCoalesce;
+    changes.push(`Moved ${pathPrefix}.blockStreamingCoalesce to streaming.block.coalesce.`);
+    changed = true;
+  }
+  if (
+    updated.nativeStreaming !== undefined &&
+    streaming.nativeTransport === undefined &&
+    params.resolvedNativeTransport !== undefined
+  ) {
+    streaming.nativeTransport = params.resolvedNativeTransport;
+    delete updated.nativeStreaming;
+    changes.push(`Moved ${pathPrefix}.nativeStreaming to streaming.nativeTransport.`);
+    changed = true;
+  } else if (
+    typeof beforeStreaming === "boolean" &&
+    streaming.nativeTransport === undefined &&
+    params.resolvedNativeTransport !== undefined
+  ) {
+    streaming.nativeTransport = params.resolvedNativeTransport;
+    changes.push(`Moved ${pathPrefix}.streaming to streaming.nativeTransport.`);
+    changed = true;
+  }
+  if (Object.keys(preview).length > 0) {
+    streaming.preview = preview;
+  }
+  if (Object.keys(block).length > 0) {
+    streaming.block = block;
+  }
+  updated.streaming = streaming;
+  if (
+    hadLegacyStreamMode &&
+    params.resolvedMode === "off" &&
+    typeof params.offModeLegacyNotice === "function"
+  ) {
+    changes.push(params.offModeLegacyNotice(pathPrefix));
+  }
+  return { entry: updated, changed };
+}
+
+function normalizeLegacyChannelAliases(params = {}) {
+  let updated = asObjectRecord(params.entry) || {};
+  let changed = false;
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = String(params.pathPrefix || "");
+  if (params.normalizeDm === true) {
+    const dm = normalizeLegacyDmAliases({
+      entry: updated,
+      pathPrefix,
+      changes,
+      promoteAllowFrom: params.rootDmPromoteAllowFrom,
+    });
+    updated = dm.entry;
+    changed = Boolean(dm.changed);
+  }
+  const streaming = normalizeLegacyStreamingAliases({
+    entry: updated,
+    pathPrefix,
+    changes,
+    ...(typeof params.resolveStreamingOptions === "function"
+      ? params.resolveStreamingOptions(updated)
+      : {}),
+  });
+  updated = streaming.entry;
+  changed = changed || streaming.changed;
+  const rawAccounts = asObjectRecord(updated.accounts);
+  if (!rawAccounts) {
+    return { entry: updated, changed };
+  }
+  let accountsChanged = false;
+  const accounts = { ...rawAccounts };
+  for (const [accountId, rawAccount] of Object.entries(rawAccounts)) {
+    const account = asObjectRecord(rawAccount);
+    if (!account) {
+      continue;
+    }
+    let accountEntry = account;
+    let accountChanged = false;
+    const accountPathPrefix = `${pathPrefix}.accounts.${accountId}`;
+    if (params.normalizeAccountDm === true) {
+      const accountDm = normalizeLegacyDmAliases({
+        entry: accountEntry,
+        pathPrefix: accountPathPrefix,
+        changes,
+      });
+      accountEntry = accountDm.entry;
+      accountChanged = Boolean(accountDm.changed);
+    }
+    const accountStreaming = normalizeLegacyStreamingAliases({
+      entry: accountEntry,
+      pathPrefix: accountPathPrefix,
+      changes,
+      ...(typeof params.resolveStreamingOptions === "function"
+        ? params.resolveStreamingOptions(accountEntry)
+        : {}),
+    });
+    accountEntry = accountStreaming.entry;
+    accountChanged = accountChanged || accountStreaming.changed;
+    if (typeof params.normalizeAccountExtra === "function") {
+      const extra = params.normalizeAccountExtra({
+        account: accountEntry,
+        accountId,
+        pathPrefix: accountPathPrefix,
+        changes,
+      });
+      if (extra) {
+        accountEntry = extra.entry;
+        accountChanged = accountChanged || Boolean(extra.changed);
+      }
+    }
+    if (accountChanged) {
+      accounts[accountId] = accountEntry;
+      accountsChanged = true;
+    }
+  }
+  if (accountsChanged) {
+    updated = { ...updated, accounts };
+    changed = true;
+  }
+  return { entry: updated, changed };
+}
+
+function hasLegacyStreamingAliases(value, options = {}) {
+  const entry = asObjectRecord(value);
+  if (!entry) {
+    return false;
+  }
+  return (
+    entry.streamMode !== undefined ||
+    typeof entry.streaming === "boolean" ||
+    typeof entry.streaming === "string" ||
+    entry.chunkMode !== undefined ||
+    entry.blockStreaming !== undefined ||
+    entry.blockStreamingCoalesce !== undefined ||
+    (options.includePreviewChunk === true && entry.draftChunk !== undefined) ||
+    (options.includeNativeTransport === true && entry.nativeStreaming !== undefined)
+  );
+}
+
+function resolvePluginInstallCandidatePaths(install) {
+  if (!install || install.source !== "path") {
+    return [];
+  }
+  return [install.sourcePath, install.installPath]
+    .map((value) => normalizeOptionalString(value) || "")
+    .filter(Boolean);
+}
+
+async function detectPluginInstallPathIssue(params = {}) {
+  const candidatePaths = resolvePluginInstallCandidatePaths(params.install);
+  if (candidatePaths.length === 0) {
+    return null;
+  }
+  for (const candidatePath of candidatePaths) {
+    try {
+      await fs.promises.access(path.resolve(candidatePath));
+      return {
+        kind: "custom-path",
+        pluginId: String(params.pluginId || ""),
+        path: candidatePath,
+      };
+    } catch {
+      // Continue checking remaining path candidates.
+    }
+  }
+  return {
+    kind: "missing-path",
+    pluginId: String(params.pluginId || ""),
+    path: candidatePaths[0] || "(unknown)",
+  };
+}
+
+function formatPluginInstallPathIssue(params = {}) {
+  const issue = params.issue || {};
+  const pluginLabel = String(params.pluginLabel || "Plugin");
+  const defaultInstallCommand = String(params.defaultInstallCommand || "");
+  const repoInstallCommand = normalizeOptionalString(params.repoInstallCommand);
+  const formatCommand =
+    typeof params.formatCommand === "function" ? params.formatCommand : (command) => command;
+  if (issue.kind === "custom-path") {
+    return [
+      `${pluginLabel} is installed from a custom path: ${issue.path}`,
+      "Main updates will not automatically replace that plugin with the repo's default " +
+        `${pluginLabel} package.`,
+      `Reinstall with "${formatCommand(defaultInstallCommand)}" ` +
+        `when you want to return to the standard ${pluginLabel} plugin.`,
+      ...(repoInstallCommand
+        ? [
+            "If you are intentionally running from a repo checkout, reinstall that checkout " +
+              `explicitly with "${formatCommand(repoInstallCommand)}" after updates.`,
+          ]
+        : []),
+    ];
+  }
+  return [
+    `${pluginLabel} is installed from a custom path that no longer exists: ${issue.path}`,
+    `Reinstall with "${formatCommand(defaultInstallCommand)}".`,
+    ...(repoInstallCommand
+      ? [
+          "If you are running from a repo checkout, you can also use " +
+            `"${formatCommand(repoInstallCommand)}".`,
+        ]
+      : []),
+  ];
+}
+
+function defaultRuntimeDoctorSlotIdForKey(slotKey) {
+  return slotKey === "contextEngine" ? "legacy" : "memory-core";
+}
+
+function createEmptyRuntimeDoctorUninstallActions(overrides = {}) {
+  return {
+    entry: false,
+    install: false,
+    allowlist: false,
+    denylist: false,
+    loadPath: false,
+    memorySlot: false,
+    contextEngineSlot: false,
+    channelConfig: false,
+    ...overrides,
+  };
+}
+
+function cleanUndefinedObjectFields(value) {
+  const cleaned = { ...value };
+  for (const key of Object.keys(cleaned)) {
+    if (cleaned[key] === undefined) {
+      delete cleaned[key];
+    }
+  }
+  return cleaned;
+}
+
+function loadPathMatchesInstallSourcePath(loadPath, sourcePath) {
+  if (loadPath === sourcePath) {
+    return true;
+  }
+  try {
+    return path.resolve(loadPath) === path.resolve(sourcePath);
+  } catch {
+    return false;
+  }
+}
+
+function removePluginFromConfig(cfg = {}, pluginId, opts = {}) {
+  const pluginKey = String(pluginId || "");
+  const actions = createEmptyRuntimeDoctorUninstallActions();
+  const pluginsConfig = cfg.plugins || {};
+  let entries = pluginsConfig.entries;
+  if (entries && Object.prototype.hasOwnProperty.call(entries, pluginKey)) {
+    const { [pluginKey]: _removedEntry, ...restEntries } = entries;
+    entries = Object.keys(restEntries).length > 0 ? restEntries : undefined;
+    actions.entry = true;
+  }
+  let installs = pluginsConfig.installs;
+  const installRecord = installs && installs[pluginKey];
+  if (installs && Object.prototype.hasOwnProperty.call(installs, pluginKey)) {
+    const { [pluginKey]: _removedInstall, ...restInstalls } = installs;
+    installs = Object.keys(restInstalls).length > 0 ? restInstalls : undefined;
+    actions.install = true;
+  }
+  let allow = pluginsConfig.allow;
+  if (Array.isArray(allow) && allow.includes(pluginKey)) {
+    allow = allow.filter((id) => id !== pluginKey);
+    allow = allow.length > 0 ? allow : undefined;
+    actions.allowlist = true;
+  }
+  let deny = pluginsConfig.deny;
+  if (Array.isArray(deny) && deny.includes(pluginKey)) {
+    deny = deny.filter((id) => id !== pluginKey);
+    deny = deny.length > 0 ? deny : undefined;
+    actions.denylist = true;
+  }
+  let load = pluginsConfig.load;
+  if (installRecord && installRecord.source === "path" && installRecord.sourcePath) {
+    const loadPaths = load && load.paths;
+    if (
+      Array.isArray(loadPaths) &&
+      loadPaths.some((entry) => loadPathMatchesInstallSourcePath(entry, installRecord.sourcePath))
+    ) {
+      const nextLoadPaths = loadPaths.filter(
+        (entry) => !loadPathMatchesInstallSourcePath(entry, installRecord.sourcePath),
+      );
+      load = nextLoadPaths.length > 0 ? { ...load, paths: nextLoadPaths } : undefined;
+      actions.loadPath = true;
+    }
+  }
+  let slots = pluginsConfig.slots;
+  if (slots && slots.memory === pluginKey) {
+    slots = { ...slots, memory: defaultRuntimeDoctorSlotIdForKey("memory") };
+    actions.memorySlot = true;
+  }
+  if (slots && slots.contextEngine === pluginKey) {
+    slots = { ...slots, contextEngine: defaultRuntimeDoctorSlotIdForKey("contextEngine") };
+    actions.contextEngineSlot = true;
+  }
+  const newPlugins = cleanUndefinedObjectFields({
+    ...pluginsConfig,
+    entries,
+    installs,
+    allow,
+    deny,
+    load,
+    slots,
+  });
+  const hasInstallRecord =
+    cfg.plugins &&
+    cfg.plugins.installs &&
+    Object.prototype.hasOwnProperty.call(cfg.plugins.installs, pluginKey);
+  let channels = cfg.channels;
+  if (hasInstallRecord && channels) {
+    const sharedChannelKeys = new Set(["defaults", "modelByChannel"]);
+    const rawChannelIds = opts.channelIds === undefined ? [pluginKey] : opts.channelIds;
+    const seen = new Set();
+    for (const key of rawChannelIds || []) {
+      if (sharedChannelKeys.has(key) || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      if (!Object.prototype.hasOwnProperty.call(channels, key)) {
+        continue;
+      }
+      const { [key]: _removedChannel, ...restChannels } = channels;
+      channels = Object.keys(restChannels).length > 0 ? restChannels : undefined;
+      actions.channelConfig = true;
+      if (!channels) {
+        break;
+      }
+    }
+  }
+  return {
+    config: {
+      ...cfg,
+      plugins: Object.keys(newPlugins).length > 0 ? newPlugins : undefined,
+      channels,
+    },
+    actions,
+  };
+}
+
+const runtimeDoctorRuntime = {
+  asObjectRecord,
+  collectProviderDangerousNameMatchingScopes,
+  detectPluginInstallPathIssue,
+  formatPluginInstallPathIssue,
+  hasLegacyAccountStreamingAliases,
+  hasLegacyStreamingAliases,
+  normalizeLegacyChannelAliases,
+  normalizeLegacyDmAliases,
+  normalizeLegacyStreamingAliases,
+  removePluginFromConfig,
+};
+
+const SELF_HOSTED_DEFAULT_CONTEXT_WINDOW = 128000;
+const SELF_HOSTED_DEFAULT_MAX_TOKENS = 8192;
+const SELF_HOSTED_DEFAULT_COST = Object.freeze({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+
+function normalizeOptionalSecretInput(value) {
+  return normalizeStringifiedOptionalString(value);
+}
+
+function applyProviderDefaultModel(cfg = {}, modelRef) {
+  const existingModel = cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model;
+  const fallbacks =
+    existingModel && typeof existingModel === "object" && "fallbacks" in existingModel
+      ? existingModel.fallbacks
+      : undefined;
+  return {
+    ...cfg,
+    agents: {
+      ...(cfg.agents || {}),
+      defaults: {
+        ...((cfg.agents && cfg.agents.defaults) || {}),
+        model: {
+          ...(fallbacks ? { fallbacks } : {}),
+          primary: modelRef,
+        },
+      },
+    },
+  };
+}
+
+function isReasoningModelHeuristic(modelId) {
+  return /r1|reasoning|think|reason/i.test(String(modelId || ""));
+}
+
+async function discoverOpenAICompatibleLocalModels(params = {}) {
+  const env = params.env || process.env;
+  if (env.VITEST || env.NODE_ENV === "test") {
+    return [];
+  }
+  const baseUrl = String(params.baseUrl || "").trim().replace(/\/+$/, "");
+  if (!baseUrl) {
+    return [];
+  }
+  const url = `${baseUrl}/models`;
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    return [];
+  }
+  try {
+    const apiKey = normalizeOptionalString(params.apiKey);
+    const response = await fetchImpl(url, {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    });
+    if (!response || response.ok !== true) {
+      return [];
+    }
+    const data = await response.json();
+    const models = Array.isArray(data && data.data) ? data.data : [];
+    return models
+      .map((model) => ({ id: normalizeOptionalString(model && model.id) || "" }))
+      .filter((model) => Boolean(model.id))
+      .map((model) => ({
+        id: model.id,
+        name: model.id,
+        reasoning: isReasoningModelHeuristic(model.id),
+        input: ["text"],
+        cost: SELF_HOSTED_DEFAULT_COST,
+        contextWindow: params.contextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+        maxTokens: params.maxTokens || SELF_HOSTED_DEFAULT_MAX_TOKENS,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function buildOpenAICompatibleSelfHostedProviderConfig(params = {}) {
+  const modelRef = `${params.providerId}/${params.modelId}`;
+  const profileId = `${params.providerId}:default`;
+  return {
+    config: {
+      ...(params.cfg || {}),
+      models: {
+        ...((params.cfg && params.cfg.models) || {}),
+        mode: (params.cfg && params.cfg.models && params.cfg.models.mode) || "merge",
+        providers: {
+          ...((params.cfg && params.cfg.models && params.cfg.models.providers) || {}),
+          [params.providerId]: {
+            baseUrl: params.baseUrl,
+            api: "openai-completions",
+            apiKey: params.providerApiKey,
+            models: [
+              {
+                id: params.modelId,
+                name: params.modelId,
+                reasoning: params.reasoning || false,
+                input: params.input || ["text"],
+                cost: SELF_HOSTED_DEFAULT_COST,
+                contextWindow: params.contextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+                maxTokens: params.maxTokens || SELF_HOSTED_DEFAULT_MAX_TOKENS,
+              },
+            ],
+          },
+        },
+      },
+    },
+    modelId: params.modelId,
+    modelRef,
+    profileId,
+  };
+}
+
+async function promptAndConfigureOpenAICompatibleSelfHostedProvider(params = {}) {
+  const baseUrlRaw = await params.prompter.text({
+    message: `${params.providerLabel} base URL`,
+    initialValue: params.defaultBaseUrl,
+    placeholder: params.defaultBaseUrl,
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const apiKeyRaw = await params.prompter.text({
+    message: `${params.providerLabel} API key`,
+    placeholder: "sk-... (or any non-empty string)",
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const modelIdRaw = await params.prompter.text({
+    message: `${params.providerLabel} model`,
+    placeholder: params.modelPlaceholder,
+    validate: (value) => (value && value.trim() ? undefined : "Required"),
+  });
+  const baseUrl = String(baseUrlRaw || "").trim().replace(/\/+$/, "");
+  const apiKey = normalizeStringifiedOptionalString(apiKeyRaw) || "";
+  const modelId = normalizeStringifiedOptionalString(modelIdRaw) || "";
+  const credential = {
+    type: "api_key",
+    provider: params.providerId,
+    key: apiKey,
+  };
+  const configured = buildOpenAICompatibleSelfHostedProviderConfig({
+    cfg: params.cfg || {},
+    providerId: params.providerId,
+    baseUrl,
+    providerApiKey: params.defaultApiKeyEnvVar,
+    modelId,
+    input: params.input,
+    reasoning: params.reasoning,
+    contextWindow: params.contextWindow,
+    maxTokens: params.maxTokens,
+  });
+  return {
+    config: configured.config,
+    credential,
+    modelId: configured.modelId,
+    modelRef: configured.modelRef,
+    profileId: configured.profileId,
+  };
+}
+
+function buildSelfHostedProviderAuthResult(result) {
+  return {
+    profiles: [
+      {
+        profileId: result.profileId,
+        credential: result.credential,
+      },
+    ],
+    configPatch: result.config,
+    defaultModel: result.modelRef,
+  };
+}
+
+async function promptAndConfigureOpenAICompatibleSelfHostedProviderAuth(params = {}) {
+  const result = await promptAndConfigureOpenAICompatibleSelfHostedProvider(params);
+  return buildSelfHostedProviderAuthResult(result);
+}
+
+async function discoverOpenAICompatibleSelfHostedProvider(params = {}) {
+  const ctx = params.ctx || {};
+  if (
+    ctx.config &&
+    ctx.config.models &&
+    ctx.config.models.providers &&
+    ctx.config.models.providers[params.providerId]
+  ) {
+    return null;
+  }
+  const resolved =
+    typeof ctx.resolveProviderApiKey === "function"
+      ? ctx.resolveProviderApiKey(params.providerId)
+      : {};
+  if (!resolved || !resolved.apiKey) {
+    return null;
+  }
+  const provider =
+    typeof params.buildProvider === "function"
+      ? await params.buildProvider({ apiKey: resolved.discoveryApiKey })
+      : {};
+  return {
+    provider: {
+      ...provider,
+      apiKey: resolved.apiKey,
+    },
+  };
+}
+
+function buildMissingNonInteractiveModelIdMessage(params = {}) {
+  return [
+    `Missing --custom-model-id for --auth-choice ${params.authChoice}.`,
+    `Pass the ${params.providerLabel} model id to use, for example ${params.modelPlaceholder}.`,
+  ].join("\n");
+}
+
+function applySelfHostedAuthProfileConfig(cfg = {}, params = {}) {
+  return {
+    ...cfg,
+    auth: {
+      ...(cfg.auth || {}),
+      profiles: {
+        ...((cfg.auth && cfg.auth.profiles) || {}),
+        [params.profileId]: {
+          provider: params.provider,
+          mode: params.mode,
+          ...(params.email ? { email: params.email } : {}),
+          ...(params.displayName ? { displayName: params.displayName } : {}),
+        },
+      },
+    },
+  };
+}
+
+async function configureOpenAICompatibleSelfHostedProviderNonInteractive(params = {}) {
+  const ctx = params.ctx || {};
+  const opts = ctx.opts || {};
+  const baseUrl = (
+    normalizeOptionalSecretInput(opts.customBaseUrl) || params.defaultBaseUrl
+  ).replace(/\/+$/, "");
+  const modelId = normalizeOptionalSecretInput(opts.customModelId);
+  if (!modelId) {
+    if (ctx.runtime && typeof ctx.runtime.error === "function") {
+      ctx.runtime.error(
+        buildMissingNonInteractiveModelIdMessage({
+          authChoice: ctx.authChoice,
+          providerLabel: params.providerLabel,
+          modelPlaceholder: params.modelPlaceholder,
+        }),
+      );
+    }
+    if (ctx.runtime && typeof ctx.runtime.exit === "function") {
+      ctx.runtime.exit(1);
+    }
+    return null;
+  }
+  const resolved =
+    typeof ctx.resolveApiKey === "function"
+      ? await ctx.resolveApiKey({
+          provider: params.providerId,
+          flagValue: normalizeOptionalSecretInput(opts.customApiKey),
+          flagName: "--custom-api-key",
+          envVar: params.defaultApiKeyEnvVar,
+          envVarName: params.defaultApiKeyEnvVar,
+        })
+      : null;
+  if (!resolved) {
+    return null;
+  }
+  const credential =
+    typeof ctx.toApiKeyCredential === "function"
+      ? ctx.toApiKeyCredential({
+          provider: params.providerId,
+          resolved,
+        })
+      : null;
+  if (!credential) {
+    return null;
+  }
+  const configured = buildOpenAICompatibleSelfHostedProviderConfig({
+    cfg: ctx.config || {},
+    providerId: params.providerId,
+    baseUrl,
+    providerApiKey: params.defaultApiKeyEnvVar,
+    modelId,
+    input: params.input,
+    reasoning: params.reasoning,
+    contextWindow: params.contextWindow,
+    maxTokens: params.maxTokens,
+  });
+  const withProfile = applySelfHostedAuthProfileConfig(configured.config, {
+    profileId: configured.profileId,
+    provider: params.providerId,
+    mode: "api_key",
+  });
+  if (ctx.runtime && typeof ctx.runtime.log === "function") {
+    ctx.runtime.log(`Default ${params.providerLabel} model: ${modelId}`);
+  }
+  return applyProviderDefaultModel(withProfile, configured.modelRef);
+}
+
+const providerSetupRuntime = {
+  SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+  SELF_HOSTED_DEFAULT_COST,
+  SELF_HOSTED_DEFAULT_MAX_TOKENS,
+  applyProviderDefaultModel,
+  configureOpenAICompatibleSelfHostedProviderNonInteractive,
+  discoverOpenAICompatibleLocalModels,
+  discoverOpenAICompatibleSelfHostedProvider,
+  promptAndConfigureOpenAICompatibleSelfHostedProvider,
+  promptAndConfigureOpenAICompatibleSelfHostedProviderAuth,
+};
+
+const LMSTUDIO_DEFAULT_BASE_URL = "http://localhost:1234";
+const LMSTUDIO_DEFAULT_INFERENCE_BASE_URL = `${LMSTUDIO_DEFAULT_BASE_URL}/v1`;
+const LMSTUDIO_DEFAULT_EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5";
+const LMSTUDIO_PROVIDER_LABEL = "LM Studio";
+const LMSTUDIO_DEFAULT_API_KEY_ENV_VAR = "LM_API_TOKEN";
+const LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER = "lmstudio-local";
+const LMSTUDIO_MODEL_PLACEHOLDER = "model-key-from-api-v1-models";
+const LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH = 64000;
+const LMSTUDIO_DEFAULT_MODEL_ID = "qwen/qwen3.5-9b";
+const LMSTUDIO_PROVIDER_ID = "lmstudio";
+
+function normalizeLmstudioReasoningOption(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
+
+function isLmstudioReasoningEnabledOption(value) {
+  const normalized = normalizeLmstudioReasoningOption(value);
+  return Boolean(normalized && normalized !== "off");
+}
+
+function normalizeLmstudioReasoningOptions(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [
+    ...new Set(
+      value
+        .map((option) => normalizeLmstudioReasoningOption(option))
+        .filter((option) => option !== null),
+    ),
+  ];
+}
+
+function resolveLmstudioEnabledReasoningOption(allowedOptions, reasoning = {}) {
+  const normalizedDefault = normalizeLmstudioReasoningOption(reasoning.default);
+  if (
+    normalizedDefault &&
+    isLmstudioReasoningEnabledOption(normalizedDefault) &&
+    allowedOptions.includes(normalizedDefault)
+  ) {
+    return normalizedDefault;
+  }
+  return (
+    allowedOptions.find((option) => option === "on" || option === "default") ||
+    allowedOptions.find((option) => isLmstudioReasoningEnabledOption(option))
+  );
+}
+
+function resolveLmstudioDisabledReasoningOption(allowedOptions) {
+  return allowedOptions.find((option) => option === "off") ||
+    allowedOptions.find((option) => option === "none");
+}
+
+function resolveLmstudioReasoningCompat(entry = {}) {
+  const reasoning = entry.capabilities && entry.capabilities.reasoning;
+  if (reasoning === undefined || reasoning === null) {
+    return undefined;
+  }
+  const allowedOptions = normalizeLmstudioReasoningOptions(reasoning.allowed_options);
+  if (allowedOptions.length === 0) {
+    return undefined;
+  }
+  const enabled = resolveLmstudioEnabledReasoningOption(allowedOptions, reasoning);
+  if (!enabled) {
+    return undefined;
+  }
+  const disabled = resolveLmstudioDisabledReasoningOption(allowedOptions);
+  return {
+    supportsReasoningEffort: true,
+    supportedReasoningEfforts: allowedOptions,
+    reasoningEffortMap: {
+      ...(disabled ? { off: disabled, none: disabled } : {}),
+      minimal: enabled,
+      low: enabled,
+      medium: enabled,
+      high: enabled,
+      xhigh: enabled,
+      adaptive: enabled,
+      max: enabled,
+    },
+  };
+}
+
+function resolveLmstudioReasoningCapability(entry = {}) {
+  const reasoning = entry.capabilities && entry.capabilities.reasoning;
+  if (reasoning === undefined || reasoning === null) {
+    return false;
+  }
+  const allowedOptions = normalizeLmstudioReasoningOptions(reasoning.allowed_options);
+  if (allowedOptions.length > 0) {
+    return allowedOptions.some((option) => isLmstudioReasoningEnabledOption(option));
+  }
+  return isLmstudioReasoningEnabledOption(reasoning.default);
+}
+
+function resolveLoadedContextWindow(entry = {}) {
+  const loadedInstances = Array.isArray(entry.loaded_instances) ? entry.loaded_instances : [];
+  let contextWindow = null;
+  for (const instance of loadedInstances) {
+    const length = instance && instance.config && instance.config.context_length;
+    if (!Number.isFinite(length) || length <= 0) {
+      continue;
+    }
+    const normalized = Math.floor(length);
+    contextWindow = contextWindow === null ? normalized : Math.max(contextWindow, normalized);
+  }
+  return contextWindow;
+}
+
+function normalizeLmstudioUrlPath(pathname) {
+  const trimmed = String(pathname || "").replace(/\/+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.replace(/\/api\/v1$/i, "").replace(/\/v1$/i, "");
+}
+
+function lmstudioHasExplicitHttpScheme(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function isLikelyLmstudioHostBaseUrl(value) {
+  const text = String(value || "").trim();
+  return Boolean(
+    text &&
+      !text.includes(" ") &&
+      (/^localhost(?::|\/|$)/i.test(text) || text.includes(".")),
+  );
+}
+
+function toFetchableLmstudioBaseUrl(value) {
+  if (lmstudioHasExplicitHttpScheme(value) || !isLikelyLmstudioHostBaseUrl(value)) {
+    return value;
+  }
+  return `http://${value}`;
+}
+
+function resolveLmstudioServerBase(configuredBaseUrl) {
+  const configured = normalizeOptionalString(configuredBaseUrl);
+  const resolved = configured || LMSTUDIO_DEFAULT_BASE_URL;
+  const fetchableBaseUrl = toFetchableLmstudioBaseUrl(resolved);
+  try {
+    const parsed = new URL(fetchableBaseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new TypeError(`Unsupported LM Studio protocol: ${parsed.protocol}`);
+    }
+    const pathname = normalizeLmstudioUrlPath(parsed.pathname);
+    parsed.pathname = pathname.length > 0 ? pathname : "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    const trimmed = resolved.replace(/\/+$/, "");
+    const normalized = normalizeLmstudioUrlPath(trimmed);
+    return normalized.length > 0 ? normalized : LMSTUDIO_DEFAULT_BASE_URL;
+  }
+}
+
+function resolveLmstudioInferenceBase(configuredBaseUrl) {
+  return `${resolveLmstudioServerBase(configuredBaseUrl)}/v1`;
+}
+
+function normalizeLmstudioProviderConfig(provider = {}) {
+  const configuredBaseUrl =
+    typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : "";
+  if (!configuredBaseUrl) {
+    return provider;
+  }
+  const request =
+    provider.request && typeof provider.request === "object" && !Array.isArray(provider.request)
+      ? provider.request
+      : undefined;
+  const requestWithPrivateNetworkDefault =
+    request && typeof request.allowPrivateNetwork === "boolean"
+      ? request
+      : {
+          ...(request || {}),
+          allowPrivateNetwork: true,
+        };
+  return {
+    ...provider,
+    baseUrl: resolveLmstudioInferenceBase(configuredBaseUrl),
+    request: requestWithPrivateNetworkDefault,
+  };
+}
+
+function isLmstudioNonSecretApiKeyMarker(value) {
+  const normalized = String(value || "").trim();
+  return (
+    normalized === LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER ||
+    (/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(normalized) &&
+      normalized !== "${AWS_SECRET_ACCESS_KEY}")
+  );
+}
+
+function buildLmstudioAuthHeaders(params = {}) {
+  const headers = { ...(params.headers || {}) };
+  const apiKey = normalizeOptionalString(params.apiKey);
+  if (apiKey && !isLmstudioNonSecretApiKeyMarker(apiKey)) {
+    for (const headerName of Object.keys(headers)) {
+      if (headerName.toLowerCase() === "authorization") {
+        delete headers[headerName];
+      }
+    }
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (params.json) {
+    headers["Content-Type"] = "application/json";
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function mapLmstudioWireEntry(entry = {}) {
+  if (entry.type !== "llm") {
+    return null;
+  }
+  const id = normalizeOptionalString(entry.key) || "";
+  if (!id) {
+    return null;
+  }
+  const loadedContextWindow = resolveLoadedContextWindow(entry);
+  const advertisedContextWindow =
+    Number.isFinite(entry.max_context_length) && entry.max_context_length > 0
+      ? Math.floor(entry.max_context_length)
+      : null;
+  const contextWindow = advertisedContextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW;
+  const contextTokens = Math.min(contextWindow, LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH);
+  const displayName = normalizeOptionalString(entry.display_name) || id;
+  const compat = resolveLmstudioReasoningCompat(entry);
+  return {
+    id,
+    displayName,
+    format: entry.format || null,
+    vision: entry.capabilities && entry.capabilities.vision === true,
+    trainedForToolUse:
+      entry.capabilities && entry.capabilities.trained_for_tool_use === true,
+    loaded: loadedContextWindow !== null,
+    reasoning: resolveLmstudioReasoningCapability(entry),
+    input: entry.capabilities && entry.capabilities.vision ? ["text", "image"] : ["text"],
+    cost: SELF_HOSTED_DEFAULT_COST,
+    ...(compat ? { compat } : {}),
+    contextWindow,
+    contextTokens,
+    maxTokens: Math.max(1, Math.min(contextWindow, SELF_HOSTED_DEFAULT_MAX_TOKENS)),
+  };
+}
+
+async function fetchLmstudioModels(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    return { reachable: false, models: [], error: "fetch unavailable" };
+  }
+  const baseUrl = resolveLmstudioServerBase(params.baseUrl);
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v0/models`, {
+      headers: buildLmstudioAuthHeaders({
+        apiKey: params.apiKey,
+        headers: params.headers,
+      }),
+    });
+    if (!response || !response.ok) {
+      return {
+        reachable: false,
+        status: response && response.status,
+        models: [],
+      };
+    }
+    const data = await response.json();
+    return {
+      reachable: true,
+      status: response.status,
+      models: Array.isArray(data && data.data) ? data.data : [],
+    };
+  } catch (error) {
+    return { reachable: false, models: [], error: formatErrorMessage(error) };
+  }
+}
+
+async function discoverLmstudioModels(params = {}) {
+  const fetched = await fetchLmstudioModels(params);
+  return (fetched.models || []).map(mapLmstudioWireEntry).filter(Boolean);
+}
+
+async function ensureLmstudioModelLoaded(params = {}) {
+  return {
+    ok: false,
+    error: "lmstudio-load-unavailable",
+    params,
+  };
+}
+
+async function resolveLmstudioConfiguredApiKey(params = {}) {
+  const providerConfig =
+    params.config &&
+    params.config.models &&
+    params.config.models.providers &&
+    params.config.models.providers[LMSTUDIO_PROVIDER_ID];
+  const apiKeyInput = providerConfig && providerConfig.apiKey;
+  if (apiKeyInput === undefined || apiKeyInput === null) {
+    return undefined;
+  }
+  const normalized = normalizeOptionalString(apiKeyInput);
+  if (!normalized) {
+    return undefined;
+  }
+  if (/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.test(normalized)) {
+    const envName = normalized.slice(2, -1);
+    return params.env && params.env[envName] ? params.env[envName] : undefined;
+  }
+  return normalized;
+}
+
+function resolveLmstudioProviderHeaders(params = {}) {
+  const headers = params.headers || {};
+  const sanitized = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const normalized = normalizeOptionalString(value);
+    if (normalized) {
+      sanitized[key] = normalized;
+    }
+  }
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+async function resolveLmstudioRequestContext(params = {}) {
+  return {
+    apiKey:
+      params.apiKey ||
+      (await resolveLmstudioConfiguredApiKey({
+        config: params.config,
+        env: params.env,
+      })),
+    headers: resolveLmstudioProviderHeaders(params),
+  };
+}
+
+async function resolveLmstudioRuntimeApiKey(params = {}) {
+  return resolveLmstudioConfiguredApiKey({
+    config: params.config,
+    env: params.env,
+  });
+}
+
+const lmstudioRuntime = {
+  LMSTUDIO_DEFAULT_API_KEY_ENV_VAR,
+  LMSTUDIO_DEFAULT_BASE_URL,
+  LMSTUDIO_DEFAULT_EMBEDDING_MODEL,
+  LMSTUDIO_DEFAULT_INFERENCE_BASE_URL,
+  LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH,
+  LMSTUDIO_DEFAULT_MODEL_ID,
+  LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER,
+  LMSTUDIO_MODEL_PLACEHOLDER,
+  LMSTUDIO_PROVIDER_ID,
+  LMSTUDIO_PROVIDER_LABEL,
+  buildLmstudioAuthHeaders,
+  discoverLmstudioModels,
+  ensureLmstudioModelLoaded,
+  fetchLmstudioModels,
+  mapLmstudioWireEntry,
+  normalizeLmstudioProviderConfig,
+  resolveLoadedContextWindow,
+  resolveLmstudioConfiguredApiKey,
+  resolveLmstudioInferenceBase,
+  resolveLmstudioProviderHeaders,
+  resolveLmstudioReasoningCapability,
+  resolveLmstudioRequestContext,
+  resolveLmstudioRuntimeApiKey,
+  resolveLmstudioServerBase,
+};
+
 const configSchemaRuntime = {
   OpenClawSchema,
   validateJsonSchemaValue,
+};
+
+const diffsRuntime = {
+  definePluginEntry,
+  resolvePreferredOpenClawTmpDir,
+};
+
+const ACP_ERROR_CODES = new Set([
+  "ACP_BACKEND_MISSING",
+  "ACP_BACKEND_UNAVAILABLE",
+  "ACP_BACKEND_UNSUPPORTED_CONTROL",
+  "ACP_DISPATCH_DISABLED",
+  "ACP_INVALID_RUNTIME_OPTION",
+  "ACP_SESSION_INIT_FAILED",
+  "ACP_TURN_FAILED",
+]);
+
+class AcpRuntimeError extends Error {
+  constructor(code, message, options = {}) {
+    super(message);
+    this.name = "AcpRuntimeError";
+    this.code = ACP_ERROR_CODES.has(code) ? code : "ACP_TURN_FAILED";
+    if (Object.prototype.hasOwnProperty.call(options, "cause")) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+const acpRuntimeBackendsById = new Map();
+
+function registerAcpRuntimeBackend(backend = {}) {
+  const id = normalizeOptionalLowercaseString(backend.id) || "";
+  if (!id) {
+    throw new Error("ACP runtime backend id is required");
+  }
+  if (!backend.runtime) {
+    throw new Error(`ACP runtime backend "${id}" is missing runtime implementation`);
+  }
+  acpRuntimeBackendsById.set(id, {
+    ...backend,
+    id,
+  });
+}
+
+function unregisterAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  if (!normalized) {
+    return;
+  }
+  acpRuntimeBackendsById.delete(normalized);
+}
+
+function isAcpRuntimeError(value) {
+  return (
+    value instanceof AcpRuntimeError ||
+    (value instanceof Error && typeof value.code === "string" && ACP_ERROR_CODES.has(value.code))
+  );
+}
+
+function isAcpBackendHealthy(backend) {
+  if (!backend || typeof backend.healthy !== "function") {
+    return true;
+  }
+  try {
+    return backend.healthy();
+  } catch {
+    return false;
+  }
+}
+
+function getAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  if (normalized) {
+    return acpRuntimeBackendsById.get(normalized) || null;
+  }
+  if (acpRuntimeBackendsById.size === 0) {
+    return null;
+  }
+  for (const backend of acpRuntimeBackendsById.values()) {
+    if (isAcpBackendHealthy(backend)) {
+      return backend;
+    }
+  }
+  return acpRuntimeBackendsById.values().next().value || null;
+}
+
+function requireAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  const backend = getAcpRuntimeBackend(normalized || undefined);
+  if (!backend) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_MISSING",
+      "ACP runtime backend is not configured. Install and enable the acpx runtime plugin.",
+    );
+  }
+  if (!isAcpBackendHealthy(backend)) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_UNAVAILABLE",
+      "ACP runtime backend is currently unavailable. Try again in a moment.",
+    );
+  }
+  if (normalized && backend.id !== normalized) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_MISSING",
+      `ACP runtime backend "${normalized}" is not registered.`,
+    );
+  }
+  return backend;
+}
+
+function hasExplicitCommandCandidateForAcp(ctx = {}) {
+  const commandBody = normalizeOptionalString(ctx.CommandBody);
+  if (commandBody) {
+    return true;
+  }
+  const normalized = normalizeOptionalString(ctx.BodyForCommands);
+  return Boolean(normalized && (normalized.startsWith("!") || normalized.startsWith("/")));
+}
+
+async function tryDispatchAcpReplyHook(event = {}, ctx = {}) {
+  if (
+    event.sendPolicy === "deny" &&
+    !event.suppressUserDelivery &&
+    !hasExplicitCommandCandidateForAcp(event.ctx || {}) &&
+    !event.isTailDispatch
+  ) {
+    return undefined;
+  }
+  return {
+    handled: false,
+    reason: "acp-dispatch-unavailable",
+  };
+}
+
+let acpSessionManagerSingleton = null;
+
+function getAcpSessionManager() {
+  if (!acpSessionManagerSingleton) {
+    acpSessionManagerSingleton = {
+      createdAt: new Date().toISOString(),
+      sessions: new Map(),
+    };
+  }
+  return acpSessionManagerSingleton;
+}
+
+function resetAcpSessionManagerForTests() {
+  acpSessionManagerSingleton = null;
+}
+
+function setAcpSessionManagerForTests(manager) {
+  acpSessionManagerSingleton = manager || null;
+}
+
+function resetAcpRuntimeBackendsForTests() {
+  acpRuntimeBackendsById.clear();
+}
+
+function getAcpRuntimeRegistryGlobalStateForTests() {
+  return {
+    backendsById: acpRuntimeBackendsById,
+  };
+}
+
+const acpRuntimeTesting = {
+  getAcpRuntimeRegistryGlobalStateForTests,
+  resetAcpRuntimeBackendsForTests,
+  resetAcpSessionManagerForTests,
+  setAcpSessionManagerForTests,
+};
+
+function resolveAcpSessionStorePath(cfg = {}) {
+  const store = cfg && cfg.session && cfg.session.store;
+  if (typeof store === "string" && store.trim()) {
+    return store.trim();
+  }
+  if (store && typeof store.path === "string" && store.path.trim()) {
+    return store.path.trim();
+  }
+  return path.join(os.tmpdir(), "openclaw", "sessions.json");
+}
+
+function resolveAcpStoreSessionKey(store, sessionKey) {
+  const normalized = String(sessionKey || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (store && Object.prototype.hasOwnProperty.call(store, normalized)) {
+    return normalized;
+  }
+  const lower = normalizeLowercaseStringOrEmpty(normalized);
+  if (store && Object.prototype.hasOwnProperty.call(store, lower)) {
+    return lower;
+  }
+  for (const key of Object.keys(store || {})) {
+    if (normalizeLowercaseStringOrEmpty(key) === lower) {
+      return key;
+    }
+  }
+  return lower;
+}
+
+function readAcpSessionEntry(params = {}) {
+  const sessionKey = String(params.sessionKey || "").trim();
+  if (!sessionKey) {
+    return null;
+  }
+  const cfg = params.cfg || {};
+  const storePath = resolveAcpSessionStorePath(cfg);
+  let store = {};
+  let storeReadFailed = false;
+  try {
+    const raw = fs.readFileSync(storePath, "utf8");
+    const parsed = JSON.parse(raw);
+    store = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    storeReadFailed = true;
+  }
+  const storeSessionKey = resolveAcpStoreSessionKey(store, sessionKey);
+  const entry = store[storeSessionKey];
+  return {
+    cfg,
+    storePath,
+    sessionKey,
+    storeSessionKey,
+    ...(entry ? { entry, acp: entry.acp } : {}),
+    ...(storeReadFailed ? { storeReadFailed: true } : {}),
+  };
+}
+
+function acpSessionMatchesConfiguredBinding(params = {}) {
+  const meta = params.meta || {};
+  const spec = params.spec || {};
+  const cfg = params.cfg || {};
+  if (meta.state === "error") {
+    return false;
+  }
+  const desiredAgent = normalizeLowercaseStringOrEmpty(spec.acpAgentId || spec.agentId);
+  const currentAgent = normalizeLowercaseStringOrEmpty(meta.agent);
+  if (!currentAgent || currentAgent !== desiredAgent) {
+    return false;
+  }
+  if (meta.mode !== spec.mode) {
+    return false;
+  }
+  const desiredBackend =
+    normalizeAcpBindingText(spec.backend) ||
+    normalizeAcpBindingText(cfg && cfg.acp && cfg.acp.backend) ||
+    "";
+  if (desiredBackend) {
+    const currentBackend = String(meta.backend || "").trim();
+    if (!currentBackend || currentBackend !== desiredBackend) {
+      return false;
+    }
+  }
+  const desiredCwd = normalizeAcpBindingText(spec.cwd);
+  if (desiredCwd !== undefined) {
+    const runtimeOptions = meta.runtimeOptions || {};
+    const currentCwd = String(runtimeOptions.cwd || meta.cwd || "").trim();
+    if (desiredCwd !== currentCwd) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function ensureConfiguredAcpBindingSession(params = {}) {
+  const cfg = params.cfg || {};
+  const spec = params.spec || {};
+  const sessionKey = buildConfiguredAcpSessionKey(spec);
+  const acpManager = getAcpSessionManager();
+  try {
+    const resolution =
+      typeof acpManager.resolveSession === "function"
+        ? acpManager.resolveSession({ cfg, sessionKey })
+        : { kind: "none" };
+    if (
+      resolution &&
+      resolution.kind === "ready" &&
+      acpSessionMatchesConfiguredBinding({
+        cfg,
+        spec,
+        meta: resolution.meta,
+      })
+    ) {
+      return {
+        ok: true,
+        sessionKey,
+      };
+    }
+    if (resolution && resolution.kind !== "none" && typeof acpManager.closeSession === "function") {
+      await acpManager.closeSession({
+        cfg,
+        sessionKey,
+        reason: "config-binding-reconfigure",
+        clearMeta: false,
+        allowBackendUnavailable: true,
+        requireAcpSession: false,
+      });
+    }
+    if (typeof acpManager.initializeSession !== "function") {
+      throw new Error("ACP session manager is missing initializeSession");
+    }
+    await acpManager.initializeSession({
+      cfg,
+      sessionKey,
+      agent: spec.acpAgentId || spec.agentId,
+      mode: spec.mode,
+      cwd: spec.cwd,
+      backendId: spec.backend,
+    });
+    return {
+      ok: true,
+      sessionKey,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      sessionKey,
+      error: formatErrorMessage(error),
+    };
+  }
+}
+
+async function ensureConfiguredAcpBindingReady(params = {}) {
+  if (!params.configuredBinding) {
+    return { ok: true };
+  }
+  const ensured = await ensureConfiguredAcpBindingSession({
+    cfg: params.cfg || {},
+    spec: params.configuredBinding.spec,
+  });
+  if (ensured.ok) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: ensured.error || "unknown error",
+  };
+}
+
+const acpRuntimeBackendRuntime = {
+  AcpRuntimeError,
+  getAcpRuntimeBackend,
+  isAcpRuntimeError,
+  registerAcpRuntimeBackend,
+  requireAcpRuntimeBackend,
+  tryDispatchAcpReplyHook,
+  unregisterAcpRuntimeBackend,
+};
+
+const acpRuntimeRuntime = {
+  ...acpRuntimeBackendRuntime,
+  __testing: acpRuntimeTesting,
+  getAcpSessionManager,
+  readAcpSessionEntry,
+};
+
+const acpBindingRuntime = {
+  ensureConfiguredAcpBindingReady,
+  resolveConfiguredAcpBindingRecord,
+};
+
+const acpxRuntime = {
+  AcpRuntimeError,
+  applyWindowsSpawnProgramPolicy,
+  listKnownProviderAuthEnvVarNames,
+  materializeWindowsSpawnProgram,
+  omitEnvKeysCaseInsensitive,
+  registerAcpRuntimeBackend,
+  resolveWindowsSpawnProgramCandidate,
+  unregisterAcpRuntimeBackend,
+};
+
+const pluginSdkEntrypoints = [
+  "index",
+  "core",
+  "lmstudio",
+  "lmstudio-runtime",
+  "provider-setup",
+  "sandbox",
+  "self-hosted-provider-setup",
+  "routing",
+  "runtime",
+  "runtime-doctor",
+  "runtime-env",
+  "runtime-logger",
+  "proxy-capture",
+  "runtime-secret-resolution",
+  "setup",
+  "setup-adapter-runtime",
+  "setup-runtime",
+  "channel-setup",
+  "channel-streaming",
+  "setup-tools",
+  "approval-auth-runtime",
+  "approval-client-runtime",
+  "approval-delivery-runtime",
+  "approval-gateway-runtime",
+  "approval-handler-adapter-runtime",
+  "approval-handler-runtime",
+  "channel-runtime-context",
+  "approval-native-runtime",
+  "approval-reply-runtime",
+  "approval-runtime",
+  "config-runtime",
+  "config-types",
+  "plugin-config-runtime",
+  "config-mutation",
+  "cron-store-runtime",
+  "config-schema",
+  "reply-runtime",
+  "reply-dedupe",
+  "reply-dispatch-runtime",
+  "reply-reference",
+  "reply-chunking",
+  "reply-payload",
+  "agent-media-payload",
+  "inbound-reply-dispatch",
+  "inbound-envelope",
+  "channel-reply-pipeline",
+  "channel-reply-options-runtime",
+  "channel-runtime",
+  "interactive-runtime",
+  "outbound-media",
+  "outbound-send-deps",
+  "outbound-runtime",
+  "poll-runtime",
+  "async-lock-runtime",
+  "channel-activity-runtime",
+  "concurrency-runtime",
+  "dedupe-runtime",
+  "delivery-queue-runtime",
+  "file-access-runtime",
+  "heartbeat-runtime",
+  "number-runtime",
+  "secure-random-runtime",
+  "system-event-runtime",
+  "transport-ready-runtime",
+  "infra-runtime",
+  "runtime-config-snapshot",
+  "runtime-group-policy",
+  "model-session-runtime",
+  "talk-config-runtime",
+  "ssrf-policy",
+  "ssrf-runtime",
+  "media-runtime",
+  "media-store",
+  "media-mime",
+  "media-generation-runtime",
+  "conversation-binding-runtime",
+  "conversation-runtime",
+  "thread-bindings-runtime",
+  "thread-bindings-session-runtime",
+  "text-runtime",
+  "text-chunking",
+  "agent-runtime",
+  "simple-completion-runtime",
+  "speech-core",
+  "tts-runtime",
+  "plugin-runtime",
+  "skills-runtime",
+  "channel-secret-basic-runtime",
+  "channel-secret-runtime",
+  "channel-secret-tts-runtime",
+  "secret-ref-runtime",
+  "secret-file-runtime",
+  "security-runtime",
+  "gateway-runtime",
+  "cli-runtime",
+  "cli-backend",
+  "agent-harness",
+  "agent-harness-runtime",
+  "hook-runtime",
+  "host-runtime",
+  "process-runtime",
+  "windows-spawn",
+  "acp-runtime",
+  "acp-runtime-backend",
+  "acp-binding-runtime",
+  "acp-binding-resolve-runtime",
+  "lazy-runtime",
+  "agent-runtime-test-contracts",
+  "channel-target-testing",
+  "channel-test-helpers",
+  "plugin-test-api",
+  "plugin-test-contracts",
+  "plugin-test-runtime",
+  "provider-http-test-mocks",
+  "provider-test-contracts",
+  "test-env",
+  "test-fixtures",
+  "test-node-mocks",
+  "testing",
+  "temp-path",
+  "time-runtime",
+  "logging-core",
+  "migration",
+  "migration-runtime",
+  "markdown-table-runtime",
+  "account-helpers",
+  "account-core",
+  "account-id",
+  "account-resolution",
+  "account-resolution-runtime",
+  "agent-config-primitives",
+  "allow-from",
+  "allowlist-config-edit",
+  "browser-config",
+  "boolean-param",
+  "channel-contract-testing",
+  "dangerous-name-runtime",
+  "command-auth",
+  "command-auth-native",
+  "command-gating",
+  "command-primitives-runtime",
+  "command-status",
+  "command-status-runtime",
+  "command-detection",
+  "command-surface",
+  "collection-runtime",
+  "compat",
+  "direct-dm",
+  "direct-dm-access",
+  "direct-dm-guard-policy",
+  "discord",
+  "device-bootstrap",
+  "diagnostic-runtime",
+  "error-runtime",
+  "extension-shared",
+  "channel-config-helpers",
+  "channel-config-writes",
+  "channel-config-primitives",
+  "channel-config-schema",
+  "bundled-channel-config-schema",
+  "channel-config-schema-legacy",
+  "channel-actions",
+  "channel-plugin-common",
+  "channel-core",
+  "channel-entry-contract",
+  "channel-contract",
+  "channel-envelope",
+  "channel-feedback",
+  "channel-inbound",
+  "channel-inbound-debounce",
+  "channel-inbound-roots",
+  "channel-logging",
+  "channel-location",
+  "channel-mention-gating",
+  "channel-lifecycle",
+  "channel-pairing",
+  "channel-pairing-paths",
+  "channel-policy",
+  "channel-send-result",
+  "channel-route",
+  "channel-targets",
+  "context-visibility-runtime",
+  "file-lock",
+  "fetch-runtime",
+  "runtime-fetch",
+  "response-limit-runtime",
+  "session-binding-runtime",
+  "session-key-runtime",
+  "session-store-runtime",
+  "session-transcript-hit",
+  "session-visibility",
+  "ssrf-dispatcher",
+  "string-coerce-runtime",
+  "group-activation",
+  "group-access",
+  "global-singleton",
+  "directory-config-runtime",
+  "directory-runtime",
+  "media-generation-runtime-shared",
+  "image-generation",
+  "image-generation-runtime",
+  "image-generation-core",
+  "music-generation",
+  "music-generation-core",
+  "video-generation",
+  "video-generation-runtime",
+  "video-generation-core",
+  "reply-history",
+  "realtime-transcription",
+  "realtime-voice",
+  "media-understanding",
+  "media-understanding-runtime",
+  "messaging-targets",
+  "request-url",
+  "runtime-store",
+  "json-store",
+  "persistent-dedupe",
+  "keyed-async-queue",
+  "qa-runner-runtime",
+  "memory-core-engine-runtime",
+  "memory-core-host-engine-embeddings",
+  "memory-core-host-engine-foundation",
+  "memory-core-host-engine-qmd",
+  "memory-core-host-engine-storage",
+  "memory-core-host-multimodal",
+  "memory-core-host-query",
+  "memory-core-host-secret",
+  "memory-core-host-events",
+  "memory-core-host-status",
+  "memory-core-host-runtime-cli",
+  "memory-core-host-runtime-core",
+  "memory-core-host-runtime-files",
+  "memory-host-core",
+  "memory-host-events",
+  "memory-host-files",
+  "memory-host-markdown",
+  "memory-host-search",
+  "memory-host-status",
+  "models-provider-runtime",
+  "skill-commands-runtime",
+  "native-command-config-runtime",
+  "native-command-registry",
+  "provider-auth",
+  "provider-auth-runtime",
+  "provider-auth-api-key",
+  "provider-auth-result",
+  "provider-auth-login",
+  "provider-selection-runtime",
+  "plugin-entry",
+  "provider-catalog-runtime",
+  "provider-catalog-shared",
+  "provider-entry",
+  "provider-env-vars",
+  "provider-http",
+  "provider-model-types",
+  "provider-model-shared",
+  "provider-onboard",
+  "provider-stream-family",
+  "provider-stream-shared",
+  "provider-transport-runtime",
+  "provider-stream",
+  "provider-tools",
+  "provider-usage",
+  "document-extractor",
+  "web-content-extractor",
+  "provider-web-fetch-contract",
+  "provider-web-fetch",
+  "provider-web-search-config-contract",
+  "provider-web-search-contract",
+  "provider-web-search",
+  "retry-runtime",
+  "run-command",
+  "param-readers",
+  "provider-zai-endpoint",
+  "secret-input",
+  "secret-input-runtime",
+  "channel-status",
+  "status-helpers",
+  "speech",
+  "string-normalization-runtime",
+  "state-paths",
+  "target-resolver-runtime",
+  "telegram-account",
+  "telegram-command-config",
+  "text-autolink-runtime",
+  "tool-payload",
+  "tool-send",
+  "webhook-ingress",
+  "webhook-targets",
+  "webhook-request-guards",
+  "webhook-path",
+  "web-media",
+  "zalouser",
+  "zod",
+];
+
+const pluginSdkSubpaths = pluginSdkEntrypoints.filter((entry) => entry !== "index");
+const reservedBundledPluginSdkEntrypoints = [];
+const supportedBundledFacadeSdkEntrypoints = [
+  "discord",
+  "lmstudio",
+  "lmstudio-runtime",
+  "memory-core-engine-runtime",
+  "qa-runner-runtime",
+  "telegram-account",
+  "tts-runtime",
+  "zalouser",
+];
+const publicPluginOwnedSdkEntrypoints = [
+  "browser-config",
+  "image-generation-core",
+  "memory-core-host-engine-embeddings",
+  "memory-core-host-engine-foundation",
+  "memory-core-host-engine-qmd",
+  "memory-core-host-engine-storage",
+  "memory-core-host-events",
+  "memory-core-host-multimodal",
+  "memory-core-host-query",
+  "memory-core-host-runtime-cli",
+  "memory-core-host-runtime-core",
+  "memory-core-host-runtime-files",
+  "memory-core-host-secret",
+  "memory-core-host-status",
+  "memory-host-core",
+  "memory-host-events",
+  "memory-host-files",
+  "memory-host-markdown",
+  "memory-host-search",
+  "memory-host-status",
+  "speech-core",
+  "telegram-command-config",
+  "video-generation-core",
+];
+
+function buildPluginSdkEntrySources(entries = pluginSdkEntrypoints) {
+  return Object.fromEntries(entries.map((entry) => [entry, `src/plugin-sdk/${entry}.ts`]));
+}
+
+function buildPluginSdkSpecifiers() {
+  return pluginSdkEntrypoints.map((entry) =>
+    entry === "index" ? "openclaw/plugin-sdk" : `openclaw/plugin-sdk/${entry}`,
+  );
+}
+
+function buildPluginSdkPackageExports() {
+  return Object.fromEntries(
+    pluginSdkEntrypoints.map((entry) => [
+      entry === "index" ? "./plugin-sdk" : `./plugin-sdk/${entry}`,
+      {
+        types: `./dist/plugin-sdk/${entry}.d.ts`,
+        default: `./dist/plugin-sdk/${entry}.js`,
+      },
+    ]),
+  );
+}
+
+function listPluginSdkDistArtifacts() {
+  return pluginSdkEntrypoints.flatMap((entry) => [
+    `dist/plugin-sdk/${entry}.js`,
+    `dist/plugin-sdk/${entry}.d.ts`,
+  ]);
+}
+
+const entrypointsRuntime = {
+  buildPluginSdkEntrySources,
+  buildPluginSdkPackageExports,
+  buildPluginSdkSpecifiers,
+  listPluginSdkDistArtifacts,
+  pluginSdkEntrypoints,
+  pluginSdkSubpaths,
+  publicPluginOwnedSdkEntrypoints,
+  reservedBundledPluginSdkEntrypoints,
+  supportedBundledFacadeSdkEntrypoints,
 };
 
 const typeOnlyPluginSdkRuntime = Object.freeze({});
@@ -45191,6 +47407,28 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return runtimeFetchRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/provider-setup" ||
+    request === "@openclaw/plugin-sdk/provider-setup" ||
+    request === "openclaw/plugin-sdk/self-hosted-provider-setup" ||
+    request === "@openclaw/plugin-sdk/self-hosted-provider-setup"
+  ) {
+    return providerSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lmstudio" ||
+    request === "@openclaw/plugin-sdk/lmstudio" ||
+    request === "openclaw/plugin-sdk/lmstudio-runtime" ||
+    request === "@openclaw/plugin-sdk/lmstudio-runtime"
+  ) {
+    return lmstudioRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-doctor" ||
+    request === "@openclaw/plugin-sdk/runtime-doctor"
+  ) {
+    return runtimeDoctorRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/fetch-runtime" ||
     request === "@openclaw/plugin-sdk/fetch-runtime"
   ) {
@@ -45203,10 +47441,52 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return cliBackendRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/cli-runtime" ||
+    request === "@openclaw/plugin-sdk/cli-runtime"
+  ) {
+    return cliRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/config-schema" ||
     request === "@openclaw/plugin-sdk/config-schema"
   ) {
     return configSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/entrypoints" ||
+    request === "@openclaw/plugin-sdk/entrypoints"
+  ) {
+    return entrypointsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/diffs" ||
+    request === "@openclaw/plugin-sdk/diffs"
+  ) {
+    return diffsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acpx" ||
+    request === "@openclaw/plugin-sdk/acpx"
+  ) {
+    return acpxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-runtime-backend" ||
+    request === "@openclaw/plugin-sdk/acp-runtime-backend"
+  ) {
+    return acpRuntimeBackendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-runtime"
+  ) {
+    return acpRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-binding-runtime"
+  ) {
+    return acpBindingRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;

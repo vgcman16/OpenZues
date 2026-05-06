@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~88.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~89.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1030,6 +1030,53 @@ may lag behind this tracker.
   JSON Schema value validation with required/additional-property, enum
   allowed-values, and default-application behavior.
   - Status: checkpointed in `ae5489b2`
+
+- [x] Imported plugin SDK entrypoints shim for canonical SDK entrypoint/subpath
+  arrays, bundled-facade/public-owned entrypoint lists, source/specifier/export
+  map builders, and expected dist artifact listing.
+  - Status: checkpointed in `bd810f14`
+
+- [x] Imported plugin SDK diffs shim for the narrow bundled-diffs helper
+  surface, preserving exact `definePluginEntry` / temp-dir exports and cached
+  lazy config-schema default behavior.
+  - Status: checkpointed in `008c6120`
+
+- [x] Imported plugin SDK ACPX shim for `AcpRuntimeError`, ACP backend
+  registration/removal, Windows spawn helper exports, and provider-auth env
+  filtering helpers.
+  - Status: checkpointed in `c7541c95`
+
+- [x] Imported plugin SDK ACP runtime backend shim for ACP runtime error checks,
+  backend lookup/require/registration/removal, and lightweight reply-hook
+  early-return behavior.
+  - Status: checkpointed in `4833176b`
+
+- [x] Imported plugin SDK ACP runtime facade shim for the ACP session-manager
+  singleton, test-helper proxy surface, session-store entry reads, and shared
+  ACP backend/error/reply-hook exports.
+  - Status: checkpointed in `44166f55`
+
+- [x] Imported plugin SDK ACP binding runtime shim for configured ACP binding
+  resolution plus readiness ensure behavior through an injected ACP session
+  manager.
+  - Status: checkpointed in `37b428c1`
+
+- [x] Imported plugin SDK CLI runtime shim for command formatting, duration
+  parsing, parent-option inheritance, help examples, command-group
+  registration, command runtime error handling, argv invocation projection,
+  lazy-subcommand policy, note/theme helpers, and version metadata.
+  - Status: checkpointed in `c052ce13`
+
+- [x] Imported plugin SDK runtime-doctor shim for dangerous-name scope
+  collection, legacy streaming/channel alias normalization, custom-path install
+  issue detection/formatting, and pure plugin config uninstall mutation.
+  - Status: checkpointed in `1a917206`
+
+- [x] Imported plugin SDK provider-setup/self-hosted-provider-setup shim for
+  self-hosted defaults, default model patching, OpenAI-compatible local
+  discovery guards, provider discovery projection, interactive auth-result
+  helpers, and non-interactive model/auth-profile/default-model config updates.
+  - Status: checkpointed in `25ad92b6`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

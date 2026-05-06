@@ -32205,6 +32205,2118 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_entrypoints_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-entrypoints.cjs"
+    runtime_entry.write_text(
+        """
+const entrypoints = require("openclaw/plugin-sdk/entrypoints");
+const scopedEntryPoints = require("@openclaw/plugin-sdk/entrypoints");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.entrypoints",
+      description: "Use OpenClaw entrypoints SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const sources = entrypoints.buildPluginSdkEntrySources();
+        const customSources = entrypoints.buildPluginSdkEntrySources([
+          "index",
+          "config-schema"
+        ]);
+        const specifiers = entrypoints.buildPluginSdkSpecifiers();
+        const packageExports = entrypoints.buildPluginSdkPackageExports();
+        const artifacts = entrypoints.listPluginSdkDistArtifacts();
+        return {
+          keys: Object.keys(entrypoints).sort(),
+          scopedType: typeof scopedEntryPoints.buildPluginSdkSpecifiers,
+          counts: {
+            entrypoints: entrypoints.pluginSdkEntrypoints.length,
+            subpaths: entrypoints.pluginSdkSubpaths.length,
+            specifiers: specifiers.length,
+            exports: Object.keys(packageExports).length,
+            artifacts: artifacts.length
+          },
+          first: entrypoints.pluginSdkEntrypoints.slice(0, 5),
+          last: entrypoints.pluginSdkEntrypoints.slice(-5),
+          indexExcluded: !entrypoints.pluginSdkSubpaths.includes("index"),
+          configSchemaIncluded: entrypoints.pluginSdkSubpaths.includes("config-schema"),
+          facadeEntrypoints: entrypoints.supportedBundledFacadeSdkEntrypoints,
+          publicOwnedHasMemory: entrypoints.publicPluginOwnedSdkEntrypoints.includes(
+            "memory-host-search"
+          ),
+          reserved: entrypoints.reservedBundledPluginSdkEntrypoints,
+          specifierSamples: [
+            specifiers[0],
+            specifiers[specifiers.indexOf("openclaw/plugin-sdk/config-schema")],
+            specifiers[specifiers.length - 1]
+          ],
+          sources: {
+            index: sources.index,
+            configSchema: sources["config-schema"],
+            custom: customSources
+          },
+          exports: {
+            index: packageExports["./plugin-sdk"],
+            configSchema: packageExports["./plugin-sdk/config-schema"]
+          },
+          artifactSamples: [
+            artifacts[0],
+            artifacts[1],
+            artifacts[artifacts.length - 2],
+            artifacts[artifacts.length - 1]
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-entrypoints-plugin",
+                    "name": "Runtime Entrypoints Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-entrypoints-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.entrypoints"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.entrypoints", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildPluginSdkEntrySources",
+            "buildPluginSdkPackageExports",
+            "buildPluginSdkSpecifiers",
+            "listPluginSdkDistArtifacts",
+            "pluginSdkEntrypoints",
+            "pluginSdkSubpaths",
+            "publicPluginOwnedSdkEntrypoints",
+            "reservedBundledPluginSdkEntrypoints",
+            "supportedBundledFacadeSdkEntrypoints",
+        ],
+        "scopedType": "function",
+        "counts": {
+            "entrypoints": 294,
+            "subpaths": 293,
+            "specifiers": 294,
+            "exports": 294,
+            "artifacts": 588,
+        },
+        "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
+        "last": [
+            "webhook-request-guards",
+            "webhook-path",
+            "web-media",
+            "zalouser",
+            "zod",
+        ],
+        "indexExcluded": True,
+        "configSchemaIncluded": True,
+        "facadeEntrypoints": [
+            "discord",
+            "lmstudio",
+            "lmstudio-runtime",
+            "memory-core-engine-runtime",
+            "qa-runner-runtime",
+            "telegram-account",
+            "tts-runtime",
+            "zalouser",
+        ],
+        "publicOwnedHasMemory": True,
+        "reserved": [],
+        "specifierSamples": [
+            "openclaw/plugin-sdk",
+            "openclaw/plugin-sdk/config-schema",
+            "openclaw/plugin-sdk/zod",
+        ],
+        "sources": {
+            "index": "src/plugin-sdk/index.ts",
+            "configSchema": "src/plugin-sdk/config-schema.ts",
+            "custom": {
+                "index": "src/plugin-sdk/index.ts",
+                "config-schema": "src/plugin-sdk/config-schema.ts",
+            },
+        },
+        "exports": {
+            "index": {
+                "types": "./dist/plugin-sdk/index.d.ts",
+                "default": "./dist/plugin-sdk/index.js",
+            },
+            "configSchema": {
+                "types": "./dist/plugin-sdk/config-schema.d.ts",
+                "default": "./dist/plugin-sdk/config-schema.js",
+            },
+        },
+        "artifactSamples": [
+            "dist/plugin-sdk/index.js",
+            "dist/plugin-sdk/index.d.ts",
+            "dist/plugin-sdk/zod.js",
+            "dist/plugin-sdk/zod.d.ts",
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_diffs_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-diffs.cjs"
+    runtime_entry.write_text(
+        """
+const diffs = require("openclaw/plugin-sdk/diffs");
+const scopedDiffs = require("@openclaw/plugin-sdk/diffs");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.diffs",
+      description: "Use OpenClaw diffs SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        let schemaCalls = 0;
+        const schema = { tag: "schema" };
+        const entry = diffs.definePluginEntry({
+          id: "diffs-test",
+          name: "Diffs Test",
+          description: "Diff helper proof",
+          configSchema() {
+            schemaCalls += 1;
+            return schema;
+          },
+          register() {}
+        });
+        const firstSchema = entry.configSchema;
+        const secondSchema = entry.configSchema;
+        const defaultEntry = diffs.definePluginEntry({
+          id: "diffs-default",
+          name: "Diffs Default",
+          description: "Default config schema proof",
+          register() {}
+        });
+        return {
+          keys: Object.keys(diffs).sort(),
+          scopedType: typeof scopedDiffs.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            schemaCalls,
+            sameSchema: firstSchema === secondSchema,
+            registerType: typeof entry.register
+          },
+          defaultConfig: [
+            defaultEntry.configSchema.safeParse(undefined).success,
+            defaultEntry.configSchema.safeParse({}).success,
+            defaultEntry.configSchema.safeParse({ unexpected: true }).success
+          ],
+          tmpDirSuffix: diffs.resolvePreferredOpenClawTmpDir({
+            tmpdir: () => "C:/runtime-temp"
+          }).replace(/\\\\/g, "/")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-diffs-plugin",
+                    "name": "Runtime Diffs Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-diffs-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.diffs"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.diffs", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry", "resolvePreferredOpenClawTmpDir"],
+        "scopedType": "function",
+        "entry": {
+            "id": "diffs-test",
+            "name": "Diffs Test",
+            "description": "Diff helper proof",
+            "schemaCalls": 1,
+            "sameSchema": True,
+            "registerType": "function",
+        },
+        "defaultConfig": [True, True, False],
+        "tmpDirSuffix": "C:/runtime-temp/openclaw",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acpx_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acpx.cjs"
+    runtime_entry.write_text(
+        """
+const acpx = require("openclaw/plugin-sdk/acpx");
+const scopedAcpx = require("@openclaw/plugin-sdk/acpx");
+
+function captureMessage(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return error.message;
+  }
+  return null;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acpx",
+      description: "Use OpenClaw ACPX SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cause = new Error("root cause");
+        const runtimeError = new acpx.AcpRuntimeError(
+          "ACP_BACKEND_MISSING",
+          "ACP runtime missing",
+          { cause }
+        );
+        const missingIdError = captureMessage(() =>
+          acpx.registerAcpRuntimeBackend({ id: "  ", runtime: {} })
+        );
+        const missingRuntimeError = captureMessage(() =>
+          acpx.registerAcpRuntimeBackend({ id: "test-backend" })
+        );
+        acpx.registerAcpRuntimeBackend({
+          id: " Test-Backend ",
+          runtime: { id: "runtime" },
+          healthy: () => true
+        });
+        acpx.unregisterAcpRuntimeBackend("TEST-BACKEND");
+        const candidate = acpx.resolveWindowsSpawnProgramCandidate({
+          platform: "win32",
+          command: "C:/tools/runtime.mjs",
+          execPath: "C:/node/node.exe",
+          env: {}
+        });
+        const program = acpx.applyWindowsSpawnProgramPolicy({
+          candidate,
+          allowShellFallback: false
+        });
+        const wrapperError = captureMessage(() =>
+          acpx.applyWindowsSpawnProgramPolicy({
+            candidate: {
+              command: "C:/tools/openclaw.cmd",
+              leadingArgv: [],
+              resolution: "unresolved-wrapper"
+            },
+            allowShellFallback: false
+          })
+        );
+        const shellFallback = acpx.applyWindowsSpawnProgramPolicy({
+          candidate: {
+            command: "C:/tools/openclaw.cmd",
+            leadingArgv: [],
+            resolution: "unresolved-wrapper"
+          },
+          allowShellFallback: true
+        });
+        return {
+          keys: Object.keys(acpx).sort(),
+          scopedType: typeof scopedAcpx.AcpRuntimeError,
+          runtimeError: {
+            name: runtimeError.name,
+            code: runtimeError.code,
+            message: runtimeError.message,
+            causeMessage: runtimeError.cause && runtimeError.cause.message
+          },
+          registrationErrors: [missingIdError, missingRuntimeError],
+          spawn: {
+            candidate,
+            program,
+            materialized: acpx.materializeWindowsSpawnProgram(program, ["--flag"]),
+            wrapperError,
+            shellFallback
+          },
+          env: {
+            hasOpenAi: acpx.listKnownProviderAuthEnvVarNames().includes("OPENAI_API_KEY"),
+            omitted: acpx.omitEnvKeysCaseInsensitive(
+              { OPENAI_API_KEY: "hide", Path: "keep", token: "remove" },
+              ["openai_api_key", "TOKEN"]
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acpx-plugin",
+                    "name": "Runtime ACPX Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acpx-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acpx"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acpx", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "applyWindowsSpawnProgramPolicy",
+            "listKnownProviderAuthEnvVarNames",
+            "materializeWindowsSpawnProgram",
+            "omitEnvKeysCaseInsensitive",
+            "registerAcpRuntimeBackend",
+            "resolveWindowsSpawnProgramCandidate",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "scopedType": "function",
+        "runtimeError": {
+            "name": "AcpRuntimeError",
+            "code": "ACP_BACKEND_MISSING",
+            "message": "ACP runtime missing",
+            "causeMessage": "root cause",
+        },
+        "registrationErrors": [
+            "ACP runtime backend id is required",
+            'ACP runtime backend "test-backend" is missing runtime implementation',
+        ],
+        "spawn": {
+            "candidate": {
+                "command": "C:/node/node.exe",
+                "leadingArgv": ["C:/tools/runtime.mjs"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "program": {
+                "command": "C:/node/node.exe",
+                "leadingArgv": ["C:/tools/runtime.mjs"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "materialized": {
+                "command": "C:/node/node.exe",
+                "argv": ["C:/tools/runtime.mjs", "--flag"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "wrapperError": (
+                "openclaw.cmd wrapper resolved, but no executable/Node entrypoint "
+                "could be resolved without shell execution."
+            ),
+            "shellFallback": {
+                "command": "C:/tools/openclaw.cmd",
+                "leadingArgv": [],
+                "resolution": "shell-fallback",
+                "shell": True,
+            },
+        },
+        "env": {
+            "hasOpenAi": True,
+            "omitted": {"Path": "keep"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_runtime_backend_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-runtime-backend.cjs"
+    runtime_entry.write_text(
+        """
+const acp = require("openclaw/plugin-sdk/acp-runtime-backend");
+const scopedAcp = require("@openclaw/plugin-sdk/acp-runtime-backend");
+
+function captureError(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return {
+      name: error.name,
+      code: error.code,
+      message: error.message,
+      isAcp: acp.isAcpRuntimeError(error)
+    };
+  }
+  return null;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_backend",
+      description: "Use OpenClaw ACP runtime backend SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        acp.unregisterAcpRuntimeBackend("healthy");
+        acp.unregisterAcpRuntimeBackend("unhealthy");
+        const missing = captureError(() => acp.requireAcpRuntimeBackend("missing"));
+        acp.registerAcpRuntimeBackend({
+          id: " Unhealthy ",
+          runtime: { id: "unhealthy-runtime" },
+          healthy: () => false
+        });
+        const unhealthyLookup = acp.getAcpRuntimeBackend("UNHEALTHY");
+        const unhealthy = captureError(() => acp.requireAcpRuntimeBackend("unhealthy"));
+        acp.unregisterAcpRuntimeBackend("unhealthy");
+        acp.registerAcpRuntimeBackend({
+          id: " Healthy ",
+          runtime: { id: "healthy-runtime" },
+          healthy: () => true
+        });
+        const anyBackend = acp.getAcpRuntimeBackend();
+        const explicitBackend = acp.requireAcpRuntimeBackend("HEALTHY");
+        const foreign = new Error("foreign ACP");
+        foreign.code = "ACP_TURN_FAILED";
+        const earlyHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "hello there" }
+          },
+          { cfg: {} }
+        );
+        const commandHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "/status" }
+          },
+          { cfg: {} }
+        );
+        acp.unregisterAcpRuntimeBackend("healthy");
+        return {
+          keys: Object.keys(acp).sort(),
+          scopedType: typeof scopedAcp.requireAcpRuntimeBackend,
+          errors: { missing, unhealthy },
+          unhealthyLookup: {
+            id: unhealthyLookup && unhealthyLookup.id,
+            runtimeId: unhealthyLookup && unhealthyLookup.runtime.id
+          },
+          resolved: {
+            anyId: anyBackend && anyBackend.id,
+            explicitId: explicitBackend.id,
+            runtimeId: explicitBackend.runtime.id
+          },
+          errorChecks: [
+            acp.isAcpRuntimeError(new acp.AcpRuntimeError(
+              "ACP_BACKEND_MISSING",
+              "missing"
+            )),
+            acp.isAcpRuntimeError(foreign),
+            acp.isAcpRuntimeError(new Error("plain"))
+          ],
+          hookResults: [
+            earlyHook === undefined ? null : earlyHook,
+            commandHook
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-backend-plugin",
+                    "name": "Runtime ACP Backend Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-backend-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_backend"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acp_backend", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "getAcpRuntimeBackend",
+            "isAcpRuntimeError",
+            "registerAcpRuntimeBackend",
+            "requireAcpRuntimeBackend",
+            "tryDispatchAcpReplyHook",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "scopedType": "function",
+        "errors": {
+            "missing": {
+                "name": "AcpRuntimeError",
+                "code": "ACP_BACKEND_MISSING",
+                "message": (
+                    "ACP runtime backend is not configured. Install and enable "
+                    "the acpx runtime plugin."
+                ),
+                "isAcp": True,
+            },
+            "unhealthy": {
+                "name": "AcpRuntimeError",
+                "code": "ACP_BACKEND_UNAVAILABLE",
+                "message": (
+                    "ACP runtime backend is currently unavailable. Try again in a moment."
+                ),
+                "isAcp": True,
+            },
+        },
+        "unhealthyLookup": {
+            "id": "unhealthy",
+            "runtimeId": "unhealthy-runtime",
+        },
+        "resolved": {
+            "anyId": "healthy",
+            "explicitId": "healthy",
+            "runtimeId": "healthy-runtime",
+        },
+        "errorChecks": [True, True, False],
+        "hookResults": [None, {"handled": False, "reason": "acp-dispatch-unavailable"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const acp = require("openclaw/plugin-sdk/acp-runtime");
+const scopedAcp = require("@openclaw/plugin-sdk/acp-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp",
+      description: "Use OpenClaw ACP runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        acp.__testing.resetAcpRuntimeBackendsForTests();
+        acp.__testing.resetAcpSessionManagerForTests();
+        const manager1 = acp.getAcpSessionManager();
+        const manager2 = acp.getAcpSessionManager();
+        acp.__testing.setAcpSessionManagerForTests({ custom: true });
+        const customManager = acp.getAcpSessionManager();
+        acp.__testing.resetAcpSessionManagerForTests();
+        const managerAfterReset = acp.getAcpSessionManager();
+        acp.registerAcpRuntimeBackend({
+          id: "runtime-one",
+          runtime: { id: "runtime-one" },
+          healthy: () => true
+        });
+        const backend = acp.requireAcpRuntimeBackend("RUNTIME-ONE");
+        const storePath = path.join(__dirname, "acp-sessions.json");
+        fs.writeFileSync(
+          storePath,
+          JSON.stringify({
+            Main: {
+              model: "gpt-test",
+              acp: {
+                runtimeSessionId: "runtime-session-1",
+                runtimeThreadId: "runtime-thread-1"
+              }
+            }
+          }),
+          "utf8"
+        );
+        const entry = acp.readAcpSessionEntry({
+          sessionKey: " main ",
+          cfg: { session: { store: storePath } }
+        });
+        const missing = acp.readAcpSessionEntry({
+          sessionKey: "missing",
+          cfg: { session: { store: path.join(__dirname, "missing.json") } }
+        });
+        const empty = acp.readAcpSessionEntry({
+          sessionKey: "   ",
+          cfg: { session: { store: storePath } }
+        });
+        const earlyHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "plain text" }
+          },
+          { cfg: {} }
+        );
+        acp.unregisterAcpRuntimeBackend("runtime-one");
+        return {
+          keys: Object.keys(acp).sort(),
+          testingKeys: Object.keys(acp.__testing).sort(),
+          scopedType: typeof scopedAcp.getAcpSessionManager,
+          manager: {
+            same: manager1 === manager2,
+            custom: customManager.custom,
+            resetCreatedNew: managerAfterReset !== customManager
+          },
+          backend: {
+            id: backend.id,
+            runtimeId: backend.runtime.id
+          },
+          entry: {
+            storePath: entry.storePath.replace(/\\\\/g, "/").endsWith("/acp-sessions.json"),
+            sessionKey: entry.sessionKey,
+            storeSessionKey: entry.storeSessionKey,
+            model: entry.entry && entry.entry.model,
+            acp: entry.acp
+          },
+          missing: {
+            storeReadFailed: missing.storeReadFailed,
+            storeSessionKey: missing.storeSessionKey,
+            hasEntry: Boolean(missing.entry)
+          },
+          empty,
+          earlyHook: earlyHook === undefined ? null : earlyHook
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-plugin",
+                    "name": "Runtime ACP Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acp", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "__testing",
+            "getAcpRuntimeBackend",
+            "getAcpSessionManager",
+            "isAcpRuntimeError",
+            "readAcpSessionEntry",
+            "registerAcpRuntimeBackend",
+            "requireAcpRuntimeBackend",
+            "tryDispatchAcpReplyHook",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "testingKeys": [
+            "getAcpRuntimeRegistryGlobalStateForTests",
+            "resetAcpRuntimeBackendsForTests",
+            "resetAcpSessionManagerForTests",
+            "setAcpSessionManagerForTests",
+        ],
+        "scopedType": "function",
+        "manager": {
+            "same": True,
+            "custom": True,
+            "resetCreatedNew": True,
+        },
+        "backend": {
+            "id": "runtime-one",
+            "runtimeId": "runtime-one",
+        },
+        "entry": {
+            "storePath": True,
+            "sessionKey": "main",
+            "storeSessionKey": "Main",
+            "model": "gpt-test",
+            "acp": {
+                "runtimeSessionId": "runtime-session-1",
+                "runtimeThreadId": "runtime-thread-1",
+            },
+        },
+        "missing": {
+            "storeReadFailed": True,
+            "storeSessionKey": "missing",
+            "hasEntry": False,
+        },
+        "empty": None,
+        "earlyHook": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_binding_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-binding.cjs"
+    runtime_entry.write_text(
+        """
+const acpRuntime = require("openclaw/plugin-sdk/acp-runtime");
+const binding = require("openclaw/plugin-sdk/acp-binding-runtime");
+const scopedBinding = require("@openclaw/plugin-sdk/acp-binding-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_binding",
+      description: "Use OpenClaw ACP binding runtime SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const calls = [];
+        acpRuntime.__testing.setAcpSessionManagerForTests({
+          resolveSession(input) {
+            calls.push(["resolve", input.sessionKey]);
+            return { kind: "none" };
+          },
+          async closeSession(input) {
+            calls.push(["close", input.reason, input.sessionKey]);
+          },
+          async initializeSession(input) {
+            calls.push([
+              "initialize",
+              input.sessionKey,
+              input.agent,
+              input.mode,
+              input.cwd,
+              input.backendId
+            ]);
+          }
+        });
+        const cfg = {
+          bindings: [
+            {
+              type: "acp",
+              agentId: "claude",
+              match: {
+                channel: "discord",
+                accountId: "work",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: {
+                mode: "oneshot",
+                backend: "acpx",
+                cwd: args.cwd,
+                label: "Work ACP"
+              }
+            }
+          ]
+        };
+        const configuredBinding = binding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "work",
+          conversationId: args.threadId,
+          parentConversationId: args.parentConversationId
+        });
+        const ensured = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding
+        });
+        const noBinding = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding: null
+        });
+        acpRuntime.__testing.setAcpSessionManagerForTests({
+          resolveSession() {
+            return {
+              kind: "ready",
+              meta: {
+                state: "ready",
+                agent: "claude",
+                mode: "oneshot",
+                backend: "acpx",
+                runtimeOptions: { cwd: args.cwd }
+              }
+            };
+          },
+          async closeSession() {
+            calls.push(["unexpected-close"]);
+          },
+          async initializeSession() {
+            calls.push(["unexpected-initialize"]);
+          }
+        });
+        const ready = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding
+        });
+        acpRuntime.__testing.resetAcpSessionManagerForTests();
+        return {
+          keys: Object.keys(binding).sort(),
+          scopedType: typeof scopedBinding.ensureConfiguredAcpBindingReady,
+          configuredSpec: configuredBinding && configuredBinding.spec,
+          ensured,
+          noBinding,
+          ready,
+          calls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-binding-plugin",
+                    "name": "Runtime ACP Binding Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-binding-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_binding"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.acp_binding",
+            "args": {
+                "threadId": "thread-123",
+                "parentConversationId": "channel-parent-1",
+                "cwd": str(tmp_path / "workspace"),
+            },
+        },
+    )
+
+    target_session_prefix = "agent:claude:acp:binding:discord:work:"
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "ensureConfiguredAcpBindingReady",
+        "resolveConfiguredAcpBindingRecord",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["configuredSpec"] == {
+        "channel": "discord",
+        "accountId": "work",
+        "conversationId": "channel-parent-1",
+        "agentId": "claude",
+        "mode": "oneshot",
+        "cwd": str(tmp_path / "workspace"),
+        "backend": "acpx",
+        "label": "Work ACP",
+    }
+    assert payload["result"]["ensured"] == {"ok": True}
+    assert payload["result"]["noBinding"] == {"ok": True}
+    assert payload["result"]["ready"] == {"ok": True}
+    calls = payload["result"]["calls"]
+    assert calls[0][0] == "resolve"
+    assert calls[0][1].startswith(target_session_prefix)
+    assert calls[1] == [
+        "initialize",
+        calls[0][1],
+        "claude",
+        "oneshot",
+        str(tmp_path / "workspace"),
+        "acpx",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_cli_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-cli-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const cli = require("openclaw/plugin-sdk/cli-runtime");
+const scopedCli = require("@openclaw/plugin-sdk/cli-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.cli_runtime",
+      description: "Use OpenClaw CLI runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const durationErrors = [];
+        for (const raw of ["", "1x", "1m nope"]) {
+          try {
+            cli.parseDurationMs(raw);
+          } catch (error) {
+            durationErrors.push(error.message);
+          }
+        }
+        const parent = {
+          parent: null,
+          getOptionValueSource(name) {
+            return name === "mode" ? "cli" : "default";
+          },
+          opts() {
+            return { mode: "fast" };
+          }
+        };
+        const child = {
+          parent,
+          getOptionValueSource(name) {
+            return name === "mode" ? "default" : undefined;
+          },
+          opts() {
+            return {};
+          }
+        };
+        const explicitChild = {
+          parent,
+          getOptionValueSource() {
+            return "cli";
+          },
+          opts() {
+            return { mode: "slow" };
+          }
+        };
+        const registered = [];
+        cli.registerCommandGroups(
+          {},
+          [
+            {
+              placeholders: [{ name: "alpha", description: "Alpha" }],
+              register() { registered.push("alpha"); }
+            },
+            {
+              placeholders: [{ name: "beta", description: "Beta" }],
+              register() { registered.push("beta"); }
+            }
+          ],
+          { eager: true, primary: null, registerPrimaryOnly: false }
+        );
+        const runtimeEvents = [];
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            runtimeEvents.push(["action", "ok"]);
+          }
+        );
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            throw new Error("handled");
+          },
+          (error) => runtimeEvents.push(["handled", error.message])
+        );
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            throw new Error("boom");
+          }
+        );
+        return {
+          keys: Object.keys(cli).sort(),
+          scopedType: typeof scopedCli.parseDurationMs,
+          commands: [
+            cli.formatCliCommand("openclaw run", { OPENCLAW_CONTAINER_HINT: "dev" }),
+            cli.formatCliCommand("openclaw update", { OPENCLAW_CONTAINER_HINT: "dev" }),
+            cli.formatCliCommand("openclaw chat", { OPENCLAW_PROFILE: "work" }),
+            cli.formatCliCommand("node script.js", { OPENCLAW_PROFILE: "work" })
+          ],
+          durations: [
+            cli.parseDurationMs("1h30m"),
+            cli.parseDurationMs("2", { defaultUnit: "s" }),
+            cli.parseDurationMs("2m500ms")
+          ],
+          durationErrors,
+          inherited: [
+            cli.inheritOptionFromParent(child, "mode"),
+            cli.inheritOptionFromParent(explicitChild, "mode") ?? null
+          ],
+          help: cli.formatHelpExamples([["openclaw run", "Run once"]], true),
+          argv: cli.resolveCliArgvInvocation([
+            "node",
+            "openclaw",
+            "--profile",
+            "work",
+            "plugins",
+            "list",
+            "--help"
+          ]),
+          eager: [
+            cli.shouldEagerRegisterSubcommands({ OPENCLAW_DISABLE_LAZY_SUBCOMMANDS: "1" }),
+            cli.shouldEagerRegisterSubcommands({ OPENCLAW_DISABLE_LAZY_SUBCOMMANDS: "0" })
+          ],
+          registered,
+          runtimeEvents,
+          theme: [
+            cli.theme.command("openclaw run"),
+            cli.stylePromptTitle("Title"),
+            typeof cli.note,
+            typeof cli.waitForever,
+            typeof cli.VERSION
+          ],
+          genericLeak: typeof cli.resolveConfiguredAcpBindingRecord
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-cli-runtime-plugin",
+                    "name": "Runtime CLI Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-cli-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.cli_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.cli_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["commands"] == [
+        "openclaw --container dev run",
+        "openclaw update",
+        "openclaw --profile work chat",
+        "node script.js",
+    ]
+    assert result["durations"] == [5_400_000, 2_000, 120_500]
+    assert result["durationErrors"] == [
+        "invalid duration (empty)",
+        "invalid duration: 1x",
+        "invalid duration: 1m nope",
+    ]
+    assert result["inherited"] == ["fast", None]
+    assert result["help"] == "  openclaw run # Run once"
+    assert result["argv"] == {
+        "argv": [
+            "node",
+            "openclaw",
+            "--profile",
+            "work",
+            "plugins",
+            "list",
+            "--help",
+        ],
+        "commandPath": ["plugins", "list"],
+        "primary": "plugins",
+        "hasHelpOrVersion": True,
+        "isRootHelpInvocation": False,
+    }
+    assert result["eager"] == [True, False]
+    assert result["registered"] == ["alpha", "beta"]
+    assert result["runtimeEvents"] == [
+        ["action", "ok"],
+        ["handled", "handled"],
+        ["error", "Error: boom"],
+        ["exit", 1],
+    ]
+    assert result["theme"] == ["openclaw run", "Title", "function", "function", "string"]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "formatCliCommand",
+        "parseDurationMs",
+        "runCommandWithRuntime",
+        "resolveCliArgvInvocation",
+        "theme",
+        "VERSION",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_doctor_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    existing_path = tmp_path / "existing-plugin"
+    existing_path.mkdir()
+    missing_path = tmp_path / "missing-plugin"
+    runtime_entry = tmp_path / "runtime-plugin-runtime-doctor.cjs"
+    runtime_entry.write_text(
+        """
+const doctor = require("openclaw/plugin-sdk/runtime-doctor");
+const scopedDoctor = require("@openclaw/plugin-sdk/runtime-doctor");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_doctor",
+      description: "Use OpenClaw runtime doctor SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const cfg = {
+          channels: {
+            slack: {
+              dangerouslyAllowNameMatching: true,
+              accounts: {
+                work: { dangerouslyAllowNameMatching: false },
+                default: {}
+              }
+            }
+          },
+          plugins: {
+            entries: { alpha: { enabled: true }, beta: { enabled: true } },
+            installs: {
+              alpha: {
+                source: "path",
+                sourcePath: args.existingPath,
+                installPath: args.existingPath
+              },
+              beta: { source: "npm", installPath: "node_modules/beta" }
+            },
+            allow: ["alpha", "beta"],
+            deny: ["alpha"],
+            load: { paths: [args.existingPath, "other"] },
+            slots: { memory: "alpha", contextEngine: "beta" }
+          }
+        };
+        const streamingChanges = [];
+        const streaming = doctor.normalizeLegacyStreamingAliases({
+          entry: {
+            streamMode: "off",
+            chunkMode: "sentence",
+            blockStreaming: true,
+            blockStreamingCoalesce: "all",
+            draftChunk: "line",
+            nativeStreaming: true
+          },
+          pathPrefix: "channels.slack",
+          changes: streamingChanges,
+          resolvedMode: "off",
+          includePreviewChunk: true,
+          resolvedNativeTransport: "native",
+          offModeLegacyNotice: (pathPrefix) => `${pathPrefix}.off-notice`
+        });
+        const channelChanges = [];
+        const channel = doctor.normalizeLegacyChannelAliases({
+          entry: {
+            streaming: true,
+            accounts: {
+              work: { streamMode: "on" },
+              idle: {}
+            }
+          },
+          pathPrefix: "channels.slack",
+          changes: channelChanges,
+          resolveStreamingOptions() {
+            return { resolvedMode: "on" };
+          }
+        });
+        const existingIssue = await doctor.detectPluginInstallPathIssue({
+          pluginId: "alpha",
+          install: {
+            source: "path",
+            sourcePath: args.existingPath,
+            installPath: args.missingPath
+          }
+        });
+        const missingIssue = await doctor.detectPluginInstallPathIssue({
+          pluginId: "stale",
+          install: {
+            source: "path",
+            sourcePath: args.missingPath,
+            installPath: args.missingPath
+          }
+        });
+        const removed = doctor.removePluginFromConfig(cfg, "alpha", {
+          channelIds: ["slack"]
+        });
+        return {
+          keys: Object.keys(doctor).sort(),
+          scopedType: typeof scopedDoctor.removePluginFromConfig,
+          scopes: doctor.collectProviderDangerousNameMatchingScopes(
+            cfg,
+            "slack"
+          ).map((scope) => ({
+            prefix: scope.prefix,
+            enabled: scope.dangerousNameMatchingEnabled,
+            path: scope.dangerousFlagPath
+          })),
+          streaming,
+          streamingChanges,
+          channel,
+          channelChanges,
+          legacyChecks: [
+            doctor.hasLegacyStreamingAliases({ streamMode: "on" }),
+            doctor.hasLegacyStreamingAliases(
+              { draftChunk: "line" },
+              { includePreviewChunk: true }
+            ),
+            doctor.hasLegacyStreamingAliases({ draftChunk: "line" }),
+            doctor.hasLegacyAccountStreamingAliases(
+              { work: { streamMode: "on" }, idle: {} },
+              doctor.hasLegacyStreamingAliases
+            )
+          ],
+          issues: [existingIssue, missingIssue],
+          formatted: doctor.formatPluginInstallPathIssue({
+            issue: existingIssue,
+            pluginLabel: "Alpha",
+            defaultInstallCommand: "openclaw plugins install alpha",
+            repoInstallCommand: "openclaw plugins install ./alpha",
+            formatCommand: (command) => `$ ${command}`
+          }),
+          removed,
+          genericLeak: typeof doctor.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-doctor-plugin",
+                    "name": "Runtime Doctor Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-runtime-doctor.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_doctor"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.runtime_doctor",
+            "args": {
+                "existingPath": str(existing_path),
+                "missingPath": str(missing_path),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["scopes"] == [
+        {
+            "prefix": "channels.slack",
+            "enabled": True,
+            "path": "channels.slack.dangerouslyAllowNameMatching",
+        },
+        {
+            "prefix": "channels.slack.accounts.work",
+            "enabled": False,
+            "path": "channels.slack.accounts.work.dangerouslyAllowNameMatching",
+        },
+        {
+            "prefix": "channels.slack.accounts.default",
+            "enabled": True,
+            "path": "channels.slack.dangerouslyAllowNameMatching",
+        },
+    ]
+    assert result["streaming"]["changed"] is True
+    assert result["streaming"]["entry"]["streaming"] == {
+        "mode": "off",
+        "chunkMode": "sentence",
+        "nativeTransport": "native",
+        "preview": {"chunk": "line"},
+        "block": {"enabled": True, "coalesce": "all"},
+    }
+    assert "streamMode" not in result["streaming"]["entry"]
+    assert result["streamingChanges"][-1] == "channels.slack.off-notice"
+    assert result["channel"]["changed"] is True
+    assert result["channel"]["entry"]["streaming"]["mode"] == "on"
+    assert result["channel"]["entry"]["accounts"]["work"]["streaming"]["mode"] == "on"
+    assert result["legacyChecks"] == [True, True, False, True]
+    assert result["issues"][0] == {
+        "kind": "custom-path",
+        "pluginId": "alpha",
+        "path": str(existing_path),
+    }
+    assert result["issues"][1] == {
+        "kind": "missing-path",
+        "pluginId": "stale",
+        "path": str(missing_path),
+    }
+    assert result["formatted"][0] == f"Alpha is installed from a custom path: {existing_path}"
+    assert "$ openclaw plugins install alpha" in result["formatted"][2]
+    assert result["removed"]["actions"] == {
+        "entry": True,
+        "install": True,
+        "allowlist": True,
+        "denylist": True,
+        "loadPath": True,
+        "memorySlot": True,
+        "contextEngineSlot": False,
+        "channelConfig": True,
+    }
+    assert "alpha" not in result["removed"]["config"]["plugins"]["entries"]
+    assert result["removed"]["config"]["plugins"]["allow"] == ["beta"]
+    assert "deny" not in result["removed"]["config"]["plugins"]
+    assert result["removed"]["config"]["plugins"]["load"]["paths"] == ["other"]
+    assert result["removed"]["config"]["plugins"]["slots"]["memory"] == "memory-core"
+    assert "channels" not in result["removed"]["config"]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "collectProviderDangerousNameMatchingScopes",
+        "detectPluginInstallPathIssue",
+        "formatPluginInstallPathIssue",
+        "normalizeLegacyStreamingAliases",
+        "removePluginFromConfig",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-setup.cjs"
+    runtime_entry.write_text(
+        """
+const providerSetup = require("openclaw/plugin-sdk/provider-setup");
+const selfHosted = require("@openclaw/plugin-sdk/self-hosted-provider-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_setup",
+      description: "Use OpenClaw provider setup SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const defaulted = providerSetup.applyProviderDefaultModel(
+          { agents: { defaults: { model: { fallbacks: ["openai/gpt-4.1"] } } } },
+          "local/llama"
+        );
+        const localModels = await providerSetup.discoverOpenAICompatibleLocalModels({
+          baseUrl: "http://localhost:1234/v1",
+          label: "Local",
+          env: { VITEST: "1" }
+        });
+        const existingDiscovery = await providerSetup
+          .discoverOpenAICompatibleSelfHostedProvider({
+            ctx: {
+              config: { models: { providers: { local: {} } } },
+              resolveProviderApiKey() {
+                return { apiKey: "env:LOCAL" };
+              }
+            },
+            providerId: "local",
+            async buildProvider() {
+              return { label: "Local" };
+            }
+          });
+        const discovered = await providerSetup.discoverOpenAICompatibleSelfHostedProvider({
+          ctx: {
+            config: {},
+            resolveProviderApiKey() {
+              return { apiKey: "env:LOCAL", discoveryApiKey: "secret" };
+            }
+          },
+          providerId: "local",
+          async buildProvider({ apiKey }) {
+            return {
+              label: "Local",
+              discoveryKey: apiKey,
+              baseUrl: "http://localhost:1234/v1"
+            };
+          }
+        });
+        const missingEvents = [];
+        const missingConfig = await selfHosted
+          .configureOpenAICompatibleSelfHostedProviderNonInteractive({
+            ctx: {
+              authChoice: "custom",
+              config: {},
+              opts: {},
+              runtime: {
+                error(message) { missingEvents.push(["error", message]); },
+                exit(code) { missingEvents.push(["exit", code]); },
+                log(message) { missingEvents.push(["log", message]); }
+              },
+              async resolveApiKey() {
+                return { value: "sk-local" };
+              },
+              toApiKeyCredential() {
+                return { type: "api_key", provider: "local", key: "sk-local" };
+              }
+            },
+            providerId: "local",
+            providerLabel: "Local",
+            defaultBaseUrl: "http://localhost:1234/v1",
+            defaultApiKeyEnvVar: "LOCAL_API_KEY",
+            modelPlaceholder: "llama-3"
+          });
+        const successEvents = [];
+        const configured = await providerSetup
+          .configureOpenAICompatibleSelfHostedProviderNonInteractive({
+            ctx: {
+              authChoice: "custom",
+              agentDir: "agent",
+              config: {},
+              opts: {
+                customApiKey: "sk-local",
+                customBaseUrl: "http://localhost:1234/v1/",
+                customModelId: "llama-3"
+              },
+              runtime: {
+                error(message) { successEvents.push(["error", message]); },
+                exit(code) { successEvents.push(["exit", code]); },
+                log(message) { successEvents.push(["log", message]); }
+              },
+              async resolveApiKey({ flagValue }) {
+                return { source: "flag", value: flagValue };
+              },
+              toApiKeyCredential({ provider, resolved }) {
+                return { type: "api_key", provider, key: resolved.value };
+              }
+            },
+            providerId: "local",
+            providerLabel: "Local",
+            defaultBaseUrl: "http://localhost:1234/v1",
+            defaultApiKeyEnvVar: "LOCAL_API_KEY",
+            modelPlaceholder: "llama-3",
+            input: ["text", "image"],
+            reasoning: true,
+            contextWindow: 4096,
+            maxTokens: 1024
+          });
+        return {
+          keys: Object.keys(providerSetup).sort(),
+          scopedType: typeof selfHosted.applyProviderDefaultModel,
+          defaults: [
+            providerSetup.SELF_HOSTED_DEFAULT_CONTEXT_WINDOW,
+            providerSetup.SELF_HOSTED_DEFAULT_MAX_TOKENS,
+            providerSetup.SELF_HOSTED_DEFAULT_COST
+          ],
+          defaulted,
+          localModels,
+          existingDiscovery,
+          discovered,
+          missing: [missingConfig, missingEvents],
+          configured,
+          successEvents,
+          genericLeak: typeof providerSetup.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "provider-setup-plugin",
+                    "name": "Provider Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-provider-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_setup"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.provider_setup", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["defaults"] == [
+        128_000,
+        8192,
+        {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+    ]
+    assert result["defaulted"]["agents"]["defaults"]["model"] == {
+        "fallbacks": ["openai/gpt-4.1"],
+        "primary": "local/llama",
+    }
+    assert result["localModels"] == []
+    assert result["existingDiscovery"] is None
+    assert result["discovered"] == {
+        "provider": {
+            "label": "Local",
+            "discoveryKey": "secret",
+            "baseUrl": "http://localhost:1234/v1",
+            "apiKey": "env:LOCAL",
+        }
+    }
+    assert result["missing"][0] is None
+    assert result["missing"][1][0][0] == "error"
+    assert "Missing --custom-model-id" in result["missing"][1][0][1]
+    assert result["missing"][1][1] == ["exit", 1]
+    configured = result["configured"]
+    assert configured["models"]["providers"]["local"] == {
+        "baseUrl": "http://localhost:1234/v1",
+        "api": "openai-completions",
+        "apiKey": "LOCAL_API_KEY",
+        "models": [
+            {
+                "id": "llama-3",
+                "name": "llama-3",
+                "reasoning": True,
+                "input": ["text", "image"],
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                "contextWindow": 4096,
+                "maxTokens": 1024,
+            }
+        ],
+    }
+    assert configured["auth"]["profiles"]["local:default"] == {
+        "provider": "local",
+        "mode": "api_key",
+    }
+    assert configured["agents"]["defaults"]["model"]["primary"] == "local/llama-3"
+    assert result["successEvents"] == [["log", "Default Local model: llama-3"]]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "SELF_HOSTED_DEFAULT_CONTEXT_WINDOW",
+        "applyProviderDefaultModel",
+        "configureOpenAICompatibleSelfHostedProviderNonInteractive",
+        "discoverOpenAICompatibleLocalModels",
+        "discoverOpenAICompatibleSelfHostedProvider",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lmstudio_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lmstudio-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const lmstudio = require("openclaw/plugin-sdk/lmstudio");
+const runtime = require("@openclaw/plugin-sdk/lmstudio-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lmstudio_runtime",
+      description: "Use OpenClaw LM Studio runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const wire = {
+          type: "llm",
+          key: " qwen/qwen3 ",
+          display_name: " Qwen 3 ",
+          max_context_length: 32000.8,
+          format: "gguf",
+          capabilities: {
+            vision: true,
+            trained_for_tool_use: true,
+            reasoning: {
+              allowed_options: ["off", "low", "low"],
+              default: "off"
+            }
+          },
+          loaded_instances: [
+            null,
+            {},
+            { config: { context_length: 2048.9 } },
+            { config: { context_length: 4096 } }
+          ]
+        };
+        const headers = lmstudio.buildLmstudioAuthHeaders({
+          apiKey: " sk-test ",
+          json: true,
+          headers: { Authorization: "old", "X-Test": "ok" }
+        });
+        return {
+          keys: Object.keys(lmstudio).sort(),
+          scopedType: typeof runtime.mapLmstudioWireEntry,
+          constants: [
+            lmstudio.LMSTUDIO_DEFAULT_BASE_URL,
+            lmstudio.LMSTUDIO_DEFAULT_INFERENCE_BASE_URL,
+            lmstudio.LMSTUDIO_DEFAULT_API_KEY_ENV_VAR,
+            lmstudio.LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER,
+            lmstudio.LMSTUDIO_PROVIDER_ID,
+            lmstudio.LMSTUDIO_PROVIDER_LABEL
+          ],
+          bases: [
+            lmstudio.resolveLmstudioServerBase(),
+            lmstudio.resolveLmstudioInferenceBase(),
+            lmstudio.resolveLmstudioServerBase("localhost:1234/api/v1/"),
+            lmstudio.resolveLmstudioInferenceBase("http://localhost:1234/api/v1/")
+          ],
+          normalizedProvider: lmstudio.normalizeLmstudioProviderConfig({
+            baseUrl: "localhost:1234/api/v1/",
+            request: {}
+          }),
+          reasoning: [
+            lmstudio.resolveLmstudioReasoningCapability({ capabilities: undefined }),
+            lmstudio.resolveLmstudioReasoningCapability({
+              capabilities: { reasoning: { allowed_options: ["off"], default: "off" } }
+            }),
+            lmstudio.resolveLmstudioReasoningCapability({
+              capabilities: { reasoning: { allowed_options: ["off", "low"] } }
+            })
+          ],
+          contextWindow: lmstudio.resolveLoadedContextWindow(wire),
+          mapped: lmstudio.mapLmstudioWireEntry(wire),
+          invalidMap: lmstudio.mapLmstudioWireEntry({ type: "embedding", key: "embed" }),
+          headers,
+          placeholderHeaders: lmstudio.buildLmstudioAuthHeaders({
+            apiKey: lmstudio.LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER
+          }) ?? null,
+          genericLeak: typeof lmstudio.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "lmstudio-runtime-plugin",
+                    "name": "LM Studio Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lmstudio-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lmstudio_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.lmstudio_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["constants"] == [
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+        "LM_API_TOKEN",
+        "lmstudio-local",
+        "lmstudio",
+        "LM Studio",
+    ]
+    assert result["bases"] == [
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+    ]
+    assert result["normalizedProvider"] == {
+        "baseUrl": "http://localhost:1234/v1",
+        "request": {"allowPrivateNetwork": True},
+    }
+    assert result["reasoning"] == [False, False, True]
+    assert result["contextWindow"] == 4096
+    assert result["mapped"] == {
+        "id": "qwen/qwen3",
+        "displayName": "Qwen 3",
+        "format": "gguf",
+        "vision": True,
+        "trainedForToolUse": True,
+        "loaded": True,
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "compat": {
+            "supportsReasoningEffort": True,
+            "supportedReasoningEfforts": ["off", "low"],
+            "reasoningEffortMap": {
+                "off": "off",
+                "none": "off",
+                "minimal": "low",
+                "low": "low",
+                "medium": "low",
+                "high": "low",
+                "xhigh": "low",
+                "adaptive": "low",
+                "max": "low",
+            },
+        },
+        "contextWindow": 32000,
+        "contextTokens": 32000,
+        "maxTokens": 8192,
+    }
+    assert result["invalidMap"] is None
+    assert result["headers"] == {
+        "X-Test": "ok",
+        "Authorization": "Bearer sk-test",
+        "Content-Type": "application/json",
+    }
+    assert result["placeholderHeaders"] is None
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "LMSTUDIO_DEFAULT_BASE_URL",
+        "buildLmstudioAuthHeaders",
+        "mapLmstudioWireEntry",
+        "normalizeLmstudioProviderConfig",
+        "resolveLmstudioInferenceBase",
+        "resolveLmstudioServerBase",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
