@@ -48432,6 +48432,39 @@ const memoryHostSearchRuntime = {
   getActiveMemorySearchManager,
 };
 
+function memoryCoreEngineRuntimeUnavailableError() {
+  return new Error("memory-core engine runtime unavailable in OpenZues plugin runtime.");
+}
+
+async function memoryCoreEngineRuntimeUnavailableAsync() {
+  throw memoryCoreEngineRuntimeUnavailableError();
+}
+
+async function getMemoryCoreEngineSearchManager(_params = {}) {
+  return { manager: null, error: "memory-core engine runtime unavailable" };
+}
+
+const memoryCoreEngineRuntimeIndexManager = {
+  async get(_params = {}) {
+    return null;
+  },
+};
+
+const memoryCoreEngineRuntime = {
+  MemoryIndexManager: memoryCoreEngineRuntimeIndexManager,
+  auditDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  auditShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  getBuiltinMemoryEmbeddingProviderDoctorMetadata(_providerId) {
+    return null;
+  },
+  getMemorySearchManager: getMemoryCoreEngineSearchManager,
+  listBuiltinAutoSelectMemoryEmbeddingProviderDoctorMetadata() {
+    return [];
+  },
+  repairDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -49673,6 +49706,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-search"
   ) {
     return memoryHostSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-engine-runtime" ||
+    request === "@openclaw/plugin-sdk/memory-core-engine-runtime"
+  ) {
+    return memoryCoreEngineRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||

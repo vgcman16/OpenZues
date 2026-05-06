@@ -36233,6 +36233,132 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_engine_runtime_facade(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-engine-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const engine = require("openclaw/plugin-sdk/memory-core-engine-runtime");
+const scopedEngine = require("@openclaw/plugin-sdk/memory-core-engine-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_engine_runtime",
+      description: "Use OpenClaw memory-core-engine-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const manager = await engine.getMemorySearchManager({
+          cfg: {},
+          agentId: "main",
+          purpose: "status"
+        });
+        const indexManager = await scopedEngine.MemoryIndexManager.get({
+          cfg: {},
+          agentId: "main"
+        });
+        let auditError = "";
+        try {
+          await engine.auditDreamingArtifacts({ workspaceDir: "workspace" });
+        } catch (err) {
+          auditError = String(err && err.message ? err.message : err);
+        }
+        let repairError = "";
+        try {
+          await scopedEngine.repairDreamingArtifacts({ workspaceDir: "workspace" });
+        } catch (err) {
+          repairError = String(err && err.message ? err.message : err);
+        }
+        return {
+          keys: Object.keys(engine).sort(),
+          scopedType: typeof scopedEngine.getMemorySearchManager,
+          manager,
+          indexManager,
+          provider: engine.getBuiltinMemoryEmbeddingProviderDoctorMetadata("openai"),
+          providers: engine.listBuiltinAutoSelectMemoryEmbeddingProviderDoctorMetadata(),
+          auditError,
+          repairError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-engine-runtime-plugin",
+                    "name": "Memory Core Engine Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-core-engine-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_engine_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_engine_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MemoryIndexManager",
+            "auditDreamingArtifacts",
+            "auditShortTermPromotionArtifacts",
+            "getBuiltinMemoryEmbeddingProviderDoctorMetadata",
+            "getMemorySearchManager",
+            "listBuiltinAutoSelectMemoryEmbeddingProviderDoctorMetadata",
+            "repairDreamingArtifacts",
+            "repairShortTermPromotionArtifacts",
+        ],
+        "scopedType": "function",
+        "manager": {
+            "manager": None,
+            "error": "memory-core engine runtime unavailable",
+        },
+        "indexManager": None,
+        "provider": None,
+        "providers": [],
+        "auditError": "memory-core engine runtime unavailable in OpenZues plugin runtime.",
+        "repairError": "memory-core engine runtime unavailable in OpenZues plugin runtime.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:
