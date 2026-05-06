@@ -15046,6 +15046,316 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/approval-native-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/approval-native-runtime");
+
+const execRequest = {
+  id: "approval-1",
+  request: { command: "uname -a" },
+  createdAtMs: 0,
+  expiresAtMs: 120000
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_runtime",
+      description: "Use OpenClaw approval native runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const originPlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "origin",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => ({ to: "origin-chat", threadId: "42" }),
+            resolveApproverDmTargets: async () => [{ to: "approver-1" }]
+          }
+        });
+        const fallbackPlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "origin",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => null,
+            resolveApproverDmTargets: async () => [
+              { to: "approver-1" },
+              { to: "approver-2" }
+            ]
+          }
+        });
+        const dmNoticePlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "plugin",
+          request: { ...execRequest, id: "plugin:approval-1" },
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "approver-dm",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true,
+              notifyOriginWhenDmOnly: true
+            }),
+            resolveOriginTarget: async () => ({ to: "origin-chat" }),
+            resolveApproverDmTargets: async () => [{ to: "approver-1" }]
+          }
+        });
+        const dedupePlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "both",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => ({ to: "shared-chat" }),
+            resolveApproverDmTargets: async () => [
+              { to: "shared-chat" },
+              { to: "approver-2" }
+            ]
+          }
+        });
+        const duplicateTargets = [];
+        const errors = [];
+        const delivered = [];
+        const deliveryResult = await runtime.deliverApprovalRequestViaChannelNativePlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "approver-dm",
+              supportsOriginSurface: false,
+              supportsApproverDmSurface: true
+            }),
+            resolveApproverDmTargets: async () => [
+              { to: "approver-1" },
+              { to: "approver-2" },
+              { to: "approver-3" }
+            ]
+          },
+          prepareTarget: async ({ plannedTarget }) => ({
+            dedupeKey:
+              plannedTarget.target.to === "approver-2"
+                ? "shared-dm"
+                : plannedTarget.target.to,
+            target: { chatId: plannedTarget.target.to }
+          }),
+          deliverTarget: async ({ preparedTarget }) => {
+            if (preparedTarget.chatId === "approver-1") {
+              throw new Error("boom");
+            }
+            return { chatId: preparedTarget.chatId };
+          },
+          onDeliveryError: ({ plannedTarget }) => errors.push(plannedTarget.target.to),
+          onDuplicateSkipped: ({ plannedTarget }) =>
+            duplicateTargets.push(plannedTarget.target.to),
+          onDelivered: ({ plannedTarget }) => delivered.push(plannedTarget.target.to)
+        });
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedType: typeof scopedRuntime.resolveChannelNativeApprovalDeliveryPlan,
+          helperType: typeof runtime.createChannelNativeOriginTargetResolver,
+          targetKeys: [
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: "!room:example.org",
+              threadId: "$event:example.org"
+            }) !==
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: "!room",
+                threadId: "example.org:$event:example.org"
+              }),
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: " room:one ",
+              threadId: " 123 "
+            }) ===
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: "room:one",
+                threadId: "123"
+              }),
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: "telegram:-100123",
+              threadId: 42.9
+            }) ===
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: " telegram:-100123 ",
+                threadId: "42"
+              })
+          ],
+          originPlan,
+          fallbackTargets: fallbackPlan.targets,
+          dmNotice: {
+            originTarget: dmNoticePlan.originTarget,
+            notifyOriginWhenDmOnly: dmNoticePlan.notifyOriginWhenDmOnly,
+            targets: dmNoticePlan.targets
+          },
+          dedupeTargets: dedupePlan.targets,
+          delivery: {
+            entries: deliveryResult.entries,
+            deliveredTargets: deliveryResult.deliveredTargets,
+            errors,
+            duplicateTargets,
+            delivered
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-runtime-plugin",
+                    "name": "Runtime Approval Native Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_runtime"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildChannelApprovalNativeTargetKey",
+            "createChannelApproverDmTargetResolver",
+            "createChannelNativeOriginTargetResolver",
+            "deliverApprovalRequestViaChannelNativePlan",
+            "resolveChannelNativeApprovalDeliveryPlan",
+        ],
+        "scopedType": "function",
+        "helperType": "function",
+        "targetKeys": [True, True, True],
+        "originPlan": {
+            "targets": [
+                {
+                    "surface": "origin",
+                    "target": {"to": "origin-chat", "threadId": "42"},
+                    "reason": "preferred",
+                }
+            ],
+            "originTarget": {"to": "origin-chat", "threadId": "42"},
+            "notifyOriginWhenDmOnly": False,
+        },
+        "fallbackTargets": [
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-1"},
+                "reason": "fallback",
+            },
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-2"},
+                "reason": "fallback",
+            },
+        ],
+        "dmNotice": {
+            "originTarget": {"to": "origin-chat"},
+            "notifyOriginWhenDmOnly": True,
+            "targets": [
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-1"},
+                    "reason": "preferred",
+                }
+            ],
+        },
+        "dedupeTargets": [
+            {
+                "surface": "origin",
+                "target": {"to": "shared-chat"},
+                "reason": "preferred",
+            },
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-2"},
+                "reason": "preferred",
+            },
+        ],
+        "delivery": {
+            "entries": [{"chatId": "approver-2"}, {"chatId": "approver-3"}],
+            "deliveredTargets": [
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-2"},
+                    "reason": "preferred",
+                },
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-3"},
+                    "reason": "preferred",
+                },
+            ],
+            "errors": ["approver-1"],
+            "duplicateTargets": [],
+            "delivered": ["approver-2", "approver-3"],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

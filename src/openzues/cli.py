@@ -37084,6 +37084,204 @@ const approvalNativeHelpersRuntime = {
   nativeApprovalTargetsMatch,
 };
 
+function buildChannelApprovalNativeTargetKey(target = {}) {
+  return channelRouteDedupeKey({
+    to: target.to,
+    threadId: target.threadId,
+  });
+}
+
+function dedupeNativeApprovalPlannedTargets(targets = []) {
+  const seen = new Set();
+  const deduped = [];
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const key = buildChannelApprovalNativeTargetKey(target.target || {});
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(target);
+  }
+  return deduped;
+}
+
+async function resolveChannelNativeApprovalDeliveryPlan(params = {}) {
+  const adapter = params.adapter;
+  if (!adapter || typeof adapter.describeDeliveryCapabilities !== "function") {
+    return {
+      targets: [],
+      originTarget: null,
+      notifyOriginWhenDmOnly: false,
+    };
+  }
+
+  const capabilities = await Promise.resolve(
+    adapter.describeDeliveryCapabilities({
+      cfg: params.cfg,
+      accountId: params.accountId,
+      approvalKind: params.approvalKind,
+      request: params.request,
+    }),
+  );
+  if (!capabilities || capabilities.enabled !== true) {
+    return {
+      targets: [],
+      originTarget: null,
+      notifyOriginWhenDmOnly: false,
+    };
+  }
+
+  const originTarget =
+    capabilities.supportsOriginSurface && typeof adapter.resolveOriginTarget === "function"
+      ? ((await Promise.resolve(
+          adapter.resolveOriginTarget({
+            cfg: params.cfg,
+            accountId: params.accountId,
+            approvalKind: params.approvalKind,
+            request: params.request,
+          }),
+        )) ?? null)
+      : null;
+  const approverDmTargets =
+    capabilities.supportsApproverDmSurface &&
+    typeof adapter.resolveApproverDmTargets === "function"
+      ? await Promise.resolve(
+          adapter.resolveApproverDmTargets({
+            cfg: params.cfg,
+            accountId: params.accountId,
+            approvalKind: params.approvalKind,
+            request: params.request,
+          }),
+        )
+      : [];
+
+  const plannedTargets = [];
+  const preferredSurface = capabilities.preferredSurface;
+  const preferOrigin = preferredSurface === "origin" || preferredSurface === "both";
+  const preferApproverDm =
+    preferredSurface === "approver-dm" || preferredSurface === "both";
+
+  if (preferOrigin && originTarget) {
+    plannedTargets.push({
+      surface: "origin",
+      target: originTarget,
+      reason: "preferred",
+    });
+  }
+  if (preferApproverDm) {
+    for (const target of Array.isArray(approverDmTargets) ? approverDmTargets : []) {
+      plannedTargets.push({
+        surface: "approver-dm",
+        target,
+        reason: "preferred",
+      });
+    }
+  } else if (!originTarget) {
+    for (const target of Array.isArray(approverDmTargets) ? approverDmTargets : []) {
+      plannedTargets.push({
+        surface: "approver-dm",
+        target,
+        reason: "fallback",
+      });
+    }
+  }
+
+  return {
+    targets: dedupeNativeApprovalPlannedTargets(plannedTargets),
+    originTarget,
+    notifyOriginWhenDmOnly:
+      preferredSurface === "approver-dm" &&
+      capabilities.notifyOriginWhenDmOnly === true &&
+      originTarget !== null,
+  };
+}
+
+async function deliverApprovalRequestViaChannelNativePlan(params = {}) {
+  const deliveryPlan = await resolveChannelNativeApprovalDeliveryPlan({
+    cfg: params.cfg,
+    accountId: params.accountId,
+    approvalKind: params.approvalKind,
+    request: params.request,
+    adapter: params.adapter,
+  });
+  const deliveredKeys = new Set();
+  const entries = [];
+  const deliveredTargets = [];
+
+  for (const plannedTarget of deliveryPlan.targets) {
+    try {
+      const preparedTarget =
+        typeof params.prepareTarget === "function"
+          ? await Promise.resolve(
+              params.prepareTarget({
+                plannedTarget,
+                request: params.request,
+              }),
+            )
+          : null;
+      if (!preparedTarget) {
+        continue;
+      }
+      if (deliveredKeys.has(preparedTarget.dedupeKey)) {
+        if (typeof params.onDuplicateSkipped === "function") {
+          params.onDuplicateSkipped({
+            plannedTarget,
+            preparedTarget,
+            request: params.request,
+          });
+        }
+        continue;
+      }
+      const entry =
+        typeof params.deliverTarget === "function"
+          ? await Promise.resolve(
+              params.deliverTarget({
+                plannedTarget,
+                preparedTarget: preparedTarget.target,
+                request: params.request,
+              }),
+            )
+          : null;
+      if (!entry) {
+        continue;
+      }
+      deliveredKeys.add(preparedTarget.dedupeKey);
+      entries.push(entry);
+      deliveredTargets.push(plannedTarget);
+      if (typeof params.onDelivered === "function") {
+        params.onDelivered({
+          plannedTarget,
+          preparedTarget,
+          request: params.request,
+          entry,
+        });
+      }
+    } catch (error) {
+      if (typeof params.onDeliveryError === "function") {
+        params.onDeliveryError({
+          error,
+          plannedTarget,
+          request: params.request,
+        });
+      }
+    }
+  }
+
+  return {
+    entries,
+    deliveryPlan,
+    deliveredTargets,
+  };
+}
+
+const approvalNativeRuntime = {
+  buildChannelApprovalNativeTargetKey,
+  createChannelApproverDmTargetResolver,
+  createChannelNativeOriginTargetResolver,
+  deliverApprovalRequestViaChannelNativePlan,
+  resolveChannelNativeApprovalDeliveryPlan,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42364,6 +42562,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-native-helpers"
   ) {
     return approvalNativeHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-native-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-native-runtime"
+  ) {
+    return approvalNativeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
