@@ -30006,6 +30006,75 @@ function buildMediaPayload(mediaList, opts) {
   };
 }
 
+function buildAgentMediaPayload(mediaList) {
+  return buildMediaPayload(mediaList);
+}
+
+function buildMediaLocalRoots(stateDir, configDir, options = {}) {
+  const resolvedStateDir = path.resolve(stateDir);
+  const resolvedConfigDir = path.resolve(configDir);
+  const preferredTmpDir = options.preferredTmpDir || resolvePreferredOpenClawTmpDir();
+  return Array.from(
+    new Set([
+      preferredTmpDir,
+      path.join(resolvedConfigDir, "media"),
+      path.join(resolvedStateDir, "media"),
+      path.join(resolvedStateDir, "canvas"),
+      path.join(resolvedStateDir, "workspace"),
+      path.join(resolvedStateDir, "sandboxes"),
+    ]),
+  );
+}
+
+function resolveAgentWorkspaceDirFromConfig(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const normalizedAgentId = normalizeAgentId(agentId);
+  let entry;
+  if (agents && Array.isArray(agents.list)) {
+    entry = agents.list.find(
+      (candidate) =>
+        normalizeAgentId(candidate && candidate.id) === normalizedAgentId,
+    );
+  } else if (agents && typeof agents === "object") {
+    entry = agents[agentId] || agents[normalizedAgentId];
+  }
+  if (!entry && cfg && cfg.agent && normalizeAgentId(cfg.agent.id) === normalizedAgentId) {
+    entry = cfg.agent;
+  }
+  const workspaceDir = normalizeOptionalString(
+    entry &&
+      (entry.workspaceDir ||
+        entry.workspace ||
+        entry.cwd ||
+        entry.worktreeDir ||
+        entry.projectDir),
+  );
+  return workspaceDir ? path.resolve(workspaceDir) : undefined;
+}
+
+function getAgentScopedMediaLocalRoots(cfg = {}, agentId) {
+  const stateDir =
+    normalizeOptionalString(cfg.stateDir) ||
+    normalizeOptionalString(cfg.dataDir) ||
+    path.join(os.homedir(), ".openclaw");
+  const configDir =
+    normalizeOptionalString(cfg.configDir) ||
+    normalizeOptionalString(cfg.homeDir) ||
+    stateDir;
+  const roots = buildMediaLocalRoots(stateDir, configDir, {
+    preferredTmpDir: cfg.preferredTmpDir,
+  });
+  const normalizedAgentId = normalizeOptionalString(agentId);
+  if (!normalizedAgentId) {
+    return roots;
+  }
+  const workspaceDir = resolveAgentWorkspaceDirFromConfig(cfg, normalizedAgentId);
+  if (workspaceDir && !roots.includes(workspaceDir)) {
+    roots.push(workspaceDir);
+  }
+  return roots;
+}
+
 async function sendPayloadWithChunkedTextAndMedia(params) {
   const payload = (params && params.ctx && params.ctx.payload) || {};
   const text = payload.text || "";
@@ -33541,6 +33610,11 @@ const replyPayloadRuntime = {
   sendTextMediaPayload,
 };
 
+const agentMediaPayloadRuntime = {
+  buildAgentMediaPayload,
+  getAgentScopedMediaLocalRoots,
+};
+
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
@@ -33607,6 +33681,7 @@ const genericSdk = new Proxy(
     asString,
     buildRandomTempFilePath,
     buildAgentMainSessionKey,
+    buildAgentMediaPayload,
     buildAgentSessionKey,
     buildBaseAccountStatusSnapshot,
     buildBaseChannelStatusSummary,
@@ -33697,6 +33772,7 @@ const genericSdk = new Proxy(
     formatUncaughtError,
     generateSecureToken,
     generateSecureUuid,
+    getAgentScopedMediaLocalRoots,
     getSubagentDepth,
     getFileExtension,
     hasNonEmptyString,
@@ -34514,6 +34590,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-payload"
   ) {
     return replyPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-media-payload" ||
+    request === "@openclaw/plugin-sdk/agent-media-payload"
+  ) {
+    return agentMediaPayloadRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

@@ -18692,6 +18692,156 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_media_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-agent-media-payload.cjs"
+    runtime_entry.write_text(
+        """
+const agentMedia = require("openclaw/plugin-sdk/agent-media-payload");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_media_payload",
+      description: "Use OpenClaw agent-media-payload SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const payload = agentMedia.buildAgentMediaPayload([
+          { path: args.mediaA, contentType: "image/png" },
+          { path: args.mediaB, contentType: null },
+          { path: args.mediaC, contentType: "video/mp4" }
+        ]);
+        const empty = agentMedia.buildAgentMediaPayload([]);
+        const roots = agentMedia.getAgentScopedMediaLocalRoots({
+          configDir: args.configDir,
+          stateDir: args.stateDir,
+          agents: {
+            list: [{ id: "ops", workspaceDir: args.workspaceDir }]
+          }
+        }, "ops");
+        return {
+          exportKeys: Object.keys(agentMedia).sort(),
+          payload,
+          empty,
+          roots: {
+            hasConfigMedia: roots.includes(args.configMediaDir),
+            hasStateMedia: roots.includes(args.stateMediaDir),
+            hasCanvas: roots.includes(args.canvasDir),
+            hasWorkspaceState: roots.includes(args.workspaceStateDir),
+            hasSandboxes: roots.includes(args.sandboxesDir),
+            hasAgentWorkspace: roots.includes(args.workspaceDir)
+          },
+          genericType: typeof genericSdk.buildAgentMediaPayload
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    config_dir = tmp_path / "config"
+    state_dir = tmp_path / "state"
+    workspace_dir = tmp_path / "workspace"
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-media-payload-plugin",
+                    "name": "Runtime Agent Media Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-media-payload.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_media_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.agent_media_payload",
+            "args": {
+                "mediaA": str(tmp_path / "a.png"),
+                "mediaB": str(tmp_path / "b.ogg"),
+                "mediaC": str(tmp_path / "c.mp4"),
+                "configDir": str(config_dir),
+                "stateDir": str(state_dir),
+                "workspaceDir": str(workspace_dir),
+                "configMediaDir": str(config_dir / "media"),
+                "stateMediaDir": str(state_dir / "media"),
+                "canvasDir": str(state_dir / "canvas"),
+                "workspaceStateDir": str(state_dir / "workspace"),
+                "sandboxesDir": str(state_dir / "sandboxes"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["buildAgentMediaPayload", "getAgentScopedMediaLocalRoots"],
+        "payload": {
+            "MediaPath": str(tmp_path / "a.png"),
+            "MediaType": "image/png",
+            "MediaUrl": str(tmp_path / "a.png"),
+            "MediaPaths": [
+                str(tmp_path / "a.png"),
+                str(tmp_path / "b.ogg"),
+                str(tmp_path / "c.mp4"),
+            ],
+            "MediaUrls": [
+                str(tmp_path / "a.png"),
+                str(tmp_path / "b.ogg"),
+                str(tmp_path / "c.mp4"),
+            ],
+            "MediaTypes": ["image/png", "video/mp4"],
+        },
+        "empty": {},
+        "roots": {
+            "hasConfigMedia": True,
+            "hasStateMedia": True,
+            "hasCanvas": True,
+            "hasWorkspaceState": True,
+            "hasSandboxes": True,
+            "hasAgentWorkspace": True,
+        },
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
