@@ -19501,6 +19501,419 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const helpers = require("openclaw/plugin-sdk/channel-config-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/channel-config-helpers");
+const sdk = require("openclaw/plugin-sdk");
+
+function resolveTelegramAccount(cfg, accountId) {
+  const section = cfg.channels.telegram;
+  const normalized = String(accountId || "default")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "default";
+  return (section.accounts && section.accounts[normalized]) || section.accounts.default || section;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_helpers",
+      description: "Use OpenClaw channel config helper SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              configWrites: true,
+              token: "root-token",
+              allowFrom: [" root "],
+              defaultTo: 99,
+              accounts: {
+                default: {
+                  enabled: true,
+                  allowFrom: [" default "],
+                  defaultTo: "default-chat",
+                  configWrites: true
+                },
+                work: {
+                  enabled: true,
+                  allowFrom: [" owner ", 42],
+                  defaultTo: " channel ",
+                  configWrites: false
+                }
+              }
+            },
+            slack: {
+              configWrites: false,
+              accounts: {
+                default: { configWrites: true }
+              }
+            },
+            signal: {
+              configWrites: false
+            }
+          }
+        };
+
+        const accessors = helpers.createScopedAccountConfigAccessors({
+          resolveAccount: ({ cfg, accountId }) => resolveTelegramAccount(cfg, accountId),
+          resolveAllowFrom: (account) => account.allowFrom,
+          formatAllowFrom: helpers.formatTrimmedAllowFromEntries,
+          resolveDefaultTo: (account) => account.defaultTo
+        });
+
+        const scopedBase = helpers.createScopedChannelConfigBase({
+          sectionKey: "telegram",
+          listAccountIds: (cfg) => Object.keys(cfg.channels.telegram.accounts || {}),
+          resolveAccount: (cfg, accountId) => resolveTelegramAccount(cfg, accountId),
+          defaultAccountId: () => "default",
+          clearBaseFields: ["token"]
+        });
+        const scopedSet = scopedBase.setAccountEnabled({
+          cfg,
+          accountId: " Work Account! ",
+          enabled: true
+        });
+        const scopedDelete = scopedBase.deleteAccount({ cfg, accountId: "work" });
+
+        const topLevel = helpers.createTopLevelChannelConfigBase({
+          sectionKey: "webchat",
+          resolveAccount: (cfg) => cfg.channels.webchat || {},
+          deleteMode: "clear-fields",
+          clearBaseFields: ["token"]
+        });
+        const topCfg = { channels: { webchat: { token: "secret", enabled: false } } };
+        const topSet = topLevel.setAccountEnabled({ cfg: topCfg, enabled: true });
+        const topClear = topLevel.deleteAccount({ cfg: topSet });
+
+        const hybrid = helpers.createHybridChannelConfigBase({
+          sectionKey: "telegram",
+          listAccountIds: (cfg) => Object.keys(cfg.channels.telegram.accounts || {}),
+          resolveAccount: (cfg, accountId) => resolveTelegramAccount(cfg, accountId),
+          defaultAccountId: () => "default",
+          clearBaseFields: ["token"],
+          preserveSectionOnDefaultDelete: true
+        });
+        const hybridDefault = hybrid.setAccountEnabled({
+          cfg,
+          accountId: "default",
+          enabled: false
+        });
+        const hybridNamed = hybrid.setAccountEnabled({ cfg, accountId: "work", enabled: false });
+        const hybridClearDefault = hybrid.deleteAccount({ cfg, accountId: "default" });
+
+        const legacyEntry = { dm: { policy: "open", allowFrom: [" alice "] } };
+        const legacyChanges = [];
+        const normalizedLegacy = helpers.normalizeLegacyDmAliases({
+          entry: legacyEntry,
+          pathPrefix: "channels.telegram",
+          changes: legacyChanges
+        });
+        const wildcardEntry = { ...normalizedLegacy.entry };
+        const wildcardChanges = [];
+        helpers.ensureOpenDmPolicyAllowFromWildcard({
+          entry: wildcardEntry,
+          mode: "topOnly",
+          pathPrefix: "channels.telegram",
+          changes: wildcardChanges
+        });
+        const nestedEntry = { dm: { policy: "open" } };
+        helpers.ensureOpenDmPolicyAllowFromWildcard({
+          entry: nestedEntry,
+          mode: "nestedOnly",
+          pathPrefix: "channels.signal",
+          changes: []
+        });
+        const canonicalEntry = {};
+        helpers.setCanonicalDmAllowFrom({
+          entry: canonicalEntry,
+          mode: "nestedOnly",
+          allowFrom: ["*"],
+          pathPrefix: "channels.test",
+          changes: [],
+          reason: "test"
+        });
+
+        const scopedDmResolver = helpers.createScopedDmSecurityResolver({
+          channelKey: "telegram",
+          resolvePolicy: (account) => account.dmPolicy,
+          resolveAllowFrom: (account) => account.allowFrom,
+          defaultPolicy: "allowlist",
+          inheritSharedDefaultsFromDefaultAccount: true
+        });
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          scopedType: typeof scopedHelpers.createHybridChannelConfigAdapter,
+          genericType: typeof sdk.createScopedChannelConfigAdapter,
+          allowFrom: {
+            raw: helpers.mapAllowFromEntries([" alice ", 42, "", null]),
+            trimmed: helpers.formatTrimmedAllowFromEntries([" alice ", 42, "", " "]),
+            optional: [
+              helpers.resolveOptionalConfigString(undefined),
+              helpers.resolveOptionalConfigString("  "),
+              helpers.resolveOptionalConfigString(123),
+              helpers.resolveOptionalConfigString(" chat ")
+            ],
+            adapted: helpers.adaptScopedAccountAccessor(
+              ({ cfg, accountId }) => `${cfg.label}:${accountId || "default"}`
+            )({ label: "cfg" }, "work")
+          },
+          accessors: {
+            allowFrom: accessors.resolveAllowFrom({ cfg, accountId: "work" }),
+            formatted: accessors.formatAllowFrom({ allowFrom: [" bob ", 7, ""] }),
+            defaultTo: accessors.resolveDefaultTo({ cfg, accountId: "work" })
+          },
+          scopedBase: {
+            ids: scopedBase.listAccountIds(cfg),
+            defaultAccountId: scopedBase.defaultAccountId(cfg),
+            setAccount: scopedSet.channels.telegram.accounts["work-account"],
+            remainingAccountIds: Object.keys(scopedDelete.channels.telegram.accounts).sort()
+          },
+          topLevel: {
+            ids: topLevel.listAccountIds(topCfg),
+            setEnabled: topSet.channels.webchat.enabled,
+            tokenPresentAfterClear: Object.prototype.hasOwnProperty.call(
+              topClear.channels.webchat,
+              "token"
+            )
+          },
+          hybrid: {
+            defaultEnabled: hybridDefault.channels.telegram.enabled,
+            namedEnabled: hybridNamed.channels.telegram.accounts.work.enabled,
+            tokenPresentAfterDefaultDelete: Object.prototype.hasOwnProperty.call(
+              hybridClearDefault.channels.telegram,
+              "token"
+            )
+          },
+          dm: {
+            normalizedLegacy,
+            wildcardEntry,
+            nestedEntry,
+            canonicalEntry,
+            access: helpers.resolveChannelDmAccess({
+              account: { dm: { policy: "allowlist", allowFrom: ["dm"] } },
+              parent: { dmPolicy: "open", allowFrom: ["parent"] },
+              mode: "topOrNested",
+              defaultPolicy: "pairing"
+            }),
+            invalidPolicy: helpers.normalizeChannelDmPolicy("restricted") ?? null,
+            scopedPolicy: scopedDmResolver({
+              cfg,
+              accountId: "work",
+              account: { accountId: "work", dmPolicy: "allowlist", allowFrom: ["owner"] }
+            })
+          },
+          configWrites: {
+            rootAllowed: helpers.resolveChannelConfigWrites({ cfg, channelId: "telegram" }),
+            accountDenied: helpers.resolveChannelConfigWrites({
+              cfg,
+              channelId: "telegram",
+              accountId: "work"
+            }),
+            originDenied: helpers.authorizeConfigWrite({
+              cfg,
+              origin: { channelId: "telegram", accountId: "work" },
+              target: { kind: "channel", scope: { channelId: "telegram" } }
+            }),
+            targetDenied: helpers.authorizeConfigWrite({
+              cfg,
+              origin: { channelId: "telegram", accountId: "default" },
+              target: { kind: "channel", scope: { channelId: "signal" } }
+            }),
+            ambiguous: helpers.authorizeConfigWrite({
+              cfg,
+              target: { kind: "ambiguous", scopes: [{ channelId: "telegram" }] }
+            }),
+            bypass: helpers.canBypassConfigWritePolicy({
+              channel: "webchat",
+              gatewayClientScopes: ["operator.admin"]
+            }),
+            noBypass: helpers.canBypassConfigWritePolicy({
+              channel: "telegram",
+              gatewayClientScopes: ["operator.admin"]
+            }),
+            deniedMessage: helpers.formatConfigWriteDeniedMessage({
+              result: {
+                allowed: false,
+                reason: "target-disabled",
+                blockedScope: {
+                  kind: "target",
+                  scope: { channelId: "slack" }
+                }
+              },
+              fallbackChannelId: "telegram"
+            })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-helpers-plugin",
+                    "name": "Runtime Channel Config Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "adaptScopedAccountAccessor",
+            "authorizeConfigWrite",
+            "buildAccountScopedDmSecurityPolicy",
+            "canBypassConfigWritePolicy",
+            "createHybridChannelConfigAdapter",
+            "createHybridChannelConfigBase",
+            "createScopedAccountConfigAccessors",
+            "createScopedChannelConfigAdapter",
+            "createScopedChannelConfigBase",
+            "createScopedDmSecurityResolver",
+            "createTopLevelChannelConfigAdapter",
+            "createTopLevelChannelConfigBase",
+            "ensureOpenDmPolicyAllowFromWildcard",
+            "formatConfigWriteDeniedMessage",
+            "formatTrimmedAllowFromEntries",
+            "mapAllowFromEntries",
+            "normalizeChannelDmPolicy",
+            "normalizeLegacyDmAliases",
+            "resolveChannelConfigWrites",
+            "resolveChannelDmAccess",
+            "resolveChannelDmAllowFrom",
+            "resolveChannelDmPolicy",
+            "resolveOptionalConfigString",
+            "setCanonicalDmAllowFrom",
+        ],
+        "scopedType": "function",
+        "genericType": "function",
+        "allowFrom": {
+            "raw": [" alice ", "42", "", "null"],
+            "trimmed": ["alice", "42"],
+            "optional": [None, None, "123", "chat"],
+            "adapted": "cfg:work",
+        },
+        "accessors": {
+            "allowFrom": [" owner ", "42"],
+            "formatted": ["bob", "7"],
+            "defaultTo": "channel",
+        },
+        "scopedBase": {
+            "ids": ["default", "work"],
+            "defaultAccountId": "default",
+            "setAccount": {"enabled": True},
+            "remainingAccountIds": ["default"],
+        },
+        "topLevel": {
+            "ids": ["default"],
+            "setEnabled": True,
+            "tokenPresentAfterClear": False,
+        },
+        "hybrid": {
+            "defaultEnabled": False,
+            "namedEnabled": False,
+            "tokenPresentAfterDefaultDelete": False,
+        },
+        "dm": {
+            "normalizedLegacy": {
+                "entry": {"dmPolicy": "open", "allowFrom": [" alice "]},
+                "changed": True,
+            },
+            "wildcardEntry": {"dmPolicy": "open", "allowFrom": [" alice ", "*"]},
+            "nestedEntry": {"dm": {"policy": "open", "allowFrom": ["*"]}},
+            "canonicalEntry": {"dm": {"allowFrom": ["*"]}},
+            "access": {"dmPolicy": "allowlist", "allowFrom": ["dm"]},
+            "invalidPolicy": None,
+            "scopedPolicy": {
+                "policy": "allowlist",
+                "allowFrom": ["owner"],
+                "allowFromPath": "channels.telegram.accounts.work.",
+                "approveHint": (
+                    "Approve via: openclaw pairing list telegram / "
+                    "openclaw pairing approve telegram <code>"
+                ),
+            },
+        },
+        "configWrites": {
+            "rootAllowed": True,
+            "accountDenied": False,
+            "originDenied": {
+                "allowed": False,
+                "reason": "origin-disabled",
+                "blockedScope": {
+                    "kind": "origin",
+                    "scope": {"channelId": "telegram", "accountId": "work"},
+                },
+            },
+            "targetDenied": {
+                "allowed": False,
+                "reason": "target-disabled",
+                "blockedScope": {
+                    "kind": "target",
+                    "scope": {"channelId": "signal"},
+                },
+            },
+            "ambiguous": {"allowed": False, "reason": "ambiguous-target"},
+            "bypass": True,
+            "noBypass": False,
+            "deniedMessage": (
+                "Config writes are disabled for slack. "
+                "Set channels.slack.configWrites=true to enable."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

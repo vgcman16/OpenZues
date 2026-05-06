@@ -34809,6 +34809,765 @@ const bundledChannelConfigSchemaRuntime = {
   WhatsAppConfigSchema: providerChannelConfigSchema,
 };
 
+function normalizeChannelDmPolicy(value) {
+  return value === "pairing" || value === "allowlist" || value === "open" || value === "disabled"
+    ? value
+    : undefined;
+}
+
+function channelConfigHelpersAsObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function cloneDmAccessRecordDm(entry) {
+  const dm = channelConfigHelpersAsObjectRecord(entry && entry.dm);
+  return dm ? { ...dm } : null;
+}
+
+function resolveDmFieldPaths(mode, kind) {
+  const topKey = kind === "policy" ? "dmPolicy" : "allowFrom";
+  const nestedKey = kind === "policy" ? "policy" : "allowFrom";
+  if (mode === "nestedOnly") {
+    return {
+      canonicalPath: ["dm", nestedKey],
+      legacyPath: [topKey],
+    };
+  }
+  return {
+    canonicalPath: [topKey],
+    legacyPath: ["dm", nestedKey],
+  };
+}
+
+function readChannelConfigHelperPath(entry, segments) {
+  let current = entry;
+  for (const segment of segments) {
+    const record = channelConfigHelpersAsObjectRecord(current);
+    if (!record) {
+      return undefined;
+    }
+    current = record[segment];
+  }
+  return current;
+}
+
+function deleteChannelConfigHelperPath(entry, segments) {
+  if (!entry || segments.length === 0) {
+    return false;
+  }
+  if (segments.length === 1) {
+    if (entry[segments[0]] === undefined) {
+      return false;
+    }
+    delete entry[segments[0]];
+    return true;
+  }
+  const parent = channelConfigHelpersAsObjectRecord(entry[segments[0]]);
+  if (!parent || parent[segments[1]] === undefined) {
+    return false;
+  }
+  delete parent[segments[1]];
+  if (Object.keys(parent).length === 0) {
+    delete entry[segments[0]];
+  } else {
+    entry[segments[0]] = parent;
+  }
+  return true;
+}
+
+function writeChannelConfigHelperPath(entry, segments, value) {
+  if (segments.length === 1) {
+    entry[segments[0]] = value;
+    return;
+  }
+  const parent = channelConfigHelpersAsObjectRecord(entry[segments[0]])
+    ? { ...entry[segments[0]] }
+    : {};
+  parent[segments[1]] = value;
+  entry[segments[0]] = parent;
+}
+
+function allowFromListsMatch(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return false;
+  }
+  const normalizedLeft = normalizeStringEntries(left);
+  const normalizedRight = normalizeStringEntries(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  );
+}
+
+function formatChannelConfigHelperPath(pathPrefix, segments) {
+  return `${pathPrefix}.${segments.join(".")}`;
+}
+
+function readCanonicalOrLegacyDmField(entry, mode, kind) {
+  const paths = resolveDmFieldPaths(mode, kind);
+  return (
+    readChannelConfigHelperPath(entry, paths.canonicalPath) ??
+    readChannelConfigHelperPath(entry, paths.legacyPath)
+  );
+}
+
+function resolveChannelDmPolicy(params = {}) {
+  const mode = params.mode || "topOnly";
+  const value =
+    readCanonicalOrLegacyDmField(params.account, mode, "policy") ??
+    readCanonicalOrLegacyDmField(params.parent, mode, "policy") ??
+    params.defaultPolicy;
+  return typeof value === "string" ? normalizeChannelDmPolicy(value) : undefined;
+}
+
+function resolveChannelDmAllowFrom(params = {}) {
+  const mode = params.mode || "topOnly";
+  const value =
+    readCanonicalOrLegacyDmField(params.account, mode, "allowFrom") ??
+    readCanonicalOrLegacyDmField(params.parent, mode, "allowFrom");
+  return Array.isArray(value) ? value : undefined;
+}
+
+function resolveChannelDmAccess(params = {}) {
+  return {
+    dmPolicy: resolveChannelDmPolicy(params),
+    allowFrom: resolveChannelDmAllowFrom(params),
+  };
+}
+
+function setCanonicalDmAllowFrom(params = {}) {
+  const entry = channelConfigHelpersAsObjectRecord(params.entry) || {};
+  const mode = params.mode || "topOnly";
+  const paths = resolveDmFieldPaths(mode, "allowFrom");
+  writeChannelConfigHelperPath(entry, paths.canonicalPath, [...(params.allowFrom || [])]);
+  if (deleteChannelConfigHelperPath(entry, paths.legacyPath)) {
+    params.changes?.push(
+      `- ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        paths.legacyPath,
+      )}: removed after moving allowlist to ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        paths.canonicalPath,
+      )}`,
+    );
+  }
+  params.changes?.push(
+    `- ${formatChannelConfigHelperPath(params.pathPrefix, paths.canonicalPath)}: ${
+      params.reason || "updated"
+    }`,
+  );
+}
+
+function normalizeLegacyDmAliases(params = {}) {
+  let changed = false;
+  let updated = channelConfigHelpersAsObjectRecord(params.entry) || {};
+  const rawDm = updated.dm;
+  const dm = cloneDmAccessRecordDm(updated);
+  let dmChanged = false;
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = params.pathPrefix || "channel";
+
+  const topDmPolicy = updated.dmPolicy;
+  const legacyDmPolicy = dm && dm.policy;
+  if (topDmPolicy === undefined && legacyDmPolicy !== undefined) {
+    updated = { ...updated, dmPolicy: legacyDmPolicy };
+    changed = true;
+    if (dm) {
+      delete dm.policy;
+      dmChanged = true;
+    }
+    changes.push(`Moved ${pathPrefix}.dm.policy to ${pathPrefix}.dmPolicy.`);
+  } else if (
+    topDmPolicy !== undefined &&
+    legacyDmPolicy !== undefined &&
+    topDmPolicy === legacyDmPolicy
+  ) {
+    if (dm) {
+      delete dm.policy;
+      dmChanged = true;
+      changes.push(`Removed ${pathPrefix}.dm.policy (dmPolicy already set).`);
+    }
+  }
+
+  if (params.promoteAllowFrom !== false) {
+    const topAllowFrom = updated.allowFrom;
+    const legacyAllowFrom = dm && dm.allowFrom;
+    if (topAllowFrom === undefined && legacyAllowFrom !== undefined) {
+      updated = { ...updated, allowFrom: legacyAllowFrom };
+      changed = true;
+      if (dm) {
+        delete dm.allowFrom;
+        dmChanged = true;
+      }
+      changes.push(`Moved ${pathPrefix}.dm.allowFrom to ${pathPrefix}.allowFrom.`);
+    } else if (
+      topAllowFrom !== undefined &&
+      legacyAllowFrom !== undefined &&
+      allowFromListsMatch(topAllowFrom, legacyAllowFrom)
+    ) {
+      if (dm) {
+        delete dm.allowFrom;
+        dmChanged = true;
+        changes.push(`Removed ${pathPrefix}.dm.allowFrom (allowFrom already set).`);
+      }
+    }
+  }
+
+  if (dm && channelConfigHelpersAsObjectRecord(rawDm) && dmChanged) {
+    if (Object.keys(dm).length === 0) {
+      if (updated.dm !== undefined) {
+        const { dm: _ignored, ...rest } = updated;
+        updated = rest;
+        changed = true;
+        changes.push(`Removed empty ${pathPrefix}.dm after migration.`);
+      }
+    } else {
+      updated = { ...updated, dm };
+      changed = true;
+    }
+  }
+  return { entry: updated, changed };
+}
+
+function channelConfigHelperListHasWildcard(list) {
+  return Array.isArray(list) && list.some((value) => String(value).trim() === "*");
+}
+
+function ensureOpenDmPolicyAllowFromWildcard(params = {}) {
+  const entry = channelConfigHelpersAsObjectRecord(params.entry);
+  if (!entry) {
+    return;
+  }
+  const mode = params.mode || "topOnly";
+  const policy = resolveChannelDmPolicy({ account: entry, mode });
+  if (policy !== "open") {
+    return;
+  }
+  const policyPaths = resolveDmFieldPaths(mode, "policy");
+  const canonicalPolicy = readChannelConfigHelperPath(entry, policyPaths.canonicalPath);
+  const legacyPolicy = readChannelConfigHelperPath(entry, policyPaths.legacyPath);
+  if (canonicalPolicy === undefined && legacyPolicy === "open") {
+    writeChannelConfigHelperPath(entry, policyPaths.canonicalPath, "open");
+    deleteChannelConfigHelperPath(entry, policyPaths.legacyPath);
+    params.changes?.push(
+      `- ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        policyPaths.canonicalPath,
+      )}: set to "open"`,
+    );
+  }
+
+  const allowPaths = resolveDmFieldPaths(mode, "allowFrom");
+  const canonicalAllowFrom = readChannelConfigHelperPath(entry, allowPaths.canonicalPath);
+  const legacyAllowFrom = readChannelConfigHelperPath(entry, allowPaths.legacyPath);
+  const sourceAllowFrom = Array.isArray(canonicalAllowFrom)
+    ? canonicalAllowFrom
+    : Array.isArray(legacyAllowFrom)
+      ? legacyAllowFrom
+      : undefined;
+  if (channelConfigHelperListHasWildcard(sourceAllowFrom)) {
+    if (canonicalAllowFrom === undefined && sourceAllowFrom) {
+      setCanonicalDmAllowFrom({
+        entry,
+        mode,
+        allowFrom: sourceAllowFrom,
+        pathPrefix: params.pathPrefix,
+        changes: params.changes,
+        reason: `moved wildcard allowlist from ${formatChannelConfigHelperPath(
+          params.pathPrefix,
+          allowPaths.legacyPath,
+        )}`,
+      });
+    }
+    return;
+  }
+  setCanonicalDmAllowFrom({
+    entry,
+    mode,
+    allowFrom: [...(sourceAllowFrom || []), "*"],
+    pathPrefix: params.pathPrefix,
+    changes: params.changes,
+    reason: Array.isArray(sourceAllowFrom)
+      ? 'added "*" (required by dmPolicy="open")'
+      : 'set to ["*"] (required by dmPolicy="open")',
+  });
+}
+
+function resolveChannelConfigWrites(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig =
+    params.channelId &&
+    cfg.channels &&
+    typeof cfg.channels === "object" &&
+    cfg.channels[params.channelId];
+  if (!channelConfig || typeof channelConfig !== "object") {
+    return true;
+  }
+  const accountConfig = resolveAccountEntry(
+    channelConfig.accounts,
+    normalizeAccountId(params.accountId),
+  );
+  const value =
+    (accountConfig && accountConfig.configWrites !== undefined
+      ? accountConfig.configWrites
+      : channelConfig.configWrites);
+  return value !== false;
+}
+
+function listConfigWriteTargetScopes(target) {
+  if (!target || target.kind === "global") {
+    return [];
+  }
+  if (target.kind === "ambiguous") {
+    return Array.isArray(target.scopes) ? target.scopes : [];
+  }
+  return target.scope ? [target.scope] : [];
+}
+
+function authorizeConfigWrite(params = {}) {
+  if (params.allowBypass) {
+    return { allowed: true };
+  }
+  if (params.target && params.target.kind === "ambiguous") {
+    return { allowed: false, reason: "ambiguous-target" };
+  }
+  if (
+    params.origin &&
+    params.origin.channelId &&
+    !resolveChannelConfigWrites({
+      cfg: params.cfg,
+      channelId: params.origin.channelId,
+      accountId: params.origin.accountId,
+    })
+  ) {
+    return {
+      allowed: false,
+      reason: "origin-disabled",
+      blockedScope: { kind: "origin", scope: params.origin },
+    };
+  }
+  const seen = new Set();
+  for (const target of listConfigWriteTargetScopes(params.target)) {
+    if (!target || !target.channelId) {
+      continue;
+    }
+    const accountId = normalizeAccountId(target.accountId);
+    const key = `${target.channelId}:${accountId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    if (
+      !resolveChannelConfigWrites({
+        cfg: params.cfg,
+        channelId: target.channelId,
+        accountId: target.accountId,
+      })
+    ) {
+      return {
+        allowed: false,
+        reason: "target-disabled",
+        blockedScope: { kind: "target", scope: target },
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+function canBypassConfigWritePolicy(params = {}) {
+  return (
+    normalizeOptionalLowercaseString(params.channel) === INTERNAL_MESSAGE_CHANNEL &&
+    Array.isArray(params.gatewayClientScopes) &&
+    params.gatewayClientScopes.includes("operator.admin")
+  );
+}
+
+function formatConfigWriteDeniedMessage(params = {}) {
+  const result = params.result || {};
+  if (result.reason === "ambiguous-target") {
+    return (
+      "Channel-initiated /config writes cannot replace channels, channel roots, " +
+      "or accounts collections. Use a more specific path or gateway operator.admin."
+    );
+  }
+  const blocked = result.blockedScope && result.blockedScope.scope;
+  const channelLabel = (blocked && blocked.channelId) || params.fallbackChannelId || "this channel";
+  const hint =
+    blocked && blocked.channelId
+      ? blocked.accountId
+        ? `channels.${blocked.channelId}.accounts.${blocked.accountId}.configWrites=true`
+        : `channels.${blocked.channelId}.configWrites=true`
+      : params.fallbackChannelId
+        ? `channels.${params.fallbackChannelId}.configWrites=true`
+        : "channels.<channel>.configWrites=true";
+  return `Config writes are disabled for ${channelLabel}. Set ${hint} to enable.`;
+}
+
+function mapAllowFromEntries(allowFrom) {
+  return (allowFrom || []).map((entry) => String(entry));
+}
+
+function formatTrimmedAllowFromEntries(allowFrom) {
+  return normalizeStringEntries(allowFrom);
+}
+
+function resolveOptionalConfigString(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized || undefined;
+}
+
+function adaptScopedAccountAccessor(accessor) {
+  return (cfg, accountId) => accessor({ cfg, accountId });
+}
+
+function createScopedAccountConfigAccessors(params = {}) {
+  const base = {
+    resolveAllowFrom({ cfg, accountId } = {}) {
+      return mapAllowFromEntries(
+        params.resolveAllowFrom(params.resolveAccount({ cfg, accountId })),
+      );
+    },
+    formatAllowFrom({ allowFrom } = {}) {
+      return params.formatAllowFrom(allowFrom);
+    },
+  };
+  if (typeof params.resolveDefaultTo !== "function") {
+    return base;
+  }
+  return {
+    ...base,
+    resolveDefaultTo({ cfg, accountId } = {}) {
+      return resolveOptionalConfigString(
+        params.resolveDefaultTo(params.resolveAccount({ cfg, accountId })),
+      );
+    },
+  };
+}
+
+function createNamedAccountConfigBase(params = {}) {
+  return {
+    listAccountIds(cfg) {
+      return params.listAccountIds(cfg);
+    },
+    resolveAccount(cfg, accountId) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    inspectAccount:
+      typeof params.inspectAccount === "function"
+        ? (cfg, accountId) => params.inspectAccount(cfg, accountId)
+        : undefined,
+    defaultAccountId(cfg) {
+      return params.defaultAccountId(cfg);
+    },
+    setAccountEnabled({ cfg, accountId, enabled } = {}) {
+      return params.setAccountEnabled({
+        cfg,
+        accountId: normalizeAccountId(accountId),
+        enabled,
+      });
+    },
+    deleteAccount({ cfg, accountId } = {}) {
+      return params.deleteAccount({ cfg, accountId: normalizeAccountId(accountId) });
+    },
+  };
+}
+
+function resolveAccessorAccountWithFallback(
+  resolveAccessorAccount,
+  fallbackResolveAccessorAccount,
+) {
+  return typeof resolveAccessorAccount === "function"
+    ? resolveAccessorAccount
+    : fallbackResolveAccessorAccount;
+}
+
+function createChannelConfigAdapterWithAccessors(params = {}) {
+  return {
+    ...params.base,
+    ...createScopedAccountConfigAccessors({
+      resolveAccount: resolveAccessorAccountWithFallback(
+        params.resolveAccessorAccount,
+        params.fallbackResolveAccessorAccount,
+      ),
+      resolveAllowFrom: params.resolveAllowFrom,
+      formatAllowFrom: params.formatAllowFrom,
+      resolveDefaultTo: params.resolveDefaultTo,
+    }),
+  };
+}
+
+function createChannelConfigAdapterFromBase(params = {}) {
+  return createChannelConfigAdapterWithAccessors({
+    base: params.base,
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    fallbackResolveAccessorAccount: params.resolveAccountForAccessors,
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function createScopedChannelConfigBase(params = {}) {
+  return createNamedAccountConfigBase({
+    listAccountIds: params.listAccountIds,
+    resolveAccount: params.resolveAccount,
+    inspectAccount: params.inspectAccount,
+    defaultAccountId: params.defaultAccountId,
+    setAccountEnabled({ cfg, accountId, enabled }) {
+      return setAccountEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        enabled,
+        allowTopLevel: params.allowTopLevel ?? true,
+      });
+    },
+    deleteAccount({ cfg, accountId }) {
+      return deleteAccountFromConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        clearBaseFields: params.clearBaseFields,
+      });
+    },
+  });
+}
+
+function createScopedChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createScopedChannelConfigBase({
+      sectionKey: params.sectionKey,
+      listAccountIds: params.listAccountIds,
+      resolveAccount: params.resolveAccount,
+      inspectAccount: params.inspectAccount,
+      defaultAccountId: params.defaultAccountId,
+      clearBaseFields: params.clearBaseFields,
+      allowTopLevel: params.allowTopLevel,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg, accountId } = {}) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function setTopLevelChannelEnabledInConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const section =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: {
+        ...section,
+        enabled: params.enabled,
+      },
+    },
+  };
+}
+
+function removeTopLevelChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const nextChannels = { ...channels };
+  delete nextChannels[params.sectionKey];
+  const nextCfg = { ...cfg };
+  if (Object.keys(nextChannels).length > 0) {
+    nextCfg.channels = nextChannels;
+  } else {
+    delete nextCfg.channels;
+  }
+  return nextCfg;
+}
+
+function clearTopLevelChannelConfigFields(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const section =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : undefined;
+  if (!section) {
+    return cfg;
+  }
+  const nextSection = { ...section };
+  for (const field of params.clearBaseFields || []) {
+    delete nextSection[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: nextSection,
+    },
+  };
+}
+
+function createTopLevelChannelConfigBase(params = {}) {
+  return {
+    listAccountIds(cfg) {
+      return typeof params.listAccountIds === "function"
+        ? params.listAccountIds(cfg)
+        : [DEFAULT_ACCOUNT_ID];
+    },
+    resolveAccount(cfg) {
+      return params.resolveAccount(cfg);
+    },
+    inspectAccount:
+      typeof params.inspectAccount === "function" ? (cfg) => params.inspectAccount(cfg) : undefined,
+    defaultAccountId(cfg) {
+      return typeof params.defaultAccountId === "function"
+        ? params.defaultAccountId(cfg)
+        : DEFAULT_ACCOUNT_ID;
+    },
+    setAccountEnabled({ cfg, enabled } = {}) {
+      return setTopLevelChannelEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        enabled,
+      });
+    },
+    deleteAccount({ cfg } = {}) {
+      return params.deleteMode === "clear-fields"
+        ? clearTopLevelChannelConfigFields({
+            cfg,
+            sectionKey: params.sectionKey,
+            clearBaseFields: params.clearBaseFields || [],
+          })
+        : removeTopLevelChannelConfigSection({
+            cfg,
+            sectionKey: params.sectionKey,
+          });
+    },
+  };
+}
+
+function createTopLevelChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createTopLevelChannelConfigBase({
+      sectionKey: params.sectionKey,
+      resolveAccount: params.resolveAccount,
+      listAccountIds: params.listAccountIds,
+      defaultAccountId: params.defaultAccountId,
+      inspectAccount: params.inspectAccount,
+      deleteMode: params.deleteMode,
+      clearBaseFields: params.clearBaseFields,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg } = {}) {
+      return params.resolveAccount(cfg);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function createHybridChannelConfigBase(params = {}) {
+  return createNamedAccountConfigBase({
+    listAccountIds: params.listAccountIds,
+    resolveAccount: params.resolveAccount,
+    inspectAccount: params.inspectAccount,
+    defaultAccountId: params.defaultAccountId,
+    setAccountEnabled({ cfg, accountId, enabled }) {
+      if (normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID) {
+        return setTopLevelChannelEnabledInConfigSection({
+          cfg,
+          sectionKey: params.sectionKey,
+          enabled,
+        });
+      }
+      return setAccountEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        enabled,
+      });
+    },
+    deleteAccount({ cfg, accountId }) {
+      if (normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID) {
+        if (params.preserveSectionOnDefaultDelete) {
+          return clearTopLevelChannelConfigFields({
+            cfg,
+            sectionKey: params.sectionKey,
+            clearBaseFields: params.clearBaseFields || [],
+          });
+        }
+        return deleteAccountFromConfigSection({
+          cfg,
+          sectionKey: params.sectionKey,
+          accountId,
+          clearBaseFields: params.clearBaseFields,
+        });
+      }
+      return deleteAccountFromConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        clearBaseFields: params.clearBaseFields,
+      });
+    },
+  });
+}
+
+function createHybridChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createHybridChannelConfigBase({
+      sectionKey: params.sectionKey,
+      listAccountIds: params.listAccountIds,
+      resolveAccount: params.resolveAccount,
+      inspectAccount: params.inspectAccount,
+      defaultAccountId: params.defaultAccountId,
+      clearBaseFields: params.clearBaseFields,
+      preserveSectionOnDefaultDelete: params.preserveSectionOnDefaultDelete,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg, accountId } = {}) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+const channelConfigHelpersRuntime = {
+  adaptScopedAccountAccessor,
+  authorizeConfigWrite,
+  buildAccountScopedDmSecurityPolicy,
+  canBypassConfigWritePolicy,
+  createHybridChannelConfigAdapter,
+  createHybridChannelConfigBase,
+  createScopedAccountConfigAccessors,
+  createScopedChannelConfigAdapter,
+  createScopedChannelConfigBase,
+  createScopedDmSecurityResolver,
+  createTopLevelChannelConfigAdapter,
+  createTopLevelChannelConfigBase,
+  ensureOpenDmPolicyAllowFromWildcard,
+  formatConfigWriteDeniedMessage,
+  formatTrimmedAllowFromEntries,
+  mapAllowFromEntries,
+  normalizeChannelDmPolicy,
+  normalizeLegacyDmAliases,
+  resolveChannelConfigWrites,
+  resolveChannelDmAccess,
+  resolveChannelDmAllowFrom,
+  resolveChannelDmPolicy,
+  resolveOptionalConfigString,
+  setCanonicalDmAllowFrom,
+};
+
 const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
   discord: {
     id: "discord",
@@ -35910,6 +36669,7 @@ const genericSdk = new Proxy(
     ...coreRuntime,
     ...channelConfigSchemaRuntime,
     ...bundledChannelConfigSchemaRuntime,
+    ...channelConfigHelpersRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -36887,6 +37647,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-config-schema-legacy"
   ) {
     return bundledChannelConfigSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-helpers" ||
+    request === "@openclaw/plugin-sdk/channel-config-helpers"
+  ) {
+    return channelConfigHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
