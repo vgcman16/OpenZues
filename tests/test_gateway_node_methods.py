@@ -22938,6 +22938,129 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secret-input-schema.cjs"
+    runtime_entry.write_text(
+        """
+const schemaRuntime = require("openclaw/plugin-sdk/secret-input-schema");
+const scopedSchemaRuntime = require("@openclaw/plugin-sdk/secret-input-schema");
+const secretInput = require("openclaw/plugin-sdk/secret-input");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_input_schema",
+      description: "Use OpenClaw secret-input schema SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const schema = schemaRuntime.buildSecretInputSchema();
+        const optional = secretInput.buildOptionalSecretInputSchema();
+        const arraySchema = secretInput.buildSecretInputArraySchema();
+        return {
+          schemaKeys: Object.keys(schemaRuntime).sort(),
+          scopedType: typeof scopedSchemaRuntime.buildSecretInputSchema,
+          secretInputTypes: [
+            typeof secretInput.buildSecretInputSchema,
+            typeof secretInput.buildOptionalSecretInputSchema,
+            typeof secretInput.buildSecretInputArraySchema
+          ],
+          valid: [
+            schema.safeParse("literal-secret").success,
+            schema.safeParse({
+              source: "env",
+              provider: "default",
+              id: "OPENAI_API_KEY"
+            }).success,
+            schema.safeParse({
+              source: "file",
+              provider: "mounted-json",
+              id: "/providers/openai/apiKey"
+            }).success,
+            schema.safeParse({
+              source: "exec",
+              provider: "vault",
+              id: "vault/openai/api-key"
+            }).success,
+            optional.safeParse(undefined).success,
+            arraySchema.safeParse([
+              "literal-secret",
+              { source: "env", provider: "default", id: "OPENAI_API_KEY" }
+            ]).success
+          ],
+          invalid: [
+            schema.safeParse({ source: "env", provider: "Bad", id: "OPENAI_API_KEY" }).success,
+            schema.safeParse({ source: "env", provider: "default", id: "bad" }).success,
+            schema.safeParse({ source: "file", provider: "default", id: "relative" }).success,
+            schema.safeParse({ source: "exec", provider: "vault", id: "../bad" }).success,
+            arraySchema.safeParse("literal-secret").success
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-input-schema-plugin",
+                    "name": "Runtime Secret Input Schema Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-secret-input-schema.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_input_schema"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_input_schema"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "schemaKeys": ["buildSecretInputSchema"],
+        "scopedType": "function",
+        "secretInputTypes": ["function", "function", "function"],
+        "valid": [True, True, True, True, True, True],
+        "invalid": [False, False, False, False, False],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

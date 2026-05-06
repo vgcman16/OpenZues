@@ -24191,9 +24191,102 @@ const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
 const ENV_SECRET_REF_ID_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const LEGACY_SECRETREF_ENV_MARKER_PREFIX = "secretref-env:";
 const ENV_SECRET_TEMPLATE_RE = /^\$\{([A-Z][A-Z0-9_]{0,127})\}$/;
+const SECRET_PROVIDER_ALIAS_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const FILE_SECRET_REF_SEGMENT_PATTERN = /^(?:[^~]|~0|~1)*$/;
+const EXEC_SECRET_REF_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/;
 
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isValidFileSecretRefId(value) {
+  if (value === "value") {
+    return true;
+  }
+  if (typeof value !== "string" || !value.startsWith("/")) {
+    return false;
+  }
+  return value
+    .slice(1)
+    .split("/")
+    .every((segment) => FILE_SECRET_REF_SEGMENT_PATTERN.test(segment));
+}
+
+function isValidExecSecretRefId(value) {
+  if (typeof value !== "string" || !EXEC_SECRET_REF_ID_PATTERN.test(value)) {
+    return false;
+  }
+  return value.split("/").every((segment) => segment !== "." && segment !== "..");
+}
+
+function createSchemaResult(ok, data) {
+  if (ok) {
+    return { success: true, data };
+  }
+  return { success: false, error: { issues: [] } };
+}
+
+function validateSecretInputSchemaValue(value) {
+  if (typeof value === "string") {
+    return true;
+  }
+  if (!isRecord(value) || Object.keys(value).length !== 3) {
+    return false;
+  }
+  if (
+    typeof value.provider !== "string" ||
+    !SECRET_PROVIDER_ALIAS_PATTERN.test(value.provider)
+  ) {
+    return false;
+  }
+  if (value.source === "env") {
+    return typeof value.id === "string" && ENV_SECRET_REF_ID_RE.test(value.id);
+  }
+  if (value.source === "file") {
+    return isValidFileSecretRefId(value.id);
+  }
+  if (value.source === "exec") {
+    return isValidExecSecretRefId(value.id);
+  }
+  return false;
+}
+
+function buildSecretInputSchema() {
+  return {
+    safeParse(value) {
+      return createSchemaResult(validateSecretInputSchemaValue(value), value);
+    },
+    optional() {
+      const base = this;
+      return {
+        safeParse(value) {
+          if (value === undefined) {
+            return createSchemaResult(true, value);
+          }
+          return base.safeParse(value);
+        },
+      };
+    },
+  };
+}
+
+function buildOptionalSecretInputSchema() {
+  return buildSecretInputSchema().optional();
+}
+
+function buildSecretInputArraySchema() {
+  return {
+    safeParse(value) {
+      if (!Array.isArray(value)) {
+        return createSchemaResult(false, value);
+      }
+      const schema = buildSecretInputSchema();
+      return createSchemaResult(
+        value.every((entry) => schema.safeParse(entry).success),
+        value,
+      );
+    },
+  };
 }
 
 function isSecretRef(value) {
@@ -38530,7 +38623,10 @@ const statePathsRuntime = {
 };
 
 const secretInputRuntime = {
+  buildOptionalSecretInputSchema,
   coerceSecretRef,
+  buildSecretInputArraySchema,
+  buildSecretInputSchema,
   hasConfiguredSecretInput,
   isSecretRef,
   normalizeResolvedSecretInputString,
@@ -38551,6 +38647,10 @@ const secretInputConfiguredRuntime = {
   resolveConfiguredSecretInputWithFallback,
   resolveRequiredConfiguredSecretRefInputString,
   resolveSecretInputString,
+};
+
+const secretInputSchemaRuntime = {
+  buildSecretInputSchema,
 };
 
 const secretRefRuntime = {
@@ -39787,6 +39887,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input-runtime"
   ) {
     return secretInputConfiguredRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-input-schema" ||
+    request === "@openclaw/plugin-sdk/secret-input-schema"
+  ) {
+    return secretInputSchemaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
