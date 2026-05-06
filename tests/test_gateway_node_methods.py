@@ -14189,6 +14189,153 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_param_readers_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-param-readers.cjs"
+    runtime_entry.write_text(
+        """
+const paramReaders = require("openclaw/plugin-sdk/param-readers");
+const scopedParamReaders = require("@openclaw/plugin-sdk/param-readers");
+
+function capture(fn) {
+  try {
+    return { ok: true, value: fn() };
+  } catch (error) {
+    return {
+      ok: false,
+      name: error && error.name,
+      message: error && error.message,
+      status: error && error.status
+    };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.param_readers",
+      description: "Use OpenClaw param-readers SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(paramReaders).sort(),
+          scopedType: typeof scopedParamReaders.readStringParam,
+          strings: [
+            paramReaders.readStringParam({ message_id: "  abc " }, "messageId"),
+            paramReaders.readStringParam({ raw: "  keep  " }, "raw", { trim: false }),
+            paramReaders.readStringParam({ blank: "" }, "blank", { allowEmpty: true }),
+            paramReaders.readStringParam({ blank: "   " }, "blank") ?? null
+          ],
+          stringOrNumber: [
+            paramReaders.readStringOrNumberParam({ value: 12 }, "value"),
+            paramReaders.readStringOrNumberParam({ value: " 34 " }, "value"),
+            paramReaders.readStringOrNumberParam({ value: false }, "value") ?? null
+          ],
+          numbers: [
+            paramReaders.readNumberParam({ count: "12.8" }, "count"),
+            paramReaders.readNumberParam({ count: "12.8" }, "count", { integer: true }),
+            paramReaders.readNumberParam({ count: "12abc" }, "count"),
+            paramReaders.readNumberParam({ count: "12abc" }, "count", { strict: true }) ?? null
+          ],
+          arrays: [
+            paramReaders.readStringArrayParam({ tags: [" a ", "", 2, "b"] }, "tags"),
+            paramReaders.readStringArrayParam({ tags: " solo " }, "tags"),
+            paramReaders.readStringArrayParam({ tags: [] }, "tags") ?? null
+          ],
+          required: [
+            capture(() => paramReaders.readStringParam({}, "target", {
+              required: true,
+              label: "Target"
+            })),
+            capture(() => paramReaders.readNumberParam({}, "count", {
+              required: true,
+              label: "Count"
+            })),
+            capture(() => paramReaders.readStringArrayParam({}, "tags", {
+              required: true,
+              label: "Tags"
+            }))
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-param-readers-plugin",
+                    "name": "Runtime Param Readers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-param-readers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.param_readers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.param_readers"})
+
+    required_error = {
+        "ok": False,
+        "name": "ToolInputError",
+        "status": 400,
+    }
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "readNumberParam",
+            "readStringArrayParam",
+            "readStringOrNumberParam",
+            "readStringParam",
+        ],
+        "scopedType": "function",
+        "strings": ["abc", "  keep  ", "", None],
+        "stringOrNumber": ["12", "34", None],
+        "numbers": [12.8, 12, 12, None],
+        "arrays": [["a", "b"], ["solo"], None],
+        "required": [
+            {**required_error, "message": "Target required"},
+            {**required_error, "message": "Count required"},
+            {**required_error, "message": "Tags required"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:

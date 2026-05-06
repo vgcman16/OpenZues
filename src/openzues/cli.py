@@ -40064,6 +40064,13 @@ const booleanParamRuntime = {
   readBooleanParam,
 };
 
+const paramReadersRuntime = {
+  readNumberParam,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+};
+
 const channelActionsRuntime = {
   ToolAuthorizationError,
   assertMediaNotDataUrl,
@@ -41452,6 +41459,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/boolean-param"
   ) {
     return booleanParamRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/param-readers" ||
+    request === "@openclaw/plugin-sdk/param-readers"
+  ) {
+    return paramReadersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-actions" ||
