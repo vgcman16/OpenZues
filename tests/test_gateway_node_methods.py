@@ -15554,6 +15554,232 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_runtime_adapter_factory(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+const scopedHandler = require("@openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const runtime = handler.createChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  resolveApprovalKind: (request) => (request.id.startsWith("plugin:") ? "plugin" : "exec"),
+  availability: {
+    isConfigured: ({ accountId }) => accountId === "ops",
+    shouldHandle: ({ request }) => request.id !== "skip"
+  },
+  presentation: {
+    buildPendingPayload: async ({ request, view }) => ({
+      pending: request.id,
+      viewKind: view.kind
+    }),
+    buildResolvedResult: async ({ resolved, entry }) => ({
+      kind: "update",
+      payload: { resolved: resolved.id, entry: entry.id }
+    }),
+    buildExpiredResult: async ({ request }) => ({ kind: "delete", expired: request.id })
+  },
+  transport: {
+    prepareTarget: async ({ plannedTarget, pendingPayload }) => ({
+      dedupeKey: plannedTarget.target.to,
+      target: { to: plannedTarget.target.to, pending: pendingPayload.pending }
+    }),
+    deliverPending: async ({ preparedTarget }) => ({ id: `entry:${preparedTarget.to}` }),
+    updateEntry: async ({ entry, payload, phase }) => ({
+      updated: entry.id,
+      payload,
+      phase
+    }),
+    deleteEntry: async ({ entry, phase }) => ({ deleted: entry.id, phase })
+  },
+  interactions: {
+    bindPending: async ({ entry }) => ({ binding: entry.id }),
+    unbindPending: async ({ binding }) => ({ unbound: binding.id }),
+    clearPendingActions: async ({ entry, phase }) => ({ cleared: entry.id, phase })
+  },
+  observe: {
+    onDeliveryError: ({ plannedTarget }) => observed.push(`error:${plannedTarget.target.to}`),
+    onDuplicateSkipped: ({ plannedTarget }) =>
+      observed.push(`duplicate:${plannedTarget.target.to}`),
+    onDelivered: ({ entry }) => observed.push(`delivered:${entry.id}`)
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_runtime",
+      description: "Use OpenClaw approval handler runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const request = { id: "plugin:req-1", request: { title: "Plugin" } };
+        const pending = await runtime.presentation.buildPendingPayload({
+          request,
+          approvalKind: "plugin",
+          nowMs: 10,
+          view: { kind: "plugin-pending" }
+        });
+        const prepared = await runtime.transport.prepareTarget({
+          plannedTarget: { target: { to: "owner" } },
+          pendingPayload: pending
+        });
+        const delivered = await runtime.transport.deliverPending({
+          preparedTarget: prepared.target,
+          pendingPayload: pending
+        });
+        const resolved = await runtime.presentation.buildResolvedResult({
+          resolved: { id: "plugin:req-1" },
+          entry: delivered,
+          view: { kind: "plugin-resolved" }
+        });
+        const expired = await runtime.presentation.buildExpiredResult({
+          request: { id: "req-expired" },
+          view: { kind: "exec-expired" },
+          entry: delivered
+        });
+        const updated = await runtime.transport.updateEntry({
+          entry: delivered,
+          payload: resolved.payload,
+          phase: "resolved"
+        });
+        const deleted = await runtime.transport.deleteEntry({
+          entry: delivered,
+          phase: "expired"
+        });
+        const binding = await runtime.interactions.bindPending({ entry: delivered });
+        const unbound = await runtime.interactions.unbindPending({
+          binding: { id: "binding-1" }
+        });
+        const cleared = await runtime.interactions.clearPendingActions({
+          entry: delivered,
+          phase: "resolved"
+        });
+        runtime.observe.onDelivered({ entry: delivered });
+        runtime.observe.onDuplicateSkipped({ plannedTarget: { target: { to: "owner" } } });
+        runtime.observe.onDeliveryError({ plannedTarget: { target: { to: "owner" } } });
+        return {
+          keys: Object.keys(handler).sort(),
+          scopedType: typeof scopedHandler.createChannelApprovalNativeRuntimeAdapter,
+          capability: handler.CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+          eventKinds: runtime.eventKinds,
+          approvalKind: runtime.resolveApprovalKind(request),
+          configured: [
+            runtime.availability.isConfigured({ accountId: "ops" }),
+            runtime.availability.isConfigured({ accountId: "other" })
+          ],
+          shouldHandle: [
+            runtime.availability.shouldHandle({ request }),
+            runtime.availability.shouldHandle({ request: { id: "skip" } })
+          ],
+          pending,
+          prepared,
+          delivered,
+          resolved,
+          expired,
+          updated,
+          deleted,
+          binding,
+          unbound,
+          cleared,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-runtime-plugin",
+                    "name": "Runtime Approval Handler Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_runtime"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
+            "createChannelApprovalNativeRuntimeAdapter",
+            "createLazyChannelApprovalNativeRuntimeAdapter",
+        ],
+        "scopedType": "function",
+        "capability": "approval.native",
+        "eventKinds": ["exec", "plugin"],
+        "approvalKind": "plugin",
+        "configured": [True, False],
+        "shouldHandle": [True, False],
+        "pending": {"pending": "plugin:req-1", "viewKind": "plugin-pending"},
+        "prepared": {
+            "dedupeKey": "owner",
+            "target": {"to": "owner", "pending": "plugin:req-1"},
+        },
+        "delivered": {"id": "entry:owner"},
+        "resolved": {
+            "kind": "update",
+            "payload": {"resolved": "plugin:req-1", "entry": "entry:owner"},
+        },
+        "expired": {"kind": "delete", "expired": "req-expired"},
+        "updated": {
+            "updated": "entry:owner",
+            "payload": {"resolved": "plugin:req-1", "entry": "entry:owner"},
+            "phase": "resolved",
+        },
+        "deleted": {"deleted": "entry:owner", "phase": "expired"},
+        "binding": {"binding": "entry:owner"},
+        "unbound": {"unbound": "binding-1"},
+        "cleared": {"cleared": "entry:owner", "phase": "resolved"},
+        "observed": ["delivered:entry:owner", "duplicate:owner", "error:owner"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

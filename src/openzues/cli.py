@@ -37377,6 +37377,92 @@ const approvalHandlerAdapterRuntime = {
   createLazyChannelApprovalNativeRuntimeAdapter,
 };
 
+function createChannelApprovalNativeRuntimeAdapter(spec = {}) {
+  const availability = spec.availability || {};
+  const presentation = spec.presentation || {};
+  const transport = spec.transport || {};
+  const interactions = spec.interactions || null;
+  const observe = spec.observe || null;
+  const runtime = {
+    ...(spec.eventKinds ? { eventKinds: spec.eventKinds } : {}),
+    ...(spec.resolveApprovalKind ? { resolveApprovalKind: spec.resolveApprovalKind } : {}),
+    availability: {
+      isConfigured:
+        typeof availability.isConfigured === "function"
+          ? availability.isConfigured
+          : () => false,
+      shouldHandle:
+        typeof availability.shouldHandle === "function" ? availability.shouldHandle : () => false,
+    },
+    presentation: {
+      buildPendingPayload: async (params) =>
+        await presentation.buildPendingPayload(params),
+      buildResolvedResult: async (params) =>
+        await presentation.buildResolvedResult(params),
+      buildExpiredResult: async (params) => await presentation.buildExpiredResult(params),
+    },
+    transport: {
+      prepareTarget: async (params) => await transport.prepareTarget(params),
+      deliverPending: async (params) => await transport.deliverPending(params),
+      ...(typeof transport.updateEntry === "function"
+        ? { updateEntry: async (params) => await transport.updateEntry(params) }
+        : {}),
+      ...(typeof transport.deleteEntry === "function"
+        ? { deleteEntry: async (params) => await transport.deleteEntry(params) }
+        : {}),
+    },
+  };
+  if (interactions) {
+    runtime.interactions = {
+      ...(typeof interactions.bindPending === "function"
+        ? { bindPending: async (params) => (await interactions.bindPending(params)) ?? null }
+        : {}),
+      ...(typeof interactions.unbindPending === "function"
+        ? { unbindPending: async (params) => await interactions.unbindPending(params) }
+        : {}),
+      ...(typeof interactions.clearPendingActions === "function"
+        ? {
+            clearPendingActions: async (params) =>
+              await interactions.clearPendingActions(params),
+          }
+        : {}),
+    };
+  }
+  if (observe) {
+    runtime.observe = {
+      ...(typeof observe.onDeliveryError === "function"
+        ? { onDeliveryError: (params) => observe.onDeliveryError(params) }
+        : {}),
+      ...(typeof observe.onDuplicateSkipped === "function"
+        ? { onDuplicateSkipped: (params) => observe.onDuplicateSkipped(params) }
+        : {}),
+      ...(typeof observe.onDelivered === "function"
+        ? { onDelivered: (params) => observe.onDelivered(params) }
+        : {}),
+    };
+  }
+  return runtime;
+}
+
+const approvalHandlerRuntime = new Proxy(
+  {
+    CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+    createChannelApprovalNativeRuntimeAdapter,
+    createLazyChannelApprovalNativeRuntimeAdapter,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42669,6 +42755,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-handler-adapter-runtime"
   ) {
     return approvalHandlerAdapterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-handler-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-handler-runtime"
+  ) {
+    return approvalHandlerRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
