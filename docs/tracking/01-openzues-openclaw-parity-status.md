@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~77.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~78.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -508,6 +508,61 @@ may lag behind this tracker.
   read/write helpers, scoped config merge, selection config application,
   scoped/unscoped SDK aliases, and generic SDK re-exports.
   - Status: checkpointed in `3dadf0fb`
+
+- [x] Imported plugin SDK provider web facade helper shim for
+  `provider-web-search` and `provider-web-fetch` imports, common web tool
+  result/parameter helpers, markdown/text utilities, cache/timing helpers,
+  search filter/date/freshness helpers, endpoint wrapper stubs, external
+  content wrappers, the deprecated plugin-backed search provider error
+  boundary, scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `0ba91657`
+
+- [x] Imported plugin SDK device-bootstrap helper shim for setup bootstrap
+  profile constants, role/scope normalization, fakeable bootstrap token issue/
+  revoke/clear, native no-pairing list/approve boundary, scoped/unscoped SDK
+  aliases, and generic SDK re-exports.
+  - Status: checkpointed in `ae2fc79f`
+
+- [x] Imported plugin SDK runtime-store helper shim for shared plugin/custom-key
+  runtime slots, isolated legacy string stores, empty plugin-id rejection,
+  falsy runtime preservation, scoped/unscoped SDK aliases, and generic SDK
+  re-exports.
+  - Status: checkpointed in `57cc0f37`
+
+- [x] Imported plugin SDK runtime helper shim for logger-backed runtime
+  adapters, runtime reuse/synthesis, custom exit errors, unavailable-exit
+  projection, scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `5bd1435b`
+
+- [x] Imported plugin SDK directory-runtime helper shim for default/empty
+  directory adapters, user/group directory entry listing, query/limit filtering,
+  resolved/inspected account listers, live runtime forwarding, scoped/unscoped
+  SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `a354299e`
+
+- [x] Imported plugin SDK directory-config-runtime helper shim for the slim
+  config-backed directory facade, preserving query/limit filtering, directory
+  entry projection, inspected/resolved listers, scoped/unscoped SDK aliases, and
+  generic SDK re-exports without adapter-only exports.
+  - Status: checkpointed in `335e215d`
+
+- [x] Imported plugin SDK thread-bindings-runtime helper shim for binding-id
+  parsing, channel/account timeout helpers, lifecycle/farewell helpers, and
+  account-scoped conversation binding manager bind/touch/list/unbind/stop
+  behavior.
+  - Status: checkpointed in `06f36c6c`
+
+- [x] Imported plugin SDK conversation-runtime helper shim for OpenClaw
+  conversation label resolution, safe inbound-session recording with meta-task
+  tracking and pinned main-DM route skip behavior, thread-binding helper reuse,
+  scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `7c5271ba`
+
+- [x] Imported plugin SDK outbound-runtime helper shim for fakeable outbound
+  delegates, dynamic and legacy send-dep resolution, outbound identity/session
+  context, plain-text sanitizer, payload planning/projection, fakeable delivery
+  entry point, scoped/unscoped SDK aliases, and generic SDK re-exports.
+  - Status: checkpointed in `a0df1bba`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

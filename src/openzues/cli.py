@@ -18032,6 +18032,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
+const util = require("util");
 const { pathToFileURL } = require("url");
 const Module = require("module");
 
@@ -20621,6 +20622,552 @@ function createWebSearchProviderContractFields(options) {
             enableProviderPluginInConfig(config, selectionPluginId).config,
         }
       : {}),
+  };
+}
+
+function normalizeWhitespace(value) {
+  return String(value || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function markdownToText(markdown) {
+  let text = String(markdown || "");
+  text = text.replace(/!\[[^\]]*]\([^)]+\)/g, "");
+  text = text.replace(/\[([^\]]+)]\([^)]+\)/g, "$1");
+  text = text.replace(/```[\s\S]*?```/g, (block) =>
+    block.replace(/```[^\n]*\n?/g, "").replace(/```/g, ""),
+  );
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/^#{1,6}\s+/gm, "");
+  text = text.replace(/^\s*[-*+]\s+/gm, "");
+  text = text.replace(/^\s*\d+\.\s+/gm, "");
+  return normalizeWhitespace(text);
+}
+
+function truncateText(value, maxChars) {
+  const text = String(value || "");
+  if (text.length <= maxChars) {
+    return { text, truncated: false };
+  }
+  return { text: text.slice(0, maxChars), truncated: true };
+}
+
+const DEFAULT_TIMEOUT_SECONDS = 30;
+const DEFAULT_CACHE_TTL_MINUTES = 15;
+const DEFAULT_CACHE_MAX_ENTRIES = 100;
+const DEFAULT_SEARCH_COUNT = 5;
+const MAX_SEARCH_COUNT = 10;
+const SEARCH_CACHE = new Map();
+const FRESHNESS_TO_RECENCY = {
+  pd: "day",
+  pw: "week",
+  pm: "month",
+  py: "year",
+};
+const RECENCY_TO_FRESHNESS = {
+  day: "pd",
+  week: "pw",
+  month: "pm",
+  year: "py",
+};
+
+function resolveTimeoutSeconds(value, fallback) {
+  const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function resolveCacheTtlMs(value, fallbackMinutes) {
+  const minutes =
+    typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : fallbackMinutes;
+  return Math.round(minutes * 60000);
+}
+
+function normalizeCacheKey(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function readCache(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) {
+    return null;
+  }
+  if (Date.now() > entry.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+  return { value: entry.value, cached: true };
+}
+
+function writeCache(cache, key, value, ttlMs) {
+  if (ttlMs <= 0) {
+    return;
+  }
+  if (cache.size >= DEFAULT_CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) {
+      cache.delete(oldest.value);
+    }
+  }
+  const now = Date.now();
+  cache.set(key, { value, expiresAt: now + ttlMs, insertedAt: now });
+}
+
+async function readResponseText(res, options = {}) {
+  const rawText = typeof res.text === "function" ? await res.text() : "";
+  const maxBytes = options.maxBytes;
+  if (typeof maxBytes === "number" && Number.isFinite(maxBytes) && maxBytes > 0) {
+    const text = rawText.slice(0, Math.floor(maxBytes));
+    return { text, truncated: text.length < rawText.length, bytesRead: text.length };
+  }
+  return { text: rawText, truncated: false, bytesRead: rawText.length };
+}
+
+function resolveSearchTimeoutSeconds(searchConfig = {}) {
+  return resolveTimeoutSeconds(searchConfig.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS);
+}
+
+function resolveSearchCacheTtlMs(searchConfig = {}) {
+  return resolveCacheTtlMs(searchConfig.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES);
+}
+
+function resolveSearchCount(value, fallback) {
+  const parsed = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(1, Math.min(MAX_SEARCH_COUNT, Math.floor(parsed)));
+}
+
+function readConfiguredSecretString(value) {
+  return normalizeSecretInputString(value) || undefined;
+}
+
+function readProviderEnvValue(envVars) {
+  for (const envVar of envVars || []) {
+    const value = normalizeSecretInputString(process.env[envVar]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+async function withTrustedWebToolsEndpoint(params, run) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  const response = await fetchImpl(params.url, params.init || {});
+  return await run({ response, finalUrl: params.url });
+}
+
+async function withSelfHostedWebToolsEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, run);
+}
+
+async function withStrictWebToolsEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, run);
+}
+
+async function withTrustedWebSearchEndpoint(params, run) {
+  return await withTrustedWebToolsEndpoint(params, async ({ response }) => run(response));
+}
+
+async function withSelfHostedWebSearchEndpoint(params, run) {
+  return await withSelfHostedWebToolsEndpoint(params, async ({ response }) => run(response));
+}
+
+async function postTrustedWebToolsJson(params, parseResponse) {
+  return await withTrustedWebToolsEndpoint(
+    {
+      url: params.url,
+      timeoutSeconds: params.timeoutSeconds,
+      signal: params.signal,
+      init: {
+        method: "POST",
+        headers: {
+          ...(params.extraHeaders || {}),
+          Accept: "application/json",
+          Authorization: `Bearer ${params.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(params.body || {}),
+      },
+      fetchImpl: params.fetchImpl,
+    },
+    async ({ response }) => {
+      if (!response.ok) {
+        const detail = await readResponseText(response, {
+          maxBytes: params.maxErrorBytes || 64000,
+        });
+        throw new Error(
+          `${params.errorLabel} API error (${response.status}): ${
+            detail.text || response.statusText
+          }`,
+        );
+      }
+      return await parseResponse(response);
+    },
+  );
+}
+
+async function throwWebSearchApiError(res, providerLabel) {
+  const detailResult = await readResponseText(res, { maxBytes: 64000 });
+  throw new Error(
+    `${providerLabel} API error (${res.status}): ${detailResult.text || res.statusText}`,
+  );
+}
+
+function resolveSiteName(url) {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isoToPerplexityDate(iso) {
+  const match = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return undefined;
+  }
+  const [, year, month, day] = match;
+  return `${Number.parseInt(month, 10)}/${Number.parseInt(day, 10)}/${year}`;
+}
+
+function normalizeToIsoDate(value) {
+  const trimmed = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return isValidIsoDate(trimmed) ? trimmed : undefined;
+  }
+  const match = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) {
+    return undefined;
+  }
+  const [, month, day, year] = match;
+  const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  return isValidIsoDate(iso) ? iso : undefined;
+}
+
+function parseIsoDateRange(params) {
+  const docs = params.docs || "https://docs.openclaw.ai/tools/web";
+  const dateAfter = params.rawDateAfter ? normalizeToIsoDate(params.rawDateAfter) : undefined;
+  if (params.rawDateAfter && !dateAfter) {
+    return { error: "invalid_date", message: params.invalidDateAfterMessage, docs };
+  }
+  const dateBefore = params.rawDateBefore ? normalizeToIsoDate(params.rawDateBefore) : undefined;
+  if (params.rawDateBefore && !dateBefore) {
+    return { error: "invalid_date", message: params.invalidDateBeforeMessage, docs };
+  }
+  if (dateAfter && dateBefore && dateAfter > dateBefore) {
+    return { error: "invalid_date_range", message: params.invalidDateRangeMessage, docs };
+  }
+  return { ...(dateAfter ? { dateAfter } : {}), ...(dateBefore ? { dateBefore } : {}) };
+}
+
+function normalizeFreshness(value, provider) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const lower = normalizeOptionalLowercaseString(trimmed);
+  if (FRESHNESS_TO_RECENCY[lower]) {
+    return provider === "brave" ? lower : FRESHNESS_TO_RECENCY[lower];
+  }
+  if (RECENCY_TO_FRESHNESS[lower]) {
+    return provider === "perplexity" ? lower : RECENCY_TO_FRESHNESS[lower];
+  }
+  if (provider === "brave") {
+    const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})to(\d{4}-\d{2}-\d{2})$/);
+    if (match && isValidIsoDate(match[1]) && isValidIsoDate(match[2]) && match[1] <= match[2]) {
+      return `${match[1]}to${match[2]}`;
+    }
+  }
+  return undefined;
+}
+
+function readCachedSearchPayload(cacheKey) {
+  const cached = readCache(SEARCH_CACHE, cacheKey);
+  return cached ? { ...cached.value, cached: true } : undefined;
+}
+
+function buildSearchCacheKey(parts) {
+  return normalizeCacheKey(
+    (parts || []).map((part) => (part === undefined ? "default" : String(part))).join(":"),
+  );
+}
+
+function writeCachedSearchPayload(cacheKey, payload, ttlMs) {
+  writeCache(SEARCH_CACHE, cacheKey, payload, ttlMs);
+}
+
+function buildUnsupportedSearchFilterResponse(
+  params,
+  provider,
+  docs = "https://docs.openclaw.ai/tools/web",
+) {
+  const unsupported = ["country", "language", "freshness", "date_after", "date_before"].find(
+    (name) => typeof params[name] === "string" && params[name].trim(),
+  );
+  if (!unsupported) {
+    return undefined;
+  }
+  const label =
+    unsupported === "country"
+      ? "country filtering"
+      : unsupported === "language"
+        ? "language filtering"
+        : unsupported === "freshness"
+          ? "freshness filtering"
+          : "date_after/date_before filtering";
+  const supportedLabel =
+    unsupported === "date_after" || unsupported === "date_before" ? "date filtering" : label;
+  return {
+    error: unsupported.startsWith("date_")
+      ? "unsupported_date_filter"
+      : `unsupported_${unsupported}`,
+    message:
+      `${label} is not supported by the ${provider} provider. ` +
+      `Only Brave and Perplexity support ${supportedLabel}.`,
+    docs,
+  };
+}
+
+function wrapExternalContent(content, options = {}) {
+  const source = options.source || "unknown";
+  const id = crypto.randomBytes(8).toString("hex");
+  const sourceLabel =
+    source === "web_search" ? "Web Search" : source === "web_fetch" ? "Web Fetch" : "External";
+  return [
+    `<<<EXTERNAL_UNTRUSTED_CONTENT id="${id}">>>`,
+    `Source: ${sourceLabel}`,
+    "---",
+    String(content || ""),
+    `<<<END_EXTERNAL_UNTRUSTED_CONTENT id="${id}">>>`,
+  ].join("\n");
+}
+
+function wrapWebContent(content, source = "web_search") {
+  return wrapExternalContent(content, { source, includeWarning: source === "web_fetch" });
+}
+
+function formatCliCommand(parts) {
+  return (parts || []).map((part) => String(part)).join(" ");
+}
+
+function resolveCitationRedirectUrl(url) {
+  return url;
+}
+
+function createPluginBackedWebSearchProvider(provider) {
+  return {
+    ...provider,
+    createTool: () => {
+      throw new Error(
+        `createPluginBackedWebSearchProvider(${provider.id}) is no longer supported. ` +
+          "Define provider-owned createTool(...) directly in the extension's " +
+          "WebSearchProviderPlugin.",
+      );
+    },
+  };
+}
+
+const BOOTSTRAP_HANDOFF_OPERATOR_SCOPES = [
+  "operator.approvals",
+  "operator.read",
+  "operator.talk.secrets",
+  "operator.write",
+];
+const PAIRING_SETUP_BOOTSTRAP_PROFILE = {
+  roles: ["node", "operator"],
+  scopes: [...BOOTSTRAP_HANDOFF_OPERATOR_SCOPES],
+};
+const DEVICE_BOOTSTRAP_TOKEN_TTL_MS = 10 * 60 * 1000;
+const DEVICE_BOOTSTRAP_TOKENS = new Map();
+
+function normalizeDeviceAuthRole(role) {
+  return String(role || "").trim();
+}
+
+function normalizeDeviceAuthScopes(scopes) {
+  if (!Array.isArray(scopes)) {
+    return [];
+  }
+  const out = new Set();
+  for (const scope of scopes) {
+    const trimmed = String(scope || "").trim();
+    if (trimmed) {
+      out.add(trimmed);
+    }
+  }
+  if (out.has("operator.admin")) {
+    out.add("operator.read");
+    out.add("operator.write");
+  } else if (out.has("operator.write")) {
+    out.add("operator.read");
+  }
+  return [...out].sort();
+}
+
+function normalizeDeviceBootstrapProfile(input) {
+  const roles = new Set();
+  for (const role of Array.isArray(input && input.roles) ? input.roles : []) {
+    const normalized = normalizeDeviceAuthRole(role);
+    if (normalized) {
+      roles.add(normalized);
+    }
+  }
+  return {
+    roles: [...roles].sort(),
+    scopes: normalizeDeviceAuthScopes(input && input.scopes ? [...input.scopes] : []),
+  };
+}
+
+function resolveBootstrapProfileScopesForRole(role, scopes) {
+  const normalizedRole = normalizeDeviceAuthRole(role);
+  const normalizedScopes = normalizeDeviceAuthScopes(Array.from(scopes || []));
+  if (normalizedRole !== "operator") {
+    return [];
+  }
+  const allowed = new Set(BOOTSTRAP_HANDOFF_OPERATOR_SCOPES);
+  return normalizedScopes.filter((scope) => allowed.has(scope));
+}
+
+function resolveBootstrapProfileScopesForRoles(roles, scopes) {
+  return normalizeDeviceAuthScopes(
+    (roles || []).flatMap((role) => resolveBootstrapProfileScopesForRole(role, scopes || [])),
+  );
+}
+
+function normalizeDeviceBootstrapHandoffProfile(input) {
+  const profile = normalizeDeviceBootstrapProfile(input);
+  return {
+    roles: profile.roles,
+    scopes: resolveBootstrapProfileScopesForRoles(profile.roles, profile.scopes),
+  };
+}
+
+function resolveIssuedBootstrapProfile(params = {}) {
+  if (params.profile || params.roles || params.scopes) {
+    return normalizeDeviceBootstrapHandoffProfile({
+      ...(params.profile || {}),
+      ...(params.roles ? { roles: params.roles } : {}),
+      ...(params.scopes ? { scopes: params.scopes } : {}),
+    });
+  }
+  return PAIRING_SETUP_BOOTSTRAP_PROFILE;
+}
+
+async function issueDeviceBootstrapToken(params = {}) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const issuedAtMs = Date.now();
+  const profile = resolveIssuedBootstrapProfile(params);
+  DEVICE_BOOTSTRAP_TOKENS.set(token, {
+    token,
+    ts: issuedAtMs,
+    profile,
+    redeemedProfile: normalizeDeviceBootstrapProfile(undefined),
+    issuedAtMs,
+  });
+  return { token, expiresAtMs: issuedAtMs + DEVICE_BOOTSTRAP_TOKEN_TTL_MS };
+}
+
+async function clearDeviceBootstrapTokens() {
+  const removed = DEVICE_BOOTSTRAP_TOKENS.size;
+  DEVICE_BOOTSTRAP_TOKENS.clear();
+  return { removed };
+}
+
+async function revokeDeviceBootstrapToken(params = {}) {
+  const providedToken = normalizeOptionalString(params.token);
+  if (!providedToken || !DEVICE_BOOTSTRAP_TOKENS.has(providedToken)) {
+    return { removed: false };
+  }
+  const record = DEVICE_BOOTSTRAP_TOKENS.get(providedToken);
+  DEVICE_BOOTSTRAP_TOKENS.delete(providedToken);
+  return { removed: true, record };
+}
+
+async function listDevicePairing() {
+  return { pending: [], paired: [] };
+}
+
+async function approveDevicePairing() {
+  return null;
+}
+
+const pluginRuntimeStoreRegistryKey = Symbol.for("openclaw.plugin-sdk.runtime-store-registry");
+
+function getPluginRuntimeStoreRegistry() {
+  globalThis[pluginRuntimeStoreRegistryKey] ||= new Map();
+  return globalThis[pluginRuntimeStoreRegistryKey];
+}
+
+function pluginRuntimeStoreKeyForPluginId(pluginId) {
+  const normalizedPluginId = String(pluginId || "").trim();
+  if (!normalizedPluginId) {
+    throw new Error("createPluginRuntimeStore: pluginId must not be empty");
+  }
+  return `plugin-runtime:${normalizedPluginId}`;
+}
+
+function resolvePluginRuntimeStoreOptions(options) {
+  if (typeof options === "string") {
+    return { key: options, errorMessage: options };
+  }
+  if (options && Object.prototype.hasOwnProperty.call(options, "pluginId")) {
+    return {
+      key: pluginRuntimeStoreKeyForPluginId(options.pluginId),
+      errorMessage: options.errorMessage,
+    };
+  }
+  return options;
+}
+
+function createPluginRuntimeStore(options) {
+  const resolved = resolvePluginRuntimeStoreOptions(options);
+  const slot =
+    typeof options === "string"
+      ? { runtime: null }
+      : (() => {
+          const registry = getPluginRuntimeStoreRegistry();
+          let existingSlot = registry.get(resolved.key);
+          if (!existingSlot) {
+            existingSlot = { runtime: null };
+            registry.set(resolved.key, existingSlot);
+          }
+          return existingSlot;
+        })();
+  return {
+    setRuntime(next) {
+      slot.runtime = next;
+    },
+    clearRuntime() {
+      slot.runtime = null;
+    },
+    tryGetRuntime() {
+      return slot.runtime ?? null;
+    },
+    getRuntime() {
+      if (slot.runtime === null) {
+        throw new Error(resolved.errorMessage);
+      }
+      return slot.runtime;
+    },
   };
 }
 
@@ -29977,6 +30524,1298 @@ const providerWebSearchContractRuntime = {
   enablePluginInConfig: enableProviderPluginInConfig,
 };
 
+const providerWebSharedRuntime = {
+  DEFAULT_CACHE_TTL_MINUTES,
+  DEFAULT_TIMEOUT_SECONDS,
+  markdownToText,
+  normalizeCacheKey,
+  readCache,
+  readResponseText,
+  resolveCacheTtlMs,
+  resolveTimeoutSeconds,
+  truncateText,
+  withSelfHostedWebToolsEndpoint,
+  withStrictWebToolsEndpoint,
+  withTrustedWebToolsEndpoint,
+  writeCache,
+};
+
+const providerWebFetchRuntime = {
+  ...providerWebSharedRuntime,
+  enablePluginInConfig: enableProviderPluginInConfig,
+  jsonResult,
+  readNumberParam,
+  readStringParam,
+  wrapExternalContent,
+  wrapWebContent,
+};
+
+const providerWebSearchRuntime = {
+  ...providerWebSharedRuntime,
+  ...providerWebSearchConfigContractRuntime,
+  buildSearchCacheKey,
+  buildUnsupportedSearchFilterResponse,
+  createPluginBackedWebSearchProvider,
+  DEFAULT_SEARCH_COUNT,
+  enablePluginInConfig: enableProviderPluginInConfig,
+  formatCliCommand,
+  FRESHNESS_TO_RECENCY,
+  isoToPerplexityDate,
+  jsonResult,
+  MAX_SEARCH_COUNT,
+  normalizeFreshness,
+  normalizeToIsoDate,
+  parseIsoDateRange,
+  postTrustedWebToolsJson,
+  readCachedSearchPayload,
+  readConfiguredSecretString,
+  readNumberParam,
+  readProviderEnvValue,
+  readStringArrayParam,
+  readStringParam,
+  resolveCitationRedirectUrl,
+  resolveSearchCacheTtlMs,
+  resolveSearchCount,
+  resolveSearchTimeoutSeconds,
+  resolveSiteName,
+  SEARCH_CACHE,
+  throwWebSearchApiError,
+  withSelfHostedWebSearchEndpoint,
+  withTrustedWebSearchEndpoint,
+  wrapWebContent,
+  writeCachedSearchPayload,
+};
+
+const deviceBootstrapRuntime = {
+  approveDevicePairing,
+  clearDeviceBootstrapTokens,
+  issueDeviceBootstrapToken,
+  listDevicePairing,
+  normalizeDeviceBootstrapProfile,
+  PAIRING_SETUP_BOOTSTRAP_PROFILE,
+  revokeDeviceBootstrapToken,
+};
+
+const runtimeStoreRuntime = {
+  createPluginRuntimeStore,
+};
+
+function createLoggerBackedRuntime(params) {
+  const logger = (params && params.logger) || console;
+  const exitError = params && params.exitError;
+  return {
+    log: (...args) => {
+      logger.info(util.format(...args));
+    },
+    error: (...args) => {
+      logger.error(util.format(...args));
+    },
+    writeStdout: (value) => {
+      logger.info(value);
+    },
+    writeJson: (value, space = 2) => {
+      logger.info(JSON.stringify(value, null, space > 0 ? space : undefined));
+    },
+    exit: (code) => {
+      throw (typeof exitError === "function" ? exitError(code) : new Error(`exit ${code}`));
+    },
+  };
+}
+
+function resolveRuntimeEnv(params) {
+  return params && params.runtime ? params.runtime : createLoggerBackedRuntime(params || {});
+}
+
+function resolveRuntimeEnvWithUnavailableExit(params) {
+  const unavailableMessage =
+    (params && params.unavailableMessage) || "Runtime exit not available";
+  return resolveRuntimeEnv({
+    ...(params || {}),
+    exitError: () => new Error(unavailableMessage),
+  });
+}
+
+function createNonExitingRuntime() {
+  return createLoggerBackedRuntime({ logger: console });
+}
+
+const defaultRuntime = createLoggerBackedRuntime({
+  logger: console,
+  exitError: () => new Error("process exit unavailable in OpenZues plugin runtime"),
+});
+
+const runtimeLoggerRuntime = {
+  createLoggerBackedRuntime,
+  resolveRuntimeEnv,
+  resolveRuntimeEnvWithUnavailableExit,
+};
+
+const runtimeRuntime = {
+  ...runtimeLoggerRuntime,
+  createNonExitingRuntime,
+  defaultRuntime,
+};
+
+async function nullChannelDirectorySelf(_ctx) {
+  return null;
+}
+
+async function emptyChannelDirectoryList(_ctx) {
+  return [];
+}
+
+function createChannelDirectoryAdapter(params = {}) {
+  return {
+    self: params.self ?? nullChannelDirectorySelf,
+    ...params,
+  };
+}
+
+function createEmptyChannelDirectoryAdapter() {
+  return createChannelDirectoryAdapter({
+    listPeers: emptyChannelDirectoryList,
+    listGroups: emptyChannelDirectoryList,
+  });
+}
+
+function resolveDirectoryQuery(query) {
+  return normalizeLowercaseStringOrEmpty(query);
+}
+
+function resolveDirectoryLimit(limit) {
+  return typeof limit === "number" && limit > 0 ? limit : undefined;
+}
+
+function applyDirectoryQueryAndLimit(ids, params = {}) {
+  const query = resolveDirectoryQuery(params.query);
+  const limit = resolveDirectoryLimit(params.limit);
+  const filtered = Array.from(ids || []).filter((id) =>
+    query ? normalizeLowercaseStringOrEmpty(id).includes(query) : true,
+  );
+  return typeof limit === "number" ? filtered.slice(0, limit) : filtered;
+}
+
+function toDirectoryEntries(kind, ids) {
+  return Array.from(ids || []).map((id) => ({ kind, id }));
+}
+
+function normalizeDirectoryIds(params) {
+  return Array.from(params.rawIds || [])
+    .map((entry) => normalizeOptionalString(entry) || "")
+    .filter((entry) => Boolean(entry) && entry !== "*")
+    .map((entry) => {
+      const normalized =
+        typeof params.normalizeId === "function" ? params.normalizeId(entry) : entry;
+      return normalizeOptionalString(normalized) || "";
+    })
+    .filter(Boolean);
+}
+
+function collectDirectoryIdsFromEntries(params = {}) {
+  return normalizeDirectoryIds({
+    rawIds: Array.from(params.entries || []).map((entry) => String(entry)),
+    normalizeId: params.normalizeId,
+  });
+}
+
+function collectDirectoryIdsFromMapKeys(params = {}) {
+  return normalizeDirectoryIds({
+    rawIds: Object.keys(params.groups || {}),
+    normalizeId: params.normalizeId,
+  });
+}
+
+function dedupeDirectoryIds(ids) {
+  return Array.from(new Set(ids || []));
+}
+
+function collectNormalizedDirectoryIds(params) {
+  const ids = new Set();
+  for (const source of params.sources || []) {
+    for (const value of source || []) {
+      const raw = normalizeOptionalString(value) || "";
+      if (!raw || raw === "*") {
+        continue;
+      }
+      const normalized =
+        typeof params.normalizeId === "function" ? params.normalizeId(raw) : raw;
+      const trimmed = normalizeOptionalString(normalized) || "";
+      if (trimmed) {
+        ids.add(trimmed);
+      }
+    }
+  }
+  return Array.from(ids);
+}
+
+function listDirectoryEntriesFromSources(params) {
+  const ids = collectNormalizedDirectoryIds({
+    sources: params.sources || [],
+    normalizeId: params.normalizeId,
+  });
+  return toDirectoryEntries(params.kind, applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listInspectedDirectoryEntriesFromSources(params) {
+  const account = params.inspectAccount(params.cfg, params.accountId);
+  if (!account) {
+    return [];
+  }
+  return listDirectoryEntriesFromSources({
+    kind: params.kind,
+    sources: params.resolveSources(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function createInspectedDirectoryEntriesLister(params) {
+  return async (configParams) =>
+    listInspectedDirectoryEntriesFromSources({
+      ...(configParams || {}),
+      ...params,
+    });
+}
+
+function listResolvedDirectoryEntriesFromSources(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryEntriesFromSources({
+    kind: params.kind,
+    sources: params.resolveSources(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function createResolvedDirectoryEntriesLister(params) {
+  return async (configParams) =>
+    listResolvedDirectoryEntriesFromSources({
+      ...(configParams || {}),
+      ...params,
+    });
+}
+
+function listDirectoryUserEntriesFromAllowFrom(params = {}) {
+  const ids = dedupeDirectoryIds(
+    collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeId,
+    }),
+  );
+  return toDirectoryEntries("user", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryUserEntriesFromAllowFromAndMapKeys(params = {}) {
+  const ids = dedupeDirectoryIds([
+    ...collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeAllowFromId,
+    }),
+    ...collectDirectoryIdsFromMapKeys({
+      groups: params.map,
+      normalizeId: params.normalizeMapKeyId,
+    }),
+  ]);
+  return toDirectoryEntries("user", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryGroupEntriesFromMapKeys(params = {}) {
+  const ids = dedupeDirectoryIds(
+    collectDirectoryIdsFromMapKeys({
+      groups: params.groups,
+      normalizeId: params.normalizeId,
+    }),
+  );
+  return toDirectoryEntries("group", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listDirectoryGroupEntriesFromMapKeysAndAllowFrom(params = {}) {
+  const ids = dedupeDirectoryIds([
+    ...collectDirectoryIdsFromMapKeys({
+      groups: params.groups,
+      normalizeId: params.normalizeMapKeyId,
+    }),
+    ...collectDirectoryIdsFromEntries({
+      entries: params.allowFrom,
+      normalizeId: params.normalizeAllowFromId,
+    }),
+  ]);
+  return toDirectoryEntries("group", applyDirectoryQueryAndLimit(ids, params));
+}
+
+function listResolvedDirectoryUserEntriesFromAllowFrom(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryUserEntriesFromAllowFrom({
+    allowFrom: params.resolveAllowFrom(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+function listResolvedDirectoryGroupEntriesFromMapKeys(params) {
+  const account = params.resolveAccount(params.cfg, params.accountId);
+  return listDirectoryGroupEntriesFromMapKeys({
+    groups: params.resolveGroups(account),
+    query: params.query,
+    limit: params.limit,
+    normalizeId: params.normalizeId,
+  });
+}
+
+async function resolveForwardedDirectoryMethod(params) {
+  const runtime = await params.getRuntime();
+  const method = params.resolve(runtime);
+  if (method) {
+    return method;
+  }
+  throw new Error(params.unavailableMessage || "Runtime method is unavailable");
+}
+
+function createRuntimeDirectoryLiveAdapter(params) {
+  const adapter = {};
+  if (params.self) {
+    adapter.self = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.self,
+        })
+      )(ctx);
+  }
+  if (params.listPeersLive) {
+    adapter.listPeersLive = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listPeersLive,
+        })
+      )(ctx);
+  }
+  if (params.listGroupsLive) {
+    adapter.listGroupsLive = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listGroupsLive,
+        })
+      )(ctx);
+  }
+  if (params.listGroupMembers) {
+    adapter.listGroupMembers = async (ctx) =>
+      await (
+        await resolveForwardedDirectoryMethod({
+          getRuntime: params.getRuntime,
+          resolve: params.listGroupMembers,
+        })
+      )(ctx);
+  }
+  return adapter;
+}
+
+const directoryRuntime = {
+  applyDirectoryQueryAndLimit,
+  collectNormalizedDirectoryIds,
+  createChannelDirectoryAdapter,
+  createEmptyChannelDirectoryAdapter,
+  createInspectedDirectoryEntriesLister,
+  createResolvedDirectoryEntriesLister,
+  createRuntimeDirectoryLiveAdapter,
+  emptyChannelDirectoryList,
+  inspectReadOnlyChannelAccount: passthrough,
+  listDirectoryEntriesFromSources,
+  listDirectoryGroupEntriesFromMapKeys,
+  listDirectoryGroupEntriesFromMapKeysAndAllowFrom,
+  listDirectoryUserEntriesFromAllowFrom,
+  listDirectoryUserEntriesFromAllowFromAndMapKeys,
+  listInspectedDirectoryEntriesFromSources,
+  listResolvedDirectoryEntriesFromSources,
+  listResolvedDirectoryGroupEntriesFromMapKeys,
+  listResolvedDirectoryUserEntriesFromAllowFrom,
+  nullChannelDirectorySelf,
+  toDirectoryEntries,
+};
+
+const directoryConfigRuntime = {
+  applyDirectoryQueryAndLimit,
+  collectNormalizedDirectoryIds,
+  createInspectedDirectoryEntriesLister,
+  createResolvedDirectoryEntriesLister,
+  listDirectoryEntriesFromSources,
+  listDirectoryGroupEntriesFromMapKeys,
+  listDirectoryGroupEntriesFromMapKeysAndAllowFrom,
+  listDirectoryUserEntriesFromAllowFrom,
+  listDirectoryUserEntriesFromAllowFromAndMapKeys,
+  listInspectedDirectoryEntriesFromSources,
+  listResolvedDirectoryEntriesFromSources,
+  listResolvedDirectoryGroupEntriesFromMapKeys,
+  listResolvedDirectoryUserEntriesFromAllowFrom,
+  toDirectoryEntries,
+};
+
+const THREAD_BINDING_SYSTEM_MARK = "\u2699\uFE0F";
+
+function prefixThreadBindingSystemMessage(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) {
+    return normalized;
+  }
+  return normalized.startsWith(THREAD_BINDING_SYSTEM_MARK)
+    ? normalized
+    : `${THREAD_BINDING_SYSTEM_MARK} ${normalized}`;
+}
+
+function normalizeThreadBindingDurationMs(raw) {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(raw));
+}
+
+function formatThreadBindingDurationLabel(durationMs) {
+  if (durationMs <= 0) {
+    return "disabled";
+  }
+  if (durationMs < 60000) {
+    return "<1m";
+  }
+  const totalMinutes = Math.floor(durationMs / 60000);
+  if (totalMinutes % 60 === 0) {
+    return `${Math.floor(totalMinutes / 60)}h`;
+  }
+  return `${totalMinutes}m`;
+}
+
+function resolveThreadBindingConversationIdFromBindingId(params) {
+  const bindingId = normalizeOptionalString(params && params.bindingId);
+  if (!bindingId) {
+    return undefined;
+  }
+  const prefix = `${params.accountId}:`;
+  if (!bindingId.startsWith(prefix)) {
+    return undefined;
+  }
+  return normalizeOptionalString(bindingId.slice(prefix.length));
+}
+
+function resolveThreadBindingFarewellText(params) {
+  const custom = normalizeOptionalString(params && params.farewellText);
+  if (custom) {
+    return prefixThreadBindingSystemMessage(custom);
+  }
+  if (params && params.reason === "idle-expired") {
+    const label = formatThreadBindingDurationLabel(
+      normalizeThreadBindingDurationMs(params.idleTimeoutMs),
+    );
+    const message =
+      `Session ended automatically after ${label} of inactivity. ` +
+      "Messages here will no longer be routed.";
+    return prefixThreadBindingSystemMessage(
+      message,
+    );
+  }
+  if (params && params.reason === "max-age-expired") {
+    const label = formatThreadBindingDurationLabel(
+      normalizeThreadBindingDurationMs(params.maxAgeMs),
+    );
+    return prefixThreadBindingSystemMessage(
+      `Session ended automatically at max age of ${label}. Messages here will no longer be routed.`,
+    );
+  }
+  return prefixThreadBindingSystemMessage(
+    "Session ended. Messages here will no longer be routed.",
+  );
+}
+
+function normalizeThreadBindingHours(raw) {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    return undefined;
+  }
+  return raw;
+}
+
+function resolveThreadBindingIdleTimeoutMs(params) {
+  const idleHours =
+    normalizeThreadBindingHours(params.channelIdleHoursRaw) ??
+    normalizeThreadBindingHours(params.sessionIdleHoursRaw) ??
+    24;
+  return Math.floor(idleHours * 60 * 60 * 1000);
+}
+
+function resolveThreadBindingMaxAgeMs(params) {
+  const maxAgeHours =
+    normalizeThreadBindingHours(params.channelMaxAgeHoursRaw) ??
+    normalizeThreadBindingHours(params.sessionMaxAgeHoursRaw) ??
+    0;
+  return Math.floor(maxAgeHours * 60 * 60 * 1000);
+}
+
+function resolveThreadBindingChannelScope(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  const accountId = normalizeAccountId(params && params.accountId);
+  const channels = (params.cfg && params.cfg.channels) || {};
+  const channelConfig = channels[channel] || {};
+  const accountConfig =
+    channelConfig.accounts && typeof channelConfig.accounts === "object"
+      ? channelConfig.accounts[accountId]
+      : undefined;
+  return {
+    root: channelConfig.threadBindings,
+    account: accountConfig && accountConfig.threadBindings,
+  };
+}
+
+function resolveThreadBindingIdleTimeoutMsForChannel(params) {
+  const scope = resolveThreadBindingChannelScope(params);
+  return resolveThreadBindingIdleTimeoutMs({
+    channelIdleHoursRaw:
+      (scope.account && scope.account.idleHours) ?? (scope.root && scope.root.idleHours),
+    sessionIdleHoursRaw:
+      params.cfg && params.cfg.session && params.cfg.session.threadBindings
+        ? params.cfg.session.threadBindings.idleHours
+        : undefined,
+  });
+}
+
+function resolveThreadBindingMaxAgeMsForChannel(params) {
+  const scope = resolveThreadBindingChannelScope(params);
+  return resolveThreadBindingMaxAgeMs({
+    channelMaxAgeHoursRaw:
+      (scope.account && scope.account.maxAgeHours) ?? (scope.root && scope.root.maxAgeHours),
+    sessionMaxAgeHoursRaw:
+      params.cfg && params.cfg.session && params.cfg.session.threadBindings
+        ? params.cfg.session.threadBindings.maxAgeHours
+        : undefined,
+  });
+}
+
+function resolveThreadBindingLifecycle(params) {
+  const idleTimeoutMs =
+    typeof params.record.idleTimeoutMs === "number"
+      ? Math.max(0, Math.floor(params.record.idleTimeoutMs))
+      : params.defaultIdleTimeoutMs;
+  const maxAgeMs =
+    typeof params.record.maxAgeMs === "number"
+      ? Math.max(0, Math.floor(params.record.maxAgeMs))
+      : params.defaultMaxAgeMs;
+  const inactivityExpiresAt =
+    idleTimeoutMs > 0
+      ? Math.max(params.record.lastActivityAt, params.record.boundAt) + idleTimeoutMs
+      : undefined;
+  const maxAgeExpiresAt =
+    maxAgeMs > 0 ? params.record.boundAt + maxAgeMs : undefined;
+  if (inactivityExpiresAt != null && maxAgeExpiresAt != null) {
+    return inactivityExpiresAt <= maxAgeExpiresAt
+      ? { expiresAt: inactivityExpiresAt, reason: "idle-expired" }
+      : { expiresAt: maxAgeExpiresAt, reason: "max-age-expired" };
+  }
+  if (inactivityExpiresAt != null) {
+    return { expiresAt: inactivityExpiresAt, reason: "idle-expired" };
+  }
+  if (maxAgeExpiresAt != null) {
+    return { expiresAt: maxAgeExpiresAt, reason: "max-age-expired" };
+  }
+  return {};
+}
+
+const SESSION_BINDING_ADAPTERS = new Map();
+
+function sessionBindingAdapterKey(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params.channel);
+  const accountId = normalizeAccountId(params.accountId);
+  return `${channel}:${accountId}`;
+}
+
+function registerSessionBindingAdapter(adapter) {
+  const key = sessionBindingAdapterKey(adapter || {});
+  const entries = SESSION_BINDING_ADAPTERS.get(key) || [];
+  SESSION_BINDING_ADAPTERS.set(key, [...entries, adapter]);
+}
+
+function unregisterSessionBindingAdapter(params) {
+  const key = sessionBindingAdapterKey(params || {});
+  const entries = SESSION_BINDING_ADAPTERS.get(key) || [];
+  if (entries.length === 0) {
+    return;
+  }
+  let next = entries.slice();
+  if (params && params.adapter) {
+    const index = next.lastIndexOf(params.adapter);
+    if (index < 0) {
+      return;
+    }
+    next.splice(index, 1);
+  } else {
+    next.pop();
+  }
+  if (next.length === 0) {
+    SESSION_BINDING_ADAPTERS.delete(key);
+  } else {
+    SESSION_BINDING_ADAPTERS.set(key, next);
+  }
+}
+
+function getAccountScopedConversationBindingState(stateKey) {
+  const key = stateKey || Symbol.for("openzues.account-scoped-conversation-bindings");
+  if (!globalThis[key]) {
+    globalThis[key] = {
+      managersByAccountId: new Map(),
+      bindingsByAccountConversation: new Map(),
+    };
+  }
+  return globalThis[key];
+}
+
+function accountScopedBindingKey(params) {
+  return `${params.accountId}:${params.conversationId}`;
+}
+
+function createAccountScopedConversationBindingManager(params) {
+  const accountId = normalizeAccountId(params.accountId);
+  const state = getAccountScopedConversationBindingState(params.stateKey);
+  const existing = state.managersByAccountId.get(accountId);
+  if (existing) {
+    return existing;
+  }
+  const manager = {
+    accountId,
+    getByConversationId: (conversationId) =>
+      getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.get(
+        accountScopedBindingKey({ accountId, conversationId }),
+      ),
+    listBySessionKey: (targetSessionKey) =>
+      Array.from(
+        getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.values(),
+      ).filter(
+        (record) => record.accountId === accountId && record.targetSessionKey === targetSessionKey,
+      ),
+    bindConversation: ({ conversationId, targetKind, targetSessionKey, metadata = {} }) => {
+      const normalizedConversationId =
+        typeof conversationId === "string" ? conversationId.trim() : "";
+      const normalizedTargetSessionKey =
+        typeof targetSessionKey === "string" ? targetSessionKey.trim() : "";
+      if (!normalizedConversationId || !normalizedTargetSessionKey) {
+        return null;
+      }
+      const key = accountScopedBindingKey({
+        accountId,
+        conversationId: normalizedConversationId,
+      });
+      const existingRecord =
+        getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.get(
+          key,
+        );
+      const now = Date.now();
+      const record = {
+        accountId,
+        conversationId: normalizedConversationId,
+        targetKind: params.toStoredTargetKind(targetKind),
+        targetSessionKey: normalizedTargetSessionKey,
+        agentId:
+          normalizeOptionalString(metadata.agentId) ||
+          (existingRecord && existingRecord.agentId) ||
+          resolveAgentIdFromSessionKey(normalizedTargetSessionKey),
+        label:
+          normalizeOptionalString(metadata.label) ||
+          (existingRecord && existingRecord.label) ||
+          undefined,
+        boundBy:
+          normalizeOptionalString(metadata.boundBy) ||
+          (existingRecord && existingRecord.boundBy) ||
+          undefined,
+        boundAt: now,
+        lastActivityAt: now,
+      };
+      getAccountScopedConversationBindingState(params.stateKey).bindingsByAccountConversation.set(
+        key,
+        record,
+      );
+      return record;
+    },
+    touchConversation: (conversationId, at = Date.now()) => {
+      const key = accountScopedBindingKey({ accountId, conversationId });
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      const existingRecord = stateRef.bindingsByAccountConversation.get(key);
+      if (!existingRecord) {
+        return null;
+      }
+      const updated = { ...existingRecord, lastActivityAt: at };
+      stateRef.bindingsByAccountConversation.set(key, updated);
+      return updated;
+    },
+    unbindConversation: (conversationId) => {
+      const key = accountScopedBindingKey({ accountId, conversationId });
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      const existingRecord = stateRef.bindingsByAccountConversation.get(key);
+      if (!existingRecord) {
+        return null;
+      }
+      stateRef.bindingsByAccountConversation.delete(key);
+      return existingRecord;
+    },
+    unbindBySessionKey: (targetSessionKey) => {
+      const removed = [];
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      for (const record of stateRef.bindingsByAccountConversation.values()) {
+        if (record.accountId !== accountId || record.targetSessionKey !== targetSessionKey) {
+          continue;
+        }
+        stateRef.bindingsByAccountConversation.delete(
+          accountScopedBindingKey({
+            accountId,
+            conversationId: record.conversationId,
+          }),
+        );
+        removed.push(record);
+      }
+      return removed;
+    },
+    stop: () => {
+      const stateRef = getAccountScopedConversationBindingState(params.stateKey);
+      for (const key of Array.from(stateRef.bindingsByAccountConversation.keys())) {
+        if (key.startsWith(`${accountId}:`)) {
+          stateRef.bindingsByAccountConversation.delete(key);
+        }
+      }
+      stateRef.managersByAccountId.delete(accountId);
+    },
+  };
+  state.managersByAccountId.set(accountId, manager);
+  return manager;
+}
+
+function resetAccountScopedConversationBindingsForTests(params) {
+  const state = getAccountScopedConversationBindingState(params && params.stateKey);
+  state.managersByAccountId.clear();
+  state.bindingsByAccountConversation.clear();
+}
+
+const threadBindingsRuntime = {
+  createAccountScopedConversationBindingManager,
+  formatThreadBindingDurationLabel,
+  registerSessionBindingAdapter,
+  resetAccountScopedConversationBindingsForTests,
+  resolveThreadBindingConversationIdFromBindingId,
+  resolveThreadBindingFarewellText,
+  resolveThreadBindingIdleTimeoutMsForChannel,
+  resolveThreadBindingLifecycle,
+  resolveThreadBindingMaxAgeMsForChannel,
+  unregisterSessionBindingAdapter,
+};
+
+function normalizeConversationChatType(value) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return normalized === "direct" || normalized === "dm" || normalized === "private"
+    ? "direct"
+    : normalized;
+}
+
+function extractConversationIdFromAddress(from) {
+  const trimmed = normalizeOptionalString(from);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parts = trimmed.split(":").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : trimmed;
+}
+
+function shouldAppendConversationId(id) {
+  return /^[0-9]+$/.test(id) || /^[^\s:@]+@[^\s:@]+$/.test(id);
+}
+
+function resolveConversationLabel(ctx = {}) {
+  const explicit = normalizeOptionalString(ctx.ConversationLabel);
+  if (explicit) {
+    return explicit;
+  }
+  const threadLabel = normalizeOptionalString(ctx.ThreadLabel);
+  if (threadLabel) {
+    return threadLabel;
+  }
+  if (normalizeConversationChatType(ctx.ChatType) === "direct") {
+    return normalizeOptionalString(ctx.SenderName) ?? normalizeOptionalString(ctx.From);
+  }
+  const base =
+    normalizeOptionalString(ctx.GroupChannel) ||
+    normalizeOptionalString(ctx.GroupSubject) ||
+    normalizeOptionalString(ctx.GroupSpace) ||
+    normalizeOptionalString(ctx.From) ||
+    "";
+  if (!base) {
+    return undefined;
+  }
+  const id = extractConversationIdFromAddress(ctx.From);
+  if (!id || !shouldAppendConversationId(id) || base === id || base.includes(id)) {
+    return base;
+  }
+  if (normalizeLowercaseStringOrEmpty(base).includes(" id:")) {
+    return base;
+  }
+  if (base.startsWith("#") || base.startsWith("@")) {
+    return base;
+  }
+  return `${base} id:${id}`;
+}
+
+function shouldSkipPinnedMainDmRouteUpdate(pin) {
+  if (!pin) {
+    return false;
+  }
+  const owner = normalizeLowercaseStringOrEmpty(pin.ownerRecipient);
+  const sender = normalizeLowercaseStringOrEmpty(pin.senderRecipient);
+  if (!owner || !sender || owner === sender) {
+    return false;
+  }
+  if (typeof pin.onSkip === "function") {
+    pin.onSkip({
+      ownerRecipient: pin.ownerRecipient,
+      senderRecipient: pin.senderRecipient,
+    });
+  }
+  return true;
+}
+
+async function recordInboundSession(params = {}) {
+  const metaTask = Promise.resolve({
+    storePath: params.storePath,
+    sessionKey: normalizeLowercaseStringOrEmpty(params.sessionKey),
+    ctx: params.ctx,
+  });
+  if (typeof params.trackSessionMetaTask === "function") {
+    params.trackSessionMetaTask(metaTask);
+  }
+  const update = params.updateLastRoute;
+  if (!update) {
+    return;
+  }
+  shouldSkipPinnedMainDmRouteUpdate(update.mainDmOwnerPin);
+}
+
+async function recordInboundSessionMetaSafe(_params = {}) {
+  return;
+}
+
+const conversationRuntime = {
+  ...threadBindingsRuntime,
+  recordInboundSession,
+  recordInboundSessionMetaSafe,
+  resolveConversationLabel,
+};
+
+async function resolveForwardedRuntimeMethod(params) {
+  const runtime =
+    typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
+  const method =
+    typeof params.resolve === "function" ? params.resolve(runtime) : undefined;
+  if (typeof method === "function") {
+    return method;
+  }
+  throw new Error(params.unavailableMessage || "Runtime method is unavailable");
+}
+
+function createRuntimeOutboundDelegates(params = {}) {
+  const createDelegate = (name) => {
+    const spec = params[name];
+    if (!spec) {
+      return undefined;
+    }
+    return async (ctx) => {
+      const method = await resolveForwardedRuntimeMethod({
+        getRuntime: params.getRuntime,
+        resolve: spec.resolve,
+        unavailableMessage: spec.unavailableMessage,
+      });
+      return await method(ctx);
+    };
+  };
+  return {
+    sendText: createDelegate("sendText"),
+    sendMedia: createDelegate("sendMedia"),
+    sendPoll: createDelegate("sendPoll"),
+  };
+}
+
+function resolveLegacyOutboundSendDepKeys(channelId) {
+  const compact = String(channelId || "").replace(/[^a-z0-9]+/gi, "");
+  if (!compact) {
+    return [];
+  }
+  const pascal = compact.charAt(0).toUpperCase() + compact.slice(1);
+  const keys = new Set([`send${pascal}`]);
+  if (pascal.startsWith("I") && pascal.length > 1) {
+    keys.add(`sendI${pascal.slice(1)}`);
+  }
+  if (pascal.startsWith("Ms") && pascal.length > 2) {
+    keys.add(`sendMS${pascal.slice(2)}`);
+  }
+  return Array.from(keys);
+}
+
+function resolveOutboundSendDep(deps, channelId, options = {}) {
+  if (!deps || typeof deps !== "object") {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(deps, channelId) && deps[channelId] !== undefined) {
+    return deps[channelId];
+  }
+  const legacyKeys = [
+    ...resolveLegacyOutboundSendDepKeys(channelId),
+    ...(Array.isArray(options.legacyKeys) ? options.legacyKeys : []),
+  ];
+  for (const legacyKey of legacyKeys) {
+    if (Object.prototype.hasOwnProperty.call(deps, legacyKey) && deps[legacyKey] !== undefined) {
+      return deps[legacyKey];
+    }
+  }
+  return undefined;
+}
+
+function normalizeOutboundIdentity(identity) {
+  if (!identity || typeof identity !== "object") {
+    return undefined;
+  }
+  const name = normalizeOptionalString(identity.name || identity.displayName);
+  const avatarUrl = normalizeOptionalString(
+    identity.avatarUrl || (identity.avatar && identity.avatar.url),
+  );
+  const emoji = normalizeOptionalString(identity.emoji);
+  const theme = normalizeOptionalString(identity.theme);
+  if (!name && !avatarUrl && !emoji && !theme) {
+    return undefined;
+  }
+  return { name, avatarUrl, emoji, theme };
+}
+
+function resolveAgentOutboundIdentity(cfg, agentId) {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const agents = cfg && cfg.agents;
+  let candidate;
+  if (Array.isArray(agents)) {
+    candidate = agents.find((entry) => normalizeAgentId(entry && entry.id) === normalizedAgentId);
+  } else if (agents && typeof agents === "object") {
+    candidate = agents[agentId] || agents[normalizedAgentId];
+  }
+  if (!candidate && cfg && cfg.agent && normalizeAgentId(cfg.agent.id) === normalizedAgentId) {
+    candidate = cfg.agent;
+  }
+  return normalizeOutboundIdentity(candidate);
+}
+
+const INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN = "system-reminder|previous_response";
+const INTERNAL_RUNTIME_SCAFFOLDING_BLOCK_RE = new RegExp(
+  `<\\s*(${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>`,
+  "gi",
+);
+const INTERNAL_RUNTIME_SCAFFOLDING_SELF_CLOSING_RE = new RegExp(
+  `<\\s*(?:${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*\\/\\s*>`,
+  "gi",
+);
+const INTERNAL_RUNTIME_SCAFFOLDING_TAG_RE = new RegExp(
+  `<\\s*\\/?\\s*(?:${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*>`,
+  "gi",
+);
+const HTML_TAG_RE = /<\/?[a-z][a-z0-9_-]*\b[^>]*>/gi;
+
+function stripInternalRuntimeScaffolding(text) {
+  return String(text || "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_BLOCK_RE, "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_SELF_CLOSING_RE, "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_TAG_RE, "");
+}
+
+function stripRemainingHtmlTags(text) {
+  let previous;
+  let current = text;
+  do {
+    previous = current;
+    current = current.replace(HTML_TAG_RE, "");
+  } while (current !== previous);
+  return current;
+}
+
+function sanitizeForPlainText(text) {
+  const converted = stripInternalRuntimeScaffolding(text)
+    .replace(/<((?:https?:\/\/|mailto:)[^<>\s]+)>/gi, "$1")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(p|div)>/gi, "\n")
+    .replace(/<(b|strong)>(.*?)<\/\1>/gi, "*$2*")
+    .replace(/<(i|em)>(.*?)<\/\1>/gi, "_$2_")
+    .replace(/<(s|strike|del)>(.*?)<\/\1>/gi, "~$2~")
+    .replace(/<code>(.*?)<\/code>/gi, "`$1`")
+    .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, "\n*$1*\n")
+    .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n");
+  return stripRemainingHtmlTags(converted).replace(/\n{3,}/g, "\n\n");
+}
+
+function buildOutboundSessionContext(params = {}) {
+  const key = normalizeOptionalString(params.sessionKey);
+  const policyKey = normalizeOptionalString(params.policySessionKey);
+  const normalizedChatType = normalizeChatType(params.conversationType);
+  const conversationType =
+    normalizedChatType === "group" || normalizedChatType === "channel"
+      ? "group"
+      : normalizedChatType === "direct"
+        ? "direct"
+        : params.isGroup === true
+          ? "group"
+          : params.isGroup === false
+            ? "direct"
+            : undefined;
+  const explicitAgentId = normalizeOptionalString(params.agentId);
+  const derivedAgentId = key ? resolveAgentIdFromSessionKey(key) : undefined;
+  const agentId = explicitAgentId || derivedAgentId;
+  const requesterAccountId = normalizeOptionalString(params.requesterAccountId);
+  const requesterSenderId = normalizeOptionalString(params.requesterSenderId);
+  const requesterSenderName = normalizeOptionalString(params.requesterSenderName);
+  const requesterSenderUsername = normalizeOptionalString(params.requesterSenderUsername);
+  const requesterSenderE164 = normalizeOptionalString(params.requesterSenderE164);
+  if (
+    !key &&
+    !policyKey &&
+    !conversationType &&
+    !agentId &&
+    !requesterAccountId &&
+    !requesterSenderId &&
+    !requesterSenderName &&
+    !requesterSenderUsername &&
+    !requesterSenderE164
+  ) {
+    return undefined;
+  }
+  return {
+    ...(key ? { key } : {}),
+    ...(policyKey ? { policyKey } : {}),
+    ...(conversationType ? { conversationType } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(requesterAccountId ? { requesterAccountId } : {}),
+    ...(requesterSenderId ? { requesterSenderId } : {}),
+    ...(requesterSenderName ? { requesterSenderName } : {}),
+    ...(requesterSenderUsername ? { requesterSenderUsername } : {}),
+    ...(requesterSenderE164 ? { requesterSenderE164 } : {}),
+  };
+}
+
+function mergeOutboundMediaUrls(...lists) {
+  const seen = new Set();
+  const merged = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const entry of list) {
+      const trimmed = normalizeOptionalString(entry);
+      if (!trimmed || seen.has(trimmed)) {
+        continue;
+      }
+      seen.add(trimmed);
+      merged.push(trimmed);
+    }
+  }
+  return merged;
+}
+
+function hasObjectContent(value) {
+  return Boolean(value && typeof value === "object" && Object.keys(value).length > 0);
+}
+
+function hasPresentationBlocks(value) {
+  return hasObjectContent(value) || (Array.isArray(value) && value.length > 0);
+}
+
+function createOutboundPayloadPlan(payloads, context = {}) {
+  const prepared = [];
+  for (const entry of Array.isArray(payloads) ? payloads : []) {
+    if (!entry || typeof entry !== "object" || isReasoningReplyPayload(entry)) {
+      continue;
+    }
+    const text = typeof entry.text === "string" ? entry.text : "";
+    const mediaUrls = mergeOutboundMediaUrls(
+      Array.isArray(entry.mediaUrls) ? entry.mediaUrls : [],
+      entry.mediaUrl ? [entry.mediaUrl] : [],
+    );
+    const isSilent = mediaUrls.length === 0 && isSilentReplyPayloadText(text);
+    const payload = {
+      ...entry,
+      text,
+      ...(mediaUrls.length ? { mediaUrls } : { mediaUrls: undefined }),
+      mediaUrl: mediaUrls.length === 1 ? mediaUrls[0] : undefined,
+      audioAsVoice: entry.audioAsVoice === true ? true : undefined,
+    };
+    const hasPresentation = hasPresentationBlocks(payload.presentation);
+    const hasInteractive = hasPresentationBlocks(payload.interactive);
+    const hasChannelData = hasObjectContent(payload.channelData);
+    const parts = resolveSendableOutboundReplyParts(payload);
+    if (!parts.hasContent && !hasPresentation && !hasInteractive && !hasChannelData && !isSilent) {
+      continue;
+    }
+    prepared.push({
+      payload,
+      parts,
+      isSilent,
+      hasPresentation,
+      hasInteractive,
+      hasChannelData,
+    });
+  }
+  const hasVisibleNonSilentContent = prepared.some(
+    (entry) => !entry.isSilent && entry.parts.hasContent,
+  );
+  return prepared
+    .filter((entry) => {
+      if (!entry.isSilent) {
+        return true;
+      }
+      return !hasVisibleNonSilentContent && context.hasPendingSpawnedChildren !== true;
+    })
+    .map((entry) => ({
+      payload: entry.payload,
+      parts: entry.parts,
+      hasPresentation: entry.hasPresentation,
+      hasInteractive: entry.hasInteractive,
+      hasChannelData: entry.hasChannelData,
+    }));
+}
+
+function projectOutboundPayloadPlanForDelivery(plan) {
+  return (Array.isArray(plan) ? plan : []).map((entry) => entry.payload);
+}
+
+function projectOutboundPayloadPlanForOutbound(plan) {
+  return (Array.isArray(plan) ? plan : [])
+    .map((entry) => ({
+      text: entry.parts && entry.parts.text ? entry.parts.text : "",
+      mediaUrls: entry.parts && Array.isArray(entry.parts.mediaUrls) ? entry.parts.mediaUrls : [],
+      audioAsVoice: entry.payload && entry.payload.audioAsVoice === true ? true : undefined,
+      ...(entry.hasPresentation ? { presentation: entry.payload.presentation } : {}),
+      ...(entry.payload && entry.payload.delivery ? { delivery: entry.payload.delivery } : {}),
+      ...(entry.hasInteractive ? { interactive: entry.payload.interactive } : {}),
+      ...(entry.hasChannelData ? { channelData: entry.payload.channelData } : {}),
+    }))
+    .filter((entry) => entry.text || entry.mediaUrls.length > 0 || entry.channelData);
+}
+
+function projectOutboundPayloadPlanForJson(plan) {
+  return (Array.isArray(plan) ? plan : []).map((entry) => ({
+    text: entry.parts && entry.parts.text ? entry.parts.text : "",
+    mediaUrl: (entry.payload && entry.payload.mediaUrl) || null,
+    mediaUrls:
+      entry.parts && Array.isArray(entry.parts.mediaUrls) && entry.parts.mediaUrls.length
+        ? entry.parts.mediaUrls
+        : undefined,
+    audioAsVoice: entry.payload && entry.payload.audioAsVoice === true ? true : undefined,
+    presentation: entry.payload && entry.payload.presentation,
+    delivery: entry.payload && entry.payload.delivery,
+    interactive: entry.payload && entry.payload.interactive,
+    channelData: entry.payload && entry.payload.channelData,
+  }));
+}
+
+function summarizeOutboundPayloadForTransport(payload) {
+  const parts = resolveSendableOutboundReplyParts(payload);
+  return {
+    text: parts.text,
+    mediaUrls: parts.mediaUrls,
+    audioAsVoice: payload && payload.audioAsVoice === true ? true : undefined,
+    presentation: payload && payload.presentation,
+    delivery: payload && payload.delivery,
+    interactive: payload && payload.interactive,
+    channelData: payload && payload.channelData,
+    ...(payload && payload.spokenText && !parts.text ? { hookContent: payload.spokenText } : {}),
+  };
+}
+
+async function deliverOutboundPayloads(params = {}) {
+  const channel =
+    normalizeMessageChannel(params.channel) || normalizeLowercaseStringOrEmpty(params.channel);
+  const sendDep = resolveOutboundSendDep(params.deps, channel);
+  if (typeof sendDep !== "function") {
+    throw new Error(`Outbound not configured for channel: ${channel || "unknown"}`);
+  }
+  const plan = createOutboundPayloadPlan(params.payloads, {
+    cfg: params.cfg,
+    sessionKey: params.session && (params.session.policyKey || params.session.key),
+    surface: channel,
+    conversationType: params.session && params.session.conversationType,
+  });
+  const replyFanout = createReplyToFanout({
+    replyToId: params.replyToId,
+    replyToMode: params.replyToMode,
+  });
+  const results = [];
+  for (const payload of projectOutboundPayloadPlanForDelivery(plan)) {
+    const parts = resolveSendableOutboundReplyParts(payload);
+    const replyToId =
+      payload && Object.prototype.hasOwnProperty.call(payload, "replyToId")
+        ? payload.replyToId || undefined
+        : replyFanout();
+    const baseCtx = {
+      cfg: params.cfg,
+      channel,
+      to: params.to,
+      accountId: params.accountId,
+      replyToId,
+      replyToMode: params.replyToMode,
+      threadId: params.threadId,
+      identity: params.identity,
+      forceDocument: params.forceDocument,
+      silent: params.silent,
+      payload,
+    };
+    if (parts.mediaUrls.length > 0) {
+      for (const [index, mediaUrl] of parts.mediaUrls.entries()) {
+        const result = await sendDep({
+          ...baseCtx,
+          text: index === 0 ? parts.text : "",
+          mediaUrl,
+          mediaUrls: [mediaUrl],
+          audioAsVoice: payload.audioAsVoice === true ? true : undefined,
+        });
+        if (Array.isArray(result)) {
+          results.push(...result.filter(Boolean));
+        } else if (result) {
+          results.push(result);
+        }
+      }
+      continue;
+    }
+    if (!parts.text && !payload.interactive && !payload.presentation && !payload.channelData) {
+      continue;
+    }
+    const result = await sendDep({
+      ...baseCtx,
+      text: parts.text,
+      mediaUrls: [],
+      audioAsVoice: payload.audioAsVoice === true ? true : undefined,
+    });
+    if (Array.isArray(result)) {
+      results.push(...result.filter(Boolean));
+    } else if (result) {
+      results.push(result);
+    }
+  }
+  return results;
+}
+
+const outboundRuntime = {
+  buildOutboundSessionContext,
+  createOutboundPayloadPlan,
+  createReplyToFanout,
+  createRuntimeOutboundDelegates,
+  deliverOutboundPayloads,
+  normalizeOutboundIdentity,
+  projectOutboundPayloadPlanForDelivery,
+  projectOutboundPayloadPlanForJson,
+  projectOutboundPayloadPlanForOutbound,
+  resolveAgentOutboundIdentity,
+  resolveLegacyOutboundSendDepKeys,
+  resolveOutboundSendDep,
+  sanitizeForPlainText,
+  stripInternalRuntimeScaffolding,
+  summarizeOutboundPayloadForTransport,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -30677,6 +32516,15 @@ const genericSdk = new Proxy(
     ...providerWebSearchConfigContractRuntime,
     ...providerWebSearchContractFieldsRuntime,
     ...providerWebSearchContractRuntime,
+    ...providerWebFetchRuntime,
+    ...providerWebSearchRuntime,
+    ...deviceBootstrapRuntime,
+    ...runtimeStoreRuntime,
+    ...runtimeRuntime,
+    ...directoryRuntime,
+    ...threadBindingsRuntime,
+    ...conversationRuntime,
+    ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -31129,6 +32977,72 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-fetch-contract"
   ) {
     return providerWebFetchContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-fetch" ||
+    request === "@openclaw/plugin-sdk/provider-web-fetch"
+  ) {
+    return providerWebFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-web-search" ||
+    request === "@openclaw/plugin-sdk/provider-web-search"
+  ) {
+    return providerWebSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/device-bootstrap" ||
+    request === "@openclaw/plugin-sdk/device-bootstrap"
+  ) {
+    return deviceBootstrapRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-store" ||
+    request === "@openclaw/plugin-sdk/runtime-store"
+  ) {
+    return runtimeStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-logger" ||
+    request === "@openclaw/plugin-sdk/runtime-logger"
+  ) {
+    return runtimeLoggerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime" ||
+    request === "@openclaw/plugin-sdk/runtime"
+  ) {
+    return runtimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/directory-runtime" ||
+    request === "@openclaw/plugin-sdk/directory-runtime"
+  ) {
+    return directoryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/directory-config-runtime" ||
+    request === "@openclaw/plugin-sdk/directory-config-runtime"
+  ) {
+    return directoryConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-bindings-runtime" ||
+    request === "@openclaw/plugin-sdk/thread-bindings-runtime"
+  ) {
+    return threadBindingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/conversation-runtime" ||
+    request === "@openclaw/plugin-sdk/conversation-runtime"
+  ) {
+    return conversationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/outbound-runtime" ||
+    request === "@openclaw/plugin-sdk/outbound-runtime"
+  ) {
+    return outboundRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

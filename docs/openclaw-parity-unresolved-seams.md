@@ -4,8 +4,8 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~77.8% overall, with a reasonable
-  band of ~75-80%.
+- Repo-wide OpenClaw parity is estimated at ~78.7% overall, with a reasonable
+  band of ~76-81%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -62,8 +62,10 @@ Current percentage rollup:
   provider-selection-runtime, windows-spawn, command-status, command-auth
   native, webhook, fetch/SSRF, provider model/catalog, provider
   entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
-  provider-auth-login, provider-auth facade, and provider web-search contract
-  helper slices.
+  provider-auth-login, provider-auth facade, provider web-search contract,
+  provider web facade, device-bootstrap, runtime-store, runtime, and
+  directory-runtime, directory-config-runtime, thread-bindings-runtime,
+  conversation-runtime, and outbound-runtime helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7358,14 +7360,118 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   web-search provider contract pytest, adjacent provider-helper proof,
   adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
   source/test checkpointed in `3dadf0fb`.
+- Closed the imported OpenClaw plugin SDK provider web facade seam from
+  `src/plugin-sdk/provider-web-search.ts` and
+  `src/plugin-sdk/provider-web-fetch.ts`: native runtime entries can import
+  web-search and web-fetch provider facade helpers, use common result/parameter
+  helpers, markdown/text utilities, cache/timing helpers, search filter/date
+  helpers, web-search cache helpers, endpoint wrapper stubs, external content
+  wrappers, the deprecated plugin-backed web-search provider error boundary,
+  scoped SDK aliases, and generic SDK aliases. Repo-wide parity is now
+  estimated at ~77.9%. Verified with focused provider web facade pytest,
+  adjacent provider-helper proof, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `0ba91657`.
+- Closed the imported OpenClaw plugin SDK device-bootstrap seam from
+  `src/plugin-sdk/device-bootstrap.ts`, `src/shared/device-bootstrap-profile.ts`,
+  `src/infra/device-bootstrap.ts`, and `src/infra/device-pairing.ts`: native
+  runtime entries can import setup bootstrap profile constants, normalize
+  bootstrap profile roles/scopes with operator scope expansion, issue/revoke/
+  clear fakeable bootstrap tokens, expose the native no-pairing boundary, and
+  reach the same helpers through scoped and generic SDK aliases. Repo-wide
+  parity is now estimated at ~78.0%. Verified with focused device-bootstrap
+  pytest, adjacent provider/helper proof, adjacent imported-plugin/runtime
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `ae2fc79f`.
+- Closed the imported OpenClaw plugin SDK runtime-store seam from
+  `src/plugin-sdk/runtime-store.ts`: native runtime entries can import
+  `createPluginRuntimeStore`, share plugin-id and custom-key runtime slots,
+  keep legacy string stores isolated per call, preserve falsy initialized
+  runtime values, reject empty plugin IDs with the upstream message, and reach
+  the helper through scoped and generic SDK aliases. Repo-wide parity is now
+  estimated at ~78.1%. Verified with focused runtime-store pytest, adjacent
+  helper proof, adjacent imported-plugin/runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `57cc0f37`.
+- Closed the imported OpenClaw plugin SDK runtime seam from
+  `src/plugin-sdk/runtime.ts`, `src/plugin-sdk/runtime-logger.ts`, and
+  `src/runtime.ts`: native runtime entries can import logger-backed runtime
+  helpers from `openclaw/plugin-sdk/runtime` and
+  `openclaw/plugin-sdk/runtime-logger`, format log/error output, write
+  stdout/JSON through logger adapters, reuse supplied runtime objects,
+  synthesize runtime envs with custom exit errors, return unavailable-exit
+  errors, and reach the logger helper through scoped and generic SDK aliases.
+  Repo-wide parity is now estimated at ~78.2%. Verified with focused runtime
+  pytest, adjacent helper proof, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `5bd1435b`.
+- Closed the imported OpenClaw plugin SDK directory-runtime seam from
+  `src/plugin-sdk/directory-runtime.ts`,
+  `src/channels/plugins/directory-adapters.ts`,
+  `src/channels/plugins/directory-config-helpers.ts`, and
+  `src/channels/plugins/runtime-forwarders.ts`: native runtime entries can
+  create default/empty directory adapters, list user/group directory entries
+  from allowlists, map keys, inspected/resolved accounts, and source iterables,
+  apply query/limit filtering, forward live directory methods through runtime
+  adapters, preserve unavailable-method errors, and reach helpers through
+  scoped and generic SDK aliases. Repo-wide parity is now estimated at ~78.3%.
+  Verified with focused directory-runtime pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `a354299e`.
+- Closed the imported OpenClaw plugin SDK directory-config-runtime seam from
+  `src/plugin-sdk/directory-config-runtime.ts`: native runtime entries can use
+  the slim config-backed directory helper facade for query/limit filtering,
+  directory entry projection, inspected/resolved account listers, and
+  user/group listing without exposing the broader adapter-only
+  `directory-runtime` exports. Repo-wide parity is now estimated at ~78.4%.
+  Verified with focused directory-config-runtime pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `335e215d`.
+- Closed the imported OpenClaw plugin SDK thread-bindings-runtime seam from
+  `src/plugin-sdk/thread-bindings-runtime.ts`,
+  `src/channels/thread-binding-id.ts`,
+  `src/channels/thread-bindings-messages.ts`,
+  `src/channels/thread-bindings-policy.ts`,
+  `src/shared/thread-binding-lifecycle.ts`, and
+  `src/infra/outbound/account-scoped-conversation-bindings.ts`: native runtime
+  entries can resolve account-prefixed binding IDs, channel/account timeout
+  settings, lifecycle expirations, farewell text, and account-scoped in-memory
+  conversation binding managers with bind/touch/list/unbind/stop behavior.
+  Repo-wide parity is now estimated at ~78.5%. Verified with focused
+  thread-bindings-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `06f36c6c`.
+- Closed the imported OpenClaw plugin SDK conversation-runtime seam from
+  `src/plugin-sdk/conversation-runtime.ts`,
+  `src/channels/conversation-label.ts`, `src/channels/session.ts`, and
+  `src/channels/session-meta.ts`: native runtime entries can resolve
+  OpenClaw conversation labels, expose safe inbound-session recording helpers
+  with meta-task tracking and pinned main-DM route skip behavior, and reuse the
+  verified thread-binding helpers through the conversation facade. Repo-wide
+  parity is now estimated at ~78.6%. Verified with focused
+  conversation-runtime pytest, adjacent helper proof, adjacent imported-plugin/
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `7c5271ba`.
+- Closed the imported OpenClaw plugin SDK outbound-runtime seam from
+  `src/plugin-sdk/outbound-runtime.ts`,
+  `src/channels/plugins/runtime-forwarders.ts`,
+  `src/infra/outbound/send-deps.ts`, `src/infra/outbound/identity.ts`,
+  `src/infra/outbound/reply-policy.ts`, `src/infra/outbound/sanitize-text.ts`,
+  `src/infra/outbound/session-context.ts`, `src/infra/outbound/payloads.ts`,
+  and `src/infra/outbound/deliver.ts`: native runtime entries can create
+  fakeable outbound delegates, resolve dynamic and legacy channel send
+  dependencies, normalize outbound identity/session context, sanitize
+  plain-text output, plan/project outbound payloads, and deliver through a
+  native fakeable dependency entry point. Repo-wide parity is now estimated at
+  ~78.7%. Verified with focused outbound-runtime pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `a0df1bba`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
-  facade/provider-web-search-contract path, starting with the next
-  source-backed SDK helper subpath.
+  facade/provider-web-search-contract/provider-web facade/device-bootstrap
+  runtime-store/runtime/directory-runtime/directory-config-runtime/
+  thread-bindings-runtime/conversation-runtime/outbound-runtime path, starting
+  with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
