@@ -32124,6 +32124,20 @@ const textRuntime = {
   readStringValue,
 };
 
+const stringCoerceRuntime = {
+  hasNonEmptyString,
+  isRecord,
+  localeLowercasePreservingWhitespace,
+  lowercasePreservingWhitespace,
+  normalizeLowercaseStringOrEmpty,
+  normalizeNullableString,
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+  normalizeOptionalStringifiedId,
+  normalizeStringifiedOptionalString,
+  readStringValue,
+};
+
 const textAutolinkRuntime = {
   isAutoLinkedFileRef,
 };
@@ -40381,6 +40395,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/text-runtime"
   ) {
     return textRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/string-coerce-runtime" ||
+    request === "@openclaw/plugin-sdk/string-coerce-runtime"
+  ) {
+    return stringCoerceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/text-autolink-runtime" ||

@@ -24157,6 +24157,145 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-string-coerce.cjs"
+    runtime_entry.write_text(
+        """
+const stringCoerce = require("openclaw/plugin-sdk/string-coerce-runtime");
+const scopedStringCoerce = require("@openclaw/plugin-sdk/string-coerce-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.string_coerce",
+      description: "Use OpenClaw string-coerce runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(stringCoerce).sort(),
+          scopedType: typeof scopedStringCoerce.normalizeOptionalString,
+          nullable: [
+            stringCoerce.normalizeNullableString("  Alpha  "),
+            stringCoerce.normalizeNullableString("   "),
+            stringCoerce.normalizeNullableString(7)
+          ],
+          optional: [
+            stringCoerce.normalizeOptionalString("  Beta  "),
+            stringCoerce.normalizeOptionalString("   ") ?? null
+          ],
+          stringified: [
+            stringCoerce.normalizeStringifiedOptionalString(42),
+            stringCoerce.normalizeStringifiedOptionalString(false),
+            stringCoerce.normalizeStringifiedOptionalString({}) ?? null
+          ],
+          ids: [
+            stringCoerce.normalizeOptionalStringifiedId(12.9),
+            stringCoerce.normalizeOptionalStringifiedId("  thread-1  "),
+            stringCoerce.normalizeOptionalStringifiedId(false) ?? null
+          ],
+          lower: [
+            stringCoerce.normalizeLowercaseStringOrEmpty("  MiXeD  "),
+            stringCoerce.normalizeOptionalLowercaseString("  Case  "),
+            stringCoerce.lowercasePreservingWhitespace("  MiXeD  "),
+            stringCoerce.localeLowercasePreservingWhitespace("  LOCALE  ")
+          ],
+          has: [
+            stringCoerce.hasNonEmptyString(" value "),
+            stringCoerce.hasNonEmptyString("   ")
+          ],
+          read: [
+            stringCoerce.readStringValue("text"),
+            stringCoerce.readStringValue(123) ?? null
+          ],
+          records: [
+            stringCoerce.isRecord({ ok: true }),
+            stringCoerce.isRecord([]),
+            stringCoerce.isRecord(null)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-string-coerce-plugin",
+                    "name": "Runtime String Coerce Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-string-coerce.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.string_coerce"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.string_coerce"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hasNonEmptyString",
+            "isRecord",
+            "localeLowercasePreservingWhitespace",
+            "lowercasePreservingWhitespace",
+            "normalizeLowercaseStringOrEmpty",
+            "normalizeNullableString",
+            "normalizeOptionalLowercaseString",
+            "normalizeOptionalString",
+            "normalizeOptionalStringifiedId",
+            "normalizeStringifiedOptionalString",
+            "readStringValue",
+        ],
+        "scopedType": "function",
+        "nullable": ["Alpha", None, None],
+        "optional": ["Beta", None],
+        "stringified": ["42", "false", None],
+        "ids": ["12", "thread-1", None],
+        "lower": ["mixed", "case", "  mixed  ", "  locale  "],
+        "has": [True, False],
+        "read": ["text", None],
+        "records": [True, False, False],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
     tmp_path,
 ) -> None:
