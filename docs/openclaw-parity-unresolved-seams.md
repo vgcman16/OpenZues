@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~84.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~84.8% overall, with a reasonable
   band of ~78-85%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -87,7 +87,8 @@ Current percentage rollup:
   approval-auth-runtime helper, Telegram command config helper,
   param-readers helper, provider-zai-endpoint helper, provider-env-vars
   helper, session-visibility helper, simple-completion-runtime
-  extractAssistantText helper, and approval-reply-runtime helper slices.
+  extractAssistantText helper, approval-reply-runtime helper, and
+  approval-client-helpers slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8095,6 +8096,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   approval/runtime proof, adjacent imported-plugin proof, `ruff check`, and
   `mypy`; source/test checkpointed in `2215e898`. Broader approval gateway,
   client, delivery, native, and handler runtimes remain open.
+- Closed the imported OpenClaw plugin SDK approval-client-helpers seam from
+  `src/plugin-sdk/approval-client-helpers.ts` and
+  `src/infra/approval-request-filters.ts`: native runtime entries can require
+  scoped/unscoped approval client helpers, resolve channel approval enablement,
+  match configured approval targets by channel/account/sender, apply agent and
+  session filters with session-key agent fallback, compose channel approval
+  profiles, and suppress local prompts from approval metadata. Repo-wide
+  parity is now estimated at ~84.8%. Verified with focused
+  approval-client-helpers pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `8a40507d`. Broader approval gateway, delivery, native, and handler runtimes
+  remain open.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8122,7 +8135,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   run-command/string-coerce-runtime/provider-auth-login.runtime/
   approval-auth-runtime/telegram-command-config/approval-gateway-runtime/
   param-readers/provider-zai-endpoint/provider-env-vars/session-visibility/
-  simple-completion-runtime/approval-reply-runtime/channel-entry-contract/
+  simple-completion-runtime/approval-reply-runtime/approval-client-helpers/
+  channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.
