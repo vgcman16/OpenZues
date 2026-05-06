@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~90.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~91.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin memory-core-host-engine-foundation slice is checkpointed in
-`4d0b1103`.
+The imported plugin memory-core-host-engine-qmd slice is checkpointed in
+`147b0978`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,12 +62,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Memory core host engine foundation checkpointed in `4d0b1103` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader unresolved helper/runtime queue; next `memory-core-host-engine-qmd` |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Memory core host engine QMD checkpointed in `147b0978` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader unresolved helper/runtime queue; next `memory-core-host-engine-storage` |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001ZQ` Imported memory-core-host-engine-qmd helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-engine-qmd.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/engine-qmd.ts`, adjacent
+    OpenClaw QMD query parser, scope, process, session-file, session-id, and
+    query-expansion helper behavior
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-engine-qmd`, exposing noisy JSON QMD query parsing,
+    no-result handling, scope allow/deny matching, transcript
+    listing/classification/export helpers, usage-counted session-id parsing,
+    CLI spawn invocation materialization, binary availability checks, and
+    capped command execution.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `147b0978`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-engine-qmd proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1010 deselected`),
+    adjacent imported-plugin proof (`202 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001ZP` Imported memory-core-host-engine-foundation helper shim
   - Source: `openclaw-main/src/plugin-sdk/memory-core-host-engine-foundation.ts`,

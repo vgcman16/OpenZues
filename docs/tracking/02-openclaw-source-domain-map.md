@@ -30,6 +30,9 @@ repo-wide percentage.
 | [~] | Packaging, distribution, release | packageDistribution doctor JSON, dist inventory validation, update-status channel projection, and git branch channel labeling verified; npm package, plugin packages, Docker/Podman, macOS DMG/Sparkle, CI release workflows, update channels remain | `src/flows/doctor-health.ts`, `src/commands/doctor-install.ts`, `src/infra/update-global.ts`, `scripts/openclaw-npm-publish.sh`, `scripts/package-mac-dist.sh`, `Dockerfile`, `.github/workflows` |
 | [ ] | Observability, diagnostics, ops | logging, OpenTelemetry/Prometheus, health/status, proxy capture, runtime reports | `src/logging`, `extensions/diagnostics-otel`, `extensions/diagnostics-prometheus`, `docs/logging.md` |
 
+Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
+verified in `147b0978` and counted with the SDK helper/runtime set above.
+
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
 `src/infra/net/proxy-env.ts`, `src/infra/net/proxy-fetch.ts`, and
@@ -112,7 +115,11 @@ CLI/runtime/theme/progress/home-path helper behavior is checkpointed in
 `4a1d82a8`; `memory-core-host-engine-foundation` from
 `src/plugin-sdk/memory-core-host-engine-foundation.ts` and
 `packages/memory-host-sdk/src/engine-foundation.ts` is checkpointed in
-`4d0b1103`.
+`4d0b1103`; `memory-core-host-engine-qmd` from
+`src/plugin-sdk/memory-core-host-engine-qmd.ts`,
+`packages/memory-host-sdk/src/engine-qmd.ts`, and adjacent QMD
+parser/scope/process/session-file/query helpers is checkpointed in
+`147b0978`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
