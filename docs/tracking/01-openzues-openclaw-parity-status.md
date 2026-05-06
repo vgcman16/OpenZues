@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~81.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~81.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -684,6 +684,12 @@ may lag behind this tracker.
   abort waiters, handler registration, subsystem logging facades, undici
   bootstrap posture, and WSL detection.
   - Status: checkpointed in `4e364149`
+
+- [x] Imported plugin SDK channel-config-helpers shim for DM access
+  normalization/migration helpers, config-write authorization helpers,
+  allowFrom/default-target accessors, scoped/top-level/hybrid channel config
+  adapters, and account-scoped DM security resolver helpers.
+  - Status: checkpointed in `02ec0b78`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

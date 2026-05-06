@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~81.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~81.1% overall, with a reasonable
   band of ~78-83%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -73,7 +73,8 @@ Current percentage rollup:
   channel pairing path, channel inbound roots, channel location, state path,
   setup adapter runtime, channel secret TTS runtime, talk config runtime,
   GitHub Copilot token, channel plugin common/core, channel entry contract,
-  channel config primitives/schema, and runtime-env helper slices.
+  channel config primitives/schema, runtime-env, and channel-config-helpers
+  helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7703,6 +7704,50 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~80.8%. Verified with focused channel entry contract pytest, adjacent helper
   proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
   source/test checkpointed in `e0bb22bf`.
+- Closed the imported OpenClaw plugin SDK channel config primitives/schema seam
+  from `src/plugin-sdk/channel-config-primitives.ts`,
+  `src/plugin-sdk/channel-config-schema.ts`,
+  `src/plugin-sdk/bundled-channel-config-schema.ts`,
+  `src/channels/plugins/config-schema.ts`, and
+  `src/config/zod-schema.core.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-config-primitives`,
+  `openclaw/plugin-sdk/channel-config-schema`,
+  `openclaw/plugin-sdk/bundled-channel-config-schema`, and legacy
+  `channel-config-schema-legacy`, receiving DM/group policy schemas,
+  markdown/block-streaming config schemas, nested DM and catchall account
+  builders, `requireOpenAllowFrom`, tool/context schemas, and bundled provider
+  schema placeholders through scoped and unscoped SDK aliases. Repo-wide
+  parity is now estimated at ~80.9%. Verified with focused channel config
+  primitives pytest, adjacent helper proof, adjacent imported-plugin runtime
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `7f046836`.
+- Closed the imported OpenClaw plugin SDK runtime-env seam from
+  `src/plugin-sdk/runtime-env.ts`, `src/runtime.ts`, `src/globals.ts`,
+  `src/infra/env.ts`, `src/logging.ts`, `src/infra/retry.ts`,
+  `src/infra/backoff.ts`, `src/utils/with-timeout.ts`,
+  `src/infra/abort-signal.ts`, and
+  `src/infra/format-time/format-duration.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/runtime-env`, receiving runtime IO helpers,
+  verbose/yes state, sleep/timeout/retry, truthy env parsing, duration/backoff
+  helpers, abort waiters, handler registration, subsystem logging facades,
+  undici proxy bootstrap posture, and WSL detection through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~81.0%. Verified
+  with focused runtime-env pytest, adjacent runtime helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `4e364149`.
+- Closed the imported OpenClaw plugin SDK channel-config-helpers seam from
+  `src/plugin-sdk/channel-config-helpers.ts`,
+  `src/channels/plugins/dm-access.ts`,
+  `src/channels/plugins/config-write-policy-shared.ts`,
+  `src/channels/plugins/config-helpers.ts`, and
+  `src/channels/plugins/helpers.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-config-helpers`, receiving DM access
+  normalization/migration helpers, config-write authorization helpers,
+  allowFrom/default-target accessors, scoped/top-level/hybrid channel config
+  adapters, and account-scoped DM security resolver helpers through scoped,
+  unscoped, and generic SDK aliases. Repo-wide parity is now estimated at
+  ~81.1%. Verified with focused channel-config-helpers pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `02ec0b78`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7718,7 +7763,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   anthropic-cli/anthropic-vertex-auth-presence/anthropic-vertex/xai-model-id/
   channel-pairing-paths/channel-inbound-roots/channel-location/state-paths/
   setup-adapter-runtime/channel-secret-tts-runtime/talk-config-runtime/
-  github-copilot-token/channel-plugin-common/core/channel-entry-contract path,
+  github-copilot-token/channel-plugin-common/core/channel-entry-contract/
+  channel-config-primitives/channel-config-schema/runtime-env/
+  channel-config-helpers path,
   starting with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
