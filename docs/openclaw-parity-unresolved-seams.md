@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~80.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~80.9% overall, with a reasonable
   band of ~78-83%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -1767,6 +1767,14 @@ schemas stay untouched before before-call hooks and executor dispatch. Remaining
 tool parity is future
 production runtime activation/import metadata beyond the native manifest
 snapshot adapter and deeper marketplace install/update/uninstall flows.
+Imported plugin SDK channel config primitives/schema subpaths are now no longer
+an unresolved queue head: `channel-config-primitives`, `channel-config-schema`,
+`bundled-channel-config-schema`, and `channel-config-schema-legacy` resolve to
+native OpenZues schema shims for policy enums, markdown/block-streaming
+schemas, nested DM config, multi-account builders, `requireOpenAllowFrom`,
+tool policy, and bundled provider schema handles. Remaining plugin SDK queue
+heads should continue with source-backed runtime/helper subpaths that still
+fall through the broad generic SDK proxy.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human

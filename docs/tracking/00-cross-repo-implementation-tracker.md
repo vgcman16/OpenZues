@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~80.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~80.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin channel entry contract slice is checkpointed in `e0bb22bf`.
+The imported plugin channel config primitives/schema slice is checkpointed in `7f046836`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +61,37 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel entry contract shim checkpointed in `e0bb22bf` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel config primitives/schema shim checkpointed in `7f046836` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader plugin SDK helper/runtime breadth |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001VT` Imported channel config primitives/schema helper shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-config-primitives.ts`,
+    `openclaw-main/src/plugin-sdk/channel-config-schema.ts`,
+    `openclaw-main/src/plugin-sdk/bundled-channel-config-schema.ts`,
+    `openclaw-main/src/channels/plugins/config-schema.ts`,
+    `openclaw-main/src/config/zod-schema.core.ts`,
+    `openclaw-main/src/config/zod-schema.agent-runtime.ts`
+  - References: `openclaw-main/src/plugin-sdk/channel-config-schema-legacy.ts`,
+    `openclaw-main/src/config/zod-schema.providers-core.ts`,
+    `openclaw-main/src/config/zod-schema.providers-whatsapp.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require the narrow channel
+    config SDK barrels and receive DM/group policy schemas, context visibility
+    and tool policy schemas, markdown/block-streaming schemas, nested DM config
+    and catchall multi-account builders, `requireOpenAllowFrom`, and bundled
+    provider schema handles through scoped and unscoped SDK aliases.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `7f046836`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused channel config primitives proof
+    (`1 passed`), adjacent helper proof (`3 passed, 914 deselected`),
+    adjacent imported-plugin/runtime proof (`114 passed, 803 deselected`),
+    `ruff check`, and `mypy`.
 
 - [x] `OZ-PLUGIN-001VS` Imported channel entry contract helper shim
   - Source: `openclaw-main/src/plugin-sdk/channel-entry-contract.ts`
