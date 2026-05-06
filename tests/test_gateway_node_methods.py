@@ -11853,6 +11853,102 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-xai-model-id.cjs"
+    runtime_entry.write_text(
+        """
+const xai = require("openclaw/plugin-sdk/xai-model-id");
+const scopedXai = require("@openclaw/plugin-sdk/xai-model-id");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.xai_model_id",
+      description: "Use OpenClaw xai-model-id SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(xai).sort(),
+          fastReasoning: xai.normalizeXaiModelId("grok-4-fast-reasoning"),
+          fast41Reasoning: scopedXai.normalizeXaiModelId("grok-4-1-fast-reasoning"),
+          betaReasoning: xai.normalizeXaiModelId("grok-4.20-experimental-beta-0304-reasoning"),
+          betaNonReasoning: scopedXai.normalizeXaiModelId(
+            "grok-4.20-experimental-beta-0304-non-reasoning"
+          ),
+          unchanged: xai.normalizeXaiModelId("grok-4.3"),
+          genericAlias: genericSdk.normalizeXaiModelId("grok-4.20-reasoning"),
+          genericNative: genericSdk.normalizeNativeXaiModelId("grok-4.20-non-reasoning")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-xai-model-id-plugin",
+                    "name": "Runtime XAI Model ID Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-xai-model-id.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.xai_model_id"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.xai_model_id"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["normalizeXaiModelId"],
+        "fastReasoning": "grok-4-fast",
+        "fast41Reasoning": "grok-4-1-fast",
+        "betaReasoning": "grok-4.20-beta-latest-reasoning",
+        "betaNonReasoning": "grok-4.20-beta-latest-non-reasoning",
+        "unchanged": "grok-4.3",
+        "genericAlias": "grok-4.20-beta-latest-reasoning",
+        "genericNative": "grok-4.20-beta-latest-non-reasoning",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_entry_enable_auth_helpers(
     tmp_path,
 ) -> None:

@@ -19889,6 +19889,10 @@ function normalizeNativeXaiModelId(id) {
   return id;
 }
 
+function normalizeXaiModelId(id) {
+  return normalizeNativeXaiModelId(id);
+}
+
 function getModelProviderHint(modelId) {
   const trimmed = normalizeOptionalLowercaseString(modelId);
   if (!trimmed) {
@@ -30681,6 +30685,10 @@ const providerModelIdNormalizeRuntime = {
   normalizeNativeXaiModelId,
 };
 
+const xaiModelIdRuntime = {
+  normalizeXaiModelId,
+};
+
 const providerModelSharedRuntime = {
   ANTHROPIC_BY_MODEL_REPLAY_HOOKS,
   DEFAULT_CONTEXT_TOKENS: 128000,
@@ -30710,6 +30718,7 @@ const providerModelSharedRuntime = {
   normalizeGooglePreviewModelId,
   normalizeModelCompat: passthrough,
   normalizeNativeXaiModelId,
+  normalizeXaiModelId,
   normalizeProviderId: normalizeOptionalLowercaseString,
   renderGpt5PromptOverlay: passthrough,
   resolveClaudeThinkingProfile,
@@ -34403,6 +34412,7 @@ const genericSdk = new Proxy(
     normalizeStringEntries,
     normalizeStringEntriesLower,
     normalizeStringifiedOptionalString,
+    normalizeXaiModelId,
     normalizeOutboundReplyPayload,
     parseAgentSessionKey,
     parseEnvTemplateSecretRef,
@@ -34656,6 +34666,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-model-id-normalize"
   ) {
     return providerModelIdNormalizeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/xai-model-id" ||
+    request === "@openclaw/plugin-sdk/xai-model-id"
+  ) {
+    return xaiModelIdRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-model-shared" ||
