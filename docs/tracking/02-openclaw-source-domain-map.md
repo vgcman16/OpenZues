@@ -79,7 +79,13 @@ are checkpointed in `6f11c3fa`; `runtime-secret-resolution` from
 `memory-core-host-status` from `src/plugin-sdk/memory-core-host-status.ts`,
 `packages/memory-host-sdk/src/status.ts`, and
 `packages/memory-host-sdk/src/host/status-format.ts` is checkpointed in
-`bfcb12a2`. Count all with
+`bfcb12a2`; `memory-core-host-runtime-files` from
+`src/plugin-sdk/memory-core-host-runtime-files.ts`,
+`packages/memory-host-sdk/src/runtime-files.ts`,
+`packages/memory-host-sdk/src/host/internal.ts`,
+`packages/memory-host-sdk/src/host/read-file.ts`, and
+`packages/memory-host-sdk/src/host/backend-config.ts` is checkpointed in
+`a8d7b586`. Count all with
 the plugin/extension system row above.
 
 ## How To Use This Map
