@@ -14274,6 +14274,241 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_client_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-client.cjs"
+    runtime_entry.write_text(
+        """
+const client = require("openclaw/plugin-sdk/approval-client-helpers");
+const scopedClient = require("@openclaw/plugin-sdk/approval-client-helpers");
+
+const cfg = {
+  approvals: {
+    exec: {
+      enabled: true,
+      mode: "targets",
+      targets: [
+        { channel: "matrix", to: "user:@owner:example.org", accountId: "ops" },
+        { channel: "matrix", to: "user:@other:example.org", accountId: "other" }
+      ]
+    }
+  }
+};
+
+const profile = client.createChannelExecApprovalProfile({
+  resolveConfig: () => ({
+    enabled: true,
+    target: "channel",
+    agentFilter: ["ops"],
+    sessionFilter: ["tail$"]
+  }),
+  resolveApprovers: () => ["owner"],
+  isTargetRecipient: ({ senderId }) => senderId === "target",
+  matchesRequestAccount: ({ accountId }) => accountId !== "other"
+});
+
+const promptProfile = client.createChannelExecApprovalProfile({
+  resolveConfig: () => undefined,
+  resolveApprovers: () => [],
+  requireClientEnabledForLocalPromptSuppression: false
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_client",
+      description: "Use OpenClaw approval client helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const request = {
+          id: "req-1",
+          request: {
+            command: "echo hi",
+            agentId: "ops",
+            sessionKey: "agent:ops:telegram:direct:owner:tail"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        const approvalPayload = {
+          channelData: {
+            execApproval: {
+              approvalId: "req-1",
+              approvalSlug: "req-1"
+            }
+          }
+        };
+        return {
+          keys: Object.keys(client).sort(),
+          scopedType: typeof scopedClient.createChannelExecApprovalProfile,
+          enabled: [
+            client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 1 }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: "auto",
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: true,
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: false,
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 0 })
+          ],
+          targets: [
+            client.isChannelExecApprovalTargetRecipient({
+              cfg,
+              senderId: "@owner:example.org",
+              accountId: "ops",
+              channel: " Matrix ",
+              matchTarget: ({ target, normalizedSenderId }) =>
+                target.to === `user:${normalizedSenderId}`
+            }),
+            client.isChannelExecApprovalTargetRecipient({
+              cfg,
+              senderId: "@owner:example.org",
+              accountId: "other",
+              channel: "matrix",
+              matchTarget: ({ target, normalizedSenderId }) =>
+                target.to === `user:${normalizedSenderId}`
+            }),
+            client.isChannelExecApprovalTargetRecipient({
+              cfg: { approvals: { exec: { enabled: true, mode: "off", targets: [] } } },
+              senderId: "@owner:example.org",
+              channel: "matrix",
+              matchTarget: () => true
+            })
+          ],
+          filters: [
+            client.matchesApprovalRequestFilters({
+              request: request.request,
+              agentFilter: ["ops"],
+              sessionFilter: ["tail$"]
+            }),
+            client.matchesApprovalRequestFilters({
+              request: { sessionKey: "agent:ops:main" },
+              agentFilter: ["ops"],
+              fallbackAgentIdFromSessionKey: true
+            }),
+            client.matchesApprovalRequestFilters({
+              request: request.request,
+              agentFilter: ["main"]
+            })
+          ],
+          profile: {
+            clientEnabled: profile.isClientEnabled({ cfg: {} }),
+            approver: profile.isApprover({ cfg: {}, senderId: "owner" }),
+            authorizedTarget: profile.isAuthorizedSender({ cfg: {}, senderId: "target" }),
+            target: profile.resolveTarget({ cfg: {} }),
+            handleGood: profile.shouldHandleRequest({
+              cfg: {},
+              accountId: "ops",
+              request
+            }),
+            handleWrongAccount: profile.shouldHandleRequest({
+              cfg: {},
+              accountId: "other",
+              request
+            }),
+            suppressEnabled: profile.shouldSuppressLocalPrompt({
+              cfg: {},
+              payload: approvalPayload
+            }),
+            suppressOverride: promptProfile.shouldSuppressLocalPrompt({
+              cfg: {},
+              payload: approvalPayload
+            })
+          },
+          metadata: client.getExecApprovalReplyMetadata(approvalPayload)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-client-plugin",
+                    "name": "Runtime Approval Client Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-client.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_client"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_client"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createChannelExecApprovalProfile",
+            "getExecApprovalReplyMetadata",
+            "isChannelExecApprovalClientEnabledFromConfig",
+            "isChannelExecApprovalTargetRecipient",
+            "matchesApprovalRequestFilters",
+        ],
+        "scopedType": "function",
+        "enabled": [False, True, True, False, False],
+        "targets": [True, False, False],
+        "filters": [True, True, False],
+        "profile": {
+            "clientEnabled": True,
+            "approver": True,
+            "authorizedTarget": True,
+            "target": "channel",
+            "handleGood": True,
+            "handleWrongAccount": False,
+            "suppressEnabled": True,
+            "suppressOverride": True,
+        },
+        "metadata": {
+            "approvalId": "req-1",
+            "approvalSlug": "req-1",
+            "approvalKind": "exec",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

@@ -36590,6 +36590,177 @@ const approvalReplyRuntime = {
   resolveExecApprovalRequestAllowedDecisions,
 };
 
+function matchesApprovalRequestSessionFilter(sessionKey, patterns = []) {
+  const key = normalizeOptionalString(sessionKey);
+  if (!key) {
+    return false;
+  }
+  return patterns.some((pattern) => {
+    const value = normalizeOptionalString(pattern);
+    if (!value) {
+      return false;
+    }
+    if (key.includes(value)) {
+      return true;
+    }
+    try {
+      return new RegExp(value).test(key.slice(0, 8192));
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+function matchesApprovalRequestFilters(params = {}) {
+  const request = params.request || {};
+  if (Array.isArray(params.agentFilter) && params.agentFilter.length > 0) {
+    const explicitAgentId = normalizeOptionalString(request.agentId);
+    const sessionAgentId =
+      params.fallbackAgentIdFromSessionKey === true
+        ? parseAgentSessionKey(request.sessionKey)?.agentId
+        : undefined;
+    const agentId = explicitAgentId || sessionAgentId;
+    if (!agentId || !params.agentFilter.includes(agentId)) {
+      return false;
+    }
+  }
+  if (Array.isArray(params.sessionFilter) && params.sessionFilter.length > 0) {
+    const sessionKey = normalizeOptionalString(request.sessionKey);
+    if (!sessionKey || !matchesApprovalRequestSessionFilter(sessionKey, params.sessionFilter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isApprovalTargetsMode(cfg = {}) {
+  const execApprovals = cfg.approvals && cfg.approvals.exec;
+  if (!execApprovals || execApprovals.enabled !== true) {
+    return false;
+  }
+  return execApprovals.mode === "targets" || execApprovals.mode === "both";
+}
+
+function isChannelExecApprovalClientEnabledFromConfig(params = {}) {
+  if (Number(params.approverCount || 0) <= 0) {
+    return false;
+  }
+  return params.enabled === true || params.enabled === "auto";
+}
+
+function isChannelExecApprovalTargetRecipient(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const normalizedSenderId =
+    params.senderId != null ? normalizeSenderId(params.senderId) : undefined;
+  const normalizedChannel = normalizeOptionalLowercaseString(params.channel);
+  if (!normalizedSenderId || !normalizedChannel || !isApprovalTargetsMode(params.cfg || {})) {
+    return false;
+  }
+  const targets = params.cfg?.approvals?.exec?.targets;
+  if (!Array.isArray(targets)) {
+    return false;
+  }
+  const normalizedAccountId =
+    params.accountId != null ? normalizeOptionalAccountId(params.accountId) : undefined;
+  return targets.some((target) => {
+    if (normalizeOptionalLowercaseString(target.channel) !== normalizedChannel) {
+      return false;
+    }
+    if (
+      normalizedAccountId &&
+      target.accountId &&
+      normalizeOptionalAccountId(target.accountId) !== normalizedAccountId
+    ) {
+      return false;
+    }
+    return params.matchTarget({
+      target,
+      normalizedSenderId,
+      normalizedAccountId,
+    });
+  });
+}
+
+function createChannelExecApprovalProfile(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const resolveConfig =
+    typeof params.resolveConfig === "function" ? params.resolveConfig : () => undefined;
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+
+  const isClientEnabled = (input = {}) => {
+    const config = resolveConfig(input);
+    return isChannelExecApprovalClientEnabledFromConfig({
+      enabled: config && config.enabled,
+      approverCount: resolveApprovers(input).length,
+    });
+  };
+  const isApprover = (input = {}) => {
+    const normalizedSenderId =
+      input.senderId != null ? normalizeSenderId(input.senderId) : undefined;
+    if (!normalizedSenderId) {
+      return false;
+    }
+    return resolveApprovers(input).includes(normalizedSenderId);
+  };
+  const isAuthorizedSender = (input = {}) =>
+    isApprover(input) || Boolean(params.isTargetRecipient && params.isTargetRecipient(input));
+  const resolveTarget = (input = {}) => {
+    const config = resolveConfig(input);
+    return (config && config.target) || "dm";
+  };
+  const shouldHandleRequest = (input = {}) => {
+    if (params.matchesRequestAccount && !params.matchesRequestAccount(input)) {
+      return false;
+    }
+    const config = resolveConfig(input);
+    const approverCount = resolveApprovers(input).length;
+    if (
+      !isChannelExecApprovalClientEnabledFromConfig({
+        enabled: config && config.enabled,
+        approverCount,
+      })
+    ) {
+      return false;
+    }
+    return matchesApprovalRequestFilters({
+      request: input.request && input.request.request,
+      agentFilter: config && config.agentFilter,
+      sessionFilter: config && config.sessionFilter,
+      fallbackAgentIdFromSessionKey: params.fallbackAgentIdFromSessionKey === true,
+    });
+  };
+  const shouldSuppressLocalPrompt = (input = {}) => {
+    if (params.requireClientEnabledForLocalPromptSuppression !== false && !isClientEnabled(input)) {
+      return false;
+    }
+    return getExecApprovalReplyMetadata(input.payload) !== null;
+  };
+
+  return {
+    isClientEnabled,
+    isApprover,
+    isAuthorizedSender,
+    resolveTarget,
+    shouldHandleRequest,
+    shouldSuppressLocalPrompt,
+  };
+}
+
+const approvalClientHelpersRuntime = {
+  createChannelExecApprovalProfile,
+  getExecApprovalReplyMetadata,
+  isChannelExecApprovalClientEnabledFromConfig,
+  isChannelExecApprovalTargetRecipient,
+  matchesApprovalRequestFilters,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -41850,6 +42021,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-reply-runtime"
   ) {
     return approvalReplyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-client-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-client-helpers"
+  ) {
+    return approvalClientHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
