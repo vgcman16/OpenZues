@@ -33346,6 +33346,254 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_cli_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-cli-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const cli = require("openclaw/plugin-sdk/cli-runtime");
+const scopedCli = require("@openclaw/plugin-sdk/cli-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.cli_runtime",
+      description: "Use OpenClaw CLI runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const durationErrors = [];
+        for (const raw of ["", "1x", "1m nope"]) {
+          try {
+            cli.parseDurationMs(raw);
+          } catch (error) {
+            durationErrors.push(error.message);
+          }
+        }
+        const parent = {
+          parent: null,
+          getOptionValueSource(name) {
+            return name === "mode" ? "cli" : "default";
+          },
+          opts() {
+            return { mode: "fast" };
+          }
+        };
+        const child = {
+          parent,
+          getOptionValueSource(name) {
+            return name === "mode" ? "default" : undefined;
+          },
+          opts() {
+            return {};
+          }
+        };
+        const explicitChild = {
+          parent,
+          getOptionValueSource() {
+            return "cli";
+          },
+          opts() {
+            return { mode: "slow" };
+          }
+        };
+        const registered = [];
+        cli.registerCommandGroups(
+          {},
+          [
+            {
+              placeholders: [{ name: "alpha", description: "Alpha" }],
+              register() { registered.push("alpha"); }
+            },
+            {
+              placeholders: [{ name: "beta", description: "Beta" }],
+              register() { registered.push("beta"); }
+            }
+          ],
+          { eager: true, primary: null, registerPrimaryOnly: false }
+        );
+        const runtimeEvents = [];
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            runtimeEvents.push(["action", "ok"]);
+          }
+        );
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            throw new Error("handled");
+          },
+          (error) => runtimeEvents.push(["handled", error.message])
+        );
+        await cli.runCommandWithRuntime(
+          {
+            error(message) { runtimeEvents.push(["error", message]); },
+            exit(code) { runtimeEvents.push(["exit", code]); }
+          },
+          async () => {
+            throw new Error("boom");
+          }
+        );
+        return {
+          keys: Object.keys(cli).sort(),
+          scopedType: typeof scopedCli.parseDurationMs,
+          commands: [
+            cli.formatCliCommand("openclaw run", { OPENCLAW_CONTAINER_HINT: "dev" }),
+            cli.formatCliCommand("openclaw update", { OPENCLAW_CONTAINER_HINT: "dev" }),
+            cli.formatCliCommand("openclaw chat", { OPENCLAW_PROFILE: "work" }),
+            cli.formatCliCommand("node script.js", { OPENCLAW_PROFILE: "work" })
+          ],
+          durations: [
+            cli.parseDurationMs("1h30m"),
+            cli.parseDurationMs("2", { defaultUnit: "s" }),
+            cli.parseDurationMs("2m500ms")
+          ],
+          durationErrors,
+          inherited: [
+            cli.inheritOptionFromParent(child, "mode"),
+            cli.inheritOptionFromParent(explicitChild, "mode") ?? null
+          ],
+          help: cli.formatHelpExamples([["openclaw run", "Run once"]], true),
+          argv: cli.resolveCliArgvInvocation([
+            "node",
+            "openclaw",
+            "--profile",
+            "work",
+            "plugins",
+            "list",
+            "--help"
+          ]),
+          eager: [
+            cli.shouldEagerRegisterSubcommands({ OPENCLAW_DISABLE_LAZY_SUBCOMMANDS: "1" }),
+            cli.shouldEagerRegisterSubcommands({ OPENCLAW_DISABLE_LAZY_SUBCOMMANDS: "0" })
+          ],
+          registered,
+          runtimeEvents,
+          theme: [
+            cli.theme.command("openclaw run"),
+            cli.stylePromptTitle("Title"),
+            typeof cli.note,
+            typeof cli.waitForever,
+            typeof cli.VERSION
+          ],
+          genericLeak: typeof cli.resolveConfiguredAcpBindingRecord
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-cli-runtime-plugin",
+                    "name": "Runtime CLI Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-cli-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.cli_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.cli_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["commands"] == [
+        "openclaw --container dev run",
+        "openclaw update",
+        "openclaw --profile work chat",
+        "node script.js",
+    ]
+    assert result["durations"] == [5_400_000, 2_000, 120_500]
+    assert result["durationErrors"] == [
+        "invalid duration (empty)",
+        "invalid duration: 1x",
+        "invalid duration: 1m nope",
+    ]
+    assert result["inherited"] == ["fast", None]
+    assert result["help"] == "  openclaw run # Run once"
+    assert result["argv"] == {
+        "argv": [
+            "node",
+            "openclaw",
+            "--profile",
+            "work",
+            "plugins",
+            "list",
+            "--help",
+        ],
+        "commandPath": ["plugins", "list"],
+        "primary": "plugins",
+        "hasHelpOrVersion": True,
+        "isRootHelpInvocation": False,
+    }
+    assert result["eager"] == [True, False]
+    assert result["registered"] == ["alpha", "beta"]
+    assert result["runtimeEvents"] == [
+        ["action", "ok"],
+        ["handled", "handled"],
+        ["error", "Error: boom"],
+        ["exit", 1],
+    ]
+    assert result["theme"] == ["openclaw run", "Title", "function", "function", "string"]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "formatCliCommand",
+        "parseDurationMs",
+        "runCommandWithRuntime",
+        "resolveCliArgvInvocation",
+        "theme",
+        "VERSION",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

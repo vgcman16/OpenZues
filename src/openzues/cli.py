@@ -34323,6 +34323,358 @@ const cliBackendRuntime = {
   CLI_RESUME_WATCHDOG_DEFAULTS,
 };
 
+const CLI_PREFIX_RE = /^(?:pnpm|npm|bunx|npx)\s+openclaw\b|^openclaw\b/;
+const CLI_CONTAINER_FLAG_RE = /(?:^|\s)--container(?:\s|=|$)/;
+const CLI_PROFILE_FLAG_RE = /(?:^|\s)--profile(?:\s|=|$)/;
+const CLI_DEV_FLAG_RE = /(?:^|\s)--dev(?:\s|$)/;
+const CLI_UPDATE_COMMAND_RE =
+  /^(?:pnpm|npm|bunx|npx)\s+openclaw\b.*(?:^|\s)update(?:\s|$)|^openclaw\b.*(?:^|\s)update(?:\s|$)/;
+const CLI_CONTAINER_HINT_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+const CLI_PROFILE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
+const CLI_DURATION_MULTIPLIERS = Object.freeze({
+  ms: 1,
+  s: 1000,
+  m: 60000,
+  h: 3600000,
+  d: 86400000,
+});
+
+function normalizeCliProfileName(raw) {
+  const profile = normalizeOptionalString(raw);
+  if (!profile) {
+    return null;
+  }
+  if (normalizeLowercaseStringOrEmpty(profile) === "default") {
+    return null;
+  }
+  return CLI_PROFILE_NAME_RE.test(profile) ? profile : null;
+}
+
+function formatOpenClawCliCommand(command, env = process.env) {
+  const normalizedCommand = String(command || "");
+  const rawContainer = normalizeOptionalString(env.OPENCLAW_CONTAINER_HINT);
+  const container =
+    rawContainer && CLI_CONTAINER_HINT_RE.test(rawContainer) ? rawContainer : undefined;
+  const profile = normalizeCliProfileName(env.OPENCLAW_PROFILE);
+  if (!container && !profile) {
+    return normalizedCommand;
+  }
+  if (!CLI_PREFIX_RE.test(normalizedCommand)) {
+    return normalizedCommand;
+  }
+  const additions = [];
+  if (
+    container &&
+    !CLI_CONTAINER_FLAG_RE.test(normalizedCommand) &&
+    !CLI_UPDATE_COMMAND_RE.test(normalizedCommand)
+  ) {
+    additions.push(`--container ${container}`);
+  }
+  if (
+    !container &&
+    profile &&
+    !CLI_PROFILE_FLAG_RE.test(normalizedCommand) &&
+    !CLI_DEV_FLAG_RE.test(normalizedCommand)
+  ) {
+    additions.push(`--profile ${profile}`);
+  }
+  if (additions.length === 0) {
+    return normalizedCommand;
+  }
+  return normalizedCommand.replace(CLI_PREFIX_RE, (match) => `${match} ${additions.join(" ")}`);
+}
+
+function parseDurationMs(raw, opts = {}) {
+  const trimmed = normalizeLowercaseStringOrEmpty(normalizeOptionalString(raw) || "");
+  if (!trimmed) {
+    throw new Error("invalid duration (empty)");
+  }
+  const single = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)?$/.exec(trimmed);
+  if (single) {
+    const value = Number(single[1]);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const unit = single[2] || opts.defaultUnit || "ms";
+    const multiplier = CLI_DURATION_MULTIPLIERS[unit];
+    if (!multiplier) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const ms = Math.round(value * multiplier);
+    if (!Number.isFinite(ms)) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    return ms;
+  }
+  let totalMs = 0;
+  let consumed = 0;
+  const tokenRe = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/g;
+  for (const match of trimmed.matchAll(tokenRe)) {
+    const full = match[0];
+    const valueRaw = match[1];
+    const unitRaw = match[2];
+    const index = match.index ?? -1;
+    if (!full || !valueRaw || !unitRaw || index < 0 || index !== consumed) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    const value = Number(valueRaw);
+    const multiplier = CLI_DURATION_MULTIPLIERS[unitRaw];
+    if (!Number.isFinite(value) || value < 0 || !multiplier) {
+      throw new Error(`invalid duration: ${raw}`);
+    }
+    totalMs += value * multiplier;
+    consumed += full.length;
+  }
+  if (consumed !== trimmed.length || consumed === 0) {
+    throw new Error(`invalid duration: ${raw}`);
+  }
+  const ms = Math.round(totalMs);
+  if (!Number.isFinite(ms)) {
+    throw new Error(`invalid duration: ${raw}`);
+  }
+  return ms;
+}
+
+function getCliOptionSource(command, name) {
+  if (!command || typeof command.getOptionValueSource !== "function") {
+    return undefined;
+  }
+  return command.getOptionValueSource(name);
+}
+
+function inheritOptionFromParent(command, name) {
+  if (!command) {
+    return undefined;
+  }
+  const childSource = getCliOptionSource(command, name);
+  if (childSource && childSource !== "default") {
+    return undefined;
+  }
+  let depth = 0;
+  let ancestor = command.parent;
+  while (ancestor && depth < 2) {
+    const source = getCliOptionSource(ancestor, name);
+    if (source && source !== "default") {
+      const opts = typeof ancestor.opts === "function" ? ancestor.opts() : {};
+      return opts ? opts[name] : undefined;
+    }
+    depth += 1;
+    ancestor = ancestor.parent;
+  }
+  return undefined;
+}
+
+function formatHelpExamples(examples, inline = false) {
+  return (examples || [])
+    .map(([command, description]) => {
+      const formattedCommand = cliTheme.command(command);
+      if (inline) {
+        return description
+          ? `  ${formattedCommand} ${cliTheme.muted(`# ${description}`)}`
+          : `  ${formattedCommand}`;
+      }
+      return `  ${formattedCommand}\n    ${cliTheme.muted(description)}`;
+    })
+    .join("\n");
+}
+
+async function runCommandWithRuntime(runtime, action, onError) {
+  try {
+    await action();
+  } catch (err) {
+    if (onError) {
+      onError(err);
+      return;
+    }
+    runtime.error(String(err));
+    runtime.exit(1);
+  }
+}
+
+function getCommandGroupNames(entry) {
+  return entry.names || (entry.placeholders || []).map((placeholder) => placeholder.name);
+}
+
+function findCommandGroupEntry(entries, name) {
+  return (entries || []).find((entry) => getCommandGroupNames(entry).includes(name));
+}
+
+function registerCommandGroups(program, entries, params = {}) {
+  if (params.eager) {
+    for (const entry of entries || []) {
+      entry.register(program);
+    }
+    return;
+  }
+  if (params.primary && params.registerPrimaryOnly) {
+    const entry = findCommandGroupEntry(entries, params.primary);
+    if (entry) {
+      entry.register(program);
+    }
+    return;
+  }
+  for (const entry of entries || []) {
+    entry.register(program);
+  }
+}
+
+function isTruthyCliEnvValue(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return Boolean(
+    normalized && normalized !== "0" && normalized !== "false" && normalized !== "off",
+  );
+}
+
+function shouldEagerRegisterSubcommands(env = process.env) {
+  return isTruthyCliEnvValue(env.OPENCLAW_DISABLE_LAZY_SUBCOMMANDS);
+}
+
+function consumeCliRootOptionToken(args, index) {
+  const arg = args[index];
+  if (!arg || arg === "--" || !arg.startsWith("-")) {
+    return 0;
+  }
+  const flag = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
+  const booleanFlags = new Set([
+    "--debug",
+    "--dev",
+    "--help",
+    "--json",
+    "--no-color",
+    "--quiet",
+    "--verbose",
+    "--version",
+    "-h",
+    "-V",
+    "-v",
+  ]);
+  const valueFlags = new Set([
+    "--config",
+    "--container",
+    "--data-dir",
+    "--profile",
+    "--state-dir",
+  ]);
+  if (booleanFlags.has(flag)) {
+    return 1;
+  }
+  if (!valueFlags.has(flag)) {
+    return 0;
+  }
+  if (arg.includes("=")) {
+    return arg.slice(arg.indexOf("=") + 1).trim() ? 1 : 0;
+  }
+  const next = args[index + 1];
+  return next && !next.startsWith("-") ? 2 : 0;
+}
+
+function getCliCommandPathWithRootOptions(argv, depth = 2) {
+  const args = (argv || []).slice(2);
+  const commandPath = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (!arg) {
+      continue;
+    }
+    if (arg === "--") {
+      break;
+    }
+    const consumed = consumeCliRootOptionToken(args, index);
+    if (consumed > 0) {
+      index += consumed - 1;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      continue;
+    }
+    commandPath.push(arg);
+    if (commandPath.length >= depth) {
+      break;
+    }
+  }
+  return commandPath;
+}
+
+function hasCliHelpOrVersion(argv) {
+  return (argv || []).slice(2).some((arg) =>
+    arg === "-h" ||
+      arg === "--help" ||
+      arg === "-V" ||
+      arg === "--version" ||
+      arg === "-v" ||
+      arg === "help",
+  );
+}
+
+function isCliRootHelpInvocation(argv) {
+  const commandPath = getCliCommandPathWithRootOptions(argv, 1);
+  if (commandPath.length > 0) {
+    return false;
+  }
+  return (argv || []).slice(2).some((arg) => arg === "-h" || arg === "--help");
+}
+
+function resolveCliArgvInvocation(argv) {
+  const normalizedArgv = Array.isArray(argv) ? argv : [];
+  const commandPath = getCliCommandPathWithRootOptions(normalizedArgv, 2);
+  return {
+    argv: normalizedArgv,
+    commandPath,
+    primary: commandPath[0] || null,
+    hasHelpOrVersion: hasCliHelpOrVersion(normalizedArgv),
+    isRootHelpInvocation: isCliRootHelpInvocation(normalizedArgv),
+  };
+}
+
+function waitForever() {
+  const interval = setInterval(() => {}, 1000000);
+  if (typeof interval.unref === "function") {
+    interval.unref();
+  }
+  return new Promise(() => {});
+}
+
+function note(message, title) {
+  return undefined;
+}
+
+const cliTheme = Object.freeze({
+  accent: (value) => String(value),
+  accentBright: (value) => String(value),
+  accentDim: (value) => String(value),
+  info: (value) => String(value),
+  success: (value) => String(value),
+  warn: (value) => String(value),
+  error: (value) => String(value),
+  muted: (value) => String(value),
+  heading: (value) => String(value),
+  command: (value) => String(value),
+  option: (value) => String(value),
+});
+
+function stylePromptTitle(title) {
+  return title === undefined ? undefined : String(title);
+}
+
+const cliRuntime = {
+  VERSION: "unknown",
+  formatCliCommand: formatOpenClawCliCommand,
+  formatHelpExamples,
+  inheritOptionFromParent,
+  note,
+  parseDurationMs,
+  registerCommandGroups,
+  resolveCliArgvInvocation,
+  runCommandWithRuntime,
+  shouldEagerRegisterSubcommands,
+  stylePromptTitle,
+  theme: cliTheme,
+  waitForever,
+};
+
 const configSchemaRuntime = {
   OpenClawSchema,
   validateJsonSchemaValue,
@@ -45951,6 +46303,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/cli-backend"
   ) {
     return cliBackendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/cli-runtime" ||
+    request === "@openclaw/plugin-sdk/cli-runtime"
+  ) {
+    return cliRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-schema" ||
