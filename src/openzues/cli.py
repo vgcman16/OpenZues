@@ -18231,6 +18231,35 @@ function createCachedLazyValueGetter(value, fallback) {
   };
 }
 
+function createLazyRuntimeSurface(importer, select) {
+  let cached = null;
+  return () => {
+    if (!cached) {
+      cached = importer().then(select);
+    }
+    return cached;
+  };
+}
+
+function createLazyRuntimeModule(importer) {
+  return createLazyRuntimeSurface(importer, (module) => module);
+}
+
+function createLazyRuntimeNamedExport(importer, key) {
+  return createLazyRuntimeSurface(importer, (module) => module[key]);
+}
+
+function createLazyRuntimeMethod(load, select) {
+  return async (...args) => {
+    const method = select(await load());
+    return await method(...args);
+  };
+}
+
+function createLazyRuntimeMethodBinder(load) {
+  return (select) => createLazyRuntimeMethod(load, select);
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32494,6 +32523,14 @@ const lazyValueRuntime = {
   createCachedLazyValueGetter,
 };
 
+const lazyRuntime = {
+  createLazyRuntimeMethod,
+  createLazyRuntimeMethodBinder,
+  createLazyRuntimeModule,
+  createLazyRuntimeNamedExport,
+  createLazyRuntimeSurface,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43246,6 +43283,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/lazy-value"
   ) {
     return lazyValueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lazy-runtime" ||
+    request === "@openclaw/plugin-sdk/lazy-runtime"
+  ) {
+    return lazyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||

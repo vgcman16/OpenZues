@@ -29406,6 +29406,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lazy_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lazy-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const lazyRuntime = require("openclaw/plugin-sdk/lazy-runtime");
+const scopedLazyRuntime = require("@openclaw/plugin-sdk/lazy-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lazy_runtime",
+      description: "Use OpenClaw lazy-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let moduleImports = 0;
+        let surfaceImports = 0;
+        let namedImports = 0;
+        const loadModule = lazyRuntime.createLazyRuntimeModule(async () => {
+          moduleImports += 1;
+          return {
+            value: "module",
+            add(left, right) {
+              return left + right;
+            }
+          };
+        });
+        const loadSurface = lazyRuntime.createLazyRuntimeSurface(
+          async () => {
+            surfaceImports += 1;
+            return { nested: { label: "surface" } };
+          },
+          (module) => module.nested
+        );
+        const loadNamed = lazyRuntime.createLazyRuntimeNamedExport(
+          async () => {
+            namedImports += 1;
+            return { answer: "forty-two" };
+          },
+          "answer"
+        );
+        const firstModule = await loadModule();
+        const secondModule = await loadModule();
+        const method = lazyRuntime.createLazyRuntimeMethod(loadModule, (runtime) => runtime.add);
+        const bind = lazyRuntime.createLazyRuntimeMethodBinder(loadModule);
+        const boundMethod = bind((runtime) => runtime.add);
+        return {
+          keys: Object.keys(lazyRuntime).sort(),
+          scopedType: typeof scopedLazyRuntime.createLazyRuntimeMethodBinder,
+          module: {
+            same: firstModule === secondModule,
+            imports: moduleImports,
+            value: firstModule.value
+          },
+          surface: [await loadSurface(), await loadSurface(), surfaceImports],
+          named: [await loadNamed(), await loadNamed(), namedImports],
+          method: await method(2, 3),
+          boundMethod: await boundMethod(5, 7)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-lazy-runtime-plugin",
+                    "name": "Runtime Lazy Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lazy-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lazy_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.lazy_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createLazyRuntimeMethod",
+            "createLazyRuntimeMethodBinder",
+            "createLazyRuntimeModule",
+            "createLazyRuntimeNamedExport",
+            "createLazyRuntimeSurface",
+        ],
+        "scopedType": "function",
+        "module": {"same": True, "imports": 1, "value": "module"},
+        "surface": [{"label": "surface"}, {"label": "surface"}, 1],
+        "named": ["forty-two", "forty-two", 1],
+        "method": 5,
+        "boundMethod": 12,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
