@@ -46880,6 +46880,50 @@ const secretFileRuntime = {
   writePrivateSecretFileAtomic,
 };
 
+const MEMORY_MULTIMODAL_MODALITIES = ["image", "audio"];
+const DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function normalizeMemoryMultimodalModalities(raw) {
+  if (!Array.isArray(raw) || raw.includes("all")) {
+    return [...MEMORY_MULTIMODAL_MODALITIES];
+  }
+  const normalized = new Set();
+  for (const value of raw) {
+    if (value === "image" || value === "audio") {
+      normalized.add(value);
+    }
+  }
+  return Array.from(normalized);
+}
+
+function normalizeMemoryMultimodalSettings(raw = {}) {
+  const enabled = raw && raw.enabled === true;
+  const rawMax = raw && raw.maxFileBytes;
+  const maxFileBytes =
+    typeof rawMax === "number" && Number.isFinite(rawMax)
+      ? Math.max(1, Math.floor(rawMax))
+      : DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES;
+  return {
+    enabled,
+    modalities: enabled ? normalizeMemoryMultimodalModalities(raw.modalities) : [],
+    maxFileBytes,
+  };
+}
+
+function isMemoryMultimodalEnabled(settings) {
+  return Boolean(
+    settings &&
+      settings.enabled &&
+      Array.isArray(settings.modalities) &&
+      settings.modalities.length > 0,
+  );
+}
+
+const memoryCoreHostMultimodalRuntime = {
+  isMemoryMultimodalEnabled,
+  normalizeMemoryMultimodalSettings,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -48083,6 +48127,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-secret-resolution"
   ) {
     return runtimeSecretResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-multimodal" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-multimodal"
+  ) {
+    return memoryCoreHostMultimodalRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-query" ||

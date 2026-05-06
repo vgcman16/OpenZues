@@ -27764,6 +27764,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_multimodal_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-multimodal.cjs"
+    runtime_entry.write_text(
+        """
+const multimodal = require("openclaw/plugin-sdk/memory-core-host-multimodal");
+const scopedMultimodal = require("@openclaw/plugin-sdk/memory-core-host-multimodal");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_multimodal",
+      description: "Use OpenClaw memory-core-host-multimodal SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const disabled = multimodal.normalizeMemoryMultimodalSettings({});
+        const enabledDefault = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true
+        });
+        const ordered = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["audio", "image", "audio", "video"],
+          maxFileBytes: 2048.9
+        });
+        const minBytes = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["image"],
+          maxFileBytes: 0
+        });
+        const noneEnabled = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["video"]
+        });
+        return {
+          keys: Object.keys(multimodal).sort(),
+          scopedType: typeof scopedMultimodal.normalizeMemoryMultimodalSettings,
+          disabled,
+          enabledDefault,
+          ordered,
+          minBytes,
+          enabledStates: [
+            multimodal.isMemoryMultimodalEnabled(disabled),
+            multimodal.isMemoryMultimodalEnabled(enabledDefault),
+            multimodal.isMemoryMultimodalEnabled(noneEnabled)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-multimodal-plugin",
+                    "name": "Memory Multimodal Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-multimodal.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_multimodal"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_multimodal"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isMemoryMultimodalEnabled",
+            "normalizeMemoryMultimodalSettings",
+        ],
+        "scopedType": "function",
+        "disabled": {
+            "enabled": False,
+            "modalities": [],
+            "maxFileBytes": 10485760,
+        },
+        "enabledDefault": {
+            "enabled": True,
+            "modalities": ["image", "audio"],
+            "maxFileBytes": 10485760,
+        },
+        "ordered": {
+            "enabled": True,
+            "modalities": ["audio", "image"],
+            "maxFileBytes": 2048,
+        },
+        "minBytes": {
+            "enabled": True,
+            "modalities": ["image"],
+            "maxFileBytes": 1,
+        },
+        "enabledStates": [False, True, False],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:
