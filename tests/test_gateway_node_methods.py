@@ -14274,6 +14274,214 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_renderers_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-renderers.cjs"
+    runtime_entry.write_text(
+        """
+const renderers = require("openclaw/plugin-sdk/approval-renderers");
+const scopedRenderers = require("@openclaw/plugin-sdk/approval-renderers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_renderers",
+      description: "Use OpenClaw approval renderers SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const pending = renderers.buildApprovalPendingReplyPayload({
+          approvalId: "exec-approval-id",
+          approvalSlug: "exec-slug",
+          text: "Exec approval asks",
+          agentId: "agent-1",
+          allowedDecisions: ["allow-once", "deny"],
+          sessionKey: "session-1",
+          channelData: { extra: "pending" }
+        });
+        const resolved = renderers.buildApprovalResolvedReplyPayload({
+          approvalId: "exec-approval-id",
+          approvalSlug: "exec-slug",
+          text: "Exec approval done",
+          channelData: { extra: "resolved" }
+        });
+        const pluginPending = renderers.buildPluginApprovalPendingReplyPayload({
+          request: {
+            id: "plugin-pending-abcdef",
+            request: {
+              pluginId: "demo-plugin",
+              title: "Use plugin tool",
+              description: "Need permission",
+              toolName: "demo.tool",
+              agentId: "agent-2"
+            },
+            createdAtMs: 0,
+            expiresAtMs: 70000
+          },
+          nowMs: 10000,
+          channelData: { extra: "plugin-pending" }
+        });
+        const pluginResolved = renderers.buildPluginApprovalResolvedReplyPayload({
+          resolved: {
+            id: "plugin-resolved-abcdef",
+            decision: "allow-once",
+            resolvedBy: "alice",
+            ts: 12345
+          },
+          channelData: { extra: "plugin-resolved" }
+        });
+        return {
+          keys: Object.keys(renderers).sort(),
+          scopedType: typeof scopedRenderers.buildPluginApprovalResolvedReplyPayload,
+          pending: {
+            text: pending.text,
+            metadata: pending.channelData.execApproval,
+            extra: pending.channelData.extra,
+            buttons: pending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          resolved: {
+            text: resolved.text,
+            metadata: resolved.channelData.execApproval,
+            extra: resolved.channelData.extra
+          },
+          pluginPending: {
+            textIncludes: [
+              pluginPending.text.includes("Plugin approval required"),
+              pluginPending.text.includes("Title: Use plugin tool"),
+              pluginPending.text.includes("Tool: demo.tool"),
+              pluginPending.text.includes("Expires in: 60s")
+            ],
+            metadata: pluginPending.channelData.execApproval,
+            extra: pluginPending.channelData.extra,
+            buttons: pluginPending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          pluginResolved: {
+            textIncludes: [
+              pluginResolved.text.includes("Plugin approval allowed once"),
+              pluginResolved.text.includes("Resolved by alice"),
+              pluginResolved.text.includes("ID: plugin-resolved-abcdef")
+            ],
+            metadata: pluginResolved.channelData.execApproval,
+            extra: pluginResolved.channelData.extra
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-renderers-plugin",
+                    "name": "Runtime Approval Renderers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-renderers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_renderers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_renderers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
+        ],
+        "scopedType": "function",
+        "pending": {
+            "text": "Exec approval asks",
+            "metadata": {
+                "approvalId": "exec-approval-id",
+                "approvalSlug": "exec-slug",
+                "approvalKind": "exec",
+                "agentId": "agent-1",
+                "allowedDecisions": ["allow-once", "deny"],
+                "sessionKey": "session-1",
+                "state": "pending",
+            },
+            "extra": "pending",
+            "buttons": [
+                "/approve exec-approval-id allow-once",
+                "/approve exec-approval-id deny",
+            ],
+        },
+        "resolved": {
+            "text": "Exec approval done",
+            "metadata": {
+                "approvalId": "exec-approval-id",
+                "approvalSlug": "exec-slug",
+                "state": "resolved",
+            },
+            "extra": "resolved",
+        },
+        "pluginPending": {
+            "textIncludes": [True, True, True, True],
+            "metadata": {
+                "approvalId": "plugin-pending-abcdef",
+                "approvalSlug": "plugin-p",
+                "approvalKind": "plugin",
+                "allowedDecisions": ["allow-once", "allow-always", "deny"],
+                "state": "pending",
+            },
+            "extra": "plugin-pending",
+            "buttons": [
+                "/approve plugin-pending-abcdef allow-once",
+                "/approve plugin-pending-abcdef allow-always",
+                "/approve plugin-pending-abcdef deny",
+            ],
+        },
+        "pluginResolved": {
+            "textIncludes": [True, True, True],
+            "metadata": {
+                "approvalId": "plugin-resolved-abcdef",
+                "approvalSlug": "plugin-r",
+                "state": "resolved",
+            },
+            "extra": "plugin-resolved",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_client_helpers(
     tmp_path,
 ) -> None:
@@ -16762,7 +16970,9 @@ module.exports = {
           scopedType: typeof scopedApproval.createChannelApprovalCapability,
           selectedKeys: [
             "buildExecApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
             "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
             "createApproverRestrictedNativeApprovalCapability",
             "createChannelExecApprovalProfile",
             "createChannelNativeOriginTargetResolver",
@@ -16874,7 +17084,9 @@ module.exports = {
         "scopedType": "function",
         "selectedKeys": [
             "buildExecApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
             "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
             "createApproverRestrictedNativeApprovalCapability",
             "createChannelExecApprovalProfile",
             "createChannelNativeOriginTargetResolver",

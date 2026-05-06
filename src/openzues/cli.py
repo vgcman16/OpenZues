@@ -36472,6 +36472,20 @@ function buildApprovalPendingReplyPayload(params = {}) {
   };
 }
 
+function buildApprovalResolvedReplyPayload(params = {}) {
+  return {
+    text: params.text,
+    channelData: {
+      execApproval: {
+        approvalId: params.approvalId,
+        approvalSlug: params.approvalSlug,
+        state: "resolved",
+      },
+      ...(params.channelData || {}),
+    },
+  };
+}
+
 function buildPluginApprovalRequestMessage(request, nowMs) {
   const payload = (request && request.request) || {};
   const lines = [];
@@ -36495,6 +36509,22 @@ function buildPluginApprovalRequestMessage(request, nowMs) {
   return lines.join("\n");
 }
 
+function approvalDecisionLabel(decision) {
+  if (decision === "allow-once") {
+    return "allowed once";
+  }
+  if (decision === "allow-always") {
+    return "allowed always";
+  }
+  return "denied";
+}
+
+function buildPluginApprovalResolvedMessage(resolved = {}) {
+  const base = `Plugin approval ${approvalDecisionLabel(resolved.decision)}.`;
+  const by = resolved.resolvedBy ? ` Resolved by ${resolved.resolvedBy}.` : "";
+  return `${base}${by} ID: ${resolved.id || ""}`;
+}
+
 function buildPluginApprovalPendingReplyPayload(params = {}) {
   const request = params.request || {};
   const approvalId = normalizeOptionalString(request.id) || "";
@@ -36506,6 +36536,17 @@ function buildPluginApprovalPendingReplyPayload(params = {}) {
       params.text ||
       buildPluginApprovalRequestMessage(request, Number(params.nowMs || Date.now())),
     allowedDecisions: params.allowedDecisions,
+    channelData: params.channelData,
+  });
+}
+
+function buildPluginApprovalResolvedReplyPayload(params = {}) {
+  const resolved = params.resolved || {};
+  const approvalId = normalizeOptionalString(resolved.id) || "";
+  return buildApprovalResolvedReplyPayload({
+    approvalId,
+    approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalId.slice(0, 8),
+    text: params.text || buildPluginApprovalResolvedMessage(resolved),
     channelData: params.channelData,
   });
 }
@@ -36588,6 +36629,13 @@ const approvalReplyRuntime = {
   resolveExecApprovalAllowedDecisions,
   resolveExecApprovalCommandDisplay,
   resolveExecApprovalRequestAllowedDecisions,
+};
+
+const approvalRenderersRuntime = {
+  buildApprovalPendingReplyPayload,
+  buildApprovalResolvedReplyPayload,
+  buildPluginApprovalPendingReplyPayload,
+  buildPluginApprovalResolvedReplyPayload,
 };
 
 function matchesApprovalRequestSessionFilter(sessionKey, patterns = []) {
@@ -38048,8 +38096,10 @@ const approvalHandlerRuntime = new Proxy(
 const approvalRuntimeAggregate = new Proxy(
   {
     buildApprovalPendingReplyPayload,
+    buildApprovalResolvedReplyPayload,
     buildExecApprovalPendingReplyPayload,
     buildPluginApprovalPendingReplyPayload,
+    buildPluginApprovalResolvedReplyPayload,
     createApproverRestrictedNativeApprovalAdapter,
     createApproverRestrictedNativeApprovalCapability,
     createChannelApprovalCapability,
@@ -43343,6 +43393,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-reply-runtime"
   ) {
     return approvalReplyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-renderers" ||
+    request === "@openclaw/plugin-sdk/approval-renderers"
+  ) {
+    return approvalRenderersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/approval-client-helpers" ||
