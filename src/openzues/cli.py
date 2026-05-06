@@ -24578,6 +24578,36 @@ function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
 
+function normalizeGroupActivation(raw) {
+  const value = normalizeOptionalLowercaseString(raw);
+  if (value === "mention") {
+    return "mention";
+  }
+  if (value === "always") {
+    return "always";
+  }
+  return undefined;
+}
+
+function parseActivationCommand(raw) {
+  if (!raw) {
+    return { hasCommand: false };
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return { hasCommand: false };
+  }
+  const normalized = trimmed.replace(/^\/([^\s:]+)\s*:(.*)$/, (_match, cmd, rest) => {
+    const trimmedRest = String(rest || "").trimStart();
+    return trimmedRest ? `/${cmd} ${trimmedRest}` : `/${cmd}`;
+  });
+  const match = normalized.match(/^\/activation(?:\s+([a-zA-Z]+))?\s*$/i);
+  if (!match) {
+    return { hasCommand: false };
+  }
+  return { hasCommand: true, mode: normalizeGroupActivation(match[1]) };
+}
+
 function normalizeStringEntries(list) {
   return (Array.isArray(list) ? list : [])
     .map((entry) => normalizeOptionalString(String(entry)) || "")
@@ -42580,6 +42610,11 @@ const groupAccessRuntime = {
   resolveSenderScopedGroupPolicy,
 };
 
+const groupActivationRuntime = {
+  normalizeGroupActivation,
+  parseActivationCommand,
+};
+
 const providerSelectionRuntime = {
   resolveConfiguredCapabilityProvider,
   resolveProviderRawConfig,
@@ -44878,6 +44913,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/group-access"
   ) {
     return groupAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/group-activation" ||
+    request === "@openclaw/plugin-sdk/group-activation"
+  ) {
+    return groupActivationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-selection-runtime" ||

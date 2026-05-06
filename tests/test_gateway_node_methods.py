@@ -31070,6 +31070,126 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_group_activation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-group-activation.cjs"
+    runtime_entry.write_text(
+        """
+const activation = require("openclaw/plugin-sdk/group-activation");
+const scopedActivation = require("@openclaw/plugin-sdk/group-activation");
+
+function parsed(command) {
+  const result = activation.parseActivationCommand(command);
+  return {
+    hasCommand: result.hasCommand,
+    mode: result.mode || null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.group_activation",
+      description: "Use OpenClaw group-activation SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(activation).sort();
+        if (!keys.includes("parseActivationCommand")) {
+          return {
+            keys,
+            scopedType: typeof scopedActivation.normalizeGroupActivation
+          };
+        }
+        return {
+          keys,
+          scopedType: typeof scopedActivation.normalizeGroupActivation,
+          normalized: [
+            activation.normalizeGroupActivation(" Mention ") || null,
+            scopedActivation.normalizeGroupActivation("ALWAYS") || null,
+            activation.normalizeGroupActivation("disabled") || null
+          ],
+          commands: {
+            slash: parsed("/activation mention"),
+            colon: parsed("/activation: always"),
+            base: parsed("/activation"),
+            invalidMode: parsed("/activation sometimes"),
+            missingSlash: parsed("activation mention"),
+            blank: parsed("   ")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-group-activation-plugin",
+                    "name": "Runtime Group Activation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-group-activation-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.group_activation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.group_activation"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["normalizeGroupActivation", "parseActivationCommand"],
+        "scopedType": "function",
+        "normalized": ["mention", "always", None],
+        "commands": {
+            "slash": {"hasCommand": True, "mode": "mention"},
+            "colon": {"hasCommand": True, "mode": "always"},
+            "base": {"hasCommand": True, "mode": None},
+            "invalidMode": {"hasCommand": True, "mode": None},
+            "missingSlash": {"hasCommand": False, "mode": None},
+            "blank": {"hasCommand": False, "mode": None},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
