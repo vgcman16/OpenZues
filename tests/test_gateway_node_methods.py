@@ -32744,6 +32744,203 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_runtime_backend_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-runtime-backend.cjs"
+    runtime_entry.write_text(
+        """
+const acp = require("openclaw/plugin-sdk/acp-runtime-backend");
+const scopedAcp = require("@openclaw/plugin-sdk/acp-runtime-backend");
+
+function captureError(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return {
+      name: error.name,
+      code: error.code,
+      message: error.message,
+      isAcp: acp.isAcpRuntimeError(error)
+    };
+  }
+  return null;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_backend",
+      description: "Use OpenClaw ACP runtime backend SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        acp.unregisterAcpRuntimeBackend("healthy");
+        acp.unregisterAcpRuntimeBackend("unhealthy");
+        const missing = captureError(() => acp.requireAcpRuntimeBackend("missing"));
+        acp.registerAcpRuntimeBackend({
+          id: " Unhealthy ",
+          runtime: { id: "unhealthy-runtime" },
+          healthy: () => false
+        });
+        const unhealthyLookup = acp.getAcpRuntimeBackend("UNHEALTHY");
+        const unhealthy = captureError(() => acp.requireAcpRuntimeBackend("unhealthy"));
+        acp.unregisterAcpRuntimeBackend("unhealthy");
+        acp.registerAcpRuntimeBackend({
+          id: " Healthy ",
+          runtime: { id: "healthy-runtime" },
+          healthy: () => true
+        });
+        const anyBackend = acp.getAcpRuntimeBackend();
+        const explicitBackend = acp.requireAcpRuntimeBackend("HEALTHY");
+        const foreign = new Error("foreign ACP");
+        foreign.code = "ACP_TURN_FAILED";
+        const earlyHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "hello there" }
+          },
+          { cfg: {} }
+        );
+        const commandHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "/status" }
+          },
+          { cfg: {} }
+        );
+        acp.unregisterAcpRuntimeBackend("healthy");
+        return {
+          keys: Object.keys(acp).sort(),
+          scopedType: typeof scopedAcp.requireAcpRuntimeBackend,
+          errors: { missing, unhealthy },
+          unhealthyLookup: {
+            id: unhealthyLookup && unhealthyLookup.id,
+            runtimeId: unhealthyLookup && unhealthyLookup.runtime.id
+          },
+          resolved: {
+            anyId: anyBackend && anyBackend.id,
+            explicitId: explicitBackend.id,
+            runtimeId: explicitBackend.runtime.id
+          },
+          errorChecks: [
+            acp.isAcpRuntimeError(new acp.AcpRuntimeError(
+              "ACP_BACKEND_MISSING",
+              "missing"
+            )),
+            acp.isAcpRuntimeError(foreign),
+            acp.isAcpRuntimeError(new Error("plain"))
+          ],
+          hookResults: [
+            earlyHook === undefined ? null : earlyHook,
+            commandHook
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-backend-plugin",
+                    "name": "Runtime ACP Backend Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-backend-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_backend"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acp_backend", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "getAcpRuntimeBackend",
+            "isAcpRuntimeError",
+            "registerAcpRuntimeBackend",
+            "requireAcpRuntimeBackend",
+            "tryDispatchAcpReplyHook",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "scopedType": "function",
+        "errors": {
+            "missing": {
+                "name": "AcpRuntimeError",
+                "code": "ACP_BACKEND_MISSING",
+                "message": (
+                    "ACP runtime backend is not configured. Install and enable "
+                    "the acpx runtime plugin."
+                ),
+                "isAcp": True,
+            },
+            "unhealthy": {
+                "name": "AcpRuntimeError",
+                "code": "ACP_BACKEND_UNAVAILABLE",
+                "message": (
+                    "ACP runtime backend is currently unavailable. Try again in a moment."
+                ),
+                "isAcp": True,
+            },
+        },
+        "unhealthyLookup": {
+            "id": "unhealthy",
+            "runtimeId": "unhealthy-runtime",
+        },
+        "resolved": {
+            "anyId": "healthy",
+            "explicitId": "healthy",
+            "runtimeId": "healthy-runtime",
+        },
+        "errorChecks": [True, True, False],
+        "hookResults": [None, {"handled": False, "reason": "acp-dispatch-unavailable"}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

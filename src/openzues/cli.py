@@ -34378,6 +34378,98 @@ function unregisterAcpRuntimeBackend(id) {
   acpRuntimeBackendsById.delete(normalized);
 }
 
+function isAcpRuntimeError(value) {
+  return (
+    value instanceof AcpRuntimeError ||
+    (value instanceof Error && typeof value.code === "string" && ACP_ERROR_CODES.has(value.code))
+  );
+}
+
+function isAcpBackendHealthy(backend) {
+  if (!backend || typeof backend.healthy !== "function") {
+    return true;
+  }
+  try {
+    return backend.healthy();
+  } catch {
+    return false;
+  }
+}
+
+function getAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  if (normalized) {
+    return acpRuntimeBackendsById.get(normalized) || null;
+  }
+  if (acpRuntimeBackendsById.size === 0) {
+    return null;
+  }
+  for (const backend of acpRuntimeBackendsById.values()) {
+    if (isAcpBackendHealthy(backend)) {
+      return backend;
+    }
+  }
+  return acpRuntimeBackendsById.values().next().value || null;
+}
+
+function requireAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  const backend = getAcpRuntimeBackend(normalized || undefined);
+  if (!backend) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_MISSING",
+      "ACP runtime backend is not configured. Install and enable the acpx runtime plugin.",
+    );
+  }
+  if (!isAcpBackendHealthy(backend)) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_UNAVAILABLE",
+      "ACP runtime backend is currently unavailable. Try again in a moment.",
+    );
+  }
+  if (normalized && backend.id !== normalized) {
+    throw new AcpRuntimeError(
+      "ACP_BACKEND_MISSING",
+      `ACP runtime backend "${normalized}" is not registered.`,
+    );
+  }
+  return backend;
+}
+
+function hasExplicitCommandCandidateForAcp(ctx = {}) {
+  const commandBody = normalizeOptionalString(ctx.CommandBody);
+  if (commandBody) {
+    return true;
+  }
+  const normalized = normalizeOptionalString(ctx.BodyForCommands);
+  return Boolean(normalized && (normalized.startsWith("!") || normalized.startsWith("/")));
+}
+
+async function tryDispatchAcpReplyHook(event = {}, ctx = {}) {
+  if (
+    event.sendPolicy === "deny" &&
+    !event.suppressUserDelivery &&
+    !hasExplicitCommandCandidateForAcp(event.ctx || {}) &&
+    !event.isTailDispatch
+  ) {
+    return undefined;
+  }
+  return {
+    handled: false,
+    reason: "acp-dispatch-unavailable",
+  };
+}
+
+const acpRuntimeBackendRuntime = {
+  AcpRuntimeError,
+  getAcpRuntimeBackend,
+  isAcpRuntimeError,
+  registerAcpRuntimeBackend,
+  requireAcpRuntimeBackend,
+  tryDispatchAcpReplyHook,
+  unregisterAcpRuntimeBackend,
+};
+
 const acpxRuntime = {
   AcpRuntimeError,
   applyWindowsSpawnProgramPolicy,
@@ -45664,6 +45756,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/acpx"
   ) {
     return acpxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-runtime-backend" ||
+    request === "@openclaw/plugin-sdk/acp-runtime-backend"
+  ) {
+    return acpRuntimeBackendRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;
