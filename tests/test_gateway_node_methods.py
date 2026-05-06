@@ -23830,6 +23830,210 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_process_runtime_run_command_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-process.cjs"
+    runtime_entry.write_text(
+        """
+const processRuntime = require("openclaw/plugin-sdk/process-runtime");
+const scopedProcessRuntime = require("@openclaw/plugin-sdk/process-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.process",
+      description: "Use OpenClaw process runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const run = await processRuntime.runCommandWithTimeout(
+          [
+            process.execPath,
+            "-e",
+            "process.stdout.write('ok'); process.stderr.write('warn')"
+          ],
+          { timeoutMs: 2000 }
+        );
+        const timeout = await processRuntime.runCommandWithTimeout(
+          [process.execPath, "-e", "setTimeout(() => {}, 500)"],
+          50
+        );
+        const env = processRuntime.resolveCommandEnv({
+          argv: ["npm", "--version"],
+          baseEnv: { FOO: 7, DROP: undefined }
+        });
+        const wrapped = processRuntime.prepareOomScoreAdjustedSpawn(
+          "node",
+          ["-e", "process.exit(0)"],
+          { platform: "linux", env: { BASH_ENV: "x", KEEP: "1" }, shellAvailable: () => true }
+        );
+        const disabledWrap = processRuntime.prepareOomScoreAdjustedSpawn(
+          "node",
+          ["-e", "process.exit(0)"],
+          {
+            platform: "linux",
+            env: { OPENCLAW_CHILD_OOM_SCORE_ADJ: "0" },
+            shellAvailable: () => true
+          }
+        );
+        return {
+          keys: Object.keys(processRuntime).sort(),
+          scopedType: typeof scopedProcessRuntime.runCommandWithTimeout,
+          run: {
+            stdout: run.stdout,
+            stderr: run.stderr,
+            code: run.code,
+            signal: run.signal,
+            killed: run.killed,
+            termination: run.termination,
+            noOutputTimedOut: run.noOutputTimedOut
+          },
+          timeout: {
+            termination: timeout.termination,
+            killed: timeout.killed,
+            noOutputTimedOut: timeout.noOutputTimedOut
+          },
+          env: {
+            foo: env.FOO,
+            drop: Object.prototype.hasOwnProperty.call(env, "DROP"),
+            fund: env.NPM_CONFIG_FUND,
+            lowerFund: env.npm_config_fund,
+            marker: env.OPENCLAW_CLI
+          },
+          exitCodes: [
+            processRuntime.resolveProcessExitCode({
+              explicitCode: 7,
+              childExitCode: 0,
+              resolvedSignal: null,
+              usesWindowsExitCodeShim: false,
+              timedOut: false,
+              noOutputTimedOut: false,
+              killIssuedByTimeout: false
+            }),
+            processRuntime.resolveProcessExitCode({
+              explicitCode: null,
+              childExitCode: null,
+              resolvedSignal: null,
+              usesWindowsExitCodeShim: true,
+              timedOut: false,
+              noOutputTimedOut: false,
+              killIssuedByTimeout: false
+            })
+          ],
+          oom: {
+            command: wrapped.command,
+            prefix: (wrapped.args || []).slice(0, 2),
+            wrapped: wrapped.wrapped,
+            bashEnvPresent: Object.prototype.hasOwnProperty.call(wrapped.env || {}, "BASH_ENV"),
+            keep: wrapped.env && wrapped.env.KEEP,
+            disabledWrapped: disabledWrap.wrapped,
+            disabledCommand: disabledWrap.command
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-process-plugin",
+                    "name": "Runtime Process Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-process.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.process"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.process"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hardenedEnvForChildOomWrap",
+            "prepareOomScoreAdjustedSpawn",
+            "resolveCommandEnv",
+            "resolveProcessExitCode",
+            "runCommandWithTimeout",
+            "runExec",
+            "shouldSpawnWithShell",
+            "wrapArgvForChildOomScoreRaise",
+        ],
+        "scopedType": "function",
+        "run": {
+            "stdout": "ok",
+            "stderr": "warn",
+            "code": 0,
+            "signal": None,
+            "killed": False,
+            "termination": "exit",
+            "noOutputTimedOut": False,
+        },
+        "timeout": {
+            "termination": "timeout",
+            "killed": True,
+            "noOutputTimedOut": False,
+        },
+        "env": {
+            "foo": "7",
+            "drop": False,
+            "fund": "false",
+            "lowerFund": "false",
+            "marker": "1",
+        },
+        "exitCodes": [7, 0],
+        "oom": {
+            "command": "/bin/sh",
+            "prefix": [
+                "-c",
+                "echo 1000 > /proc/self/oom_score_adj 2>/dev/null; exec \"$0\" \"$@\"",
+            ],
+            "wrapped": True,
+            "bashEnvPresent": False,
+            "keep": "1",
+            "disabledWrapped": False,
+            "disabledCommand": "node",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
     tmp_path,
 ) -> None:

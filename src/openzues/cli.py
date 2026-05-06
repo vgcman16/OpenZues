@@ -18033,8 +18033,10 @@ const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 const util = require("util");
+const { execFile, spawn } = require("child_process");
 const { fileURLToPath, pathToFileURL } = require("url");
 const Module = require("module");
+const execFileAsync = util.promisify(execFile);
 
 const contextPath = process.argv[2];
 const context = JSON.parse(fs.readFileSync(contextPath, "utf8"));
@@ -39294,6 +39296,286 @@ const modelSessionRuntime = {
   resolveChannelModelOverride,
 };
 
+function shouldSpawnWithShell(params = {}) {
+  void params;
+  return false;
+}
+
+async function runExec(command, args = [], opts = 10000) {
+  const options = typeof opts === "number"
+    ? { timeout: opts, encoding: "utf8" }
+    : {
+        timeout: opts.timeoutMs,
+        maxBuffer: opts.maxBuffer,
+        cwd: opts.cwd,
+        encoding: "utf8",
+      };
+  const result = await execFileAsync(command, args, { ...options, windowsHide: true });
+  return { stdout: result.stdout || "", stderr: result.stderr || "" };
+}
+
+function resolveProcessExitCode(params = {}) {
+  if (params.explicitCode !== undefined && params.explicitCode !== null) {
+    return params.explicitCode;
+  }
+  if (params.childExitCode !== undefined && params.childExitCode !== null) {
+    return params.childExitCode;
+  }
+  if (
+    params.usesWindowsExitCodeShim &&
+    params.resolvedSignal == null &&
+    !params.timedOut &&
+    !params.noOutputTimedOut &&
+    !params.killIssuedByTimeout
+  ) {
+    return 0;
+  }
+  return null;
+}
+
+function resolveCommandEnv(params = {}) {
+  const baseEnv = params.baseEnv || process.env;
+  const merged = params.env ? { ...baseEnv, ...params.env } : { ...baseEnv };
+  const resolved = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value !== undefined) {
+      resolved[key] = String(value);
+    }
+  }
+  const argv = Array.isArray(params.argv) ? params.argv : [];
+  const command = path.basename(String(argv[0] || ""));
+  const script = String(argv[1] || "");
+  const suppressNpmFund =
+    command === "npm" ||
+    command === "npm.cmd" ||
+    command === "npm.exe" ||
+    ((command === "node" || command === "node.exe") && script.includes("npm-cli.js"));
+  if (suppressNpmFund) {
+    if (resolved.NPM_CONFIG_FUND == null) {
+      resolved.NPM_CONFIG_FUND = "false";
+    }
+    if (resolved.npm_config_fund == null) {
+      resolved.npm_config_fund = "false";
+    }
+  }
+  resolved.OPENCLAW_CLI = "1";
+  return resolved;
+}
+
+async function runCommandWithTimeout(argv = [], optionsOrTimeout = {}) {
+  const args = Array.isArray(argv) ? argv.slice() : [];
+  if (args.length === 0 || !args[0]) {
+    throw new Error("spawn argv cannot be empty");
+  }
+  const options = typeof optionsOrTimeout === "number"
+    ? { timeoutMs: optionsOrTimeout }
+    : optionsOrTimeout || {};
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(0, options.timeoutMs) : 10000;
+  const hasInput = options.input !== undefined;
+  const resolvedEnv = resolveCommandEnv({ argv: args, env: options.env });
+  const child = spawn(args[0], args.slice(1), {
+    cwd: options.cwd,
+    env: resolvedEnv,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    windowsVerbatimArguments: options.windowsVerbatimArguments === true,
+  });
+
+  return await new Promise((resolve, reject) => {
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let settled = false;
+    let timedOut = false;
+    let noOutputTimedOut = false;
+    let killIssuedByTimeout = false;
+    let noOutputTimer = null;
+
+    const clearNoOutputTimer = () => {
+      if (noOutputTimer) {
+        clearTimeout(noOutputTimer);
+        noOutputTimer = null;
+      }
+    };
+    const killChild = () => {
+      if (settled || typeof child.kill !== "function") {
+        return;
+      }
+      killIssuedByTimeout = true;
+      child.kill("SIGKILL");
+    };
+    const armNoOutputTimer = () => {
+      if (
+        !Number.isFinite(options.noOutputTimeoutMs) ||
+        options.noOutputTimeoutMs <= 0 ||
+        settled
+      ) {
+        return;
+      }
+      clearNoOutputTimer();
+      noOutputTimer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        noOutputTimedOut = true;
+        killChild();
+      }, Math.floor(options.noOutputTimeoutMs));
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killChild();
+    }, timeoutMs);
+
+    armNoOutputTimer();
+    if (hasInput && child.stdin) {
+      child.stdin.on("error", () => {});
+      child.stdin.write(options.input || "");
+      child.stdin.end();
+    } else if (child.stdin) {
+      child.stdin.end();
+    }
+
+    child.stdout?.on("data", (chunk) => {
+      stdoutChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      armNoOutputTimer();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      armNoOutputTimer();
+    });
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearNoOutputTimer();
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      clearNoOutputTimer();
+      const termination = noOutputTimedOut
+        ? "no-output-timeout"
+        : timedOut
+          ? "timeout"
+          : signal != null
+            ? "signal"
+            : "exit";
+      const resolvedCode = resolveProcessExitCode({
+        explicitCode: code,
+        childExitCode: child.exitCode,
+        resolvedSignal: signal || child.signalCode || null,
+        usesWindowsExitCodeShim: false,
+        timedOut,
+        noOutputTimedOut,
+        killIssuedByTimeout,
+      });
+      resolve({
+        pid: child.pid || undefined,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        code: termination === "timeout" && resolvedCode === 0 ? 124 : resolvedCode,
+        signal: signal || child.signalCode || null,
+        killed: child.killed || killIssuedByTimeout,
+        termination,
+        noOutputTimedOut,
+      });
+    });
+  });
+}
+
+const CHILD_OOM_SCORE_ADJ_ENV_KEY = "OPENCLAW_CHILD_OOM_SCORE_ADJ";
+const OOM_SCORE_WRAP_SHELL = "/bin/sh";
+const OOM_SCORE_WRAP_SCRIPT =
+  'echo 1000 > /proc/self/oom_score_adj 2>/dev/null; exec "$0" "$@"';
+const SHELL_INIT_ENV_KEYS = ["BASH_ENV", "ENV", "CDPATH"];
+
+function isChildOomWrapDisabled(value) {
+  switch (String(value || "").trim().toLowerCase()) {
+    case "0":
+    case "false":
+    case "no":
+    case "off":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function shouldWrapChildForOomScore(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== "linux") {
+    return false;
+  }
+  const env = options.env || process.env;
+  if (isChildOomWrapDisabled(env[CHILD_OOM_SCORE_ADJ_ENV_KEY])) {
+    return false;
+  }
+  if (typeof options.shellAvailable === "function") {
+    return options.shellAvailable();
+  }
+  try {
+    return fs.statSync(OOM_SCORE_WRAP_SHELL).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hardenShellEnv(baseEnv) {
+  const next = { ...(baseEnv || process.env) };
+  for (const key of SHELL_INIT_ENV_KEYS) {
+    delete next[key];
+  }
+  return next;
+}
+
+function prepareOomScoreAdjustedSpawn(command, args = [], options = {}) {
+  const copy = Array.isArray(args) ? args.slice() : [];
+  if (!command || String(command).startsWith("-") || !shouldWrapChildForOomScore(options)) {
+    return { command, args: copy, env: options.env, wrapped: false };
+  }
+  if (command === OOM_SCORE_WRAP_SHELL && copy[0] === "-c" && copy[1] === OOM_SCORE_WRAP_SCRIPT) {
+    return { command, args: copy, env: hardenShellEnv(options.env), wrapped: true };
+  }
+  return {
+    command: OOM_SCORE_WRAP_SHELL,
+    args: ["-c", OOM_SCORE_WRAP_SCRIPT, command, ...copy],
+    env: hardenShellEnv(options.env),
+    wrapped: true,
+  };
+}
+
+function wrapArgvForChildOomScoreRaise(argv = [], options = {}) {
+  const copy = Array.isArray(argv) ? argv.slice() : [];
+  if (copy.length === 0) {
+    return copy;
+  }
+  const prepared = prepareOomScoreAdjustedSpawn(copy[0] || "", copy.slice(1), options);
+  return [prepared.command, ...prepared.args];
+}
+
+function hardenedEnvForChildOomWrap(baseEnv, options = {}) {
+  if (!shouldWrapChildForOomScore(options)) {
+    return baseEnv;
+  }
+  return hardenShellEnv(baseEnv);
+}
+
+const processRuntime = {
+  hardenedEnvForChildOomWrap,
+  prepareOomScoreAdjustedSpawn,
+  resolveCommandEnv,
+  resolveProcessExitCode,
+  runCommandWithTimeout,
+  runExec,
+  shouldSpawnWithShell,
+  wrapArgvForChildOomScoreRaise,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -40293,6 +40575,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/model-session-runtime"
   ) {
     return modelSessionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/process-runtime" ||
+    request === "@openclaw/plugin-sdk/process-runtime"
+  ) {
+    return processRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
