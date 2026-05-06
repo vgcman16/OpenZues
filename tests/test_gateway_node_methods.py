@@ -13988,6 +13988,204 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_github_copilot_token_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-github-copilot-token.cjs"
+    runtime_entry.write_text(
+        """
+const copilot = require("openclaw/plugin-sdk/github-copilot-token");
+const scopedCopilot = require("@openclaw/plugin-sdk/github-copilot-token");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.github_copilot_token",
+      description: "Use OpenClaw github-copilot-token SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const saved = [];
+        const fetchedCall = {};
+        const cached = await copilot.resolveCopilotApiToken({
+          githubToken: "unused",
+          cachePath: "cache.json",
+          loadJsonFileImpl: () => ({
+            token: "cached-token;proxy-ep=proxy.cached.example.com;",
+            expiresAt: Date.now() + 10 * 60 * 1000,
+            updatedAt: 1
+          }),
+          saveJsonFileImpl: () => {
+            throw new Error("cache hit should not write");
+          },
+          fetchImpl: async () => {
+            throw new Error("cache hit should not fetch");
+          }
+        });
+        const fetched = await scopedCopilot.resolveCopilotApiToken({
+          githubToken: "github-token",
+          cachePath: "fetch.json",
+          loadJsonFileImpl: () => undefined,
+          saveJsonFileImpl: (path, value) => saved.push({ path, value }),
+          fetchImpl: async (url, options) => {
+            fetchedCall.url = url;
+            fetchedCall.options = options;
+            return {
+              ok: true,
+              json: async () => ({
+                token: "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+                expires_at: 12345678901
+              })
+            };
+          }
+        });
+        return {
+          exportKeys: Object.keys(copilot).sort(),
+          defaultBase: copilot.DEFAULT_COPILOT_API_BASE_URL,
+          bases: [
+            copilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=https://proxy.individual.githubcopilot.com;"
+            ),
+            scopedCopilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=proxy.example.com:8443;"
+            ),
+            copilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=javascript:alert(1);"
+            )
+          ],
+          cached: {
+            token: cached.token,
+            source: cached.source,
+            baseUrl: cached.baseUrl
+          },
+          fetched: {
+            token: fetched.token,
+            expiresAt: fetched.expiresAt,
+            source: fetched.source,
+            baseUrl: fetched.baseUrl,
+            saved: saved.map((entry) => ({
+              path: entry.path,
+              value: {
+                token: entry.value.token,
+                expiresAt: entry.value.expiresAt,
+                updatedAtType: typeof entry.value.updatedAt
+              }
+            })),
+            call: {
+              url: fetchedCall.url,
+              method: fetchedCall.options && fetchedCall.options.method,
+              authorization:
+                fetchedCall.options &&
+                fetchedCall.options.headers &&
+                fetchedCall.options.headers.Authorization,
+              apiVersion:
+                fetchedCall.options &&
+                fetchedCall.options.headers &&
+                fetchedCall.options.headers["X-Github-Api-Version"]
+            }
+          },
+          scopedExportType: typeof scopedCopilot.resolveCopilotApiToken
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-github-copilot-token-plugin",
+                    "name": "Runtime GitHub Copilot Token Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-github-copilot-token.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.github_copilot_token"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.github_copilot_token"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "DEFAULT_COPILOT_API_BASE_URL",
+            "deriveCopilotApiBaseUrlFromToken",
+            "resolveCopilotApiToken",
+        ],
+        "defaultBase": "https://api.individual.githubcopilot.com",
+        "bases": [
+            "https://api.individual.githubcopilot.com",
+            "https://api.example.com",
+            None,
+        ],
+        "cached": {
+            "token": "cached-token;proxy-ep=proxy.cached.example.com;",
+            "source": "cache:cache.json",
+            "baseUrl": "https://api.cached.example.com",
+        },
+        "fetched": {
+            "token": "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+            "expiresAt": 12345678901000,
+            "source": "fetched:https://api.github.com/copilot_internal/v2/token",
+            "baseUrl": "https://api.individual.githubcopilot.com",
+            "saved": [
+                {
+                    "path": "fetch.json",
+                    "value": {
+                        "token": (
+                            "fresh-token;proxy-ep="
+                            "https://proxy.individual.githubcopilot.com;"
+                        ),
+                        "expiresAt": 12345678901000,
+                        "updatedAtType": "number",
+                    },
+                }
+            ],
+            "call": {
+                "url": "https://api.github.com/copilot_internal/v2/token",
+                "method": "GET",
+                "authorization": "Bearer github-token",
+                "apiVersion": "2025-04-01",
+            },
+        },
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
     tmp_path,
 ) -> None:

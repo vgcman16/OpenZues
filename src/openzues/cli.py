@@ -34108,6 +34108,12 @@ const providerAuthFacadeRuntime = {
   writeOAuthCredentials: () => undefined,
 };
 
+const githubCopilotTokenRuntime = {
+  DEFAULT_COPILOT_API_BASE_URL,
+  deriveCopilotApiBaseUrlFromToken,
+  resolveCopilotApiToken,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -35393,6 +35399,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth"
   ) {
     return providerAuthFacadeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/github-copilot-token" ||
+    request === "@openclaw/plugin-sdk/github-copilot-token"
+  ) {
+    return githubCopilotTokenRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
