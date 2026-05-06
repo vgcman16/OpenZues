@@ -38998,6 +38998,74 @@ const loggingCoreRuntime = {
   redactSensitiveText,
 };
 
+const SCP_REMOTE_HOST_TOKEN = /^[A-Za-z0-9._-]+$/;
+const SCP_REMOTE_HOST_BRACKETED_IPV6 = /^\[[0-9A-Fa-f:.%]+\]$/;
+const SCP_REMOTE_HOST_WHITESPACE = /\s/;
+
+function hasScpRemoteHostControlOrWhitespace(value) {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f || SCP_REMOTE_HOST_WHITESPACE.test(char)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeHostRuntimeHostname(hostname) {
+  const normalized = normalizeLowercaseStringOrEmpty(hostname).replace(/\.$/, "");
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
+}
+
+function normalizeScpRemoteHost(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  if (hasScpRemoteHostControlOrWhitespace(trimmed)) {
+    return undefined;
+  }
+  if (trimmed.startsWith("-") || trimmed.includes("/") || trimmed.includes("\\")) {
+    return undefined;
+  }
+
+  const firstAt = trimmed.indexOf("@");
+  const lastAt = trimmed.lastIndexOf("@");
+  let user;
+  let host = trimmed;
+
+  if (firstAt !== -1) {
+    if (firstAt !== lastAt || firstAt === 0 || firstAt === trimmed.length - 1) {
+      return undefined;
+    }
+    user = trimmed.slice(0, firstAt);
+    host = trimmed.slice(firstAt + 1);
+    if (!SCP_REMOTE_HOST_TOKEN.test(user)) {
+      return undefined;
+    }
+  }
+
+  if (!host || host.startsWith("-") || host.includes("@")) {
+    return undefined;
+  }
+  if (host.includes(":") && !SCP_REMOTE_HOST_BRACKETED_IPV6.test(host)) {
+    return undefined;
+  }
+  if (!SCP_REMOTE_HOST_TOKEN.test(host) && !SCP_REMOTE_HOST_BRACKETED_IPV6.test(host)) {
+    return undefined;
+  }
+
+  return user ? `${user}@${host}` : host;
+}
+
+const hostRuntime = {
+  normalizeHostname: normalizeHostRuntimeHostname,
+  normalizeScpRemoteHost,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -39985,6 +40053,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/logging-core"
   ) {
     return loggingCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/host-runtime" ||
+    request === "@openclaw/plugin-sdk/host-runtime"
+  ) {
+    return hostRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||

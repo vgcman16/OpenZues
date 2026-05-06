@@ -23447,6 +23447,101 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_host_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-host.cjs"
+    runtime_entry.write_text(
+        """
+const hostRuntime = require("openclaw/plugin-sdk/host-runtime");
+const scopedHostRuntime = require("@openclaw/plugin-sdk/host-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.host",
+      description: "Use OpenClaw host runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(hostRuntime).sort(),
+          scopedType: typeof scopedHostRuntime.normalizeHostname,
+          hosts: [
+            hostRuntime.normalizeHostname(" Example.COM. "),
+            hostRuntime.normalizeHostname("Example.."),
+            hostRuntime.normalizeHostname("[FE80::1]"),
+            hostRuntime.normalizeHostname(null)
+          ],
+          scpHosts: [
+            hostRuntime.normalizeScpRemoteHost(" bot@gateway-host "),
+            hostRuntime.normalizeScpRemoteHost("bot@[fe80::1]"),
+            hostRuntime.normalizeScpRemoteHost("bot@host:22") ?? null,
+            hostRuntime.normalizeScpRemoteHost("-oProxyCommand=whoami") ?? null
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-host-plugin",
+                    "name": "Runtime Host Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-host.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.host"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.host"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["normalizeHostname", "normalizeScpRemoteHost"],
+        "scopedType": "function",
+        "hosts": ["example.com", "example.", "fe80::1", ""],
+        "scpHosts": ["bot@gateway-host", "bot@[fe80::1]", None, None],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
     tmp_path,
 ) -> None:
