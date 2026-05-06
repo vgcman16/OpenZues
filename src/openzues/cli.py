@@ -38356,6 +38356,10 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const secretRefRuntime = {
+  coerceSecretRef,
+};
+
 const secretFileRuntime = {
   DEFAULT_SECRET_FILE_MAX_BYTES,
   PRIVATE_SECRET_DIR_MODE,
@@ -39580,6 +39584,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-ref-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-ref-runtime"
+  ) {
+    return secretRefRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-file-runtime" ||
