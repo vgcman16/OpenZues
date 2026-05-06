@@ -35500,6 +35500,79 @@ const providerAuthLoginRuntime = {
   loginOpenAICodexOAuth: providerAuthLoginUnavailable,
 };
 
+function dedupeDefinedStrings(values = []) {
+  const resolved = new Set();
+  for (const value of values) {
+    if (value) {
+      resolved.add(value);
+    }
+  }
+  return [...resolved];
+}
+
+function resolveApprovalApprovers(params = {}) {
+  const normalizeApprover =
+    typeof params.normalizeApprover === "function"
+      ? params.normalizeApprover
+      : (value) => normalizeOptionalString(value);
+  const explicit = dedupeDefinedStrings(
+    (Array.isArray(params.explicit) ? params.explicit : []).map((entry) =>
+      normalizeApprover(entry),
+    ),
+  );
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const allowFrom = Array.isArray(params.allowFrom) ? params.allowFrom : [];
+  const extraAllowFrom = Array.isArray(params.extraAllowFrom) ? params.extraAllowFrom : [];
+  const defaultTo = normalizeOptionalString(params.defaultTo);
+  const normalizeDefaultTo =
+    typeof params.normalizeDefaultTo === "function"
+      ? params.normalizeDefaultTo
+      : (value) => normalizeApprover(value);
+  return dedupeDefinedStrings([
+    ...allowFrom.map((entry) => normalizeApprover(entry)),
+    ...extraAllowFrom.map((entry) => normalizeApprover(entry)),
+    ...(defaultTo ? [normalizeDefaultTo(defaultTo)] : []),
+  ]);
+}
+
+function createResolvedApproverActionAuthAdapter(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+  const channelLabel = normalizeOptionalString(params.channelLabel) || "this channel";
+  return {
+    authorizeActorAction(actionParams = {}) {
+      const approvers = resolveApprovers({
+        cfg: actionParams.cfg,
+        accountId: actionParams.accountId,
+      });
+      if (!Array.isArray(approvers) || approvers.length === 0) {
+        return { authorized: true };
+      }
+      const normalizedSenderId =
+        actionParams.senderId != null ? normalizeSenderId(actionParams.senderId) : undefined;
+      if (normalizedSenderId && approvers.includes(normalizedSenderId)) {
+        return { authorized: true };
+      }
+      const approvalKind = normalizeOptionalString(actionParams.approvalKind) || "approval";
+      return {
+        authorized: false,
+        reason: `❌ You are not authorized to approve ${approvalKind} requests on ${channelLabel}.`,
+      };
+    },
+  };
+}
+
+const approvalAuthRuntime = {
+  createResolvedApproverActionAuthAdapter,
+  resolveApprovalApprovers,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -40641,6 +40714,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/run-command"
   ) {
     return runCommandRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-auth-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-auth-runtime"
+  ) {
+    return approvalAuthRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||

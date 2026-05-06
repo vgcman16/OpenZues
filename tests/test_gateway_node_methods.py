@@ -13875,6 +13875,154 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-auth.cjs"
+    runtime_entry.write_text(
+        """
+const approvalAuth = require("openclaw/plugin-sdk/approval-auth-runtime");
+const scopedApprovalAuth = require("@openclaw/plugin-sdk/approval-auth-runtime");
+
+function normalizeApprover(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized || undefined;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_auth",
+      description: "Use OpenClaw approval auth runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const adapter = approvalAuth.createResolvedApproverActionAuthAdapter({
+          channelLabel: "Telegram",
+          normalizeSenderId: normalizeApprover,
+          resolveApprovers() {
+            return ["alice"];
+          }
+        });
+        const implicitAdapter = approvalAuth.createResolvedApproverActionAuthAdapter({
+          channelLabel: "Discord",
+          resolveApprovers() {
+            return [];
+          }
+        });
+        const denied = adapter.authorizeActorAction({
+          cfg: {},
+          senderId: " bob ",
+          action: "approve",
+          approvalKind: "plugin"
+        });
+        return {
+          keys: Object.keys(approvalAuth).sort(),
+          scopedType: typeof scopedApprovalAuth.resolveApprovalApprovers,
+          explicit: approvalAuth.resolveApprovalApprovers({
+            explicit: [" Alice ", "alice", 42, ""],
+            allowFrom: ["bob"],
+            defaultTo: "carol",
+            normalizeApprover
+          }),
+          inferred: approvalAuth.resolveApprovalApprovers({
+            explicit: [],
+            allowFrom: [" Bob ", "bob"],
+            extraAllowFrom: ["Carol"],
+            defaultTo: "  Dave  ",
+            normalizeApprover
+          }),
+          authorized: adapter.authorizeActorAction({
+            cfg: {},
+            senderId: " Alice ",
+            action: "approve",
+            approvalKind: "exec"
+          }),
+          denied,
+          deniedReasonIncludes: [
+            denied.reason.includes("not authorized"),
+            denied.reason.includes("plugin"),
+            denied.reason.includes("Telegram")
+          ],
+          implicit: implicitAdapter.authorizeActorAction({
+            cfg: {},
+            senderId: "anyone",
+            action: "approve",
+            approvalKind: "exec"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-auth-plugin",
+                    "name": "Runtime Approval Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_auth"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createResolvedApproverActionAuthAdapter",
+            "resolveApprovalApprovers",
+        ],
+        "scopedType": "function",
+        "explicit": ["alice", "42"],
+        "inferred": ["bob", "carol", "dave"],
+        "authorized": {"authorized": True},
+        "denied": {
+            "authorized": False,
+            "reason": "❌ You are not authorized to approve plugin requests on Telegram.",
+        },
+        "deniedReasonIncludes": [True, True, True],
+        "implicit": {"authorized": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:
