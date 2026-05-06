@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~83.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~83.8% overall, with a reasonable
   band of ~78-85%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -82,7 +82,8 @@ Current percentage rollup:
   secret-input-runtime, secret-input-schema, cron-store-runtime, and
   file-access-runtime, logging-core, native-command-config-runtime, and
   host-runtime, image-generation-core auth-runtime, model-session-runtime,
-  process-runtime command helper, and run-command normalized helper slices.
+  process-runtime command helper, run-command normalized helper, and
+  string-coerce-runtime primitive helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7992,6 +7993,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   timeout cases. Repo-wide parity is now estimated at ~83.7%. Verified with
   focused run-command pytest, adjacent helper proof, adjacent imported-plugin
   proof, `ruff check`, and `mypy`; source/test checkpointed in `96c11a19`.
+- Closed the imported OpenClaw plugin SDK string-coerce-runtime helper seam from
+  `src/plugin-sdk/string-coerce-runtime.ts`, `src/shared/string-coerce.ts`, and
+  `src/utils.ts`: native runtime entries can require scoped/unscoped string
+  coercion helpers and receive exact primitive normalization, stringified-id,
+  lowercase, read-string, non-empty, and record detection behavior. Repo-wide
+  parity is now estimated at ~83.8%. Verified with focused
+  string-coerce-runtime pytest, adjacent helper proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `70df7410`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8015,7 +8024,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   cron-store-runtime/file-access-runtime/logging-core/
   native-command-config-runtime/host-runtime/
   image-generation-core.auth.runtime/model-session-runtime/process-runtime/
-  run-command/approval-gateway-runtime/channel-entry-contract/
+  run-command/string-coerce-runtime/approval-gateway-runtime/channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.
