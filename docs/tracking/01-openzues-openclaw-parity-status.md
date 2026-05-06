@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~82.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~83.0% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -772,6 +772,10 @@ may lag behind this tracker.
 - [x] Imported plugin SDK cron-store-runtime shim for cron store path
   resolution, split config/state persistence, and state merge-on-load helpers.
   - Status: checkpointed in `ded083a8`
+
+- [x] Imported plugin SDK file-access-runtime shim for safe file URL handling,
+  basename extraction, root-bounded writes, and root-bounded reads.
+  - Status: checkpointed in `22e4455d`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
