@@ -34333,6 +34333,62 @@ const diffsRuntime = {
   resolvePreferredOpenClawTmpDir,
 };
 
+const ACP_ERROR_CODES = new Set([
+  "ACP_BACKEND_MISSING",
+  "ACP_BACKEND_UNAVAILABLE",
+  "ACP_BACKEND_UNSUPPORTED_CONTROL",
+  "ACP_DISPATCH_DISABLED",
+  "ACP_INVALID_RUNTIME_OPTION",
+  "ACP_SESSION_INIT_FAILED",
+  "ACP_TURN_FAILED",
+]);
+
+class AcpRuntimeError extends Error {
+  constructor(code, message, options = {}) {
+    super(message);
+    this.name = "AcpRuntimeError";
+    this.code = ACP_ERROR_CODES.has(code) ? code : "ACP_TURN_FAILED";
+    if (Object.prototype.hasOwnProperty.call(options, "cause")) {
+      this.cause = options.cause;
+    }
+  }
+}
+
+const acpRuntimeBackendsById = new Map();
+
+function registerAcpRuntimeBackend(backend = {}) {
+  const id = normalizeOptionalLowercaseString(backend.id) || "";
+  if (!id) {
+    throw new Error("ACP runtime backend id is required");
+  }
+  if (!backend.runtime) {
+    throw new Error(`ACP runtime backend "${id}" is missing runtime implementation`);
+  }
+  acpRuntimeBackendsById.set(id, {
+    ...backend,
+    id,
+  });
+}
+
+function unregisterAcpRuntimeBackend(id) {
+  const normalized = normalizeOptionalLowercaseString(id) || "";
+  if (!normalized) {
+    return;
+  }
+  acpRuntimeBackendsById.delete(normalized);
+}
+
+const acpxRuntime = {
+  AcpRuntimeError,
+  applyWindowsSpawnProgramPolicy,
+  listKnownProviderAuthEnvVarNames,
+  materializeWindowsSpawnProgram,
+  omitEnvKeysCaseInsensitive,
+  registerAcpRuntimeBackend,
+  resolveWindowsSpawnProgramCandidate,
+  unregisterAcpRuntimeBackend,
+};
+
 const pluginSdkEntrypoints = [
   "index",
   "core",
@@ -45602,6 +45658,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/diffs"
   ) {
     return diffsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acpx" ||
+    request === "@openclaw/plugin-sdk/acpx"
+  ) {
+    return acpxRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;

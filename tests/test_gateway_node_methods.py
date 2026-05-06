@@ -32531,6 +32531,219 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acpx_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acpx.cjs"
+    runtime_entry.write_text(
+        """
+const acpx = require("openclaw/plugin-sdk/acpx");
+const scopedAcpx = require("@openclaw/plugin-sdk/acpx");
+
+function captureMessage(fn) {
+  try {
+    fn();
+  } catch (error) {
+    return error.message;
+  }
+  return null;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acpx",
+      description: "Use OpenClaw ACPX SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cause = new Error("root cause");
+        const runtimeError = new acpx.AcpRuntimeError(
+          "ACP_BACKEND_MISSING",
+          "ACP runtime missing",
+          { cause }
+        );
+        const missingIdError = captureMessage(() =>
+          acpx.registerAcpRuntimeBackend({ id: "  ", runtime: {} })
+        );
+        const missingRuntimeError = captureMessage(() =>
+          acpx.registerAcpRuntimeBackend({ id: "test-backend" })
+        );
+        acpx.registerAcpRuntimeBackend({
+          id: " Test-Backend ",
+          runtime: { id: "runtime" },
+          healthy: () => true
+        });
+        acpx.unregisterAcpRuntimeBackend("TEST-BACKEND");
+        const candidate = acpx.resolveWindowsSpawnProgramCandidate({
+          platform: "win32",
+          command: "C:/tools/runtime.mjs",
+          execPath: "C:/node/node.exe",
+          env: {}
+        });
+        const program = acpx.applyWindowsSpawnProgramPolicy({
+          candidate,
+          allowShellFallback: false
+        });
+        const wrapperError = captureMessage(() =>
+          acpx.applyWindowsSpawnProgramPolicy({
+            candidate: {
+              command: "C:/tools/openclaw.cmd",
+              leadingArgv: [],
+              resolution: "unresolved-wrapper"
+            },
+            allowShellFallback: false
+          })
+        );
+        const shellFallback = acpx.applyWindowsSpawnProgramPolicy({
+          candidate: {
+            command: "C:/tools/openclaw.cmd",
+            leadingArgv: [],
+            resolution: "unresolved-wrapper"
+          },
+          allowShellFallback: true
+        });
+        return {
+          keys: Object.keys(acpx).sort(),
+          scopedType: typeof scopedAcpx.AcpRuntimeError,
+          runtimeError: {
+            name: runtimeError.name,
+            code: runtimeError.code,
+            message: runtimeError.message,
+            causeMessage: runtimeError.cause && runtimeError.cause.message
+          },
+          registrationErrors: [missingIdError, missingRuntimeError],
+          spawn: {
+            candidate,
+            program,
+            materialized: acpx.materializeWindowsSpawnProgram(program, ["--flag"]),
+            wrapperError,
+            shellFallback
+          },
+          env: {
+            hasOpenAi: acpx.listKnownProviderAuthEnvVarNames().includes("OPENAI_API_KEY"),
+            omitted: acpx.omitEnvKeysCaseInsensitive(
+              { OPENAI_API_KEY: "hide", Path: "keep", token: "remove" },
+              ["openai_api_key", "TOKEN"]
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acpx-plugin",
+                    "name": "Runtime ACPX Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acpx-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acpx"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acpx", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "applyWindowsSpawnProgramPolicy",
+            "listKnownProviderAuthEnvVarNames",
+            "materializeWindowsSpawnProgram",
+            "omitEnvKeysCaseInsensitive",
+            "registerAcpRuntimeBackend",
+            "resolveWindowsSpawnProgramCandidate",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "scopedType": "function",
+        "runtimeError": {
+            "name": "AcpRuntimeError",
+            "code": "ACP_BACKEND_MISSING",
+            "message": "ACP runtime missing",
+            "causeMessage": "root cause",
+        },
+        "registrationErrors": [
+            "ACP runtime backend id is required",
+            'ACP runtime backend "test-backend" is missing runtime implementation',
+        ],
+        "spawn": {
+            "candidate": {
+                "command": "C:/node/node.exe",
+                "leadingArgv": ["C:/tools/runtime.mjs"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "program": {
+                "command": "C:/node/node.exe",
+                "leadingArgv": ["C:/tools/runtime.mjs"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "materialized": {
+                "command": "C:/node/node.exe",
+                "argv": ["C:/tools/runtime.mjs", "--flag"],
+                "resolution": "node-entrypoint",
+                "windowsHide": True,
+            },
+            "wrapperError": (
+                "openclaw.cmd wrapper resolved, but no executable/Node entrypoint "
+                "could be resolved without shell execution."
+            ),
+            "shellFallback": {
+                "command": "C:/tools/openclaw.cmd",
+                "leadingArgv": [],
+                "resolution": "shell-fallback",
+                "shell": True,
+            },
+        },
+        "env": {
+            "hasOpenAi": True,
+            "omitted": {"Path": "keep"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
