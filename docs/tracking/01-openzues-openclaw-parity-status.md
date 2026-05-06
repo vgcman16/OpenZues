@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~83.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~83.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -792,6 +792,10 @@ may lag behind this tracker.
 - [x] Imported plugin SDK image-generation-core auth-runtime shim for the
   image-generation provider auth resolver alias.
   - Status: checkpointed in `532fd8de`
+
+- [x] Imported plugin SDK model-session-runtime shim for agent concurrency,
+  channel model override resolution, and session-entry model override mutation.
+  - Status: checkpointed in `6f5096bc`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
