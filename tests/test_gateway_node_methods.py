@@ -36233,6 +36233,202 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_sdk_runtime_aggregate_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-runtime-aggregate-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-sdk-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const runtime = require("@openclaw/memory-host-sdk/runtime");
+const coreSubpath = require("@openclaw/memory-host-sdk/runtime-core");
+const cliSubpath = require("@openclaw/memory-host-sdk/runtime-cli");
+const filesSubpath = require("@openclaw/memory-host-sdk/runtime-files");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+function rel(value) {{
+  const relative = path.relative(workspaceDir, value).replace(/\\\\/g, "/");
+  return relative || ".";
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_host_sdk_runtime",
+      description: "Use OpenClaw memory-host-sdk runtime aggregate shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        fs.mkdirSync(path.join(workspaceDir, "memory"), {{ recursive: true }});
+        fs.mkdirSync(path.join(workspaceDir, "extra"), {{ recursive: true }});
+        fs.writeFileSync(path.join(workspaceDir, "memory", "note.md"), "alpha\\nbeta", "utf8");
+        fs.writeFileSync(path.join(workspaceDir, "extra", "extra.md"), "extra", "utf8");
+        runtime.clearMemoryPluginState();
+        runtime.registerMemoryCapability("aggregate-runtime", {{
+          promptBuilder({{ availableTools }}) {{
+            return availableTools.has("memory_search") ? ["memory prompt"] : [];
+          }}
+        }});
+        const cfg = {{
+          agents: {{
+            list: [{{
+              id: "Main Agent",
+              default: true,
+              workspace: workspaceDir,
+              contextLimits: {{ memoryGetDefaultLines: 2 }}
+            }}]
+          }},
+          memory: {{ backend: "builtin", citations: "off" }}
+        }};
+        const read = await runtime.readAgentMemoryFile({{
+          cfg,
+          agentId: "main-agent",
+          relPath: "memory/note.md"
+        }});
+        const backend = runtime.resolveMemoryBackendConfig({{ cfg, agentId: "main-agent" }});
+        const result = {{
+          selectedTypes: Object.fromEntries([
+            "asToolParamsRecord",
+            "formatErrorMessage",
+            "readAgentMemoryFile",
+            "resolveMemoryBackendConfig",
+            "registerMemoryCapability",
+            "resolveDefaultAgentId",
+            "withProgressTotals",
+            "normalizeExtraMemoryPaths"
+          ].map((name) => [name, typeof runtime[name]])),
+          subpaths: {{
+            core: typeof coreSubpath.asToolParamsRecord,
+            cli: typeof cliSubpath.formatErrorMessage,
+            files: typeof filesSubpath.readAgentMemoryFile
+          }},
+          core: {{
+            defaultAgent: runtime.resolveDefaultAgentId(cfg),
+            params: runtime.asToolParamsRecord({{ ok: true }}),
+            prompt: runtime.buildActiveMemoryPromptSection({{
+              availableTools: new Set(["memory_search"])
+            }}),
+            capabilityPluginId: runtime.getMemoryCapabilityRegistration().pluginId
+          }},
+          cli: {{
+            error: runtime.formatErrorMessage(
+              new Error("outer", {{ cause: new Error("inner") }})
+            ),
+            help: runtime.formatHelpExamples([["openzues memory", "show memory"]], true)
+          }},
+          files: {{
+            normalizedExtra: runtime
+              .normalizeExtraMemoryPaths(
+                workspaceDir,
+                [" extra ", path.join(workspaceDir, "extra")]
+              )
+              .map(rel),
+            read,
+            backend: {{
+              backend: backend.backend,
+              citations: backend.citations
+            }}
+          }}
+        }};
+        runtime.clearMemoryPluginState();
+        result.afterClear = runtime.buildActiveMemoryPromptSection({{
+          availableTools: new Set(["memory_search"])
+        }});
+        return result;
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-sdk-runtime-plugin",
+                    "name": "Memory Host SDK Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-sdk-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_sdk_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_host_sdk_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "asToolParamsRecord": "function",
+            "formatErrorMessage": "function",
+            "readAgentMemoryFile": "function",
+            "resolveMemoryBackendConfig": "function",
+            "registerMemoryCapability": "function",
+            "resolveDefaultAgentId": "function",
+            "withProgressTotals": "function",
+            "normalizeExtraMemoryPaths": "function",
+        },
+        "subpaths": {"core": "function", "cli": "function", "files": "function"},
+        "core": {
+            "defaultAgent": "main-agent",
+            "params": {"ok": True},
+            "prompt": ["memory prompt"],
+            "capabilityPluginId": "aggregate-runtime",
+        },
+        "cli": {
+            "error": "outer | inner",
+            "help": "  openzues memory # show memory",
+        },
+        "files": {
+            "normalizedExtra": ["extra"],
+            "read": {
+                "text": "alpha\nbeta",
+                "path": "memory/note.md",
+                "from": 1,
+                "lines": 2,
+            },
+            "backend": {"backend": "builtin", "citations": "off"},
+        },
+        "afterClear": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_engine_runtime_facade(
     tmp_path,
 ) -> None:

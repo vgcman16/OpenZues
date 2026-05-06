@@ -48403,6 +48403,12 @@ const memoryCoreHostRuntimeCoreRuntime = {
   resolveStateDir,
 };
 
+const memoryHostSdkRuntimeRuntime = {
+  ...memoryCoreHostRuntimeCoreRuntime,
+  ...memoryCoreHostRuntimeCliRuntime,
+  ...memoryCoreHostRuntimeFilesRuntime,
+};
+
 const memoryCoreHostFoundationTranscriptListeners = new Set();
 
 function resolveMemoryCoreHostFoundationAgentDir(cfg = {}, agentId, env = process.env) {
@@ -51978,6 +51984,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostRuntimeFilesRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/runtime-files") {
+    return memoryCoreHostRuntimeFilesRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-host-files" ||
     request === "@openclaw/plugin-sdk/memory-host-files"
@@ -51992,11 +52001,20 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostRuntimeCoreRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/runtime-core") {
+    return memoryCoreHostRuntimeCoreRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-runtime-cli" ||
     request === "@openclaw/plugin-sdk/memory-core-host-runtime-cli"
   ) {
     return memoryCoreHostRuntimeCliRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/runtime-cli") {
+    return memoryCoreHostRuntimeCliRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/runtime") {
+    return memoryHostSdkRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
