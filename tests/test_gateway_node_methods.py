@@ -18842,6 +18842,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_config_primitives_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-agent-config-primitives.cjs"
+    runtime_entry.write_text(
+        """
+const primitives = require("openclaw/plugin-sdk/agent-config-primitives");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function summarize(result) {
+  return {
+    success: result.success,
+    message: result.error && result.error.issues && result.error.issues[0]
+      ? result.error.issues[0].message
+      : null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_config_primitives",
+      description: "Use OpenClaw agent-config-primitives SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(primitives).sort(),
+          replyKeys: Object.keys(primitives.ReplyRuntimeConfigSchemaShape).sort(),
+          validPolicy: summarize(primitives.ToolPolicySchema.safeParse({
+            allow: ["chat.send"],
+            deny: ["tools.exec"]
+          })),
+          conflictingPolicy: summarize(primitives.ToolPolicySchema.safeParse({
+            allow: ["chat.send"],
+            alsoAllow: ["tools.exec"]
+          })),
+          undefinedPolicy: summarize(primitives.ToolPolicySchema.safeParse(undefined)),
+          chunkMode: summarize(
+            primitives.ReplyRuntimeConfigSchemaShape.chunkMode.safeParse("newline")
+          ),
+          invalidChunkMode: summarize(
+            primitives.ReplyRuntimeConfigSchemaShape.chunkMode.safeParse("paragraph")
+          ),
+          genericType: typeof genericSdk.ToolPolicySchema.safeParse
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-config-primitives-plugin",
+                    "name": "Runtime Agent Config Primitives Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-config-primitives.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_config_primitives"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_config_primitives"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["ReplyRuntimeConfigSchemaShape", "ToolPolicySchema"],
+        "replyKeys": [
+            "blockStreaming",
+            "blockStreamingCoalesce",
+            "chunkMode",
+            "contextVisibility",
+            "dmHistoryLimit",
+            "dms",
+            "historyLimit",
+            "mediaMaxMb",
+            "responsePrefix",
+            "textChunkLimit",
+        ],
+        "validPolicy": {"success": True, "message": None},
+        "conflictingPolicy": {
+            "success": False,
+            "message": (
+                "tools policy cannot set both allow and alsoAllow in the same scope "
+                "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)"
+            ),
+        },
+        "undefinedPolicy": {"success": True, "message": None},
+        "chunkMode": {"success": True, "message": None},
+        "invalidChunkMode": {
+            "success": False,
+            "message": "Invalid enum value",
+        },
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:

@@ -25309,6 +25309,180 @@ function optionalStringEnum(values, options = {}) {
   return stringEnum(values, options);
 }
 
+function makeSchemaResult(ok, data, message) {
+  if (ok) {
+    return { success: true, data };
+  }
+  return {
+    success: false,
+    error: {
+      issues: [{ message: message || "Invalid input" }],
+    },
+  };
+}
+
+function createSimpleSchema(validate, options = {}) {
+  const schema = {
+    _def: {
+      typeName: options.typeName || "OpenZuesSchema",
+    },
+    safeParse(value) {
+      const message = validate(value);
+      return makeSchemaResult(message === undefined, value, message);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return createOptionalSchema(schema);
+    },
+  };
+  return schema;
+}
+
+function createOptionalSchema(innerSchema) {
+  const schema = {
+    _def: {
+      typeName: "ZodOptional",
+      innerType: innerSchema,
+    },
+    safeParse(value) {
+      if (value === undefined) {
+        return makeSchemaResult(true, undefined);
+      }
+      return innerSchema.safeParse(value);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return schema;
+    },
+  };
+  return schema;
+}
+
+function createStringSchema() {
+  return createSimpleSchema(
+    (value) => (typeof value === "string" ? undefined : "Expected string"),
+    { typeName: "ZodString" },
+  );
+}
+
+function createBooleanSchema() {
+  return createSimpleSchema(
+    (value) => (typeof value === "boolean" ? undefined : "Expected boolean"),
+    { typeName: "ZodBoolean" },
+  );
+}
+
+function createNumberSchema(options = {}) {
+  return createSimpleSchema(
+    (value) => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "Expected number";
+      }
+      if (options.integer === true && !Number.isInteger(value)) {
+        return "Expected integer";
+      }
+      if (typeof options.min === "number" && value < options.min) {
+        return `Number must be greater than or equal to ${options.min}`;
+      }
+      if (options.positive === true && value <= 0) {
+        return "Number must be greater than 0";
+      }
+      return undefined;
+    },
+    { typeName: "ZodNumber" },
+  );
+}
+
+function createEnumSchema(values) {
+  const allowed = new Set(enumValuesFrom(values));
+  return createSimpleSchema(
+    (value) => (allowed.has(value) ? undefined : "Invalid enum value"),
+    { typeName: "ZodEnum" },
+  );
+}
+
+function createRecordSchema() {
+  return createSimpleSchema(
+    (value) =>
+      value && typeof value === "object" && !Array.isArray(value) ? undefined : "Expected object",
+    { typeName: "ZodRecord" },
+  );
+}
+
+function createToolPolicySchema() {
+  const stringArrayIssue = (value) =>
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+      ? undefined
+      : "Expected string array";
+  return createOptionalSchema(
+    createSimpleSchema(
+      (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return "Expected object";
+        }
+        const allowedKeys = new Set(["allow", "alsoAllow", "deny"]);
+        for (const key of Object.keys(value)) {
+          if (!allowedKeys.has(key)) {
+            return `Unrecognized key: ${key}`;
+          }
+        }
+        for (const key of allowedKeys) {
+          if (value[key] !== undefined) {
+            const issue = stringArrayIssue(value[key]);
+            if (issue) {
+              return issue;
+            }
+          }
+        }
+        if (
+          Array.isArray(value.allow) &&
+          value.allow.length > 0 &&
+          Array.isArray(value.alsoAllow) &&
+          value.alsoAllow.length > 0
+        ) {
+          return "tools policy cannot set both allow and alsoAllow in the same scope "
+            + "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)";
+        }
+        return undefined;
+      },
+      { typeName: "ZodObject" },
+    ),
+  );
+}
+
+const ReplyRuntimeConfigSchemaShape = {
+  historyLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+  dmHistoryLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+  contextVisibility: createOptionalSchema(
+    createEnumSchema(["all", "allowlist", "allowlist_quote"]),
+  ),
+  dms: createOptionalSchema(createRecordSchema()),
+  textChunkLimit: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  chunkMode: createOptionalSchema(createEnumSchema(["length", "newline"])),
+  blockStreaming: createOptionalSchema(createBooleanSchema()),
+  blockStreamingCoalesce: createOptionalSchema(createRecordSchema()),
+  responsePrefix: createOptionalSchema(createStringSchema()),
+  mediaMaxMb: createOptionalSchema(createNumberSchema({ positive: true })),
+};
+
+const ToolPolicySchema = createToolPolicySchema();
+
 function createMessageToolButtonsSchema() {
   return {
     type: "array",
@@ -33615,6 +33789,11 @@ const agentMediaPayloadRuntime = {
   getAgentScopedMediaLocalRoots,
 };
 
+const agentConfigPrimitivesRuntime = {
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+};
+
 const genericSdk = new Proxy(
   {
     DEFAULT_ACCOUNT_ID,
@@ -33623,7 +33802,9 @@ const genericSdk = new Proxy(
     DEFAULT_MAIN_KEY,
     DEFAULT_TIMING,
     PAIRING_APPROVED_MESSAGE,
+    ReplyRuntimeConfigSchemaShape,
     SILENT_REPLY_TOKEN,
+    ToolPolicySchema,
     CODING_TOOL_TOKENS,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -34596,6 +34777,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/agent-media-payload"
   ) {
     return agentMediaPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-config-primitives" ||
+    request === "@openclaw/plugin-sdk/agent-config-primitives"
+  ) {
+    return agentConfigPrimitivesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||
