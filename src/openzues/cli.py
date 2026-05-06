@@ -30598,21 +30598,106 @@ function resolveTextChunkLimit(cfg, provider, accountId, opts) {
     : fallback;
 }
 
+function asTextChunkMode(value) {
+  return value === "length" || value === "newline" ? value : undefined;
+}
+
+function asBoolean(value) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeStreamingMode(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return normalizeOptionalLowercaseString(value) || null;
+}
+
+function parsePreviewStreamingMode(value) {
+  const normalized = normalizeStreamingMode(value);
+  if (
+    normalized === "off" ||
+    normalized === "partial" ||
+    normalized === "block" ||
+    normalized === "progress"
+  ) {
+    return normalized === "progress" ? "partial" : normalized;
+  }
+  return null;
+}
+
+function getChannelStreamingConfigObject(entry) {
+  const streaming = asObjectRecord(entry && entry.streaming);
+  return streaming || undefined;
+}
+
 function resolveChannelStreamingChunkMode(entry) {
   if (!entry || typeof entry !== "object") {
     return undefined;
   }
-  const streaming = entry.streaming;
-  if (
-    streaming &&
-    typeof streaming === "object" &&
-    (streaming.chunkMode === "length" || streaming.chunkMode === "newline")
-  ) {
-    return streaming.chunkMode;
+  return asTextChunkMode(getChannelStreamingConfigObject(entry)?.chunkMode) ??
+    asTextChunkMode(entry.chunkMode);
+}
+
+function resolveChannelStreamingBlockEnabled(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
   }
-  return entry.chunkMode === "length" || entry.chunkMode === "newline"
-    ? entry.chunkMode
-    : undefined;
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.block?.enabled) ?? asBoolean(entry.blockStreaming);
+}
+
+function resolveChannelStreamingBlockCoalesce(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asObjectRecord(config?.block?.coalesce) || asObjectRecord(entry.blockStreamingCoalesce) ||
+    undefined;
+}
+
+function resolveChannelStreamingPreviewChunk(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asObjectRecord(config?.preview?.chunk) || asObjectRecord(entry.draftChunk) || undefined;
+}
+
+function resolveChannelStreamingPreviewToolProgress(entry, defaultValue = true) {
+  if (!entry || typeof entry !== "object") {
+    return defaultValue;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.preview?.toolProgress) ?? defaultValue;
+}
+
+function resolveChannelStreamingNativeTransport(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.nativeTransport) ?? asBoolean(entry.nativeStreaming);
+}
+
+function resolveChannelPreviewStreamMode(entry, defaultMode) {
+  if (!entry || typeof entry !== "object") {
+    return defaultMode;
+  }
+  const parsedStreaming = parsePreviewStreamingMode(
+    getChannelStreamingConfigObject(entry)?.mode ?? entry.streaming,
+  );
+  if (parsedStreaming) {
+    return parsedStreaming;
+  }
+  const legacy = parsePreviewStreamingMode(entry.streamMode);
+  if (legacy) {
+    return legacy;
+  }
+  if (typeof entry.streaming === "boolean") {
+    return entry.streaming ? "partial" : "off";
+  }
+  return defaultMode;
 }
 
 function resolveChunkModeForProvider(cfgSection, accountId) {
@@ -37177,6 +37262,17 @@ const channelTargetsRuntime = {
   resolveTargetsWithOptionalToken,
 };
 
+const channelStreamingRuntime = {
+  getChannelStreamingConfigObject,
+  resolveChannelPreviewStreamMode,
+  resolveChannelStreamingBlockCoalesce,
+  resolveChannelStreamingBlockEnabled,
+  resolveChannelStreamingChunkMode,
+  resolveChannelStreamingNativeTransport,
+  resolveChannelStreamingPreviewChunk,
+  resolveChannelStreamingPreviewToolProgress,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38044,6 +38140,7 @@ const genericSdk = new Proxy(
     ...channelCoreRuntime,
     ...channelContractTestingRuntime,
     ...channelTargetsRuntime,
+    ...channelStreamingRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39065,6 +39162,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-targets"
   ) {
     return channelTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-streaming" ||
+    request === "@openclaw/plugin-sdk/channel-streaming"
+  ) {
+    return channelStreamingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

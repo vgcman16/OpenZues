@@ -21253,6 +21253,173 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_streaming_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-streaming.cjs"
+    runtime_entry.write_text(
+        """
+const streaming = require("openclaw/plugin-sdk/channel-streaming");
+const scopedStreaming = require("@openclaw/plugin-sdk/channel-streaming");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_streaming",
+      description: "Use OpenClaw channel streaming SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = {
+          streaming: {
+            mode: "progress",
+            chunkMode: "newline",
+            block: {
+              enabled: true,
+              coalesce: { maxWaitMs: 25 },
+            },
+            preview: {
+              chunk: { maxChars: 120 },
+              toolProgress: false,
+            },
+            nativeTransport: true,
+          },
+          streamMode: "off",
+          chunkMode: "length",
+          blockStreaming: false,
+          blockStreamingCoalesce: { legacy: true },
+          draftChunk: { maxChars: 10 },
+          nativeStreaming: false,
+        };
+        const legacy = {
+          streaming: true,
+          streamMode: "block",
+          blockStreaming: true,
+          blockStreamingCoalesce: { legacy: true },
+          draftChunk: { maxChars: 10 },
+          nativeStreaming: true,
+        };
+        return {
+          keys: Object.keys(streaming).sort(),
+          scopedType: typeof scopedStreaming.resolveChannelPreviewStreamMode,
+          config: streaming.getChannelStreamingConfigObject(entry),
+          chunkMode: streaming.resolveChannelStreamingChunkMode(entry),
+          blockEnabled: streaming.resolveChannelStreamingBlockEnabled(entry),
+          blockCoalesce: streaming.resolveChannelStreamingBlockCoalesce(entry),
+          previewChunk: streaming.resolveChannelStreamingPreviewChunk(entry),
+          previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress(entry),
+          nativeTransport: streaming.resolveChannelStreamingNativeTransport(entry),
+          previewMode: streaming.resolveChannelPreviewStreamMode(entry, "off"),
+          legacy: {
+            chunkMode: streaming.resolveChannelStreamingChunkMode(legacy) ?? null,
+            blockEnabled: streaming.resolveChannelStreamingBlockEnabled(legacy),
+            blockCoalesce: streaming.resolveChannelStreamingBlockCoalesce(legacy),
+            previewChunk: streaming.resolveChannelStreamingPreviewChunk(legacy),
+            previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress(
+              legacy,
+              true,
+            ),
+            nativeTransport: streaming.resolveChannelStreamingNativeTransport(legacy),
+            previewMode: streaming.resolveChannelPreviewStreamMode(legacy, "partial"),
+          },
+          defaults: {
+            previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress({}, false),
+            previewMode: streaming.resolveChannelPreviewStreamMode({}, "partial"),
+          },
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-streaming-plugin",
+                    "name": "Runtime Channel Streaming Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-streaming.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_streaming"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_streaming"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "getChannelStreamingConfigObject",
+            "resolveChannelPreviewStreamMode",
+            "resolveChannelStreamingBlockCoalesce",
+            "resolveChannelStreamingBlockEnabled",
+            "resolveChannelStreamingChunkMode",
+            "resolveChannelStreamingNativeTransport",
+            "resolveChannelStreamingPreviewChunk",
+            "resolveChannelStreamingPreviewToolProgress",
+        ],
+        "scopedType": "function",
+        "config": {
+            "mode": "progress",
+            "chunkMode": "newline",
+            "block": {"enabled": True, "coalesce": {"maxWaitMs": 25}},
+            "preview": {"chunk": {"maxChars": 120}, "toolProgress": False},
+            "nativeTransport": True,
+        },
+        "chunkMode": "newline",
+        "blockEnabled": True,
+        "blockCoalesce": {"maxWaitMs": 25},
+        "previewChunk": {"maxChars": 120},
+        "previewToolProgress": False,
+        "nativeTransport": True,
+        "previewMode": "partial",
+        "legacy": {
+            "chunkMode": None,
+            "blockEnabled": True,
+            "blockCoalesce": {"legacy": True},
+            "previewChunk": {"maxChars": 10},
+            "previewToolProgress": True,
+            "nativeTransport": True,
+            "previewMode": "block",
+        },
+        "defaults": {"previewToolProgress": False, "previewMode": "partial"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
