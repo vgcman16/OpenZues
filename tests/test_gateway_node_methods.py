@@ -7250,6 +7250,325 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_inbound_roots_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-inbound-roots.cjs"
+    runtime_entry.write_text(
+        """
+const inboundRoots = require("openclaw/plugin-sdk/channel-inbound-roots");
+const scopedInboundRoots = require("@openclaw/plugin-sdk/channel-inbound-roots");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_inbound_roots",
+      description: "Use OpenClaw channel-inbound-roots SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(inboundRoots).sort(),
+          merged: inboundRoots.mergeInboundPathRoots(
+            ["C:\\\\tmp\\\\*", "/var/data", "/", "relative", "/var/data"],
+            ["/mnt/*/media", "/var/data"]
+          ),
+          scoped: scopedInboundRoots.mergeInboundPathRoots(["/srv/media"], ["/srv/media/cache"]),
+          genericType: typeof genericSdk.mergeInboundPathRoots
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-inbound-roots-plugin",
+                    "name": "Runtime Channel Inbound Roots Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-inbound-roots.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_inbound_roots"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_inbound_roots"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["mergeInboundPathRoots"],
+        "merged": ["C:/tmp/*", "/var/data", "/mnt/*/media"],
+        "scoped": ["/srv/media", "/srv/media/cache"],
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_location_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-location.cjs"
+    runtime_entry.write_text(
+        """
+const location = require("openclaw/plugin-sdk/channel-location");
+const scopedLocation = require("@openclaw/plugin-sdk/channel-location");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_location",
+      description: "Use OpenClaw channel-location SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const rawLocation = {
+          latitude: 12.3456789,
+          longitude: -98.7654321,
+          accuracy: 4.6,
+          name: "HQ",
+          source: "place",
+          live: false,
+          caption: "front door"
+        };
+        const scopedContext = scopedLocation.toLocationContext(rawLocation);
+        return {
+          exportKeys: Object.keys(location).sort(),
+          textChecks: [
+            location.formatLocationText(rawLocation).startsWith("\\u{1F4CD}"),
+            location.formatLocationText(rawLocation).includes("12.345679, -98.765432"),
+            location.formatLocationText(rawLocation).includes("\\u00b15m")
+          ],
+          context: location.toLocationContext(rawLocation),
+          scopedCaption: scopedContext.LocationCaption,
+          genericTypes: [
+            typeof genericSdk.formatLocationText,
+            typeof genericSdk.toLocationContext
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-location-plugin",
+                    "name": "Runtime Channel Location Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-location.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_location"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_location"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["formatLocationText", "toLocationContext"],
+        "textChecks": [True, True, True],
+        "context": {
+            "LocationLat": 12.3456789,
+            "LocationLon": -98.7654321,
+            "LocationAccuracy": 4.6,
+            "LocationName": "HQ",
+            "LocationSource": "place",
+            "LocationIsLive": False,
+            "LocationCaption": "front door",
+        },
+        "scopedCaption": "front door",
+        "genericTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_state_paths_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-state-paths.cjs"
+    runtime_entry.write_text(
+        """
+const statePaths = require("openclaw/plugin-sdk/state-paths");
+const scopedStatePaths = require("@openclaw/plugin-sdk/state-paths");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.state_paths",
+      description: "Use OpenClaw state-paths SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const homeEnv = { OPENCLAW_HOME: args.homeDir };
+        const stateEnv = { OPENCLAW_STATE_DIR: "~/custom-state", OPENCLAW_HOME: args.homeDir };
+        const oauthEnv = { OPENCLAW_OAUTH_DIR: "~/oauth-dir", OPENCLAW_HOME: args.homeDir };
+        return {
+          exportKeys: Object.keys(statePaths).sort(),
+          requiredHome: statePaths.resolveRequiredHomeDir(homeEnv).replace(/\\\\/g, "/"),
+          stateDir: statePaths.resolveStateDir(stateEnv).replace(/\\\\/g, "/"),
+          oauthOverride: scopedStatePaths.resolveOAuthDir(oauthEnv).replace(/\\\\/g, "/"),
+          oauthDefault: statePaths.resolveOAuthDir({}, args.stateDir).replace(/\\\\/g, "/"),
+          stateType: typeof statePaths.STATE_DIR,
+          genericTypes: [
+            typeof genericSdk.resolveStateDir,
+            typeof genericSdk.resolveOAuthDir,
+            typeof genericSdk.resolveRequiredHomeDir
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    state_dir = tmp_path / "state-root"
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-state-paths-plugin",
+                    "name": "Runtime State Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-state-paths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.state_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.state_paths",
+            "args": {"homeDir": str(home_dir), "stateDir": str(state_dir)},
+        },
+    )
+
+    expected_home = str(home_dir).replace("\\", "/")
+    expected_state = f"{expected_home}/custom-state"
+    expected_oauth_override = f"{expected_home}/oauth-dir"
+    expected_oauth_default = f"{str(state_dir).replace('\\', '/')}/credentials"
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "STATE_DIR",
+            "resolveOAuthDir",
+            "resolveRequiredHomeDir",
+            "resolveStateDir",
+        ],
+        "requiredHome": expected_home,
+        "stateDir": expected_state,
+        "oauthOverride": expected_oauth_override,
+        "oauthDefault": expected_oauth_default,
+        "stateType": "string",
+        "genericTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_route_helpers(
     tmp_path,
 ) -> None:
@@ -9305,6 +9624,99 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_pairing_paths_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-pairing-paths.cjs"
+    runtime_entry.write_text(
+        """
+const pairingPaths = require("openclaw/plugin-sdk/channel-pairing-paths");
+const scopedPairingPaths = require("@openclaw/plugin-sdk/channel-pairing-paths");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_pairing_paths",
+      description: "Use OpenClaw channel-pairing-paths SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(pairingPaths).sort(),
+          pathTail: pairingPaths.resolveChannelAllowFromPath(
+            "Telegram",
+            { OPENCLAW_OAUTH_DIR: "/tmp/oauth" },
+            "Work/Profile"
+          ).replace(/\\\\/g, "/"),
+          scopedTail: scopedPairingPaths.resolveChannelAllowFromPath(
+            "NextCloud Talk",
+            { OPENCLAW_STATE_DIR: "/tmp/state" }
+          ).replace(/\\\\/g, "/"),
+          genericType: typeof genericSdk.resolveChannelAllowFromPath
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-pairing-paths-plugin",
+                    "name": "Runtime Channel Pairing Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-pairing-paths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_pairing_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_pairing_paths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveChannelAllowFromPath"],
+        "pathTail": "/tmp/oauth/telegram-work_profile-allowFrom.json",
+        "scopedTail": "/tmp/state/credentials/nextcloud talk-allowFrom.json",
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_auth_helpers(
     tmp_path,
 ) -> None:
@@ -9827,6 +10239,550 @@ module.exports = {
             "defaultAccountId": "default",
         },
         "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_talk_config_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-talk-config-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const talkConfig = require("openclaw/plugin-sdk/talk-config-runtime");
+const scopedTalkConfig = require("@openclaw/plugin-sdk/talk-config-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.talk_config",
+      description: "Use OpenClaw talk-config-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(talkConfig).sort(),
+          missing: talkConfig.resolveActiveTalkProviderConfig(undefined) ?? null,
+          singleProvider: talkConfig.resolveActiveTalkProviderConfig({
+            providers: {
+              elevenlabs: {
+                apiKey: "  sk-voice  ",
+                voiceId: "alice"
+              }
+            }
+          }),
+          explicitProvider: scopedTalkConfig.resolveActiveTalkProviderConfig({
+            provider: " openai ",
+            providers: {
+              openai: {
+                apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+                modelId: "gpt-4o-mini-tts"
+              },
+              elevenlabs: { apiKey: "" },
+              "  ": { apiKey: "ignored" }
+            },
+            silenceTimeoutMs: 1200,
+            interruptOnSpeech: true,
+            speechLocale: " en-US "
+          }),
+          invalidExplicit: talkConfig.resolveActiveTalkProviderConfig({
+            provider: "missing",
+            providers: { openai: { apiKey: "sk" } }
+          }) ?? null,
+          ambiguous: talkConfig.resolveActiveTalkProviderConfig({
+            providers: {
+              openai: { apiKey: "sk-openai" },
+              elevenlabs: { apiKey: "sk-eleven" }
+            }
+          }) ?? null,
+          scopedExportType: typeof scopedTalkConfig.resolveActiveTalkProviderConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-talk-config-plugin",
+                    "name": "Runtime Talk Config Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-talk-config.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.talk_config"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.talk_config"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveActiveTalkProviderConfig"],
+        "missing": None,
+        "singleProvider": {
+            "provider": "elevenlabs",
+            "config": {"apiKey": "sk-voice", "voiceId": "alice"},
+        },
+        "explicitProvider": {
+            "provider": "openai",
+            "config": {
+                "apiKey": {
+                    "source": "env",
+                    "provider": "default",
+                    "id": "OPENAI_API_KEY",
+                },
+                "modelId": "gpt-4o-mini-tts",
+            },
+        },
+        "invalidExplicit": None,
+        "ambiguous": None,
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_secret_tts_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-secret-tts-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const ttsRuntime = require("openclaw/plugin-sdk/channel-secret-tts-runtime");
+const scopedTtsRuntime = require("@openclaw/plugin-sdk/channel-secret-tts-runtime");
+
+function createContext() {
+  return { assignments: [], warnings: [], warningKeys: new Set() };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_secret_tts",
+      description: "Use OpenClaw channel-secret-tts-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const channel = {
+          enabled: true,
+          voice: {
+            enabled: true,
+            tts: {
+              providers: {
+                elevenlabs: { apiKey: "${ELEVENLABS_API_KEY}" },
+                empty: {}
+              }
+            }
+          },
+          accounts: {
+            work: {
+              enabled: true,
+              voice: {
+                enabled: true,
+                tts: {
+                  providers: {
+                    openai: {
+                      apiKey: {
+                        source: "env",
+                        provider: "custom",
+                        id: "OPENAI_API_KEY"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            disabled: {
+              enabled: false,
+              voice: {
+                enabled: true,
+                tts: {
+                  providers: {
+                    edge: { apiKey: "${EDGE_API_KEY}" }
+                  }
+                }
+              }
+            },
+            noVoice: { enabled: true }
+          }
+        };
+        const surface = {
+          hasExplicitAccounts: true,
+          channelEnabled: true,
+          accounts: Object.entries(channel.accounts).map(([accountId, account]) => ({
+            accountId,
+            account,
+            enabled: channel.enabled !== false && account.enabled !== false
+          }))
+        };
+        const context = createContext();
+        ttsRuntime.collectNestedChannelTtsAssignments({
+          channelKey: "discord",
+          nestedKey: "voice",
+          channel,
+          surface,
+          defaults: { env: "default-env" },
+          context,
+          topLevelActive: true,
+          topInactiveReason: "top inactive",
+          accountActive: ({ account, enabled }) =>
+            enabled && account.voice && account.voice.enabled !== false,
+          accountInactiveReason: ({ accountId }) => `${accountId} inactive`
+        });
+        const assignments = context.assignments.map((assignment) => ({
+          path: assignment.path,
+          expected: assignment.expected,
+          ref: assignment.ref
+        }));
+        context.assignments[0].apply("top-secret");
+        context.assignments[1].apply("work-secret");
+
+        const inactiveContext = createContext();
+        scopedTtsRuntime.collectNestedChannelTtsAssignments({
+          channelKey: "discord",
+          nestedKey: "voice",
+          channel: {
+            voice: {
+              tts: { providers: { openai: { apiKey: "${TOP_INACTIVE_KEY}" } } }
+            }
+          },
+          surface: { hasExplicitAccounts: false, channelEnabled: false, accounts: [] },
+          defaults: { env: "default-env" },
+          context: inactiveContext,
+          topLevelActive: false,
+          topInactiveReason: "top voice disabled",
+          accountActive: () => false,
+          accountInactiveReason: "account inactive"
+        });
+
+        return {
+          exportKeys: Object.keys(ttsRuntime).sort(),
+          assignments,
+          warnings: context.warnings,
+          mutated: {
+            top: channel.voice.tts.providers.elevenlabs.apiKey,
+            work: channel.accounts.work.voice.tts.providers.openai.apiKey
+          },
+          inactiveWarnings: inactiveContext.warnings,
+          scopedExportType: typeof scopedTtsRuntime.collectNestedChannelTtsAssignments
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-secret-tts-plugin",
+                    "name": "Runtime Channel Secret TTS Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-secret-tts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_secret_tts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_secret_tts"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["collectNestedChannelTtsAssignments"],
+        "assignments": [
+            {
+                "path": "channels.discord.voice.tts.providers.elevenlabs.apiKey",
+                "expected": "string",
+                "ref": {
+                    "source": "env",
+                    "provider": "default-env",
+                    "id": "ELEVENLABS_API_KEY",
+                },
+            },
+            {
+                "path": (
+                    "channels.discord.accounts.work.voice.tts.providers.openai.apiKey"
+                ),
+                "expected": "string",
+                "ref": {
+                    "source": "env",
+                    "provider": "custom",
+                    "id": "OPENAI_API_KEY",
+                },
+            },
+        ],
+        "warnings": [
+            {
+                "code": "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "path": "channels.discord.accounts.disabled.voice.tts.providers.edge.apiKey",
+                "message": (
+                    "channels.discord.accounts.disabled.voice.tts.providers.edge.apiKey: "
+                    "disabled inactive"
+                ),
+            }
+        ],
+        "mutated": {
+            "top": "top-secret",
+            "work": "work-secret",
+        },
+        "inactiveWarnings": [
+            {
+                "code": "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "path": "channels.discord.voice.tts.providers.openai.apiKey",
+                "message": (
+                    "channels.discord.voice.tts.providers.openai.apiKey: "
+                    "top voice disabled"
+                ),
+            }
+        ],
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_adapter_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-setup-adapter-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const setupAdapter = require("openclaw/plugin-sdk/setup-adapter-runtime");
+const scopedSetupAdapter = require("@openclaw/plugin-sdk/setup-adapter-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.setup_adapter",
+      description: "Use OpenClaw setup-adapter-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const adapter = setupAdapter.createEnvPatchedAccountSetupAdapter({
+          channelKey: "discord",
+          defaultAccountOnlyEnvError: "env default only",
+          missingCredentialError: "missing token",
+          hasCredentials: (input) => Boolean(input.token),
+          buildPatch: (input) => ({ token: input.token, mode: input.mode || "bot" })
+        });
+        const scopedAdapter = scopedSetupAdapter.createEnvPatchedAccountSetupAdapter({
+          channelKey: "matrix",
+          alwaysUseAccounts: true,
+          ensureChannelEnabled: true,
+          defaultAccountOnlyEnvError: "matrix env default only",
+          missingCredentialError: "missing access token",
+          hasCredentials: (input) => Boolean(input.accessToken),
+          buildPatch: (input) => ({ accessToken: input.accessToken })
+        });
+        return {
+          exportKeys: Object.keys(setupAdapter).sort(),
+          validation: {
+            missing: adapter.validateInput({ cfg: {}, accountId: "default", input: {} }),
+            envNamed: adapter.validateInput({
+              cfg: {},
+              accountId: "work",
+              input: { useEnv: true }
+            }),
+            ok: adapter.validateInput({
+              cfg: {},
+              accountId: "work",
+              input: { token: "abc" }
+            })
+          },
+          resolvedDefault: adapter.resolveAccountId({}),
+          resolvedNamed: adapter.resolveAccountId({ accountId: "Work Account!" }),
+          defaultPatch: adapter.applyAccountConfig({
+            cfg: {},
+            accountId: "default",
+            input: { token: "abc", name: "Primary" }
+          }),
+          namedPatch: adapter.applyAccountConfig({
+            cfg: {
+              channels: {
+                discord: {
+                  name: "Base",
+                  accounts: { existing: { token: "old" } }
+                }
+              }
+            },
+            accountId: "work",
+            input: { token: "def", name: "Work" }
+          }),
+          scopedPatch: scopedAdapter.applyAccountConfig({
+            cfg: { channels: { matrix: {} } },
+            accountId: "default",
+            input: { accessToken: "mat", name: "Matrix Default" }
+          }),
+          scopedExportType: typeof scopedSetupAdapter.createEnvPatchedAccountSetupAdapter
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-adapter-plugin",
+                    "name": "Runtime Setup Adapter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-adapter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setup_adapter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setup_adapter"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["createEnvPatchedAccountSetupAdapter"],
+        "validation": {
+            "missing": "missing token",
+            "envNamed": "env default only",
+            "ok": None,
+        },
+        "resolvedDefault": "default",
+        "resolvedNamed": "work-account",
+        "defaultPatch": {
+            "channels": {
+                "discord": {
+                    "enabled": True,
+                    "name": "Primary",
+                    "token": "abc",
+                    "mode": "bot",
+                }
+            }
+        },
+        "namedPatch": {
+            "channels": {
+                "discord": {
+                    "enabled": True,
+                    "accounts": {
+                        "existing": {"token": "old"},
+                        "work": {
+                            "name": "Work",
+                            "enabled": True,
+                            "token": "def",
+                            "mode": "bot",
+                        },
+                        "default": {"name": "Base"},
+                    },
+                }
+            }
+        },
+        "scopedPatch": {
+            "channels": {
+                "matrix": {
+                    "enabled": True,
+                    "accounts": {
+                        "default": {
+                            "name": "Matrix Default",
+                            "enabled": True,
+                            "accessToken": "mat",
+                        }
+                    },
+                }
+            }
+        },
+        "scopedExportType": "function",
     }
 
 
@@ -11853,6 +12809,102 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_xai_model_id_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-xai-model-id.cjs"
+    runtime_entry.write_text(
+        """
+const xai = require("openclaw/plugin-sdk/xai-model-id");
+const scopedXai = require("@openclaw/plugin-sdk/xai-model-id");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.xai_model_id",
+      description: "Use OpenClaw xai-model-id SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(xai).sort(),
+          fastReasoning: xai.normalizeXaiModelId("grok-4-fast-reasoning"),
+          fast41Reasoning: scopedXai.normalizeXaiModelId("grok-4-1-fast-reasoning"),
+          betaReasoning: xai.normalizeXaiModelId("grok-4.20-experimental-beta-0304-reasoning"),
+          betaNonReasoning: scopedXai.normalizeXaiModelId(
+            "grok-4.20-experimental-beta-0304-non-reasoning"
+          ),
+          unchanged: xai.normalizeXaiModelId("grok-4.3"),
+          genericAlias: genericSdk.normalizeXaiModelId("grok-4.20-reasoning"),
+          genericNative: genericSdk.normalizeNativeXaiModelId("grok-4.20-non-reasoning")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-xai-model-id-plugin",
+                    "name": "Runtime XAI Model ID Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-xai-model-id.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.xai_model_id"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.xai_model_id"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["normalizeXaiModelId"],
+        "fastReasoning": "grok-4-fast",
+        "fast41Reasoning": "grok-4-1-fast",
+        "betaReasoning": "grok-4.20-beta-latest-reasoning",
+        "betaNonReasoning": "grok-4.20-beta-latest-non-reasoning",
+        "unchanged": "grok-4.3",
+        "genericAlias": "grok-4.20-beta-latest-reasoning",
+        "genericNative": "grok-4.20-beta-latest-non-reasoning",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_entry_enable_auth_helpers(
     tmp_path,
 ) -> None:
@@ -12930,6 +13982,1145 @@ module.exports = {
                 "method": "GET",
                 "authorization": "Bearer github-token",
                 "apiVersion": "2025-04-01",
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_github_copilot_token_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-github-copilot-token.cjs"
+    runtime_entry.write_text(
+        """
+const copilot = require("openclaw/plugin-sdk/github-copilot-token");
+const scopedCopilot = require("@openclaw/plugin-sdk/github-copilot-token");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.github_copilot_token",
+      description: "Use OpenClaw github-copilot-token SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const saved = [];
+        const fetchedCall = {};
+        const cached = await copilot.resolveCopilotApiToken({
+          githubToken: "unused",
+          cachePath: "cache.json",
+          loadJsonFileImpl: () => ({
+            token: "cached-token;proxy-ep=proxy.cached.example.com;",
+            expiresAt: Date.now() + 10 * 60 * 1000,
+            updatedAt: 1
+          }),
+          saveJsonFileImpl: () => {
+            throw new Error("cache hit should not write");
+          },
+          fetchImpl: async () => {
+            throw new Error("cache hit should not fetch");
+          }
+        });
+        const fetched = await scopedCopilot.resolveCopilotApiToken({
+          githubToken: "github-token",
+          cachePath: "fetch.json",
+          loadJsonFileImpl: () => undefined,
+          saveJsonFileImpl: (path, value) => saved.push({ path, value }),
+          fetchImpl: async (url, options) => {
+            fetchedCall.url = url;
+            fetchedCall.options = options;
+            return {
+              ok: true,
+              json: async () => ({
+                token: "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+                expires_at: 12345678901
+              })
+            };
+          }
+        });
+        return {
+          exportKeys: Object.keys(copilot).sort(),
+          defaultBase: copilot.DEFAULT_COPILOT_API_BASE_URL,
+          bases: [
+            copilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=https://proxy.individual.githubcopilot.com;"
+            ),
+            scopedCopilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=proxy.example.com:8443;"
+            ),
+            copilot.deriveCopilotApiBaseUrlFromToken(
+              "copilot-token;proxy-ep=javascript:alert(1);"
+            )
+          ],
+          cached: {
+            token: cached.token,
+            source: cached.source,
+            baseUrl: cached.baseUrl
+          },
+          fetched: {
+            token: fetched.token,
+            expiresAt: fetched.expiresAt,
+            source: fetched.source,
+            baseUrl: fetched.baseUrl,
+            saved: saved.map((entry) => ({
+              path: entry.path,
+              value: {
+                token: entry.value.token,
+                expiresAt: entry.value.expiresAt,
+                updatedAtType: typeof entry.value.updatedAt
+              }
+            })),
+            call: {
+              url: fetchedCall.url,
+              method: fetchedCall.options && fetchedCall.options.method,
+              authorization:
+                fetchedCall.options &&
+                fetchedCall.options.headers &&
+                fetchedCall.options.headers.Authorization,
+              apiVersion:
+                fetchedCall.options &&
+                fetchedCall.options.headers &&
+                fetchedCall.options.headers["X-Github-Api-Version"]
+            }
+          },
+          scopedExportType: typeof scopedCopilot.resolveCopilotApiToken
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-github-copilot-token-plugin",
+                    "name": "Runtime GitHub Copilot Token Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-github-copilot-token.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.github_copilot_token"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.github_copilot_token"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "DEFAULT_COPILOT_API_BASE_URL",
+            "deriveCopilotApiBaseUrlFromToken",
+            "resolveCopilotApiToken",
+        ],
+        "defaultBase": "https://api.individual.githubcopilot.com",
+        "bases": [
+            "https://api.individual.githubcopilot.com",
+            "https://api.example.com",
+            None,
+        ],
+        "cached": {
+            "token": "cached-token;proxy-ep=proxy.cached.example.com;",
+            "source": "cache:cache.json",
+            "baseUrl": "https://api.cached.example.com",
+        },
+        "fetched": {
+            "token": "fresh-token;proxy-ep=https://proxy.individual.githubcopilot.com;",
+            "expiresAt": 12345678901000,
+            "source": "fetched:https://api.github.com/copilot_internal/v2/token",
+            "baseUrl": "https://api.individual.githubcopilot.com",
+            "saved": [
+                {
+                    "path": "fetch.json",
+                    "value": {
+                        "token": (
+                            "fresh-token;proxy-ep="
+                            "https://proxy.individual.githubcopilot.com;"
+                        ),
+                        "expiresAt": 12345678901000,
+                        "updatedAtType": "number",
+                    },
+                }
+            ],
+            "call": {
+                "url": "https://api.github.com/copilot_internal/v2/token",
+                "method": "GET",
+                "authorization": "Bearer github-token",
+                "apiVersion": "2025-04-01",
+            },
+        },
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_plugin_common_and_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-plugin-common.cjs"
+    runtime_entry.write_text(
+        """
+const common = require("openclaw/plugin-sdk/channel-plugin-common");
+const scopedCommon = require("@openclaw/plugin-sdk/channel-plugin-common");
+const core = require("openclaw/plugin-sdk/core");
+
+function parseSummary(result) {
+  if (!result) {
+    return null;
+  }
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+  return {
+    success: false,
+    issues: result.error ? result.error.issues : result.issues
+  };
+}
+
+function pickMeta(meta) {
+  return {
+    id: meta && meta.id,
+    label: meta && meta.label,
+    selectionLabel: meta && meta.selectionLabel,
+    docsPath: meta && meta.docsPath,
+    docsLabel: meta && meta.docsLabel,
+    detailLabel: meta && meta.detailLabel,
+    systemImage: meta && meta.systemImage
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_plugin_common",
+      description: "Use OpenClaw channel-plugin-common and core SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const empty = common.emptyPluginConfigSchema();
+        const channelEmpty = core.emptyChannelConfigSchema();
+        const namedConfig = common.applyAccountNameToChannelSection({
+          cfg: { channels: { telegram: { accounts: {} } } },
+          channelKey: "telegram",
+          accountId: " Work Account! ",
+          name: " Work Bot "
+        });
+        const migratedConfig = common.migrateBaseNameToDefaultAccount({
+          cfg: {
+            channels: {
+              telegram: {
+                name: "Root Bot",
+                accounts: { work: { name: "Work Bot" } }
+              }
+            }
+          },
+          channelKey: "telegram"
+        });
+        const enabledConfig = common.setAccountEnabledInConfigSection({
+          cfg: { channels: { telegram: { accounts: { work: { name: "Work" } } } } },
+          sectionKey: "telegram",
+          accountId: "work",
+          enabled: true
+        });
+        const deletedConfig = common.deleteAccountFromConfigSection({
+          cfg: {
+            channels: {
+              telegram: {
+                accounts: {
+                  default: { botToken: "default-token" },
+                  work: { botToken: "work-token" }
+                }
+              }
+            }
+          },
+          sectionKey: "telegram",
+          accountId: "work"
+        });
+        const cleared = common.clearAccountEntryFields({
+          accounts: { work: { botToken: "secret", keep: "yes" } },
+          accountId: "work",
+          fields: ["botToken"]
+        });
+        const base = core.createChannelPluginBase({
+          id: "telegram",
+          meta: { label: "Telegram Override" },
+          capabilities: { send: true },
+          setup: { kind: "setup" }
+        });
+        return {
+          commonExportKeys: Object.keys(common).sort(),
+          scopedMetaType: typeof scopedCommon.getChatChannelMeta,
+          defaults: {
+            accountId: common.DEFAULT_ACCOUNT_ID,
+            normalized: common.normalizeAccountId(" Work Account! "),
+            pairing: common.formatPairingApproveHint("telegram"),
+            approved: common.PAIRING_APPROVED_MESSAGE
+          },
+          meta: pickMeta(common.getChatChannelMeta("telegram")),
+          coreMeta: pickMeta(core.getChatChannelMeta("telegram")),
+          emptySchema: {
+            jsonSchema: empty.jsonSchema,
+            undefinedValue: parseSummary(empty.safeParse(undefined)),
+            emptyObject: parseSummary(empty.safeParse({})),
+            extraObject: parseSummary(empty.safeParse({ extra: true })),
+            arrayValue: parseSummary(empty.safeParse([]))
+          },
+          emptyChannelSchema: {
+            schema: channelEmpty.schema,
+            emptyObject: parseSummary(channelEmpty.runtime.safeParse({})),
+            extraObject: parseSummary(channelEmpty.runtime.safeParse({ extra: true }))
+          },
+          setupHelpers: {
+            namedAccount: namedConfig.channels.telegram.accounts["work-account"],
+            migrated: migratedConfig.channels.telegram,
+            enabled: enabledConfig.channels.telegram.accounts.work,
+            deletedAccounts: deletedConfig.channels.telegram.accounts,
+            cleared
+          },
+          basePlugin: {
+            id: base.id,
+            meta: pickMeta(base.meta),
+            capabilities: base.capabilities,
+            setup: base.setup
+          },
+          coreTypes: {
+            buildChannelConfigSchema: typeof core.buildChannelConfigSchema,
+            createChannelPluginBase: typeof core.createChannelPluginBase
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-plugin-common-plugin",
+                    "name": "Runtime Channel Plugin Common Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-plugin-common.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_plugin_common"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_plugin_common"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "commonExportKeys": [
+            "DEFAULT_ACCOUNT_ID",
+            "PAIRING_APPROVED_MESSAGE",
+            "applyAccountNameToChannelSection",
+            "buildChannelConfigSchema",
+            "clearAccountEntryFields",
+            "deleteAccountFromConfigSection",
+            "emptyPluginConfigSchema",
+            "formatPairingApproveHint",
+            "getChatChannelMeta",
+            "migrateBaseNameToDefaultAccount",
+            "normalizeAccountId",
+            "setAccountEnabledInConfigSection",
+        ],
+        "scopedMetaType": "function",
+        "defaults": {
+            "accountId": "default",
+            "normalized": "work-account",
+            "pairing": (
+                "Approve via: openclaw pairing list telegram / "
+                "openclaw pairing approve telegram <code>"
+            ),
+            "approved": "\u2705 OpenClaw access approved. Send a message to start chatting.",
+        },
+        "meta": {
+            "id": "telegram",
+            "label": "Telegram",
+            "selectionLabel": "Telegram (Bot API)",
+            "docsPath": "/channels/telegram",
+            "docsLabel": "telegram",
+            "detailLabel": "Telegram Bot",
+            "systemImage": "paperplane",
+        },
+        "coreMeta": {
+            "id": "telegram",
+            "label": "Telegram",
+            "selectionLabel": "Telegram (Bot API)",
+            "docsPath": "/channels/telegram",
+            "docsLabel": "telegram",
+            "detailLabel": "Telegram Bot",
+            "systemImage": "paperplane",
+        },
+        "emptySchema": {
+            "jsonSchema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            "undefinedValue": {"success": True},
+            "emptyObject": {"success": True, "data": {}},
+            "extraObject": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+            "arrayValue": {
+                "success": False,
+                "issues": [{"path": [], "message": "expected config object"}],
+            },
+        },
+        "emptyChannelSchema": {
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            "emptyObject": {"success": True, "data": {}},
+            "extraObject": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+        },
+        "setupHelpers": {
+            "namedAccount": {"name": "Work Bot"},
+            "migrated": {
+                "accounts": {
+                    "work": {"name": "Work Bot"},
+                    "default": {"name": "Root Bot"},
+                }
+            },
+            "enabled": {"name": "Work", "enabled": True},
+            "deletedAccounts": {"default": {"botToken": "default-token"}},
+            "cleared": {
+                "nextAccounts": {"work": {"keep": "yes"}},
+                "changed": True,
+                "cleared": True,
+            },
+        },
+        "basePlugin": {
+            "id": "telegram",
+            "meta": {
+                "id": "telegram",
+                "label": "Telegram Override",
+                "selectionLabel": "Telegram (Bot API)",
+                "docsPath": "/channels/telegram",
+                "docsLabel": "telegram",
+                "detailLabel": "Telegram Bot",
+                "systemImage": "paperplane",
+            },
+            "capabilities": {"send": True},
+            "setup": {"kind": "setup"},
+        },
+        "coreTypes": {
+            "buildChannelConfigSchema": "function",
+            "createChannelPluginBase": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_entry_contract_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-entry-contract.cjs"
+    runtime_entry.write_text(
+        """
+const contract = require("openclaw/plugin-sdk/channel-entry-contract");
+const scopedContract = require("@openclaw/plugin-sdk/channel-entry-contract");
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+function createApi(registrationMode) {
+  return {
+    registrationMode,
+    runtime: { registrationMode },
+    channels: [],
+    tools: [],
+    registerChannel(value) {
+      this.channels.push(value);
+    },
+    registerTool(tool) {
+      this.tools.push(tool.name);
+    }
+  };
+}
+
+function parseChannelConfig(entry, value) {
+  const parsed = entry.configSchema.runtime.safeParse(value);
+  return parsed.success
+    ? { success: true, data: parsed.data }
+    : { success: false, issues: parsed.issues };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_entry_contract",
+      description: "Use OpenClaw channel-entry-contract SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const sidecarPath = path.join(__dirname, "channel-sidecar.cjs");
+        const runtimeMarkerPath = path.join(__dirname, "runtime-marker.txt");
+        fs.writeFileSync(
+          sidecarPath,
+          `
+module.exports = {
+  channelPlugin: {
+    id: "telegram",
+    meta: { id: "telegram", label: "Telegram" },
+    config: { listAccountIds: () => [], resolveAccount: () => null }
+  },
+  channelSecrets: { TELEGRAM_TOKEN: { env: "TELEGRAM_TOKEN" } },
+  inspectAccount: () => ({ ok: true }),
+  setRuntime: (runtime) => {
+    require("node:fs").writeFileSync(
+      ${JSON.stringify(runtimeMarkerPath)},
+      runtime.registrationMode,
+      "utf8"
+    );
+  },
+  namedValue: 42
+};
+`,
+          "utf8"
+        );
+        const defaultSidecarPath = path.join(__dirname, "default-sidecar.cjs");
+        fs.writeFileSync(
+          defaultSidecarPath,
+          'module.exports = { default: { defaultExport: true } };\\n',
+          "utf8"
+        );
+        const importMetaUrl = pathToFileURL(__filename).href;
+        const loadedNamed = contract.loadBundledEntryExportSync(importMetaUrl, {
+          specifier: "./channel-sidecar.cjs",
+          exportName: "namedValue"
+        });
+        const loadedDefault = contract.loadBundledEntryExportSync(importMetaUrl, {
+          specifier: "./default-sidecar.cjs"
+        });
+        let missingExportError;
+        try {
+          contract.loadBundledEntryExportSync(importMetaUrl, {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "missingValue"
+          });
+        } catch (error) {
+          missingExportError = error.message;
+        }
+        const entry = contract.defineBundledChannelEntry({
+          id: "telegram",
+          name: "Telegram",
+          description: "Telegram channel entry",
+          importMetaUrl,
+          plugin: { specifier: "./channel-sidecar.cjs", exportName: "channelPlugin" },
+          secrets: { specifier: "./channel-sidecar.cjs", exportName: "channelSecrets" },
+          runtime: { specifier: "./channel-sidecar.cjs", exportName: "setRuntime" },
+          accountInspect: { specifier: "./channel-sidecar.cjs", exportName: "inspectAccount" },
+          registerCliMetadata(api) {
+            api.registerTool({ name: "cli_tool" });
+          },
+          registerFull(api) {
+            api.registerTool({ name: "full_tool" });
+          }
+        });
+        const toolDiscoveryApi = createApi("tool-discovery");
+        entry.register(toolDiscoveryApi);
+        const discoveryApi = createApi("discovery");
+        entry.register(discoveryApi);
+        const setupRuntimeApi = createApi("setup-runtime");
+        entry.register(setupRuntimeApi);
+        const fullApi = createApi("full");
+        entry.register(fullApi);
+        const setupEntry = scopedContract.defineBundledChannelSetupEntry({
+          importMetaUrl,
+          plugin: { specifier: "./channel-sidecar.cjs", exportName: "channelPlugin" },
+          secrets: { specifier: "./channel-sidecar.cjs", exportName: "channelSecrets" },
+          runtime: { specifier: "./channel-sidecar.cjs", exportName: "setRuntime" },
+          legacyStateMigrations: {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "inspectAccount"
+          },
+          legacySessionSurface: {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "inspectAccount"
+          },
+          features: { legacyStateMigrations: true, legacySessionSurfaces: true }
+        });
+        setupEntry.setChannelRuntime({ registrationMode: "setup-entry" });
+        return {
+          exportKeys: Object.keys(contract).sort(),
+          scopedDefineType: typeof scopedContract.defineBundledChannelEntry,
+          loadedNamed,
+          loadedDefault,
+          missingExportError,
+          entry: {
+            kind: entry.kind,
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            features: entry.features,
+            configEmpty: parseChannelConfig(entry, {}),
+            configExtra: parseChannelConfig(entry, { extra: true }),
+            pluginId: entry.loadChannelPlugin().id,
+            secrets: entry.loadChannelSecrets(),
+            inspectorType: typeof entry.loadChannelAccountInspector(),
+            runtimeMarker: fs.readFileSync(runtimeMarkerPath, "utf8")
+          },
+          registrations: {
+            toolDiscovery: {
+              channels: toolDiscoveryApi.channels.length,
+              tools: toolDiscoveryApi.tools
+            },
+            discovery: {
+              channels: discoveryApi.channels.length,
+              tools: discoveryApi.tools
+            },
+            setupRuntime: {
+              channels: setupRuntimeApi.channels.length,
+              tools: setupRuntimeApi.tools
+            },
+            full: {
+              channels: fullApi.channels.length,
+              tools: fullApi.tools
+            }
+          },
+          setupEntry: {
+            kind: setupEntry.kind,
+            features: setupEntry.features,
+            pluginId: setupEntry.loadSetupPlugin().id,
+            secrets: setupEntry.loadSetupSecrets(),
+            legacyStateType: typeof setupEntry.loadLegacyStateMigrationDetector(),
+            legacySessionType: typeof setupEntry.loadLegacySessionSurface(),
+            runtimeMarker: fs.readFileSync(runtimeMarkerPath, "utf8")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-entry-contract-plugin",
+                    "name": "Runtime Channel Entry Contract Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-entry-contract.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_entry_contract"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_entry_contract"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "defineBundledChannelEntry",
+            "defineBundledChannelSetupEntry",
+            "loadBundledEntryExportSync",
+        ],
+        "scopedDefineType": "function",
+        "loadedNamed": 42,
+        "loadedDefault": {"defaultExport": True},
+        "missingExportError": (
+            'missing export "missingValue" from bundled entry module '
+            "./channel-sidecar.cjs"
+        ),
+        "entry": {
+            "kind": "bundled-channel-entry",
+            "id": "telegram",
+            "name": "Telegram",
+            "description": "Telegram channel entry",
+            "features": {"accountInspect": True},
+            "configEmpty": {"success": True, "data": {}},
+            "configExtra": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+            "pluginId": "telegram",
+            "secrets": {"TELEGRAM_TOKEN": {"env": "TELEGRAM_TOKEN"}},
+            "inspectorType": "function",
+            "runtimeMarker": "setup-entry",
+        },
+        "registrations": {
+            "toolDiscovery": {"channels": 0, "tools": ["full_tool"]},
+            "discovery": {"channels": 1, "tools": ["cli_tool"]},
+            "setupRuntime": {"channels": 1, "tools": []},
+            "full": {"channels": 1, "tools": ["cli_tool", "full_tool"]},
+        },
+        "setupEntry": {
+            "kind": "bundled-channel-setup-entry",
+            "features": {
+                "legacyStateMigrations": True,
+                "legacySessionSurfaces": True,
+            },
+            "pluginId": "telegram",
+            "secrets": {"TELEGRAM_TOKEN": {"env": "TELEGRAM_TOKEN"}},
+            "legacyStateType": "function",
+            "legacySessionType": "function",
+            "runtimeMarker": "setup-entry",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_primitives_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-primitives.cjs"
+    runtime_entry.write_text(
+        """
+const primitives = require("openclaw/plugin-sdk/channel-config-primitives");
+const scopedPrimitives = require("@openclaw/plugin-sdk/channel-config-primitives");
+const channelSchema = require("openclaw/plugin-sdk/channel-config-schema");
+const bundled = require("openclaw/plugin-sdk/bundled-channel-config-schema");
+const legacy = require("openclaw/plugin-sdk/channel-config-schema-legacy");
+
+function summarize(result) {
+  return {
+    success: result.success,
+    data: result.success ? result.data : undefined,
+    message: result.error && result.error.issues && result.error.issues[0]
+      ? result.error.issues[0].message
+      : result.issues && result.issues[0]
+        ? result.issues[0].message
+        : null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_primitives",
+      description: "Use OpenClaw channel config primitive SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const ctxIssues = [];
+        primitives.requireOpenAllowFrom({
+          policy: "open",
+          allowFrom: ["admin"],
+          ctx: { addIssue(issue) { ctxIssues.push(issue); } },
+          path: ["dm", "allowFrom"],
+          message: "open policy requires wildcard"
+        });
+        const wildcardIssues = [];
+        primitives.requireOpenAllowFrom({
+          policy: "open",
+          allowFrom: ["*"],
+          ctx: { addIssue(issue) { wildcardIssues.push(issue); } },
+          path: ["dm", "allowFrom"],
+          message: "open policy requires wildcard"
+        });
+        const nestedDm = primitives.buildNestedDmConfigSchema();
+        const catchall = primitives.buildCatchallMultiAccountChannelSchema({
+          extend(shape) {
+            return {
+              kind: "extended-account-schema",
+              keys: Object.keys(shape).sort(),
+              accountType: typeof shape.accounts,
+              defaultType: typeof shape.defaultAccount
+            };
+          }
+        });
+        const fakeSchema = {
+          safeParse(value) {
+            if (value && value.ok === true) {
+              return { success: true, data: { ok: true } };
+            }
+            return {
+              success: false,
+              error: { issues: [{ path: ["ok"], message: "missing ok" }] }
+            };
+          },
+          toJSONSchema(options) {
+            return {
+              type: "object",
+              properties: { ok: { type: "boolean" } },
+              required: ["ok"],
+              target: options && options.target
+            };
+          }
+        };
+        const built = primitives.buildChannelConfigSchema(fakeSchema, {
+          uiHints: { ok: { control: "switch" } }
+        });
+        return {
+          primitiveKeys: Object.keys(primitives).sort(),
+          schemaKeys: Object.keys(channelSchema).sort(),
+          bundledKeys: Object.keys(bundled).sort(),
+          legacyKeys: Object.keys(legacy).sort(),
+          scopedBuildType: typeof scopedPrimitives.buildChannelConfigSchema,
+          policies: {
+            dmPairing: summarize(primitives.DmPolicySchema.safeParse("pairing")),
+            dmInvalid: summarize(primitives.DmPolicySchema.safeParse("restricted")),
+            groupAllowlist: summarize(primitives.GroupPolicySchema.safeParse("allowlist")),
+            groupInvalid: summarize(primitives.GroupPolicySchema.safeParse("restrict-senders")),
+            contextQuote: summarize(
+              channelSchema.ContextVisibilityModeSchema.safeParse("allowlist_quote")
+            )
+          },
+          markdown: {
+            undefinedValue: summarize(primitives.MarkdownConfigSchema.safeParse(undefined)),
+            tableCode: summarize(primitives.MarkdownConfigSchema.safeParse({ tables: "code" })),
+            tableInvalid: summarize(primitives.MarkdownConfigSchema.safeParse({ tables: "grid" }))
+          },
+          blockStreaming: {
+            valid: summarize(
+              primitives.BlockStreamingCoalesceSchema.safeParse({
+                minChars: 3,
+                maxChars: 10,
+                idleMs: 0
+              })
+            ),
+            invalid: summarize(
+              primitives.BlockStreamingCoalesceSchema.safeParse({ minChars: 0 })
+            )
+          },
+          dmConfig: {
+            valid: summarize(primitives.DmConfigSchema.safeParse({ historyLimit: 0 })),
+            invalid: summarize(primitives.DmConfigSchema.safeParse({ historyLimit: -1 }))
+          },
+          nestedDm: {
+            undefinedValue: summarize(nestedDm.safeParse(undefined)),
+            valid: summarize(
+              nestedDm.safeParse({ enabled: true, policy: "allowlist", allowFrom: ["admin", 42] })
+            ),
+            invalidPolicy: summarize(nestedDm.safeParse({ policy: "restricted" }))
+          },
+          allowFrom: {
+            schemaValid: summarize(primitives.AllowFromListSchema.safeParse(["admin", 42])),
+            schemaInvalid: summarize(primitives.AllowFromListSchema.safeParse([{}])),
+            issue: ctxIssues[0],
+            wildcardIssueCount: wildcardIssues.length
+          },
+          catchall,
+          builtConfig: {
+            schema: built.schema,
+            uiHints: built.uiHints,
+            valid: summarize(built.runtime.safeParse({ ok: true })),
+            invalid: summarize(built.runtime.safeParse({}))
+          },
+          providerSchemaTypes: {
+            telegram: typeof bundled.TelegramConfigSchema.safeParse,
+            whatsapp: typeof bundled.WhatsAppConfigSchema.safeParse,
+            legacyTelegram: typeof legacy.TelegramConfigSchema.safeParse
+          },
+          toolPolicy: {
+            valid: summarize(channelSchema.ToolPolicySchema.safeParse({ allow: ["chat.send"] })),
+            conflict: summarize(
+              channelSchema.ToolPolicySchema.safeParse({
+                allow: ["chat.send"],
+                alsoAllow: ["tools.exec"]
+              })
+            )
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-primitives-plugin",
+                    "name": "Runtime Channel Config Primitives Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-primitives.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_primitives"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_primitives"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "primitiveKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GroupPolicySchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "schemaKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GroupPolicySchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "ToolPolicySchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "bundledKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DiscordConfigSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GoogleChatConfigSchema",
+            "GroupPolicySchema",
+            "IMessageConfigSchema",
+            "MSTeamsConfigSchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "SignalConfigSchema",
+            "SlackConfigSchema",
+            "TelegramConfigSchema",
+            "ToolPolicySchema",
+            "WhatsAppConfigSchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "legacyKeys": [
+            "AllowFromListSchema",
+            "BlockStreamingCoalesceSchema",
+            "ContextVisibilityModeSchema",
+            "DiscordConfigSchema",
+            "DmConfigSchema",
+            "DmPolicySchema",
+            "GoogleChatConfigSchema",
+            "GroupPolicySchema",
+            "IMessageConfigSchema",
+            "MSTeamsConfigSchema",
+            "MarkdownConfigSchema",
+            "ReplyRuntimeConfigSchemaShape",
+            "SignalConfigSchema",
+            "SlackConfigSchema",
+            "TelegramConfigSchema",
+            "ToolPolicySchema",
+            "WhatsAppConfigSchema",
+            "buildCatchallMultiAccountChannelSchema",
+            "buildChannelConfigSchema",
+            "buildNestedDmConfigSchema",
+            "requireOpenAllowFrom",
+        ],
+        "scopedBuildType": "function",
+        "policies": {
+            "dmPairing": {"success": True, "data": "pairing", "message": None},
+            "dmInvalid": {"success": False, "message": "Invalid enum value"},
+            "groupAllowlist": {"success": True, "data": "allowlist", "message": None},
+            "groupInvalid": {"success": False, "message": "Invalid enum value"},
+            "contextQuote": {"success": True, "data": "allowlist_quote", "message": None},
+        },
+        "markdown": {
+            "undefinedValue": {"success": True, "message": None},
+            "tableCode": {"success": True, "data": {"tables": "code"}, "message": None},
+            "tableInvalid": {"success": False, "message": "Invalid enum value"},
+        },
+        "blockStreaming": {
+            "valid": {
+                "success": True,
+                "data": {"minChars": 3, "maxChars": 10, "idleMs": 0},
+                "message": None,
+            },
+            "invalid": {"success": False, "message": "Number must be greater than 0"},
+        },
+        "dmConfig": {
+            "valid": {"success": True, "data": {"historyLimit": 0}, "message": None},
+            "invalid": {
+                "success": False,
+                "message": "Number must be greater than or equal to 0",
+            },
+        },
+        "nestedDm": {
+            "undefinedValue": {"success": True, "message": None},
+            "valid": {
+                "success": True,
+                "data": {"enabled": True, "policy": "allowlist", "allowFrom": ["admin", 42]},
+                "message": None,
+            },
+            "invalidPolicy": {"success": False, "message": "Invalid enum value"},
+        },
+        "allowFrom": {
+            "schemaValid": {"success": True, "data": ["admin", 42], "message": None},
+            "schemaInvalid": {"success": False, "message": "Expected string or number"},
+            "issue": {
+                "code": "custom",
+                "path": ["dm", "allowFrom"],
+                "message": "open policy requires wildcard",
+            },
+            "wildcardIssueCount": 0,
+        },
+        "catchall": {
+            "kind": "extended-account-schema",
+            "keys": ["accounts", "defaultAccount"],
+            "accountType": "object",
+            "defaultType": "object",
+        },
+        "builtConfig": {
+            "schema": {
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "target": "draft-07",
+            },
+            "uiHints": {"ok": {"control": "switch"}},
+            "valid": {"success": True, "data": {"ok": True}, "message": None},
+            "invalid": {"success": False, "message": "missing ok"},
+        },
+        "providerSchemaTypes": {
+            "telegram": "function",
+            "whatsapp": "function",
+            "legacyTelegram": "function",
+        },
+        "toolPolicy": {
+            "valid": {"success": True, "data": {"allow": ["chat.send"]}, "message": None},
+            "conflict": {
+                "success": False,
+                "message": (
+                    "tools policy cannot set both allow and alsoAllow in the same scope "
+                    "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)"
+                ),
             },
         },
     }
@@ -14691,6 +16882,780 @@ module.exports = {
                 "replyToId": "root",
             },
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_conversation_binding_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-conversation-binding-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const bindingRuntime = require("openclaw/plugin-sdk/conversation-binding-runtime");
+const threadBindings = require("openclaw/plugin-sdk/thread-bindings-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createRoute() {
+  return {
+    agentId: "main",
+    channel: "demo",
+    accountId: "default",
+    sessionKey: "agent:main:main",
+    mainSessionKey: "agent:main:main",
+    lastRoutePolicy: "main",
+    matchedBy: "default"
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.conversation_binding_runtime",
+      description: "Use OpenClaw conversation binding runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const records = new Map();
+        const touches = [];
+        const keyFor = (ref) => `${ref.channel}:${ref.accountId}:${ref.conversationId}`;
+        threadBindings.registerSessionBindingAdapter({
+          channel: "demo",
+          accountId: "default",
+          capabilities: {
+            placements: ["current"],
+            bindSupported: true,
+            unbindSupported: true
+          },
+          bind: async (input) => {
+            const record = {
+              bindingId: "binding-" + input.conversation.conversationId,
+              targetSessionKey: input.targetSessionKey,
+              targetKind: input.targetKind,
+              conversation: input.conversation,
+              status: "active",
+              boundAt: 1,
+              metadata: input.metadata
+            };
+            records.set(keyFor(input.conversation), record);
+            return record;
+          },
+          listBySession: (targetSessionKey) =>
+            Array.from(records.values()).filter(
+              (record) => record.targetSessionKey === targetSessionKey
+            ),
+          resolveByConversation: (ref) => records.get(keyFor(ref)) || null,
+          touch: (bindingId, at) => touches.push([bindingId, at == null ? null : at]),
+          unbind: async (input) => {
+            const removed = [];
+            for (const [key, record] of Array.from(records.entries())) {
+              if (
+                (input.bindingId && record.bindingId === input.bindingId) ||
+                (input.targetSessionKey && record.targetSessionKey === input.targetSessionKey)
+              ) {
+                records.delete(key);
+                removed.push(record);
+              }
+            }
+            return removed;
+          }
+        });
+
+        const service = bindingRuntime.getSessionBindingService();
+        const bound = await service.bind({
+          targetSessionKey: "agent:review:acp:session-1",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          },
+          placement: "current",
+          metadata: { source: "runtime-test" }
+        });
+        await service.bind({
+          targetSessionKey: "plugin-binding:demo-plugin:abc",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-plugin"
+          },
+          placement: "current",
+          metadata: {
+            pluginBindingOwner: "plugin",
+            pluginId: "demo-plugin",
+            pluginRoot: "/tmp/demo-plugin"
+          }
+        });
+
+        const runtimeRoute = bindingRuntime.resolveRuntimeConversationBindingRoute({
+          route: createRoute(),
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }
+        });
+        const pluginRoute = bindingRuntime.resolveRuntimeConversationBindingRoute({
+          route: createRoute(),
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-plugin"
+          }
+        });
+        const configuredRoute = bindingRuntime.resolveConfiguredBindingRoute({
+          cfg: {
+            bindings: [
+              {
+                agentId: "qa",
+                sessionKey: "agent:qa:configured",
+                match: {
+                  channel: "demo",
+                  accountId: "default",
+                  conversationId: "room-2"
+                }
+              }
+            ]
+          },
+          route: createRoute(),
+          channel: "demo",
+          accountId: "default",
+          conversationId: "room-2"
+        });
+        const listBeforeUnbind = service.listBySession("agent:review:acp:session-1").length;
+        const removed = await service.unbind({
+          bindingId: bound.bindingId,
+          reason: "test"
+        });
+        const ready = await bindingRuntime.ensureConfiguredBindingRouteReady({
+          cfg: {},
+          bindingResolution: null
+        });
+
+        return {
+          exportTypes: [
+            typeof bindingRuntime.getSessionBindingService,
+            typeof bindingRuntime.resolveRuntimeConversationBindingRoute,
+            typeof bindingRuntime.resolveConfiguredBindingRoute,
+            typeof bindingRuntime.ensureConfiguredBindingRouteReady,
+            typeof bindingRuntime.isPluginOwnedSessionBindingRecord,
+            typeof genericSdk.buildPairingReply
+          ],
+          capabilities: service.getCapabilities({ channel: "demo", accountId: "default" }),
+          runtimeRoute: {
+            boundSessionKey: runtimeRoute.boundSessionKey,
+            boundAgentId: runtimeRoute.boundAgentId,
+            route: {
+              agentId: runtimeRoute.route.agentId,
+              sessionKey: runtimeRoute.route.sessionKey,
+              lastRoutePolicy: runtimeRoute.route.lastRoutePolicy,
+              matchedBy: runtimeRoute.route.matchedBy
+            }
+          },
+          pluginRoute: {
+            isPluginOwned: bindingRuntime.isPluginOwnedSessionBindingRecord(
+              pluginRoute.bindingRecord
+            ),
+            rewritten: pluginRoute.route.sessionKey !== "agent:main:main"
+          },
+          configuredRoute: {
+            boundSessionKey: configuredRoute.boundSessionKey,
+            boundAgentId: configuredRoute.boundAgentId,
+            matchedBy: configuredRoute.route.matchedBy
+          },
+          pairing: bindingRuntime.buildPairingReply({
+            channel: "demo",
+            idLine: "Demo ID: room-1",
+            code: "ABC123"
+          }).includes("openclaw pairing approve demo ABC123"),
+          listBeforeUnbind,
+          removed: removed.map((record) => record.bindingId),
+          ready,
+          touches
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "conversation-binding-runtime-plugin",
+                    "name": "Conversation Binding Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-conversation-binding-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.conversation_binding_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.conversation_binding_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "function", "function"],
+        "capabilities": {
+            "adapterAvailable": True,
+            "bindSupported": True,
+            "unbindSupported": True,
+            "placements": ["current"],
+        },
+        "runtimeRoute": {
+            "boundSessionKey": "agent:review:acp:session-1",
+            "boundAgentId": "review",
+            "route": {
+                "agentId": "review",
+                "sessionKey": "agent:review:acp:session-1",
+                "lastRoutePolicy": "session",
+                "matchedBy": "binding.channel",
+            },
+        },
+        "pluginRoute": {"isPluginOwned": True, "rewritten": False},
+        "configuredRoute": {
+            "boundSessionKey": "agent:qa:configured",
+            "boundAgentId": "qa",
+            "matchedBy": "binding.channel",
+        },
+        "pairing": True,
+        "listBeforeUnbind": 1,
+        "removed": ["binding-room-1"],
+        "ready": {"ok": True},
+        "touches": [["binding-room-1", None], ["binding-room-plugin", None]],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_binding_and_key_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-binding-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const sessionBinding = require("openclaw/plugin-sdk/session-binding-runtime");
+const threadSession = require("openclaw/plugin-sdk/thread-bindings-session-runtime");
+const sessionKey = require("openclaw/plugin-sdk/session-key-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_binding_runtime",
+      description: "Use OpenClaw session binding/key runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        sessionBinding.__testing.resetSessionBindingAdaptersForTests();
+        const records = [];
+        sessionBinding.registerSessionBindingAdapter({
+          channel: "demo",
+          accountId: "default",
+          bind: async (input) => {
+            const record = {
+              bindingId: "session-binding-1",
+              targetSessionKey: input.targetSessionKey,
+              targetKind: input.targetKind,
+              conversation: input.conversation,
+              status: "active",
+              boundAt: 10
+            };
+            records.push(record);
+            return record;
+          },
+          listBySession: (targetSessionKey) =>
+            records.filter((record) => record.targetSessionKey === targetSessionKey),
+          resolveByConversation: (ref) =>
+            records.find((record) => record.conversation.conversationId === ref.conversationId) ||
+            null,
+          touch: () => {}
+        });
+        const service = sessionBinding.getSessionBindingService();
+        const bound = await service.bind({
+          targetSessionKey: "agent:review:thread:one",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }
+        });
+        const lifecycle = threadSession.resolveThreadBindingLifecycle({
+          record: {
+            boundAt: 100,
+            lastActivityAt: 250,
+            idleTimeoutMs: 100,
+            maxAgeMs: 500
+          },
+          defaultIdleTimeoutMs: 0,
+          defaultMaxAgeMs: 0
+        });
+        const registeredBefore = sessionBinding.__testing.getRegisteredAdapterKeys();
+        const boundSummary = {
+          bindingId: bound.bindingId,
+          conversation: bound.conversation,
+          listCount: service.listBySession("agent:review:thread:one").length,
+          resolvedId: service.resolveByConversation({
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }).bindingId
+        };
+        sessionBinding.__testing.resetSessionBindingAdaptersForTests();
+
+        return {
+          exportTypes: [
+            typeof sessionBinding.getSessionBindingService,
+            typeof sessionBinding.registerSessionBindingAdapter,
+            typeof sessionBinding.__testing.resetSessionBindingAdaptersForTests,
+            typeof threadSession.resolveThreadBindingFarewellText,
+            typeof threadSession.registerSessionBindingAdapter,
+            typeof sessionKey.resolveAgentIdFromSessionKey,
+            typeof genericSdk.getSessionBindingService
+          ],
+          bound: boundSummary,
+          lifecycle,
+        farewell: threadSession.resolveThreadBindingFarewellText({
+          reason: "idle-expired",
+          idleTimeoutMs: 120000,
+          maxAgeMs: 0
+        }).includes("2m of inactivity"),
+          agentId: sessionKey.resolveAgentIdFromSessionKey("agent:review:thread:one"),
+          registeredBefore,
+          registeredAfter: sessionBinding.__testing.getRegisteredAdapterKeys()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "session-binding-runtime-plugin",
+                    "name": "Session Binding Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-session-binding-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_binding_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.session_binding_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
+        "bound": {
+            "bindingId": "session-binding-1",
+            "conversation": {
+                "channel": "demo",
+                "accountId": "default",
+                "conversationId": "room-1",
+            },
+            "listCount": 1,
+            "resolvedId": "session-binding-1",
+        },
+        "lifecycle": {"expiresAt": 350, "reason": "idle-expired"},
+        "farewell": True,
+        "agentId": "review",
+        "registeredBefore": ["demo:default"],
+        "registeredAfter": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_store_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-store-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const sessionStore = require("openclaw/plugin-sdk/session-store-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_store_runtime",
+      description: "Use OpenClaw session store runtime SDK shims",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        sessionStore.clearSessionStoreCacheForTest();
+        const store = {
+          "agent:ops:main": { sessionId: "old-main", updatedAt: 10 },
+          "Agent:Ops:MAIN": { sessionId: "legacy-main", updatedAt: 25 }
+        };
+        const resolved = sessionStore.resolveSessionStoreEntry({
+          store,
+          sessionKey: "Agent:Ops:MAIN"
+        });
+        const group = sessionStore.resolveGroupSessionKey({
+          Provider: "slack",
+          ChatType: "channel",
+          From: "slack:channel:C123",
+          GroupChannel: "#ops"
+        });
+        const groupSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { Provider: "slack", ChatType: "channel", From: "slack:channel:C123" },
+          "home",
+          "ops"
+        );
+        const directSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { ChatType: "direct", From: "+1 (555) 0100" },
+          "home",
+          "ops"
+        );
+        const explicitSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { SessionKey: " Agent:Review:MAIN " },
+          "home",
+          "ops"
+        );
+        const canonicalMain = sessionStore.canonicalizeMainSessionAlias({
+          cfg: { session: { mainKey: "home" } },
+          agentId: "ops",
+          sessionKey: "main"
+        });
+        const globalMain = sessionStore.canonicalizeMainSessionAlias({
+          cfg: { session: { scope: "global", mainKey: "home" } },
+          agentId: "ops",
+          sessionKey: "agent:main:home"
+        });
+        const storePath = sessionStore.resolveStorePath(
+          args.storeTemplate,
+          { agentId: "ops", env: { OPENCLAW_STATE_DIR: args.stateDir } }
+        );
+        await sessionStore.saveSessionStore(storePath, {
+          "Agent:Ops:MAIN": { sessionId: "legacy-main", updatedAt: 25 }
+        });
+        const loadedBefore = sessionStore.loadSessionStore(storePath);
+        const meta = await sessionStore.recordSessionMetaFromInbound({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN",
+          ctx: {
+            Provider: "slack",
+            ChatType: "channel",
+            From: "slack:channel:C123",
+            To: "bot",
+            Body: "hello",
+            GroupChannel: "#ops"
+          }
+        });
+        const routed = await sessionStore.updateLastRoute({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN",
+          channel: "slack",
+          to: "C123",
+          accountId: "work",
+          threadId: "166"
+        });
+        const updatedAt = sessionStore.readSessionUpdatedAt({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN"
+        });
+        await sessionStore.updateSessionStore(storePath, (mutable) => {
+          mutable["agent:ops:extra"] = {
+            sessionId: "extra",
+            updatedAt: 40,
+            sessionStartedAt: 40
+          };
+          return "mutated";
+        });
+        const loadedAfter = sessionStore.loadSessionStore(storePath);
+        const resetType = sessionStore.resolveSessionResetType({
+          sessionKey: groupSessionKey
+        });
+        const threadFlag = sessionStore.resolveThreadFlag({
+          messageThreadId: "166"
+        });
+        const resetOverride = sessionStore.resolveChannelResetConfig({
+          sessionCfg: {
+            resetByChannel: {
+              slack: { mode: "idle", idleMinutes: 2 }
+            }
+          },
+          channel: "slack"
+        });
+        const resetPolicy = sessionStore.resolveSessionResetPolicy({
+          sessionCfg: { reset: { mode: "idle", idleMinutes: 1 } },
+          resetType: "direct"
+        });
+        const freshness = sessionStore.evaluateSessionFreshness({
+          updatedAt: 1000,
+          sessionStartedAt: 1000,
+          lastInteractionAt: 1000,
+          now: 70000,
+          policy: resetPolicy
+        });
+
+        return {
+          exportTypes: [
+            typeof sessionStore.loadSessionStore,
+            typeof sessionStore.resolveSessionStoreEntry,
+            typeof sessionStore.resolveStorePath,
+            typeof sessionStore.resolveSessionKey,
+            typeof sessionStore.resolveGroupSessionKey,
+            typeof sessionStore.canonicalizeMainSessionAlias,
+            typeof sessionStore.updateSessionStore,
+            typeof sessionStore.evaluateSessionFreshness,
+            typeof genericSdk.resolveSessionStoreEntry
+          ],
+          resolved: {
+            normalizedKey: resolved.normalizedKey,
+            existingSessionId: resolved.existing.sessionId,
+            legacyKeys: resolved.legacyKeys.sort()
+          },
+          group,
+          keys: {
+            groupSessionKey,
+            directSessionKey,
+            explicitSessionKey,
+            canonicalMain,
+            globalMain
+          },
+          storePath,
+          loadedBeforeKeys: Object.keys(loadedBefore).sort(),
+          meta: {
+            sessionId: meta.sessionId,
+            channel: meta.channel,
+            groupId: meta.groupId,
+            groupChannel: meta.groupChannel,
+            lastChannel: meta.lastChannel ?? null
+          },
+          routed: {
+            sessionId: routed.sessionId,
+            lastChannel: routed.lastChannel,
+            lastTo: routed.lastTo,
+            lastAccountId: routed.lastAccountId,
+            lastThreadId: routed.lastThreadId,
+            deliveryContext: routed.deliveryContext
+          },
+          updatedAt,
+          loadedAfterKeys: Object.keys(loadedAfter).sort(),
+          reset: {
+            resetType,
+            threadFlag,
+            resetOverride,
+            resetPolicy,
+            freshness
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "session-store-runtime-plugin",
+                    "name": "Session Store Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-session-store-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_store_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.session_store_runtime",
+            "args": {
+                "stateDir": str(tmp_path / "state"),
+                "storeTemplate": str(
+                    tmp_path
+                    / "state"
+                    / "agents"
+                    / "{agentId}"
+                    / "sessions"
+                    / "sessions.json"
+                ),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
+        "resolved": {
+            "normalizedKey": "agent:ops:main",
+            "existingSessionId": "legacy-main",
+            "legacyKeys": ["Agent:Ops:MAIN"],
+        },
+        "group": {
+            "key": "slack:channel:c123",
+            "channel": "slack",
+            "id": "c123",
+            "chatType": "channel",
+        },
+        "keys": {
+            "groupSessionKey": "agent:ops:slack:channel:c123",
+            "directSessionKey": "agent:ops:home",
+            "explicitSessionKey": "agent:review:main",
+            "canonicalMain": "agent:ops:home",
+            "globalMain": "global",
+        },
+        "storePath": str(
+            tmp_path / "state" / "agents" / "ops" / "sessions" / "sessions.json"
+        ),
+        "loadedBeforeKeys": ["Agent:Ops:MAIN"],
+        "meta": {
+            "sessionId": "legacy-main",
+            "channel": "slack",
+            "groupId": "c123",
+            "groupChannel": "#ops",
+            "lastChannel": None,
+        },
+        "routed": {
+            "sessionId": "legacy-main",
+            "lastChannel": "slack",
+            "lastTo": "C123",
+            "lastAccountId": "work",
+            "lastThreadId": "166",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+                "accountId": "work",
+                "threadId": "166",
+            },
+        },
+        "updatedAt": 25,
+        "loadedAfterKeys": ["agent:ops:extra", "agent:ops:main"],
+        "reset": {
+            "resetType": "group",
+            "threadFlag": True,
+            "resetOverride": {"mode": "idle", "idleMinutes": 2},
+            "resetPolicy": {
+                "mode": "idle",
+                "atHour": 4,
+                "idleMinutes": 1,
+                "configured": True,
+            },
+            "freshness": {"fresh": False, "idleExpiresAt": 61000},
+        },
     }
 
 
@@ -16536,6 +19501,2169 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const helpers = require("openclaw/plugin-sdk/channel-config-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/channel-config-helpers");
+const sdk = require("openclaw/plugin-sdk");
+
+function resolveTelegramAccount(cfg, accountId) {
+  const section = cfg.channels.telegram;
+  const normalized = String(accountId || "default")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "default";
+  return (section.accounts && section.accounts[normalized]) || section.accounts.default || section;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_helpers",
+      description: "Use OpenClaw channel config helper SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              configWrites: true,
+              token: "root-token",
+              allowFrom: [" root "],
+              defaultTo: 99,
+              accounts: {
+                default: {
+                  enabled: true,
+                  allowFrom: [" default "],
+                  defaultTo: "default-chat",
+                  configWrites: true
+                },
+                work: {
+                  enabled: true,
+                  allowFrom: [" owner ", 42],
+                  defaultTo: " channel ",
+                  configWrites: false
+                }
+              }
+            },
+            slack: {
+              configWrites: false,
+              accounts: {
+                default: { configWrites: true }
+              }
+            },
+            signal: {
+              configWrites: false
+            }
+          }
+        };
+
+        const accessors = helpers.createScopedAccountConfigAccessors({
+          resolveAccount: ({ cfg, accountId }) => resolveTelegramAccount(cfg, accountId),
+          resolveAllowFrom: (account) => account.allowFrom,
+          formatAllowFrom: helpers.formatTrimmedAllowFromEntries,
+          resolveDefaultTo: (account) => account.defaultTo
+        });
+
+        const scopedBase = helpers.createScopedChannelConfigBase({
+          sectionKey: "telegram",
+          listAccountIds: (cfg) => Object.keys(cfg.channels.telegram.accounts || {}),
+          resolveAccount: (cfg, accountId) => resolveTelegramAccount(cfg, accountId),
+          defaultAccountId: () => "default",
+          clearBaseFields: ["token"]
+        });
+        const scopedSet = scopedBase.setAccountEnabled({
+          cfg,
+          accountId: " Work Account! ",
+          enabled: true
+        });
+        const scopedDelete = scopedBase.deleteAccount({ cfg, accountId: "work" });
+
+        const topLevel = helpers.createTopLevelChannelConfigBase({
+          sectionKey: "webchat",
+          resolveAccount: (cfg) => cfg.channels.webchat || {},
+          deleteMode: "clear-fields",
+          clearBaseFields: ["token"]
+        });
+        const topCfg = { channels: { webchat: { token: "secret", enabled: false } } };
+        const topSet = topLevel.setAccountEnabled({ cfg: topCfg, enabled: true });
+        const topClear = topLevel.deleteAccount({ cfg: topSet });
+
+        const hybrid = helpers.createHybridChannelConfigBase({
+          sectionKey: "telegram",
+          listAccountIds: (cfg) => Object.keys(cfg.channels.telegram.accounts || {}),
+          resolveAccount: (cfg, accountId) => resolveTelegramAccount(cfg, accountId),
+          defaultAccountId: () => "default",
+          clearBaseFields: ["token"],
+          preserveSectionOnDefaultDelete: true
+        });
+        const hybridDefault = hybrid.setAccountEnabled({
+          cfg,
+          accountId: "default",
+          enabled: false
+        });
+        const hybridNamed = hybrid.setAccountEnabled({ cfg, accountId: "work", enabled: false });
+        const hybridClearDefault = hybrid.deleteAccount({ cfg, accountId: "default" });
+
+        const legacyEntry = { dm: { policy: "open", allowFrom: [" alice "] } };
+        const legacyChanges = [];
+        const normalizedLegacy = helpers.normalizeLegacyDmAliases({
+          entry: legacyEntry,
+          pathPrefix: "channels.telegram",
+          changes: legacyChanges
+        });
+        const wildcardEntry = { ...normalizedLegacy.entry };
+        const wildcardChanges = [];
+        helpers.ensureOpenDmPolicyAllowFromWildcard({
+          entry: wildcardEntry,
+          mode: "topOnly",
+          pathPrefix: "channels.telegram",
+          changes: wildcardChanges
+        });
+        const nestedEntry = { dm: { policy: "open" } };
+        helpers.ensureOpenDmPolicyAllowFromWildcard({
+          entry: nestedEntry,
+          mode: "nestedOnly",
+          pathPrefix: "channels.signal",
+          changes: []
+        });
+        const canonicalEntry = {};
+        helpers.setCanonicalDmAllowFrom({
+          entry: canonicalEntry,
+          mode: "nestedOnly",
+          allowFrom: ["*"],
+          pathPrefix: "channels.test",
+          changes: [],
+          reason: "test"
+        });
+
+        const scopedDmResolver = helpers.createScopedDmSecurityResolver({
+          channelKey: "telegram",
+          resolvePolicy: (account) => account.dmPolicy,
+          resolveAllowFrom: (account) => account.allowFrom,
+          defaultPolicy: "allowlist",
+          inheritSharedDefaultsFromDefaultAccount: true
+        });
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          scopedType: typeof scopedHelpers.createHybridChannelConfigAdapter,
+          genericType: typeof sdk.createScopedChannelConfigAdapter,
+          allowFrom: {
+            raw: helpers.mapAllowFromEntries([" alice ", 42, "", null]),
+            trimmed: helpers.formatTrimmedAllowFromEntries([" alice ", 42, "", " "]),
+            optional: [
+              helpers.resolveOptionalConfigString(undefined),
+              helpers.resolveOptionalConfigString("  "),
+              helpers.resolveOptionalConfigString(123),
+              helpers.resolveOptionalConfigString(" chat ")
+            ],
+            adapted: helpers.adaptScopedAccountAccessor(
+              ({ cfg, accountId }) => `${cfg.label}:${accountId || "default"}`
+            )({ label: "cfg" }, "work")
+          },
+          accessors: {
+            allowFrom: accessors.resolveAllowFrom({ cfg, accountId: "work" }),
+            formatted: accessors.formatAllowFrom({ allowFrom: [" bob ", 7, ""] }),
+            defaultTo: accessors.resolveDefaultTo({ cfg, accountId: "work" })
+          },
+          scopedBase: {
+            ids: scopedBase.listAccountIds(cfg),
+            defaultAccountId: scopedBase.defaultAccountId(cfg),
+            setAccount: scopedSet.channels.telegram.accounts["work-account"],
+            remainingAccountIds: Object.keys(scopedDelete.channels.telegram.accounts).sort()
+          },
+          topLevel: {
+            ids: topLevel.listAccountIds(topCfg),
+            setEnabled: topSet.channels.webchat.enabled,
+            tokenPresentAfterClear: Object.prototype.hasOwnProperty.call(
+              topClear.channels.webchat,
+              "token"
+            )
+          },
+          hybrid: {
+            defaultEnabled: hybridDefault.channels.telegram.enabled,
+            namedEnabled: hybridNamed.channels.telegram.accounts.work.enabled,
+            tokenPresentAfterDefaultDelete: Object.prototype.hasOwnProperty.call(
+              hybridClearDefault.channels.telegram,
+              "token"
+            )
+          },
+          dm: {
+            normalizedLegacy,
+            wildcardEntry,
+            nestedEntry,
+            canonicalEntry,
+            access: helpers.resolveChannelDmAccess({
+              account: { dm: { policy: "allowlist", allowFrom: ["dm"] } },
+              parent: { dmPolicy: "open", allowFrom: ["parent"] },
+              mode: "topOrNested",
+              defaultPolicy: "pairing"
+            }),
+            invalidPolicy: helpers.normalizeChannelDmPolicy("restricted") ?? null,
+            scopedPolicy: scopedDmResolver({
+              cfg,
+              accountId: "work",
+              account: { accountId: "work", dmPolicy: "allowlist", allowFrom: ["owner"] }
+            })
+          },
+          configWrites: {
+            rootAllowed: helpers.resolveChannelConfigWrites({ cfg, channelId: "telegram" }),
+            accountDenied: helpers.resolveChannelConfigWrites({
+              cfg,
+              channelId: "telegram",
+              accountId: "work"
+            }),
+            originDenied: helpers.authorizeConfigWrite({
+              cfg,
+              origin: { channelId: "telegram", accountId: "work" },
+              target: { kind: "channel", scope: { channelId: "telegram" } }
+            }),
+            targetDenied: helpers.authorizeConfigWrite({
+              cfg,
+              origin: { channelId: "telegram", accountId: "default" },
+              target: { kind: "channel", scope: { channelId: "signal" } }
+            }),
+            ambiguous: helpers.authorizeConfigWrite({
+              cfg,
+              target: { kind: "ambiguous", scopes: [{ channelId: "telegram" }] }
+            }),
+            bypass: helpers.canBypassConfigWritePolicy({
+              channel: "webchat",
+              gatewayClientScopes: ["operator.admin"]
+            }),
+            noBypass: helpers.canBypassConfigWritePolicy({
+              channel: "telegram",
+              gatewayClientScopes: ["operator.admin"]
+            }),
+            deniedMessage: helpers.formatConfigWriteDeniedMessage({
+              result: {
+                allowed: false,
+                reason: "target-disabled",
+                blockedScope: {
+                  kind: "target",
+                  scope: { channelId: "slack" }
+                }
+              },
+              fallbackChannelId: "telegram"
+            })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-helpers-plugin",
+                    "name": "Runtime Channel Config Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_helpers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "adaptScopedAccountAccessor",
+            "authorizeConfigWrite",
+            "buildAccountScopedDmSecurityPolicy",
+            "canBypassConfigWritePolicy",
+            "createHybridChannelConfigAdapter",
+            "createHybridChannelConfigBase",
+            "createScopedAccountConfigAccessors",
+            "createScopedChannelConfigAdapter",
+            "createScopedChannelConfigBase",
+            "createScopedDmSecurityResolver",
+            "createTopLevelChannelConfigAdapter",
+            "createTopLevelChannelConfigBase",
+            "ensureOpenDmPolicyAllowFromWildcard",
+            "formatConfigWriteDeniedMessage",
+            "formatTrimmedAllowFromEntries",
+            "mapAllowFromEntries",
+            "normalizeChannelDmPolicy",
+            "normalizeLegacyDmAliases",
+            "resolveChannelConfigWrites",
+            "resolveChannelDmAccess",
+            "resolveChannelDmAllowFrom",
+            "resolveChannelDmPolicy",
+            "resolveOptionalConfigString",
+            "setCanonicalDmAllowFrom",
+        ],
+        "scopedType": "function",
+        "genericType": "function",
+        "allowFrom": {
+            "raw": [" alice ", "42", "", "null"],
+            "trimmed": ["alice", "42"],
+            "optional": [None, None, "123", "chat"],
+            "adapted": "cfg:work",
+        },
+        "accessors": {
+            "allowFrom": [" owner ", "42"],
+            "formatted": ["bob", "7"],
+            "defaultTo": "channel",
+        },
+        "scopedBase": {
+            "ids": ["default", "work"],
+            "defaultAccountId": "default",
+            "setAccount": {"enabled": True},
+            "remainingAccountIds": ["default"],
+        },
+        "topLevel": {
+            "ids": ["default"],
+            "setEnabled": True,
+            "tokenPresentAfterClear": False,
+        },
+        "hybrid": {
+            "defaultEnabled": False,
+            "namedEnabled": False,
+            "tokenPresentAfterDefaultDelete": False,
+        },
+        "dm": {
+            "normalizedLegacy": {
+                "entry": {"dmPolicy": "open", "allowFrom": [" alice "]},
+                "changed": True,
+            },
+            "wildcardEntry": {"dmPolicy": "open", "allowFrom": [" alice ", "*"]},
+            "nestedEntry": {"dm": {"policy": "open", "allowFrom": ["*"]}},
+            "canonicalEntry": {"dm": {"allowFrom": ["*"]}},
+            "access": {"dmPolicy": "allowlist", "allowFrom": ["dm"]},
+            "invalidPolicy": None,
+            "scopedPolicy": {
+                "policy": "allowlist",
+                "allowFrom": ["owner"],
+                "allowFromPath": "channels.telegram.accounts.work.",
+                "approveHint": (
+                    "Approve via: openclaw pairing list telegram / "
+                    "openclaw pairing approve telegram <code>"
+                ),
+            },
+        },
+        "configWrites": {
+            "rootAllowed": True,
+            "accountDenied": False,
+            "originDenied": {
+                "allowed": False,
+                "reason": "origin-disabled",
+                "blockedScope": {
+                    "kind": "origin",
+                    "scope": {"channelId": "telegram", "accountId": "work"},
+                },
+            },
+            "targetDenied": {
+                "allowed": False,
+                "reason": "target-disabled",
+                "blockedScope": {
+                    "kind": "target",
+                    "scope": {"channelId": "signal"},
+                },
+            },
+            "ambiguous": {"allowed": False, "reason": "ambiguous-target"},
+            "bypass": True,
+            "noBypass": False,
+            "deniedMessage": (
+                "Config writes are disabled for slack. "
+                "Set channels.slack.configWrites=true to enable."
+            ),
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_writes_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-writes.cjs"
+    runtime_entry.write_text(
+        """
+const writes = require("openclaw/plugin-sdk/channel-config-writes");
+const scopedWrites = require("@openclaw/plugin-sdk/channel-config-writes");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_writes",
+      description: "Use OpenClaw channel config writes SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              configWrites: true,
+              accounts: {
+                default: { configWrites: true },
+                work: { configWrites: false }
+              }
+            },
+            signal: { configWrites: false }
+          }
+        };
+        return {
+          keys: Object.keys(writes).sort(),
+          scopedType: typeof scopedWrites.authorizeConfigWrite,
+          rootAllowed: writes.resolveChannelConfigWrites({
+            cfg,
+            channelId: "telegram"
+          }),
+          accountDenied: writes.resolveChannelConfigWrites({
+            cfg,
+            channelId: "telegram",
+            accountId: "work"
+          }),
+          allowed: writes.authorizeConfigWrite({
+            cfg,
+            allowBypass: true,
+            target: { kind: "ambiguous", scopes: [{ channelId: "signal" }] }
+          }),
+          originDenied: writes.authorizeConfigWrite({
+            cfg,
+            origin: { channelId: "telegram", accountId: "work" },
+            target: { kind: "channel", scope: { channelId: "telegram" } }
+          }),
+          targetDenied: writes.authorizeConfigWrite({
+            cfg,
+            origin: { channelId: "telegram", accountId: "default" },
+            target: { kind: "channel", scope: { channelId: "signal" } }
+          }),
+          bypass: writes.canBypassConfigWritePolicy({
+            channel: "webchat",
+            gatewayClientScopes: ["operator.admin"]
+          }),
+          noBypass: writes.canBypassConfigWritePolicy({
+            channel: "webchat",
+            gatewayClientScopes: []
+          }),
+          deniedMessage: writes.formatConfigWriteDeniedMessage({
+            result: {
+              allowed: false,
+              reason: "target-disabled",
+              blockedScope: {
+                kind: "target",
+                scope: { channelId: "signal" }
+              }
+            }
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-writes-plugin",
+                    "name": "Runtime Channel Config Writes Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-writes.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_writes"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_writes"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "authorizeConfigWrite",
+            "canBypassConfigWritePolicy",
+            "formatConfigWriteDeniedMessage",
+            "resolveChannelConfigWrites",
+        ],
+        "scopedType": "function",
+        "rootAllowed": True,
+        "accountDenied": False,
+        "allowed": {"allowed": True},
+        "originDenied": {
+            "allowed": False,
+            "reason": "origin-disabled",
+            "blockedScope": {
+                "kind": "origin",
+                "scope": {"channelId": "telegram", "accountId": "work"},
+            },
+        },
+        "targetDenied": {
+            "allowed": False,
+            "reason": "target-disabled",
+            "blockedScope": {"kind": "target", "scope": {"channelId": "signal"}},
+        },
+        "bypass": True,
+        "noBypass": False,
+        "deniedMessage": (
+            "Config writes are disabled for signal. "
+            "Set channels.signal.configWrites=true to enable."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_lifecycle_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-lifecycle.cjs"
+    runtime_entry.write_text(
+        """
+const lifecycle = require("openclaw/plugin-sdk/channel-lifecycle");
+const scopedLifecycle = require("@openclaw/plugin-sdk/channel-lifecycle");
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_lifecycle",
+      description: "Use OpenClaw channel lifecycle SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const statusPatches = [];
+        const sink = lifecycle.createAccountStatusSink({
+          accountId: "work",
+          setStatus: (patch) => statusPatches.push(patch)
+        });
+        sink({ running: true, lastStartAt: 123 });
+
+        const abort = new AbortController();
+        let abortCleanup = 0;
+        const abortTask = lifecycle.waitUntilAbort(abort.signal, async () => {
+          abortCleanup += 1;
+        });
+        abort.abort();
+        await abortTask;
+
+        const passiveAbort = new AbortController();
+        const passiveEvents = [];
+        const passiveTask = lifecycle.runPassiveAccountLifecycle({
+          abortSignal: passiveAbort.signal,
+          start: async () => {
+            passiveEvents.push("start");
+            return { id: "handle" };
+          },
+          stop: async (handle) => {
+            passiveEvents.push(`stop:${handle.id}`);
+          },
+          onStop: async () => {
+            passiveEvents.push("onStop");
+          }
+        });
+        await Promise.resolve();
+        passiveAbort.abort();
+        await passiveTask;
+
+        let closeListener;
+        const server = {
+          once(event, listener) {
+            if (event === "close") {
+              closeListener = listener;
+            }
+          },
+          close() {
+            closeListener && closeListener();
+          }
+        };
+        const serverAbort = new AbortController();
+        let serverAbortCleanup = 0;
+        const serverTask = lifecycle.keepHttpServerTaskAlive({
+          server,
+          abortSignal: serverAbort.signal,
+          onAbort: async () => {
+            serverAbortCleanup += 1;
+            server.close();
+          }
+        });
+        serverAbort.abort();
+        await serverTask;
+
+        const runStatuses = [];
+        const runAbort = new AbortController();
+        const runState = lifecycle.createRunStateMachine({
+          abortSignal: runAbort.signal,
+          heartbeatMs: 10,
+          now: () => 5000,
+          setStatus: (patch) => runStatuses.push(patch)
+        });
+        const activeBefore = runState.isActive();
+        runState.onRunStart();
+        runState.onRunEnd();
+        runAbort.abort();
+        const activeAfter = runState.isActive();
+
+        const queueOrder = [];
+        const queueStatuses = [];
+        let queueDone;
+        const queueDonePromise = new Promise((resolve) => {
+          queueDone = resolve;
+        });
+        const queue = lifecycle.createChannelRunQueue({
+          setStatus: (patch) => queueStatuses.push(patch)
+        });
+        queue.enqueue("same", async () => {
+          queueOrder.push("first");
+          await sleep(1);
+        });
+        queue.enqueue("same", async () => {
+          queueOrder.push("second");
+          queueDone();
+        });
+        await queueDonePromise;
+        await sleep(5);
+        queue.deactivate();
+
+        const draftSends = [];
+        const loop = lifecycle.createDraftStreamLoop({
+          throttleMs: 0,
+          isStopped: () => false,
+          sendOrEditStreamMessage: async (text) => {
+            draftSends.push(text);
+            return true;
+          }
+        });
+        loop.update("hello");
+        await loop.flush();
+        loop.resetThrottleWindow();
+        loop.resetPending();
+
+        const state = { stopped: false, final: false };
+        const controls = lifecycle.createFinalizableDraftStreamControlsForState({
+          throttleMs: 0,
+          state,
+          sendOrEditStreamMessage: async (text) => {
+            draftSends.push(`control:${text}`);
+            return true;
+          }
+        });
+        controls.update("preview");
+        await controls.stop();
+
+        let heldId = "msg-1";
+        const takenId = await lifecycle.takeMessageIdAfterStop({
+          stopForClear: async () => {
+            draftSends.push("stopForClear");
+          },
+          readMessageId: () => heldId,
+          clearMessageId: () => {
+            heldId = undefined;
+          }
+        });
+
+        const deleted = [];
+        await lifecycle.clearFinalizableDraftMessage({
+          stopForClear: async () => undefined,
+          readMessageId: () => "msg-2",
+          clearMessageId: () => undefined,
+          isValidMessageId: (value) => typeof value === "string",
+          deleteMessage: async (messageId) => {
+            deleted.push(messageId);
+          },
+          warnPrefix: "draft"
+        });
+
+        const finalized = [];
+        const delivered = [];
+        const previewResult = await lifecycle.deliverFinalizableDraftPreview({
+          kind: "final",
+          payload: { text: "done" },
+          draft: {
+            flush: async () => finalized.push("flush"),
+            id: () => "preview-1",
+            seal: async () => finalized.push("seal"),
+            clear: async () => finalized.push("clear")
+          },
+          buildFinalEdit: (payload) => ({ body: payload.text }),
+          editFinal: async (id, edit) => finalized.push(`${id}:${edit.body}`),
+          deliverNormally: async () => {
+            delivered.push("normal");
+            return true;
+          },
+          onPreviewFinalized: async (id) => finalized.push(`finalized:${id}`)
+        });
+        const normalResult = await lifecycle.deliverFinalizableDraftPreview({
+          kind: "tool",
+          payload: "plain",
+          buildFinalEdit: () => undefined,
+          editFinal: async () => undefined,
+          deliverNormally: async (payload) => {
+            delivered.push(payload);
+            return true;
+          },
+          onNormalDelivered: async () => delivered.push("normal-delivered")
+        });
+
+        const watchdogTimeouts = [];
+        const watchdog = lifecycle.createArmableStallWatchdog({
+          label: "test",
+          timeoutMs: 50,
+          checkIntervalMs: 100,
+          onTimeout: (meta) => watchdogTimeouts.push(meta)
+        });
+        watchdog.arm(1000);
+        const watchdogArmed = watchdog.isArmed();
+        watchdog.touch(1025);
+        watchdog.disarm();
+        const watchdogDisarmed = watchdog.isArmed();
+        watchdog.stop();
+
+        return {
+          keys: Object.keys(lifecycle).sort(),
+          scopedType: typeof scopedLifecycle.waitUntilAbort,
+          statusPatches,
+          abortCleanup,
+          passiveEvents,
+          serverAbortCleanup,
+          runState: {
+            activeBefore,
+            activeAfter,
+            statuses: runStatuses
+          },
+          queue: {
+            order: queueOrder,
+            firstStatus: queueStatuses[0],
+            lastBusy: queueStatuses[queueStatuses.length - 1].busy
+          },
+          draft: {
+            sends: draftSends,
+            state,
+            takenId,
+            heldId: heldId ?? null,
+            deleted,
+            previewResult,
+            normalResult,
+            finalized,
+            delivered
+          },
+          watchdog: {
+            armed: watchdogArmed,
+            disarmed: watchdogDisarmed,
+            timeoutCount: watchdogTimeouts.length
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-lifecycle-plugin",
+                    "name": "Runtime Channel Lifecycle Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-lifecycle.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_lifecycle"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_lifecycle"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "clearFinalizableDraftMessage",
+            "createAccountStatusSink",
+            "createArmableStallWatchdog",
+            "createChannelRunQueue",
+            "createDraftStreamLoop",
+            "createFinalizableDraftLifecycle",
+            "createFinalizableDraftStreamControls",
+            "createFinalizableDraftStreamControlsForState",
+            "createRunStateMachine",
+            "deliverFinalizableDraftPreview",
+            "keepHttpServerTaskAlive",
+            "runPassiveAccountLifecycle",
+            "takeMessageIdAfterStop",
+            "waitUntilAbort",
+        ],
+        "scopedType": "function",
+        "statusPatches": [{"accountId": "work", "running": True, "lastStartAt": 123}],
+        "abortCleanup": 1,
+        "passiveEvents": ["start", "stop:handle", "onStop"],
+        "serverAbortCleanup": 1,
+        "runState": {
+            "activeBefore": True,
+            "activeAfter": False,
+            "statuses": [
+                {"activeRuns": 0, "busy": False},
+                {"activeRuns": 1, "busy": True, "lastRunActivityAt": 5000},
+                {"activeRuns": 0, "busy": False, "lastRunActivityAt": 5000},
+            ],
+        },
+        "queue": {
+            "order": ["first", "second"],
+            "firstStatus": {"activeRuns": 0, "busy": False},
+            "lastBusy": False,
+        },
+        "draft": {
+            "sends": ["hello", "control:preview", "stopForClear"],
+            "state": {"stopped": False, "final": True},
+            "takenId": "msg-1",
+            "heldId": None,
+            "deleted": ["msg-2"],
+            "previewResult": "preview-finalized",
+            "normalResult": "normal-delivered",
+            "finalized": [
+                "flush",
+                "seal",
+                "preview-1:done",
+                "finalized:preview-1",
+            ],
+            "delivered": ["plain", "normal-delivered"],
+        },
+        "watchdog": {"armed": True, "disarmed": False, "timeoutCount": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-core.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const core = require("openclaw/plugin-sdk/channel-core");
+const scopedCore = require("@openclaw/plugin-sdk/channel-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_core",
+      description: "Use OpenClaw channel core SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const base = core.createChannelPluginBase({
+          id: "discord",
+          meta: { label: "Discord Custom", docsLabel: "discord-custom" },
+          setup: { kind: "setup" },
+          capabilities: { reactions: true }
+        });
+        const chat = core.createChatChannelPlugin({
+          base,
+          threading: { supportsCurrentConversationBinding: true }
+        });
+
+        const registered = [];
+        const runtimes = [];
+        const calls = [];
+        const entry = core.defineChannelPluginEntry({
+          id: "discord",
+          name: "Discord",
+          description: "Discord channel",
+          plugin: chat,
+          setRuntime: (runtime) => runtimes.push(runtime.name),
+          registerCliMetadata: (api) => calls.push(`cli:${api.registrationMode}`),
+          registerFull: (api) => calls.push(`full:${api.registrationMode}`)
+        });
+        entry.register({
+          registrationMode: "full",
+          runtime: { name: "runtime-full" },
+          registerChannel: ({ plugin }) => registered.push(plugin.id)
+        });
+        entry.register({
+          registrationMode: "cli-metadata",
+          runtime: { name: "runtime-cli" },
+          registerChannel: ({ plugin }) => registered.push(`unexpected:${plugin.id}`)
+        });
+        entry.register({
+          registrationMode: "tool-discovery",
+          runtime: { name: "runtime-tool" },
+          registerChannel: ({ plugin }) => registered.push(`unexpected:${plugin.id}`)
+        });
+
+        const cfg = { session: { dmScope: "per-account-channel-peer" } };
+        const route = core.buildChannelOutboundSessionRoute({
+          cfg,
+          agentId: "Assistant",
+          channel: "Discord",
+          accountId: "Work",
+          peer: { kind: "direct", id: "User-42" },
+          chatType: "direct",
+          from: "bot",
+          to: "user",
+          threadId: 123
+        });
+        const recovered = core.recoverCurrentThreadSessionId({
+          route,
+          currentSessionKey: `${route.baseSessionKey}:thread:old-thread`
+        });
+        const threaded = core.buildThreadAwareOutboundSessionRoute({
+          route,
+          replyToId: " reply-1 ",
+          currentSessionKey: `${route.baseSessionKey}:thread:old-thread`,
+          precedence: ["currentSession", "replyToId"],
+          useSuffix: true
+        });
+        const noSuffix = core.buildThreadAwareOutboundSessionRoute({
+          route,
+          replyToId: " Reply A ",
+          threadId: 999,
+          precedence: ["replyToId", "threadId"],
+          useSuffix: false
+        });
+
+        const secretPath = path.join(os.tmpdir(), `openzues-channel-core-${process.pid}.txt`);
+        fs.writeFileSync(secretPath, " secret-value \\n", "utf8");
+        const secret = core.tryReadSecretFileSync(secretPath, "token") ?? null;
+        fs.unlinkSync(secretPath);
+
+        return {
+          keys: Object.keys(core).sort(),
+          scopedType: typeof scopedCore.createChannelPluginBase,
+          base: {
+            id: base.id,
+            label: base.meta.label,
+            docsLabel: base.meta.docsLabel,
+            setupKind: base.setup.kind,
+            reactions: base.capabilities.reactions
+          },
+          chat: {
+            id: chat.id,
+            supportsBinding: chat.conversationBindings.supportsCurrentConversationBinding
+          },
+          entry: {
+            id: entry.id,
+            channelPluginId: entry.channelPlugin.id,
+            setType: typeof entry.setChannelRuntime,
+            registered,
+            runtimes,
+            calls,
+            setupPlugin: core.defineSetupPluginEntry({ id: "setup" }).plugin.id
+          },
+          route,
+          recovered,
+          threaded,
+          noSuffix,
+          strings: {
+            strippedChannel: core.stripChannelTargetPrefix(" discord: 123 ", "discord"),
+            notStrippedChannel: core.stripChannelTargetPrefix(" slack: 123 ", "discord"),
+            strippedKind: core.stripTargetKindPrefix("user: abc"),
+            parsed: core.parseOptionalDelimitedEntries(" a, b;c\\n d "),
+            emptyParsed: core.parseOptionalDelimitedEntries("  ") ?? null
+          },
+          secret
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-core-plugin",
+                    "name": "Runtime Channel Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_core"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildChannelConfigSchema",
+            "buildChannelOutboundSessionRoute",
+            "buildThreadAwareOutboundSessionRoute",
+            "clearAccountEntryFields",
+            "createChannelPluginBase",
+            "createChatChannelPlugin",
+            "defineChannelPluginEntry",
+            "defineSetupPluginEntry",
+            "parseOptionalDelimitedEntries",
+            "recoverCurrentThreadSessionId",
+            "stripChannelTargetPrefix",
+            "stripTargetKindPrefix",
+            "tryReadSecretFileSync",
+        ],
+        "scopedType": "function",
+        "base": {
+            "id": "discord",
+            "label": "Discord Custom",
+            "docsLabel": "discord-custom",
+            "setupKind": "setup",
+            "reactions": True,
+        },
+        "chat": {"id": "discord", "supportsBinding": True},
+        "entry": {
+            "id": "discord",
+            "channelPluginId": "discord",
+            "setType": "function",
+            "registered": ["discord"],
+            "runtimes": ["runtime-full"],
+            "calls": ["cli:full", "full:full", "cli:cli-metadata", "full:tool-discovery"],
+            "setupPlugin": "setup",
+        },
+        "route": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": 123,
+        },
+        "recovered": "old-thread",
+        "threaded": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42:thread:old-thread",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": "old-thread",
+        },
+        "noSuffix": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": "Reply A",
+        },
+        "strings": {
+            "strippedChannel": "123",
+            "notStrippedChannel": "slack: 123",
+            "strippedKind": "abc",
+            "parsed": ["a", "b", "c", "d"],
+            "emptyParsed": None,
+        },
+        "secret": "secret-value",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_contract_testing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-contract-testing.cjs"
+    runtime_entry.write_text(
+        """
+const contract = require("openclaw/plugin-sdk/channel-contract");
+const testing = require("openclaw/plugin-sdk/channel-contract-testing");
+const scopedTesting = require("@openclaw/plugin-sdk/channel-contract-testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_contract_testing",
+      description: "Use OpenClaw channel contract testing SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        testing.expectChannelTurnDispatchResultContract(
+          {
+            queuedFinal: false,
+            counts: { tool: 0, block: 1, final: 0 },
+          },
+          {
+            visible: true,
+            final: false,
+            counts: { block: 1 },
+          },
+        );
+        let dispatchError = "";
+        try {
+          testing.expectChannelTurnDispatchResultContract(
+            { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } },
+            { visible: true },
+          );
+        } catch (error) {
+          dispatchError = error.message;
+        }
+
+        testing.expectChannelInboundContextContract({
+          Body: "hello",
+          BodyForAgent: "hello agent",
+          BodyForCommands: "hello command",
+          ChatType: "group",
+          ConversationLabel: "Project Room",
+          SenderId: "u-1",
+          SenderName: "Ada",
+          SenderUsername: "ada",
+        });
+        let inboundError = "";
+        try {
+          testing.expectChannelInboundContextContract({
+            Body: "hello",
+            BodyForAgent: "hello agent",
+            BodyForCommands: "hello command",
+            ChatType: "group",
+          });
+        } catch (error) {
+          inboundError = error.message;
+        }
+
+        const sendMock = {
+          resetCount: 0,
+          resolved: [],
+          once: [],
+          mockReset() {
+            this.resetCount += 1;
+            this.resolved = [];
+            this.once = [];
+          },
+          mockResolvedValue(value) {
+            this.resolved.push(value);
+          },
+          mockResolvedValueOnce(value) {
+            this.once.push(value);
+          },
+        };
+        testing.primeChannelOutboundSendMock(
+          sendMock,
+          { messageId: "fallback" },
+          [{ messageId: "first" }, { messageId: "second" }],
+        );
+
+        const captured = [];
+        const wrapped = testing.buildDispatchInboundCaptureMock(
+          { kind: "actual" },
+          (ctx) => captured.push(ctx),
+        );
+        const dispatchResult = await wrapped.dispatchInboundMessage({
+          ctx: { Body: "captured" },
+        });
+        const bufferedResult = await wrapped.dispatchInboundMessageWithBufferedDispatcher({
+          ctx: { Body: "buffered" },
+        });
+
+        return {
+          keys: Object.keys(testing).sort(),
+          contractKeys: Object.keys(contract).sort(),
+          scopedType: typeof scopedTesting.expectChannelInboundContextContract,
+          dispatchError,
+          inboundError,
+          sendMock: {
+            resetCount: sendMock.resetCount,
+            resolved: sendMock.resolved,
+            once: sendMock.once,
+          },
+          wrapped: {
+            kind: wrapped.kind,
+            sameDispatcher:
+              wrapped.dispatchInboundMessage ===
+              wrapped.dispatchInboundMessageWithDispatcher,
+            sameBuffered:
+              wrapped.dispatchInboundMessage ===
+              wrapped.dispatchInboundMessageWithBufferedDispatcher,
+          },
+          captured,
+          dispatchResult,
+          bufferedResult,
+          installerType: typeof testing.installChannelOutboundPayloadContractSuite,
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-contract-testing-plugin",
+                    "name": "Runtime Channel Contract Testing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-contract-testing.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_contract_testing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_contract_testing"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildDispatchInboundCaptureMock",
+            "expectChannelInboundContextContract",
+            "expectChannelTurnDispatchResultContract",
+            "installChannelOutboundPayloadContractSuite",
+            "primeChannelOutboundSendMock",
+        ],
+        "contractKeys": [],
+        "scopedType": "function",
+        "dispatchError": "expected channel turn visible dispatch to be true",
+        "inboundError": (
+            "expected valid channel inbound context; missing sender identity "
+            "(SenderId/SenderName/SenderUsername/SenderE164)"
+        ),
+        "sendMock": {
+            "resetCount": 1,
+            "resolved": [],
+            "once": [{"messageId": "first"}, {"messageId": "second"}],
+        },
+        "wrapped": {"kind": "actual", "sameDispatcher": True, "sameBuffered": True},
+        "captured": [{"Body": "captured"}, {"Body": "buffered"}],
+        "dispatchResult": {"queuedFinal": False, "counts": {"tool": 0, "block": 0, "final": 0}},
+        "bufferedResult": {"queuedFinal": False, "counts": {"tool": 0, "block": 0, "final": 0}},
+        "installerType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-targets.cjs"
+    runtime_entry.write_text(
+        """
+const targets = require("openclaw/plugin-sdk/channel-targets");
+const scopedTargets = require("@openclaw/plugin-sdk/channel-targets");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_targets",
+      description: "Use OpenClaw channel targets SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = {
+          "team-alpha": { id: "direct" },
+          parent: { id: "parent" },
+          "*": { id: "wildcard" },
+        };
+        const directMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["team-alpha"],
+          parentKeys: ["parent"],
+          wildcardKey: "*",
+        });
+        const normalizedMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["#Team Alpha"],
+          parentKeys: ["parent"],
+          wildcardKey: "*",
+          normalizeKey: targets.normalizeChannelSlug,
+        });
+        const wildcardMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["missing"],
+          wildcardKey: "*",
+        });
+        const matchConfig = targets.resolveChannelMatchConfig(
+          directMatch,
+          (entry) => ({ value: entry.id }),
+        );
+        const metaApplied = targets.applyChannelMatchMeta({ value: "ok" }, directMatch);
+
+        const mention = targets.parseTargetMention({
+          raw: "<@U123>",
+          mentionPattern: /^<@([^>]+)>$/,
+          kind: "user",
+        });
+        const prefixed = targets.parseTargetPrefix({
+          raw: "channel:C123",
+          prefix: "channel:",
+          kind: "channel",
+        });
+        const prefixedMulti = targets.parseTargetPrefixes({
+          raw: "user:U456",
+          prefixes: [
+            { prefix: "channel:", kind: "channel" },
+            { prefix: "user:", kind: "user" },
+          ],
+        });
+        const atUser = targets.parseAtUserTarget({
+          raw: "@Ada",
+          pattern: /^[A-Za-z]+$/,
+          errorMessage: "invalid user",
+        });
+        const mentionPrefixOrAt = targets.parseMentionPrefixOrAtUserTarget({
+          raw: "@Grace",
+          mentionPattern: /^<@([^>]+)>$/,
+          prefixes: [{ prefix: "channel:", kind: "channel" }],
+          atUserPattern: /^[A-Za-z]+$/,
+          atUserErrorMessage: "invalid user",
+        });
+        let requiredError = "";
+        try {
+          targets.requireTargetKind({
+            platform: "Slack",
+            target: prefixedMulti,
+            kind: "channel",
+          });
+        } catch (error) {
+          requiredError = error.message;
+        }
+
+        const chatParams = {
+          trimmed: "chat_id:42",
+          lower: "chat_id:42",
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+        };
+        const chatTarget = targets.parseChatTargetPrefixesOrThrow(chatParams);
+        const chatAllow = targets.parseChatAllowTargetPrefixes({
+          ...chatParams,
+          trimmed: "chat_guid:room-guid",
+          lower: "chat_guid:room-guid",
+        });
+        const servicePrefixed = targets.resolveServicePrefixedTarget({
+          trimmed: "sms:+15551234567",
+          lower: "sms:+15551234567",
+          servicePrefixes: [{ prefix: "sms:", service: "sms" }],
+          isChatTarget: () => false,
+          parseTarget: (value) => ({ kind: "chat", value }),
+        });
+        const serviceChat = targets.resolveServicePrefixedChatTarget({
+          trimmed: "imessage:chat_id:99",
+          lower: "imessage:chat_id:99",
+          servicePrefixes: [{ prefix: "imessage:", service: "imessage" }],
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+          parseTarget: (value) => ({ parsed: value }),
+        });
+        const serviceAllow = targets.resolveServicePrefixedAllowTarget({
+          trimmed: "sms:+1555",
+          lower: "sms:+1555",
+          servicePrefixes: [{ prefix: "sms:" }],
+          parseAllowTarget: (value) => ({ kind: "handle", handle: value }),
+        });
+        const serviceOrChatAllow = targets.resolveServicePrefixedOrChatAllowTarget({
+          trimmed: "chat_identifier:team",
+          lower: "chat_identifier:team",
+          servicePrefixes: [{ prefix: "sms:" }],
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+          parseAllowTarget: (value) => ({ kind: "handle", handle: value }),
+        });
+        const matcher = targets.createAllowedChatSenderMatcher({
+          normalizeSender: (sender) => sender.toLowerCase(),
+          parseAllowTarget: (entry) =>
+            entry.startsWith("chat_id:")
+              ? { kind: "chat_id", chatId: Number.parseInt(entry.slice(8), 10) }
+              : { kind: "handle", handle: entry.toLowerCase() },
+        });
+        const matched = matcher({
+          allowFrom: ["chat_id:42", "ada"],
+          sender: "Grace",
+          chatId: 42,
+        });
+        const unresolved = targets.buildUnresolvedTargetResults(["a", "b"], "missing token");
+        const missingToken = await targets.resolveTargetsWithOptionalToken({
+          token: "",
+          inputs: ["a"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async () => [{ id: "never" }],
+          mapResolved: (entry) => ({ input: entry.id, resolved: true }),
+        });
+        const resolved = await targets.resolveTargetsWithOptionalToken({
+          token: " tok ",
+          inputs: ["a"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async ({ token, inputs }) =>
+            inputs.map((input) => ({ input, token })),
+          mapResolved: (entry) => ({
+            input: entry.input,
+            resolved: true,
+            note: entry.token,
+          }),
+        });
+
+        return {
+          keys: Object.keys(targets).sort(),
+          scopedType: typeof scopedTargets.buildMessagingTarget,
+          slug: targets.normalizeChannelSlug("#Team Alpha!"),
+          candidates: targets.buildChannelKeyCandidates(" a ", "a", "", "b"),
+          directMatch,
+          normalizedMatch,
+          wildcardMatch,
+          matchConfig,
+          metaApplied,
+          target: targets.buildMessagingTarget("channel", "C123", "channel:C123"),
+          targetId: targets.normalizeTargetId("user", "Ada"),
+          ensured: targets.ensureTargetId({
+            candidate: "U123",
+            pattern: /^U\\d+$/,
+            errorMessage: "invalid user",
+          }),
+          mention,
+          prefixed,
+          prefixedMulti,
+          atUser,
+          mentionPrefixOrAt,
+          required: targets.requireTargetKind({
+            platform: "Slack",
+            target: prefixed,
+            kind: "channel",
+          }),
+          requiredError,
+          chatTarget,
+          chatAllow,
+          servicePrefixed,
+          serviceChat,
+          serviceAllow,
+          serviceOrChatAllow,
+          matched,
+          normalizedChannel: targets.normalizeChannelId("Slack"),
+          voice: targets.resolveChannelTtsVoiceDelivery("missing") ?? null,
+          unresolved,
+          missingToken,
+          resolved,
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-targets-plugin",
+                    "name": "Runtime Channel Targets Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-targets.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_targets"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_targets"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyChannelMatchMeta",
+            "buildChannelKeyCandidates",
+            "buildMessagingTarget",
+            "buildUnresolvedTargetResults",
+            "createAllowedChatSenderMatcher",
+            "ensureTargetId",
+            "normalizeChannelId",
+            "normalizeChannelSlug",
+            "normalizeTargetId",
+            "parseAtUserTarget",
+            "parseChatAllowTargetPrefixes",
+            "parseChatTargetPrefixesOrThrow",
+            "parseMentionPrefixOrAtUserTarget",
+            "parseTargetMention",
+            "parseTargetPrefix",
+            "parseTargetPrefixes",
+            "requireTargetKind",
+            "resolveChannelEntryMatch",
+            "resolveChannelEntryMatchWithFallback",
+            "resolveChannelMatchConfig",
+            "resolveChannelTtsVoiceDelivery",
+            "resolveNestedAllowlistDecision",
+            "resolveServicePrefixedAllowTarget",
+            "resolveServicePrefixedChatTarget",
+            "resolveServicePrefixedOrChatAllowTarget",
+            "resolveServicePrefixedTarget",
+            "resolveTargetsWithOptionalToken",
+        ],
+        "scopedType": "function",
+        "slug": "team-alpha",
+        "candidates": ["a", "b"],
+        "directMatch": {
+            "entry": {"id": "direct"},
+            "key": "team-alpha",
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "matchKey": "team-alpha",
+            "matchSource": "direct",
+        },
+        "normalizedMatch": {
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "entry": {"id": "direct"},
+            "key": "team-alpha",
+            "matchKey": "team-alpha",
+            "matchSource": "direct",
+        },
+        "wildcardMatch": {
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "entry": {"id": "wildcard"},
+            "key": "*",
+            "matchKey": "*",
+            "matchSource": "wildcard",
+        },
+        "matchConfig": {"value": "direct", "matchKey": "team-alpha", "matchSource": "direct"},
+        "metaApplied": {"value": "ok", "matchKey": "team-alpha", "matchSource": "direct"},
+        "target": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel:C123",
+            "normalized": "channel:c123",
+        },
+        "targetId": "user:ada",
+        "ensured": "U123",
+        "mention": {"kind": "user", "id": "U123", "raw": "<@U123>", "normalized": "user:u123"},
+        "prefixed": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel:C123",
+            "normalized": "channel:c123",
+        },
+        "prefixedMulti": {
+            "kind": "user",
+            "id": "U456",
+            "raw": "user:U456",
+            "normalized": "user:u456",
+        },
+        "atUser": {"kind": "user", "id": "Ada", "raw": "@Ada", "normalized": "user:ada"},
+        "mentionPrefixOrAt": {
+            "kind": "user",
+            "id": "Grace",
+            "raw": "@Grace",
+            "normalized": "user:grace",
+        },
+        "required": "C123",
+        "requiredError": "Slack channel id is required (use channel:<id>).",
+        "chatTarget": {"kind": "chat_id", "chatId": 42},
+        "chatAllow": {"kind": "chat_guid", "chatGuid": "room-guid"},
+        "servicePrefixed": {"kind": "handle", "to": "+15551234567", "service": "sms"},
+        "serviceChat": {"parsed": "chat_id:99"},
+        "serviceAllow": {"kind": "handle", "handle": "+1555"},
+        "serviceOrChatAllow": {"kind": "chat_identifier", "chatIdentifier": "team"},
+        "matched": True,
+        "normalizedChannel": "slack",
+        "voice": None,
+        "unresolved": [
+            {"input": "a", "resolved": False, "note": "missing token"},
+            {"input": "b", "resolved": False, "note": "missing token"},
+        ],
+        "missingToken": [{"input": "a", "resolved": False, "note": "missing token"}],
+        "resolved": [{"input": "a", "resolved": True, "note": "tok"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_streaming_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-streaming.cjs"
+    runtime_entry.write_text(
+        """
+const streaming = require("openclaw/plugin-sdk/channel-streaming");
+const scopedStreaming = require("@openclaw/plugin-sdk/channel-streaming");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_streaming",
+      description: "Use OpenClaw channel streaming SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const entry = {
+          streaming: {
+            mode: "progress",
+            chunkMode: "newline",
+            block: {
+              enabled: true,
+              coalesce: { maxWaitMs: 25 },
+            },
+            preview: {
+              chunk: { maxChars: 120 },
+              toolProgress: false,
+            },
+            nativeTransport: true,
+          },
+          streamMode: "off",
+          chunkMode: "length",
+          blockStreaming: false,
+          blockStreamingCoalesce: { legacy: true },
+          draftChunk: { maxChars: 10 },
+          nativeStreaming: false,
+        };
+        const legacy = {
+          streaming: true,
+          streamMode: "block",
+          blockStreaming: true,
+          blockStreamingCoalesce: { legacy: true },
+          draftChunk: { maxChars: 10 },
+          nativeStreaming: true,
+        };
+        return {
+          keys: Object.keys(streaming).sort(),
+          scopedType: typeof scopedStreaming.resolveChannelPreviewStreamMode,
+          config: streaming.getChannelStreamingConfigObject(entry),
+          chunkMode: streaming.resolveChannelStreamingChunkMode(entry),
+          blockEnabled: streaming.resolveChannelStreamingBlockEnabled(entry),
+          blockCoalesce: streaming.resolveChannelStreamingBlockCoalesce(entry),
+          previewChunk: streaming.resolveChannelStreamingPreviewChunk(entry),
+          previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress(entry),
+          nativeTransport: streaming.resolveChannelStreamingNativeTransport(entry),
+          previewMode: streaming.resolveChannelPreviewStreamMode(entry, "off"),
+          legacy: {
+            chunkMode: streaming.resolveChannelStreamingChunkMode(legacy) ?? null,
+            blockEnabled: streaming.resolveChannelStreamingBlockEnabled(legacy),
+            blockCoalesce: streaming.resolveChannelStreamingBlockCoalesce(legacy),
+            previewChunk: streaming.resolveChannelStreamingPreviewChunk(legacy),
+            previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress(
+              legacy,
+              true,
+            ),
+            nativeTransport: streaming.resolveChannelStreamingNativeTransport(legacy),
+            previewMode: streaming.resolveChannelPreviewStreamMode(legacy, "partial"),
+          },
+          defaults: {
+            previewToolProgress: streaming.resolveChannelStreamingPreviewToolProgress({}, false),
+            previewMode: streaming.resolveChannelPreviewStreamMode({}, "partial"),
+          },
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-streaming-plugin",
+                    "name": "Runtime Channel Streaming Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-streaming.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_streaming"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_streaming"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "getChannelStreamingConfigObject",
+            "resolveChannelPreviewStreamMode",
+            "resolveChannelStreamingBlockCoalesce",
+            "resolveChannelStreamingBlockEnabled",
+            "resolveChannelStreamingChunkMode",
+            "resolveChannelStreamingNativeTransport",
+            "resolveChannelStreamingPreviewChunk",
+            "resolveChannelStreamingPreviewToolProgress",
+        ],
+        "scopedType": "function",
+        "config": {
+            "mode": "progress",
+            "chunkMode": "newline",
+            "block": {"enabled": True, "coalesce": {"maxWaitMs": 25}},
+            "preview": {"chunk": {"maxChars": 120}, "toolProgress": False},
+            "nativeTransport": True,
+        },
+        "chunkMode": "newline",
+        "blockEnabled": True,
+        "blockCoalesce": {"maxWaitMs": 25},
+        "previewChunk": {"maxChars": 120},
+        "previewToolProgress": False,
+        "nativeTransport": True,
+        "previewMode": "partial",
+        "legacy": {
+            "chunkMode": None,
+            "blockEnabled": True,
+            "blockCoalesce": {"legacy": True},
+            "previewChunk": {"maxChars": 10},
+            "previewToolProgress": True,
+            "nativeTransport": True,
+            "previewMode": "block",
+        },
+        "defaults": {"previewToolProgress": False, "previewMode": "partial"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-env.cjs"
+    runtime_entry.write_text(
+        """
+const runtimeEnv = require("openclaw/plugin-sdk/runtime-env");
+const scopedRuntimeEnv = require("@openclaw/plugin-sdk/runtime-env");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_env",
+      description: "Use OpenClaw runtime-env SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        runtimeEnv.setVerbose(false);
+        const verboseBefore = runtimeEnv.isVerbose();
+        runtimeEnv.setVerbose(true);
+        const verboseAfter = runtimeEnv.isVerbose();
+        runtimeEnv.setYes(true);
+        const yesAfter = runtimeEnv.isYes();
+        runtimeEnv.setVerbose(false);
+        runtimeEnv.setYes(false);
+
+        await runtimeEnv.sleep(0);
+        const timeoutValue = await runtimeEnv.withTimeout(Promise.resolve("ok"), 20);
+        let timeoutMessage = null;
+        try {
+          await runtimeEnv.withTimeout(new Promise(() => {}), 1);
+        } catch (error) {
+          timeoutMessage = error && error.message;
+        }
+
+        let retryCalls = 0;
+        const retryValue = await runtimeEnv.retryAsync(async () => {
+          retryCalls += 1;
+          if (retryCalls < 2) {
+            throw new Error("retry me");
+          }
+          return "retried";
+        }, { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 });
+
+        const alreadyAborted = new AbortController();
+        alreadyAborted.abort("done");
+        let sleepWithAbortMessage = null;
+        try {
+          await runtimeEnv.sleepWithAbort(10, alreadyAborted.signal);
+        } catch (error) {
+          sleepWithAbortMessage = error && error.message;
+        }
+
+        const abortController = new AbortController();
+        const abortWait = runtimeEnv.waitForAbortSignal(abortController.signal).then(
+          () => "aborted"
+        );
+        abortController.abort();
+
+        const rejectionCleanup = runtimeEnv.registerUnhandledRejectionHandler(
+          (reason) => Boolean(reason && reason.message === "handled")
+        );
+        const exceptionCleanup = runtimeEnv.registerUncaughtExceptionHandler(
+          (error) => Boolean(error && error.message === "caught")
+        );
+        const cleanupTypes = [typeof rejectionCleanup, typeof exceptionCleanup];
+        rejectionCleanup();
+        exceptionCleanup();
+
+        const logger = runtimeEnv.createSubsystemLogger("plugins/runtime-env");
+        const childLogger = logger.child("child");
+        const runtime = runtimeEnv.createNonExitingRuntime();
+        let runtimeExitMessage = null;
+        try {
+          runtime.exit(7);
+        } catch (error) {
+          runtimeExitMessage = error && error.message;
+        }
+
+        runtimeEnv.ensureGlobalUndiciEnvProxyDispatcher();
+
+        return {
+          exportTypes: [
+            typeof runtimeEnv.createNonExitingRuntime,
+            typeof runtimeEnv.defaultRuntime.log,
+            typeof runtimeEnv.sleep,
+            typeof runtimeEnv.withTimeout,
+            typeof runtimeEnv.retryAsync,
+            typeof runtimeEnv.isTruthyEnvValue,
+            typeof runtimeEnv.createSubsystemLogger,
+            typeof runtimeEnv.computeBackoff,
+            typeof runtimeEnv.sleepWithAbort,
+            typeof runtimeEnv.waitForAbortSignal,
+            typeof runtimeEnv.registerUnhandledRejectionHandler,
+            typeof runtimeEnv.registerUncaughtExceptionHandler,
+            typeof runtimeEnv.ensureGlobalUndiciEnvProxyDispatcher,
+            typeof runtimeEnv.isWSL2Sync,
+            typeof scopedRuntimeEnv.formatDurationPrecise
+          ],
+          flags: { verboseBefore, verboseAfter, yesAfter },
+          truthy: ["1", "on", "true", "yes", "YES"].map(runtimeEnv.isTruthyEnvValue),
+          falsey: [undefined, "", "0", "false", "no", "off"].map(runtimeEnv.isTruthyEnvValue),
+          durations: {
+            preciseShort: runtimeEnv.formatDurationPrecise(500),
+            preciseLong: runtimeEnv.formatDurationPrecise(1234),
+            seconds: runtimeEnv.formatDurationSeconds(1500, { decimals: 0, unit: "seconds" })
+          },
+          timeoutValue,
+          timeoutMessage,
+          retryCalls,
+          retryValue,
+          backoff: runtimeEnv.computeBackoff(
+            { initialMs: 100, maxMs: 1000, factor: 2, jitter: 0 },
+            3
+          ),
+          sleepWithAbortMessage,
+          abortWait: await abortWait,
+          cleanupTypes,
+          logger: {
+            subsystem: logger.subsystem,
+            childSubsystem: childLogger.subsystem,
+            levels: [
+              typeof logger.trace,
+              typeof logger.debug,
+              typeof logger.info,
+              typeof logger.warn,
+              typeof logger.error,
+              typeof logger.fatal,
+              typeof logger.raw
+            ],
+            enabled: logger.isEnabled("info")
+          },
+          runtimeExitMessage,
+          colors: {
+            success: runtimeEnv.success("ok"),
+            warn: runtimeEnv.warn("careful"),
+            info: runtimeEnv.info("note"),
+            danger: runtimeEnv.danger("bad")
+          },
+          loggingConstants: {
+            allowed: runtimeEnv.ALLOWED_LOG_LEVELS,
+            infoLevel: runtimeEnv.levelToMinLevel("info"),
+            normalized: runtimeEnv.normalizeLogLevel("warn"),
+            defaultDirType: typeof runtimeEnv.DEFAULT_LOG_DIR,
+            defaultFileType: typeof runtimeEnv.DEFAULT_LOG_FILE
+          },
+          wslType: typeof runtimeEnv.isWSL2Sync()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-runtime-env-plugin",
+                    "name": "Runtime Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-env-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.runtime_env"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 15,
+        "flags": {"verboseBefore": False, "verboseAfter": True, "yesAfter": True},
+        "truthy": [True, True, True, True, True],
+        "falsey": [False, False, False, False, False, False],
+        "durations": {
+            "preciseShort": "500ms",
+            "preciseLong": "1.23s",
+            "seconds": "2 seconds",
+        },
+        "timeoutValue": "ok",
+        "timeoutMessage": "timeout",
+        "retryCalls": 2,
+        "retryValue": "retried",
+        "backoff": 400,
+        "sleepWithAbortMessage": "aborted",
+        "abortWait": "aborted",
+        "cleanupTypes": ["function", "function"],
+        "logger": {
+            "subsystem": "plugins/runtime-env",
+            "childSubsystem": "plugins/runtime-env/child",
+            "levels": ["function"] * 7,
+            "enabled": True,
+        },
+        "runtimeExitMessage": "exit 7",
+        "colors": {
+            "success": "ok",
+            "warn": "careful",
+            "info": "note",
+            "danger": "bad",
+        },
+        "loggingConstants": {
+            "allowed": ["trace", "debug", "info", "warn", "error", "fatal", "silent"],
+            "infoLevel": 30,
+            "normalized": "warn",
+            "defaultDirType": "string",
+            "defaultFileType": "string",
+        },
+        "wslType": "boolean",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_keyed_async_queue_helpers(
     tmp_path,
 ) -> None:
@@ -17918,6 +23046,820 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_media_payload_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-agent-media-payload.cjs"
+    runtime_entry.write_text(
+        """
+const agentMedia = require("openclaw/plugin-sdk/agent-media-payload");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_media_payload",
+      description: "Use OpenClaw agent-media-payload SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const payload = agentMedia.buildAgentMediaPayload([
+          { path: args.mediaA, contentType: "image/png" },
+          { path: args.mediaB, contentType: null },
+          { path: args.mediaC, contentType: "video/mp4" }
+        ]);
+        const empty = agentMedia.buildAgentMediaPayload([]);
+        const roots = agentMedia.getAgentScopedMediaLocalRoots({
+          configDir: args.configDir,
+          stateDir: args.stateDir,
+          agents: {
+            list: [{ id: "ops", workspaceDir: args.workspaceDir }]
+          }
+        }, "ops");
+        return {
+          exportKeys: Object.keys(agentMedia).sort(),
+          payload,
+          empty,
+          roots: {
+            hasConfigMedia: roots.includes(args.configMediaDir),
+            hasStateMedia: roots.includes(args.stateMediaDir),
+            hasCanvas: roots.includes(args.canvasDir),
+            hasWorkspaceState: roots.includes(args.workspaceStateDir),
+            hasSandboxes: roots.includes(args.sandboxesDir),
+            hasAgentWorkspace: roots.includes(args.workspaceDir)
+          },
+          genericType: typeof genericSdk.buildAgentMediaPayload
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    config_dir = tmp_path / "config"
+    state_dir = tmp_path / "state"
+    workspace_dir = tmp_path / "workspace"
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-media-payload-plugin",
+                    "name": "Runtime Agent Media Payload Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-media-payload.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_media_payload"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.agent_media_payload",
+            "args": {
+                "mediaA": str(tmp_path / "a.png"),
+                "mediaB": str(tmp_path / "b.ogg"),
+                "mediaC": str(tmp_path / "c.mp4"),
+                "configDir": str(config_dir),
+                "stateDir": str(state_dir),
+                "workspaceDir": str(workspace_dir),
+                "configMediaDir": str(config_dir / "media"),
+                "stateMediaDir": str(state_dir / "media"),
+                "canvasDir": str(state_dir / "canvas"),
+                "workspaceStateDir": str(state_dir / "workspace"),
+                "sandboxesDir": str(state_dir / "sandboxes"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["buildAgentMediaPayload", "getAgentScopedMediaLocalRoots"],
+        "payload": {
+            "MediaPath": str(tmp_path / "a.png"),
+            "MediaType": "image/png",
+            "MediaUrl": str(tmp_path / "a.png"),
+            "MediaPaths": [
+                str(tmp_path / "a.png"),
+                str(tmp_path / "b.ogg"),
+                str(tmp_path / "c.mp4"),
+            ],
+            "MediaUrls": [
+                str(tmp_path / "a.png"),
+                str(tmp_path / "b.ogg"),
+                str(tmp_path / "c.mp4"),
+            ],
+            "MediaTypes": ["image/png", "video/mp4"],
+        },
+        "empty": {},
+        "roots": {
+            "hasConfigMedia": True,
+            "hasStateMedia": True,
+            "hasCanvas": True,
+            "hasWorkspaceState": True,
+            "hasSandboxes": True,
+            "hasAgentWorkspace": True,
+        },
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_config_primitives_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-agent-config-primitives.cjs"
+    runtime_entry.write_text(
+        """
+const primitives = require("openclaw/plugin-sdk/agent-config-primitives");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function summarize(result) {
+  return {
+    success: result.success,
+    message: result.error && result.error.issues && result.error.issues[0]
+      ? result.error.issues[0].message
+      : null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_config_primitives",
+      description: "Use OpenClaw agent-config-primitives SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(primitives).sort(),
+          replyKeys: Object.keys(primitives.ReplyRuntimeConfigSchemaShape).sort(),
+          validPolicy: summarize(primitives.ToolPolicySchema.safeParse({
+            allow: ["chat.send"],
+            deny: ["tools.exec"]
+          })),
+          conflictingPolicy: summarize(primitives.ToolPolicySchema.safeParse({
+            allow: ["chat.send"],
+            alsoAllow: ["tools.exec"]
+          })),
+          undefinedPolicy: summarize(primitives.ToolPolicySchema.safeParse(undefined)),
+          chunkMode: summarize(
+            primitives.ReplyRuntimeConfigSchemaShape.chunkMode.safeParse("newline")
+          ),
+          invalidChunkMode: summarize(
+            primitives.ReplyRuntimeConfigSchemaShape.chunkMode.safeParse("paragraph")
+          ),
+          genericType: typeof genericSdk.ToolPolicySchema.safeParse
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-config-primitives-plugin",
+                    "name": "Runtime Agent Config Primitives Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-config-primitives.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_config_primitives"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_config_primitives"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["ReplyRuntimeConfigSchemaShape", "ToolPolicySchema"],
+        "replyKeys": [
+            "blockStreaming",
+            "blockStreamingCoalesce",
+            "chunkMode",
+            "contextVisibility",
+            "dmHistoryLimit",
+            "dms",
+            "historyLimit",
+            "mediaMaxMb",
+            "responsePrefix",
+            "textChunkLimit",
+        ],
+        "validPolicy": {"success": True, "message": None},
+        "conflictingPolicy": {
+            "success": False,
+            "message": (
+                "tools policy cannot set both allow and alsoAllow in the same scope "
+                "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)"
+            ),
+        },
+        "undefinedPolicy": {"success": True, "message": None},
+        "chunkMode": {"success": True, "message": None},
+        "invalidChunkMode": {
+            "success": False,
+            "message": "Invalid enum value",
+        },
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_binding_resolve_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-binding-resolve.cjs"
+    runtime_entry.write_text(
+        """
+const acpBinding = require("openclaw/plugin-sdk/acp-binding-resolve-runtime");
+const scopedAcpBinding = require("@openclaw/plugin-sdk/acp-binding-resolve-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_binding_resolve",
+      description: "Use OpenClaw ACP binding resolve runtime SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const cfg = {
+          bindings: [
+            {
+              type: "acp",
+              agentId: "codex",
+              match: {
+                channel: "discord",
+                accountId: "*",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: { mode: "persistent", backend: "wildcard" }
+            },
+            {
+              type: "acp",
+              agentId: "claude",
+              match: {
+                channel: "discord",
+                accountId: "work",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: {
+                mode: "oneshot",
+                backend: "acpx",
+                cwd: args.cwd,
+                label: "Work ACP"
+              }
+            }
+          ]
+        };
+        const resolved = acpBinding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "work",
+          conversationId: args.threadId,
+          parentConversationId: args.parentConversationId
+        });
+        const missing = scopedAcpBinding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "other",
+          conversationId: "missing-thread",
+          parentConversationId: "missing-parent"
+        });
+        return {
+          exportKeys: Object.keys(acpBinding).sort(),
+          genericType: typeof genericSdk.resolveConfiguredAcpBindingRecord,
+          missing,
+          resolved: {
+            spec: resolved && resolved.spec,
+            record: resolved && {
+              bindingId: resolved.record.bindingId,
+              targetKind: resolved.record.targetKind,
+              targetSessionKeyStartsWith: resolved.record.targetSessionKey.startsWith(
+                "agent:claude:acp:binding:discord:work:"
+              ),
+              targetSessionKeyHashLength: resolved.record.targetSessionKey.split(":").pop().length,
+              conversation: resolved.record.conversation,
+              status: resolved.record.status,
+              boundAt: resolved.record.boundAt,
+              metadata: resolved.record.metadata
+            }
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-binding-resolve-plugin",
+                    "name": "Runtime ACP Binding Resolve Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-acp-binding-resolve.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_binding_resolve"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.acp_binding_resolve",
+            "args": {
+                "threadId": "thread-123",
+                "parentConversationId": "channel-parent-1",
+                "cwd": str(tmp_path / "workspace"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveConfiguredAcpBindingRecord"],
+        "genericType": "function",
+        "missing": None,
+        "resolved": {
+            "spec": {
+                "channel": "discord",
+                "accountId": "work",
+                "conversationId": "channel-parent-1",
+                "agentId": "claude",
+                "mode": "oneshot",
+                "cwd": str(tmp_path / "workspace"),
+                "backend": "acpx",
+                "label": "Work ACP",
+            },
+            "record": {
+                "bindingId": "config:acp:discord:work:channel-parent-1",
+                "targetKind": "session",
+                "targetSessionKeyStartsWith": True,
+                "targetSessionKeyHashLength": 16,
+                "conversation": {
+                    "channel": "discord",
+                    "accountId": "work",
+                    "conversationId": "channel-parent-1",
+                },
+                "status": "active",
+                "boundAt": 0,
+                "metadata": {
+                    "source": "config",
+                    "mode": "oneshot",
+                    "agentId": "claude",
+                    "label": "Work ACP",
+                    "backend": "acpx",
+                    "cwd": str(tmp_path / "workspace"),
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_cli_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-cli.cjs"
+    runtime_entry.write_text(
+        """
+const anthropicCli = require("openclaw/plugin-sdk/anthropic-cli");
+const scopedAnthropicCli = require("@openclaw/plugin-sdk/anthropic-cli");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_cli",
+      description: "Use OpenClaw anthropic-cli SDK shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(anthropicCli).sort(),
+          backendId: anthropicCli.CLAUDE_CLI_BACKEND_ID,
+          direct: anthropicCli.isClaudeCliProvider("claude-cli"),
+          trimmedCase: anthropicCli.isClaudeCliProvider(" CLAUDE-CLI "),
+          other: anthropicCli.isClaudeCliProvider("anthropic"),
+          scoped: scopedAnthropicCli.isClaudeCliProvider("claude-cli"),
+          genericId: genericSdk.CLAUDE_CLI_BACKEND_ID,
+          genericType: typeof genericSdk.isClaudeCliProvider
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-cli-plugin",
+                    "name": "Runtime Anthropic CLI Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-cli.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.anthropic_cli"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.anthropic_cli"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["CLAUDE_CLI_BACKEND_ID", "isClaudeCliProvider"],
+        "backendId": "claude-cli",
+        "direct": True,
+        "trimmedCase": True,
+        "other": False,
+        "scoped": True,
+        "genericId": "claude-cli",
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_vertex_auth_presence_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-vertex-auth-presence.cjs"
+    runtime_entry.write_text(
+        """
+const vertexAuth = require("openclaw/plugin-sdk/anthropic-vertex-auth-presence");
+const scopedVertexAuth = require("@openclaw/plugin-sdk/anthropic-vertex-auth-presence");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_vertex_auth_presence",
+      description: "Use OpenClaw anthropic-vertex-auth-presence SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        return {
+          exportKeys: Object.keys(vertexAuth).sort(),
+          metadataTrue: vertexAuth.hasAnthropicVertexAvailableAuth({
+            ANTHROPIC_VERTEX_USE_GCP_METADATA: " true "
+          }),
+          metadataOne: vertexAuth.hasAnthropicVertexAvailableAuth({
+            ANTHROPIC_VERTEX_USE_GCP_METADATA: "1"
+          }),
+          explicitPath: vertexAuth.hasAnthropicVertexAvailableAuth({
+            GOOGLE_APPLICATION_CREDENTIALS: `  ${args.credentialsPath}  `
+          }),
+          missingExplicitPath: scopedVertexAuth.hasAnthropicVertexAvailableAuth({
+            GOOGLE_APPLICATION_CREDENTIALS: args.missingCredentialsPath
+          }),
+          genericType: typeof genericSdk.hasAnthropicVertexAvailableAuth
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    unicode_dir = tmp_path / "\u8a8d\u8a3c\u60c5\u5831"
+    unicode_dir.mkdir()
+    credentials_path = unicode_dir / "application_default_credentials.json"
+    credentials_path.write_text("{}\n", encoding="utf-8")
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-vertex-auth-presence-plugin",
+                    "name": "Runtime Anthropic Vertex Auth Presence Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-vertex-auth-presence.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.anthropic_vertex_auth_presence"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.anthropic_vertex_auth_presence",
+            "args": {
+                "credentialsPath": str(credentials_path),
+                "missingCredentialsPath": str(tmp_path / "missing.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["hasAnthropicVertexAvailableAuth"],
+        "metadataTrue": True,
+        "metadataOne": True,
+        "explicitPath": True,
+        "missingExplicitPath": False,
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_vertex_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-vertex.cjs"
+    runtime_entry.write_text(
+        """
+const vertex = require("openclaw/plugin-sdk/anthropic-vertex");
+const scopedVertex = require("@openclaw/plugin-sdk/anthropic-vertex");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_vertex",
+      description: "Use OpenClaw anthropic-vertex SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        return {
+          exportKeys: Object.keys(vertex).sort(),
+          regionalEndpoint: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://europe-west4-aiplatform.googleapis.com/v1",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          globalEndpoint: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://aiplatform.googleapis.com",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          envRegion: vertex.resolveAnthropicVertexClientRegion({
+            env: { GOOGLE_CLOUD_LOCATION: "us-east1" }
+          }),
+          malformedEnvRegion: vertex.resolveAnthropicVertexClientRegion({
+            env: { GOOGLE_CLOUD_LOCATION: "us-central1.attacker.example" }
+          }),
+          envProject: vertex.resolveAnthropicVertexProjectId({
+            ANTHROPIC_VERTEX_PROJECT_ID: " vertex-project "
+          }),
+          googleProject: scopedVertex.resolveAnthropicVertexProjectId({
+            GOOGLE_CLOUD_PROJECT: " google-project "
+          }),
+          adcProject: vertex.resolveAnthropicVertexProjectId({
+            GOOGLE_APPLICATION_CREDENTIALS: args.adcProjectPath
+          }),
+          adcQuotaProject: vertex.resolveAnthropicVertexProjectId({
+            GOOGLE_APPLICATION_CREDENTIALS: args.adcQuotaPath
+          }),
+          customProxyRegion: vertex.resolveAnthropicVertexClientRegion({
+            baseUrl: "https://proxy.example.com/google/aiplatform",
+            env: { GOOGLE_CLOUD_LOCATION: "us-east5" }
+          }),
+          genericTypes: [
+            typeof genericSdk.resolveAnthropicVertexClientRegion,
+            typeof genericSdk.resolveAnthropicVertexProjectId
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adc_project_path = tmp_path / "adc-project.json"
+    adc_project_path.write_text('{"project_id":"adc-project"}\n', encoding="utf-8")
+    adc_quota_path = tmp_path / "adc-quota.json"
+    adc_quota_path.write_text('{"quota_project_id":"quota-project"}\n', encoding="utf-8")
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-vertex-plugin",
+                    "name": "Runtime Anthropic Vertex Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-vertex.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.anthropic_vertex"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.anthropic_vertex",
+            "args": {
+                "adcProjectPath": str(adc_project_path),
+                "adcQuotaPath": str(adc_quota_path),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "resolveAnthropicVertexClientRegion",
+            "resolveAnthropicVertexProjectId",
+        ],
+        "regionalEndpoint": "europe-west4",
+        "globalEndpoint": "global",
+        "envRegion": "us-east1",
+        "malformedEnvRegion": "global",
+        "envProject": "vertex-project",
+        "googleProject": "google-project",
+        "adcProject": "adc-project",
+        "adcQuotaProject": "quota-project",
+        "customProxyRegion": "us-east5",
+        "genericTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
@@ -18305,6 +24247,115 @@ module.exports = {
         "resolutionFacade": True,
         "runtimeMerged": {"enabled": True, "name": "Work"},
         "helperFacade": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_id_subpath_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-account-id-subpaths.cjs"
+    runtime_entry.write_text(
+        """
+const accountIds = require("openclaw/plugin-sdk/account-id");
+const configuredIds = require("openclaw/plugin-sdk/account-configured-ids");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_id_subpaths",
+      description: "Use OpenClaw account-id SDK subpath shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          accountIdExports: Object.keys(accountIds).sort(),
+          configuredIdExports: Object.keys(configuredIds).sort(),
+          defaultAccountId: accountIds.DEFAULT_ACCOUNT_ID,
+          normalized: [
+            accountIds.normalizeAccountId(" Workspace One! "),
+            accountIds.normalizeAccountId(" "),
+            accountIds.normalizeOptionalAccountId(" ") ?? null
+          ],
+          configuredIds: configuredIds.listConfiguredAccountIds({
+            accounts: {
+              "Router D": {},
+              "router-d": {},
+              " Personal A ": {},
+              "": {}
+            },
+            normalizeAccountId: accountIds.normalizeAccountId
+          }),
+          genericTypes: [
+            typeof genericSdk.normalizeAccountId,
+            typeof genericSdk.listConfiguredAccountIds
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-id-subpaths-plugin",
+                    "name": "Runtime Account Id Subpaths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-id-subpaths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_id_subpaths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.account_id_subpaths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "accountIdExports": [
+            "DEFAULT_ACCOUNT_ID",
+            "normalizeAccountId",
+            "normalizeOptionalAccountId",
+        ],
+        "configuredIdExports": ["listConfiguredAccountIds"],
+        "defaultAccountId": "default",
+        "normalized": ["workspace-one", "default", None],
+        "configuredIds": ["router-d", "personal-a"],
+        "genericTypes": ["function", "function"],
     }
 
 

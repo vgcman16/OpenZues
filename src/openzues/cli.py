@@ -19889,6 +19889,10 @@ function normalizeNativeXaiModelId(id) {
   return id;
 }
 
+function normalizeXaiModelId(id) {
+  return normalizeNativeXaiModelId(id);
+}
+
 function getModelProviderHint(modelId) {
   const trimmed = normalizeOptionalLowercaseString(modelId);
   if (!trimmed) {
@@ -24319,6 +24323,236 @@ function normalizeResolvedSecretInputString(params) {
   return resolved.status === "available" ? resolved.value : undefined;
 }
 
+function pushSecretRuntimeWarning(context, warning) {
+  if (!context || typeof context !== "object") {
+    return;
+  }
+  if (!Array.isArray(context.warnings)) {
+    context.warnings = [];
+  }
+  const warningKey = `${warning.code}:${warning.path}:${warning.message}`;
+  const warningKeys = context.warningKeys;
+  if (warningKeys && typeof warningKeys.has === "function" && warningKeys.has(warningKey)) {
+    return;
+  }
+  if (warningKeys && typeof warningKeys.add === "function") {
+    warningKeys.add(warningKey);
+  }
+  context.warnings.push(warning);
+}
+
+function pushInactiveSurfaceWarning(params) {
+  const message =
+    params.details && String(params.details).trim().length > 0
+      ? `${params.path}: ${params.details}`
+      : (
+          `${params.path}: secret ref is configured on an inactive surface; ` +
+          "skipping resolution until it becomes active."
+        );
+  pushSecretRuntimeWarning(params.context, {
+    code: "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+    path: params.path,
+    message,
+  });
+}
+
+function collectSecretInputAssignment(params) {
+  const ref = coerceSecretRef(params.value, params.defaults);
+  if (!ref) {
+    return;
+  }
+  if (params.active === false) {
+    pushInactiveSurfaceWarning({
+      context: params.context,
+      path: params.path,
+      details: params.inactiveReason,
+    });
+    return;
+  }
+  if (!Array.isArray(params.context.assignments)) {
+    params.context.assignments = [];
+  }
+  params.context.assignments.push({
+    ref,
+    path: params.path,
+    expected: params.expected,
+    apply: params.apply,
+  });
+}
+
+function collectTtsApiKeyAssignments(params) {
+  const providers = params.tts && params.tts.providers;
+  if (!isRecord(providers)) {
+    return;
+  }
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (!isRecord(providerConfig)) {
+      continue;
+    }
+    collectSecretInputAssignment({
+      value: providerConfig.apiKey,
+      path: `${params.pathPrefix}.providers.${providerId}.apiKey`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: params.active,
+      inactiveReason: params.inactiveReason,
+      apply: (value) => {
+        providerConfig.apiKey = value;
+      },
+    });
+  }
+}
+
+function collectNestedChannelTtsAssignments(params) {
+  const topLevelNested = params.channel && params.channel[params.nestedKey];
+  if (isRecord(topLevelNested) && isRecord(topLevelNested.tts)) {
+    collectTtsApiKeyAssignments({
+      tts: topLevelNested.tts,
+      pathPrefix: `channels.${params.channelKey}.${params.nestedKey}.tts`,
+      defaults: params.defaults,
+      context: params.context,
+      active: params.topLevelActive,
+      inactiveReason: params.topInactiveReason,
+    });
+  }
+  if (!params.surface || !params.surface.hasExplicitAccounts) {
+    return;
+  }
+  const accounts = Array.isArray(params.surface.accounts) ? params.surface.accounts : [];
+  for (const entry of accounts) {
+    const nested = entry && entry.account && entry.account[params.nestedKey];
+    if (!isRecord(nested) || !isRecord(nested.tts)) {
+      continue;
+    }
+    const active =
+      typeof params.accountActive === "function" ? params.accountActive(entry) : false;
+    const inactiveReason =
+      typeof params.accountInactiveReason === "function"
+        ? params.accountInactiveReason(entry)
+        : params.accountInactiveReason;
+    collectTtsApiKeyAssignments({
+      tts: nested.tts,
+      pathPrefix:
+        `channels.${params.channelKey}.accounts.${entry.accountId}.` +
+        `${params.nestedKey}.tts`,
+      defaults: params.defaults,
+      context: params.context,
+      active,
+      inactiveReason,
+    });
+  }
+}
+
+function normalizeTalkSecretInput(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return coerceSecretRef(value) || undefined;
+}
+
+function normalizeTalkProviderConfig(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const provider = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === undefined) {
+      continue;
+    }
+    if (key === "apiKey") {
+      const normalized = normalizeTalkSecretInput(raw);
+      if (normalized !== undefined) {
+        provider.apiKey = normalized;
+      }
+      continue;
+    }
+    provider[key] = raw;
+  }
+  return Object.keys(provider).length > 0 ? provider : undefined;
+}
+
+function normalizeTalkProviders(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const providers = {};
+  for (const [rawProviderId, providerConfig] of Object.entries(value)) {
+    const providerId = normalizeOptionalString(rawProviderId);
+    if (!providerId) {
+      continue;
+    }
+    const normalizedProvider = normalizeTalkProviderConfig(providerConfig);
+    if (!normalizedProvider) {
+      continue;
+    }
+    providers[providerId] = {
+      ...(providers[providerId] || {}),
+      ...normalizedProvider,
+    };
+  }
+  return Object.keys(providers).length > 0 ? providers : undefined;
+}
+
+function normalizeTalkSection(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const normalized = {};
+  const speechLocale = normalizeOptionalString(value.speechLocale);
+  if (speechLocale) {
+    normalized.speechLocale = speechLocale;
+  }
+  if (typeof value.interruptOnSpeech === "boolean") {
+    normalized.interruptOnSpeech = value.interruptOnSpeech;
+  }
+  if (
+    typeof value.silenceTimeoutMs === "number" &&
+    Number.isInteger(value.silenceTimeoutMs) &&
+    value.silenceTimeoutMs > 0
+  ) {
+    normalized.silenceTimeoutMs = value.silenceTimeoutMs;
+  }
+  const providers = normalizeTalkProviders(value.providers);
+  const provider = normalizeOptionalString(value.provider);
+  if (providers) {
+    normalized.providers = providers;
+  }
+  if (provider) {
+    normalized.provider = provider;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function activeProviderFromTalk(talk) {
+  const provider = normalizeOptionalString(talk && talk.provider);
+  const providers = talk && talk.providers;
+  if (provider) {
+    if (providers && !(provider in providers)) {
+      return undefined;
+    }
+    return provider;
+  }
+  const providerIds = providers ? Object.keys(providers) : [];
+  return providerIds.length === 1 ? providerIds[0] : undefined;
+}
+
+function resolveActiveTalkProviderConfig(talk) {
+  const normalizedTalk = normalizeTalkSection(talk);
+  if (!normalizedTalk) {
+    return undefined;
+  }
+  const provider = activeProviderFromTalk(normalizedTalk);
+  if (!provider) {
+    return undefined;
+  }
+  return {
+    provider,
+    config: (normalizedTalk.providers && normalizedTalk.providers[provider]) || {},
+  };
+}
+
 const DEFAULT_ACCOUNT_ID = "default";
 const DEFAULT_AGENT_ID = "main";
 const DEFAULT_MAIN_KEY = "main";
@@ -24952,6 +25186,38 @@ function resolveUserPath(input, env = process.env, homedir = () => os.homedir())
   return resolveHomeRelativePath(input, { env, homedir });
 }
 
+function resolveStateDir(env = process.env, homedir = () => os.homedir()) {
+  const sourceEnv = env || process.env;
+  const override =
+    typeof sourceEnv.OPENCLAW_STATE_DIR === "string"
+      ? sourceEnv.OPENCLAW_STATE_DIR.trim()
+      : "";
+  if (override) {
+    return resolveUserPath(override, sourceEnv, homedir);
+  }
+  return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
+}
+
+function resolveOAuthDir(env = process.env, stateDir) {
+  const sourceEnv = env || process.env;
+  const override =
+    typeof sourceEnv.OPENCLAW_OAUTH_DIR === "string"
+      ? sourceEnv.OPENCLAW_OAUTH_DIR.trim()
+      : "";
+  if (override) {
+    return resolveUserPath(
+      override,
+      sourceEnv,
+      () => resolveRequiredHomeDir(sourceEnv, os.homedir),
+    );
+  }
+  const resolvedStateDir =
+    typeof stateDir === "string" && stateDir.trim() ? stateDir : resolveStateDir(sourceEnv);
+  return path.join(resolvedStateDir, "credentials");
+}
+
+const STATE_DIR = resolveStateDir();
+
 function resolveAccountWithDefaultFallback(params) {
   const rawAccountId = params && params.accountId;
   const hasExplicitAccountId = Boolean(
@@ -25308,6 +25574,295 @@ function stringEnum(values, options = {}) {
 function optionalStringEnum(values, options = {}) {
   return stringEnum(values, options);
 }
+
+function makeSchemaResult(ok, data, message) {
+  if (ok) {
+    return { success: true, data };
+  }
+  return {
+    success: false,
+    error: {
+      issues: [{ message: message || "Invalid input" }],
+    },
+  };
+}
+
+function createSimpleSchema(validate, options = {}) {
+  const schema = {
+    _def: {
+      typeName: options.typeName || "OpenZuesSchema",
+    },
+    safeParse(value) {
+      const message = validate(value);
+      return makeSchemaResult(message === undefined, value, message);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return createOptionalSchema(schema);
+    },
+    catchall() {
+      return schema;
+    },
+    toJSONSchema() {
+      return options.jsonSchema || {};
+    },
+  };
+  return schema;
+}
+
+function createOptionalSchema(innerSchema) {
+  const schema = {
+    _def: {
+      typeName: "ZodOptional",
+      innerType: innerSchema,
+    },
+    safeParse(value) {
+      if (value === undefined) {
+        return makeSchemaResult(true, undefined);
+      }
+      return innerSchema.safeParse(value);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return schema;
+    },
+    toJSONSchema() {
+      return typeof innerSchema.toJSONSchema === "function" ? innerSchema.toJSONSchema() : {};
+    },
+  };
+  return schema;
+}
+
+function createStringSchema() {
+  return createSimpleSchema(
+    (value) => (typeof value === "string" ? undefined : "Expected string"),
+    { typeName: "ZodString", jsonSchema: { type: "string" } },
+  );
+}
+
+function createBooleanSchema() {
+  return createSimpleSchema(
+    (value) => (typeof value === "boolean" ? undefined : "Expected boolean"),
+    { typeName: "ZodBoolean", jsonSchema: { type: "boolean" } },
+  );
+}
+
+function createNumberSchema(options = {}) {
+  return createSimpleSchema(
+    (value) => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "Expected number";
+      }
+      if (options.integer === true && !Number.isInteger(value)) {
+        return "Expected integer";
+      }
+      if (typeof options.min === "number" && value < options.min) {
+        return `Number must be greater than or equal to ${options.min}`;
+      }
+      if (options.positive === true && value <= 0) {
+        return "Number must be greater than 0";
+      }
+      return undefined;
+    },
+    { typeName: "ZodNumber", jsonSchema: { type: "number" } },
+  );
+}
+
+function createEnumSchema(values) {
+  const allowed = new Set(enumValuesFrom(values));
+  return createSimpleSchema(
+    (value) => (allowed.has(value) ? undefined : "Invalid enum value"),
+    { typeName: "ZodEnum", jsonSchema: { type: "string", enum: [...allowed] } },
+  );
+}
+
+function createRecordSchema() {
+  return createSimpleSchema(
+    (value) =>
+      value && typeof value === "object" && !Array.isArray(value) ? undefined : "Expected object",
+    { typeName: "ZodRecord", jsonSchema: { type: "object", additionalProperties: true } },
+  );
+}
+
+function createArraySchema(itemSchema) {
+  return createSimpleSchema(
+    (value) => {
+      if (!Array.isArray(value)) {
+        return "Expected array";
+      }
+      for (const item of value) {
+        const result =
+          itemSchema && typeof itemSchema.safeParse === "function"
+            ? itemSchema.safeParse(item)
+            : { success: true };
+        if (!result.success) {
+          return result.error && result.error.issues && result.error.issues[0]
+            ? result.error.issues[0].message
+            : "Invalid array item";
+        }
+      }
+      return undefined;
+    },
+    {
+      typeName: "ZodArray",
+      jsonSchema: {
+        type: "array",
+        items:
+          itemSchema && typeof itemSchema.toJSONSchema === "function"
+            ? itemSchema.toJSONSchema()
+            : {},
+      },
+    },
+  );
+}
+
+function createStrictObjectSchema(shape, options = {}) {
+  const keys = Object.keys(shape || {});
+  const schema = {
+    _def: {
+      typeName: "ZodObject",
+      shape,
+    },
+    safeParse(value) {
+      if (value === undefined && options.optional) {
+        return makeSchemaResult(true, undefined);
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return makeSchemaResult(false, value, "Expected object");
+      }
+      for (const key of Object.keys(value)) {
+        if (!Object.prototype.hasOwnProperty.call(shape, key)) {
+          return makeSchemaResult(false, value, `Unrecognized key: ${key}`);
+        }
+      }
+      for (const key of keys) {
+        if (value[key] === undefined) {
+          continue;
+        }
+        const fieldSchema = shape[key];
+        const result =
+          fieldSchema && typeof fieldSchema.safeParse === "function"
+            ? fieldSchema.safeParse(value[key])
+            : { success: true };
+        if (!result.success) {
+          const issue =
+            result.error && result.error.issues && result.error.issues[0]
+              ? result.error.issues[0]
+              : { message: "Invalid object field" };
+          return makeSchemaResult(false, value, issue.message);
+        }
+      }
+      return makeSchemaResult(true, value);
+    },
+    parse(value) {
+      const result = this.safeParse(value);
+      if (result.success) {
+        return result.data;
+      }
+      const error = new Error(result.error.issues[0].message);
+      error.issues = result.error.issues;
+      throw error;
+    },
+    optional() {
+      return createOptionalSchema(schema);
+    },
+    extend(extraShape) {
+      return createStrictObjectSchema({ ...shape, ...(extraShape || {}) }, options);
+    },
+    catchall() {
+      return schema;
+    },
+    toJSONSchema() {
+      const properties = {};
+      for (const [key, fieldSchema] of Object.entries(shape || {})) {
+        properties[key] =
+          fieldSchema && typeof fieldSchema.toJSONSchema === "function"
+            ? fieldSchema.toJSONSchema()
+            : {};
+      }
+      return {
+        type: "object",
+        additionalProperties: false,
+        properties,
+      };
+    },
+  };
+  return schema;
+}
+
+function createToolPolicySchema() {
+  const stringArrayIssue = (value) =>
+    Array.isArray(value) && value.every((entry) => typeof entry === "string")
+      ? undefined
+      : "Expected string array";
+  return createOptionalSchema(
+    createSimpleSchema(
+      (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return "Expected object";
+        }
+        const allowedKeys = new Set(["allow", "alsoAllow", "deny"]);
+        for (const key of Object.keys(value)) {
+          if (!allowedKeys.has(key)) {
+            return `Unrecognized key: ${key}`;
+          }
+        }
+        for (const key of allowedKeys) {
+          if (value[key] !== undefined) {
+            const issue = stringArrayIssue(value[key]);
+            if (issue) {
+              return issue;
+            }
+          }
+        }
+        if (
+          Array.isArray(value.allow) &&
+          value.allow.length > 0 &&
+          Array.isArray(value.alsoAllow) &&
+          value.alsoAllow.length > 0
+        ) {
+          return "tools policy cannot set both allow and alsoAllow in the same scope "
+            + "(merge alsoAllow into allow, or remove allow and use profile + alsoAllow)";
+        }
+        return undefined;
+      },
+      { typeName: "ZodObject" },
+    ),
+  );
+}
+
+const ReplyRuntimeConfigSchemaShape = {
+  historyLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+  dmHistoryLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+  contextVisibility: createOptionalSchema(
+    createEnumSchema(["all", "allowlist", "allowlist_quote"]),
+  ),
+  dms: createOptionalSchema(createRecordSchema()),
+  textChunkLimit: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  chunkMode: createOptionalSchema(createEnumSchema(["length", "newline"])),
+  blockStreaming: createOptionalSchema(createBooleanSchema()),
+  blockStreamingCoalesce: createOptionalSchema(createRecordSchema()),
+  responsePrefix: createOptionalSchema(createStringSchema()),
+  mediaMaxMb: createOptionalSchema(createNumberSchema({ positive: true })),
+};
+
+const ToolPolicySchema = createToolPolicySchema();
 
 function createMessageToolButtonsSchema() {
   return {
@@ -29276,6 +29831,7 @@ async function readChannelAllowFromStore(channel, env = process.env, accountId) 
 }
 
 function buildPairingReply(params) {
+  const approveCommand = `openclaw pairing approve ${params.channel} ${params.code}`;
   return [
     "OpenClaw: access not configured.",
     "",
@@ -29286,7 +29842,10 @@ function buildPairingReply(params) {
     "```",
     "",
     "Ask the bot owner to approve with:",
-    `openclaw pairing approve ${params.channel} ${params.code}`,
+    approveCommand,
+    "```",
+    approveCommand,
+    "```",
   ].join("\n");
 }
 
@@ -29466,6 +30025,256 @@ function createOptionalChannelSetupAdapter(params) {
     },
     validateInput: () => message,
   };
+}
+
+function resolveSetupChannelSection(cfg, channelKey) {
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = channels[channelKey];
+  return base && typeof base === "object" && !Array.isArray(base) ? base : {};
+}
+
+function resolveSetupChannelAccounts(section) {
+  return section && section.accounts && typeof section.accounts === "object"
+    ? section.accounts
+    : {};
+}
+
+function shouldStoreSetupNameInAccounts(params) {
+  if (params.alwaysUseAccounts) {
+    return true;
+  }
+  if (params.accountId !== DEFAULT_ACCOUNT_ID) {
+    return true;
+  }
+  return Object.keys(resolveSetupChannelAccounts(
+    resolveSetupChannelSection(params.cfg, params.channelKey),
+  )).length > 0;
+}
+
+function applySetupAccountNameToChannelSection(params) {
+  const trimmed = typeof params.name === "string" ? params.name.trim() : "";
+  if (!trimmed) {
+    return params.cfg || {};
+  }
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const accountId = normalizeAccountId(params.accountId);
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const useAccounts = shouldStoreSetupNameInAccounts({
+    cfg,
+    channelKey: params.channelKey,
+    accountId,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+  if (!useAccounts && accountId === DEFAULT_ACCOUNT_ID) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.channelKey]: {
+          ...base,
+          name: trimmed,
+        },
+      },
+    };
+  }
+  const accounts = resolveSetupChannelAccounts(base);
+  const existingAccount =
+    accounts[accountId] && typeof accounts[accountId] === "object" ? accounts[accountId] : {};
+  const baseWithoutName = { ...base };
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    delete baseWithoutName.name;
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...baseWithoutName,
+        accounts: {
+          ...accounts,
+          [accountId]: {
+            ...existingAccount,
+            name: trimmed,
+          },
+        },
+      },
+    },
+  };
+}
+
+function migrateSetupBaseNameToDefaultAccount(params) {
+  if (params.alwaysUseAccounts) {
+    return params.cfg || {};
+  }
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const baseName = typeof base.name === "string" ? base.name.trim() : "";
+  if (!baseName) {
+    return cfg;
+  }
+  const accounts = { ...resolveSetupChannelAccounts(base) };
+  const defaultAccount =
+    accounts[DEFAULT_ACCOUNT_ID] && typeof accounts[DEFAULT_ACCOUNT_ID] === "object"
+      ? accounts[DEFAULT_ACCOUNT_ID]
+      : {};
+  if (!defaultAccount.name) {
+    accounts[DEFAULT_ACCOUNT_ID] = { ...defaultAccount, name: baseName };
+  }
+  const baseWithoutName = { ...base };
+  delete baseWithoutName.name;
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...baseWithoutName,
+        accounts,
+      },
+    },
+  };
+}
+
+function prepareScopedSetupConfig(params) {
+  const accountId = normalizeAccountId(params.accountId);
+  const namedConfig = applySetupAccountNameToChannelSection({
+    cfg: params.cfg,
+    channelKey: params.channelKey,
+    accountId,
+    name: params.name,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+  if (!params.migrateBaseName || accountId === DEFAULT_ACCOUNT_ID) {
+    return namedConfig;
+  }
+  return migrateSetupBaseNameToDefaultAccount({
+    cfg: namedConfig,
+    channelKey: params.channelKey,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+  });
+}
+
+function patchScopedSetupAccountConfig(params) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const accountId = normalizeAccountId(params.accountId);
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  const ensureChannelEnabled =
+    typeof params.ensureChannelEnabled === "boolean" ? params.ensureChannelEnabled : true;
+  const ensureAccountEnabled =
+    typeof params.ensureAccountEnabled === "boolean"
+      ? params.ensureAccountEnabled
+      : ensureChannelEnabled;
+  const patch = params.patch && typeof params.patch === "object" ? params.patch : {};
+  const accountPatch =
+    params.accountPatch && typeof params.accountPatch === "object" ? params.accountPatch : patch;
+  if (accountId === DEFAULT_ACCOUNT_ID && !params.scopeDefaultToAccounts) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.channelKey]: {
+          ...base,
+          ...(ensureChannelEnabled ? { enabled: true } : {}),
+          ...patch,
+        },
+      },
+    };
+  }
+  const accounts = resolveSetupChannelAccounts(base);
+  const existingAccount =
+    accounts[accountId] && typeof accounts[accountId] === "object" ? accounts[accountId] : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...base,
+        ...(ensureChannelEnabled ? { enabled: true } : {}),
+        accounts: {
+          ...accounts,
+          [accountId]: {
+            ...existingAccount,
+            ...(ensureAccountEnabled
+              ? {
+                  enabled:
+                    typeof existingAccount.enabled === "boolean" ? existingAccount.enabled : true,
+                }
+              : {}),
+            ...accountPatch,
+          },
+        },
+      },
+    },
+  };
+}
+
+function createPatchedAccountSetupAdapter(params) {
+  return {
+    resolveAccountId: ({ accountId } = {}) => normalizeAccountId(accountId),
+    applyAccountName: ({ cfg, accountId, name } = {}) =>
+      prepareScopedSetupConfig({
+        cfg: cfg || {},
+        channelKey: params.channelKey,
+        accountId,
+        name,
+        alwaysUseAccounts: params.alwaysUseAccounts,
+      }),
+    validateInput: params.validateInput,
+    applyAccountConfig: ({ cfg, accountId, input } = {}) => {
+      const setupInput = input && typeof input === "object" ? input : {};
+      const resolvedAccountId = normalizeAccountId(accountId);
+      const next = prepareScopedSetupConfig({
+        cfg: cfg || {},
+        channelKey: params.channelKey,
+        accountId: resolvedAccountId,
+        name: setupInput.name,
+        alwaysUseAccounts: params.alwaysUseAccounts,
+        migrateBaseName: !params.alwaysUseAccounts,
+      });
+      const patch =
+        typeof params.buildPatch === "function" ? params.buildPatch(setupInput) : {};
+      return patchScopedSetupAccountConfig({
+        cfg: next,
+        channelKey: params.channelKey,
+        accountId: resolvedAccountId,
+        patch,
+        accountPatch: patch,
+        ensureChannelEnabled: params.ensureChannelEnabled ?? !params.alwaysUseAccounts,
+        ensureAccountEnabled: params.ensureAccountEnabled ?? true,
+        scopeDefaultToAccounts: params.alwaysUseAccounts,
+      });
+    },
+  };
+}
+
+function createEnvPatchedAccountSetupAdapter(params) {
+  return createPatchedAccountSetupAdapter({
+    channelKey: params.channelKey,
+    alwaysUseAccounts: params.alwaysUseAccounts,
+    ensureChannelEnabled: params.ensureChannelEnabled,
+    ensureAccountEnabled: params.ensureAccountEnabled,
+    validateInput: (inputParams = {}) => {
+      const input = inputParams.input && typeof inputParams.input === "object"
+        ? inputParams.input
+        : {};
+      const accountId = normalizeAccountId(inputParams.accountId);
+      if (input.useEnv && accountId !== DEFAULT_ACCOUNT_ID) {
+        return params.defaultAccountOnlyEnvError;
+      }
+      if (
+        !input.useEnv &&
+        !(typeof params.hasCredentials === "function" && params.hasCredentials(input))
+      ) {
+        return params.missingCredentialError;
+      }
+      return typeof params.validateInput === "function"
+        ? params.validateInput({ ...inputParams, accountId, input })
+        : null;
+    },
+    buildPatch: params.buildPatch,
+  });
 }
 
 function createOptionalChannelSetupWizard(params) {
@@ -29789,21 +30598,106 @@ function resolveTextChunkLimit(cfg, provider, accountId, opts) {
     : fallback;
 }
 
+function asTextChunkMode(value) {
+  return value === "length" || value === "newline" ? value : undefined;
+}
+
+function asBoolean(value) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeStreamingMode(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return normalizeOptionalLowercaseString(value) || null;
+}
+
+function parsePreviewStreamingMode(value) {
+  const normalized = normalizeStreamingMode(value);
+  if (
+    normalized === "off" ||
+    normalized === "partial" ||
+    normalized === "block" ||
+    normalized === "progress"
+  ) {
+    return normalized === "progress" ? "partial" : normalized;
+  }
+  return null;
+}
+
+function getChannelStreamingConfigObject(entry) {
+  const streaming = asObjectRecord(entry && entry.streaming);
+  return streaming || undefined;
+}
+
 function resolveChannelStreamingChunkMode(entry) {
   if (!entry || typeof entry !== "object") {
     return undefined;
   }
-  const streaming = entry.streaming;
-  if (
-    streaming &&
-    typeof streaming === "object" &&
-    (streaming.chunkMode === "length" || streaming.chunkMode === "newline")
-  ) {
-    return streaming.chunkMode;
+  return asTextChunkMode(getChannelStreamingConfigObject(entry)?.chunkMode) ??
+    asTextChunkMode(entry.chunkMode);
+}
+
+function resolveChannelStreamingBlockEnabled(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
   }
-  return entry.chunkMode === "length" || entry.chunkMode === "newline"
-    ? entry.chunkMode
-    : undefined;
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.block?.enabled) ?? asBoolean(entry.blockStreaming);
+}
+
+function resolveChannelStreamingBlockCoalesce(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asObjectRecord(config?.block?.coalesce) || asObjectRecord(entry.blockStreamingCoalesce) ||
+    undefined;
+}
+
+function resolveChannelStreamingPreviewChunk(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asObjectRecord(config?.preview?.chunk) || asObjectRecord(entry.draftChunk) || undefined;
+}
+
+function resolveChannelStreamingPreviewToolProgress(entry, defaultValue = true) {
+  if (!entry || typeof entry !== "object") {
+    return defaultValue;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.preview?.toolProgress) ?? defaultValue;
+}
+
+function resolveChannelStreamingNativeTransport(entry) {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const config = getChannelStreamingConfigObject(entry);
+  return asBoolean(config?.nativeTransport) ?? asBoolean(entry.nativeStreaming);
+}
+
+function resolveChannelPreviewStreamMode(entry, defaultMode) {
+  if (!entry || typeof entry !== "object") {
+    return defaultMode;
+  }
+  const parsedStreaming = parsePreviewStreamingMode(
+    getChannelStreamingConfigObject(entry)?.mode ?? entry.streaming,
+  );
+  if (parsedStreaming) {
+    return parsedStreaming;
+  }
+  const legacy = parsePreviewStreamingMode(entry.streamMode);
+  if (legacy) {
+    return legacy;
+  }
+  if (typeof entry.streaming === "boolean") {
+    return entry.streaming ? "partial" : "off";
+  }
+  return defaultMode;
 }
 
 function resolveChunkModeForProvider(cfgSection, accountId) {
@@ -30000,6 +30894,75 @@ function buildMediaPayload(mediaList, opts) {
     MediaUrls: mediaPaths.length > 0 ? mediaPaths : undefined,
     MediaTypes: mediaTypes.length > 0 ? mediaTypes : undefined,
   };
+}
+
+function buildAgentMediaPayload(mediaList) {
+  return buildMediaPayload(mediaList);
+}
+
+function buildMediaLocalRoots(stateDir, configDir, options = {}) {
+  const resolvedStateDir = path.resolve(stateDir);
+  const resolvedConfigDir = path.resolve(configDir);
+  const preferredTmpDir = options.preferredTmpDir || resolvePreferredOpenClawTmpDir();
+  return Array.from(
+    new Set([
+      preferredTmpDir,
+      path.join(resolvedConfigDir, "media"),
+      path.join(resolvedStateDir, "media"),
+      path.join(resolvedStateDir, "canvas"),
+      path.join(resolvedStateDir, "workspace"),
+      path.join(resolvedStateDir, "sandboxes"),
+    ]),
+  );
+}
+
+function resolveAgentWorkspaceDirFromConfig(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const normalizedAgentId = normalizeAgentId(agentId);
+  let entry;
+  if (agents && Array.isArray(agents.list)) {
+    entry = agents.list.find(
+      (candidate) =>
+        normalizeAgentId(candidate && candidate.id) === normalizedAgentId,
+    );
+  } else if (agents && typeof agents === "object") {
+    entry = agents[agentId] || agents[normalizedAgentId];
+  }
+  if (!entry && cfg && cfg.agent && normalizeAgentId(cfg.agent.id) === normalizedAgentId) {
+    entry = cfg.agent;
+  }
+  const workspaceDir = normalizeOptionalString(
+    entry &&
+      (entry.workspaceDir ||
+        entry.workspace ||
+        entry.cwd ||
+        entry.worktreeDir ||
+        entry.projectDir),
+  );
+  return workspaceDir ? path.resolve(workspaceDir) : undefined;
+}
+
+function getAgentScopedMediaLocalRoots(cfg = {}, agentId) {
+  const stateDir =
+    normalizeOptionalString(cfg.stateDir) ||
+    normalizeOptionalString(cfg.dataDir) ||
+    path.join(os.homedir(), ".openclaw");
+  const configDir =
+    normalizeOptionalString(cfg.configDir) ||
+    normalizeOptionalString(cfg.homeDir) ||
+    stateDir;
+  const roots = buildMediaLocalRoots(stateDir, configDir, {
+    preferredTmpDir: cfg.preferredTmpDir,
+  });
+  const normalizedAgentId = normalizeOptionalString(agentId);
+  if (!normalizedAgentId) {
+    return roots;
+  }
+  const workspaceDir = resolveAgentWorkspaceDirFromConfig(cfg, normalizedAgentId);
+  if (workspaceDir && !roots.includes(workspaceDir)) {
+    roots.push(workspaceDir);
+  }
+  return roots;
 }
 
 async function sendPayloadWithChunkedTextAndMedia(params) {
@@ -30434,6 +31397,10 @@ const providerModelIdNormalizeRuntime = {
   normalizeNativeXaiModelId,
 };
 
+const xaiModelIdRuntime = {
+  normalizeXaiModelId,
+};
+
 const providerModelSharedRuntime = {
   ANTHROPIC_BY_MODEL_REPLAY_HOOKS,
   DEFAULT_CONTEXT_TOKENS: 128000,
@@ -30463,6 +31430,7 @@ const providerModelSharedRuntime = {
   normalizeGooglePreviewModelId,
   normalizeModelCompat: passthrough,
   normalizeNativeXaiModelId,
+  normalizeXaiModelId,
   normalizeProviderId: normalizeOptionalLowercaseString,
   renderGpt5PromptOverlay: passthrough,
   resolveClaudeThinkingProfile,
@@ -30654,6 +31622,328 @@ const runtimeRuntime = {
   ...runtimeLoggerRuntime,
   createNonExitingRuntime,
   defaultRuntime,
+};
+
+const RUNTIME_ENV_LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"];
+const RUNTIME_ENV_LOG_LEVEL_WEIGHTS = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+  silent: Number.POSITIVE_INFINITY,
+};
+let runtimeEnvVerbose = false;
+let runtimeEnvYes = false;
+const runtimeUnhandledRejectionHandlers = new Set();
+const runtimeUncaughtExceptionHandlers = new Set();
+
+function isVerbose() {
+  return runtimeEnvVerbose;
+}
+
+function setVerbose(value) {
+  runtimeEnvVerbose = Boolean(value);
+}
+
+function isYes() {
+  return runtimeEnvYes;
+}
+
+function setYes(value) {
+  runtimeEnvYes = Boolean(value);
+}
+
+function shouldLogVerbose() {
+  return runtimeEnvVerbose;
+}
+
+function logVerbose(message) {
+  if (shouldLogVerbose()) {
+    console.log(String(message));
+  }
+}
+
+function logVerboseConsole(message) {
+  if (isVerbose()) {
+    console.log(String(message));
+  }
+}
+
+function identityTheme(value) {
+  return String(value);
+}
+
+function withTimeout(promise, timeoutMs) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return promise;
+  }
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function isTruthyEnvValue(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return ["1", "on", "true", "yes"].includes(normalizeLowercaseStringOrEmpty(value));
+}
+
+function waitForAbortSignal(signal) {
+  if (!signal || signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function computeBackoff(policy, attempt) {
+  const base = policy.initialMs * policy.factor ** Math.max(attempt - 1, 0);
+  const jitter = base * policy.jitter * Math.random();
+  return Math.min(policy.maxMs, Math.round(base + jitter));
+}
+
+function formatDurationSeconds(ms, options = {}) {
+  if (!Number.isFinite(ms)) {
+    return "unknown";
+  }
+  const decimals = options.decimals ?? 1;
+  const unit = options.unit ?? "s";
+  const seconds = Math.max(0, ms) / 1000;
+  const fixed = seconds.toFixed(Math.max(0, decimals));
+  const trimmed = fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  return unit === "seconds" ? `${trimmed} seconds` : `${trimmed}s`;
+}
+
+function formatDurationPrecise(ms, options = {}) {
+  if (!Number.isFinite(ms)) {
+    return "unknown";
+  }
+  if (ms < 1000) {
+    return `${Math.max(0, Math.round(ms))}ms`;
+  }
+  return formatDurationSeconds(ms, {
+    decimals: options.decimals ?? 2,
+    unit: options.unit ?? "s",
+  });
+}
+
+function registerUnhandledRejectionHandler(handler) {
+  runtimeUnhandledRejectionHandlers.add(handler);
+  return () => runtimeUnhandledRejectionHandlers.delete(handler);
+}
+
+function registerUncaughtExceptionHandler(handler) {
+  runtimeUncaughtExceptionHandlers.add(handler);
+  return () => runtimeUncaughtExceptionHandlers.delete(handler);
+}
+
+function normalizeLogLevel(value, fallback = "info") {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return RUNTIME_ENV_LOG_LEVELS.includes(normalized) ? normalized : fallback;
+}
+
+function levelToMinLevel(value) {
+  return RUNTIME_ENV_LOG_LEVEL_WEIGHTS[normalizeLogLevel(value)] ?? 30;
+}
+
+function createNoopPinoLikeLogger(subsystem = "unknown") {
+  const logger = {
+    trace() {},
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+    fatal() {},
+    child(meta) {
+      const suffix =
+        meta && typeof meta === "object" && typeof meta.subsystem === "string"
+          ? meta.subsystem
+          : "";
+      return createNoopPinoLikeLogger(suffix ? `${subsystem}/${suffix}` : subsystem);
+    },
+  };
+  return logger;
+}
+
+function toPinoLikeLogger(logger = console) {
+  return {
+    trace: typeof logger.trace === "function" ? logger.trace.bind(logger) : () => {},
+    debug: typeof logger.debug === "function" ? logger.debug.bind(logger) : () => {},
+    info: typeof logger.info === "function" ? logger.info.bind(logger) : () => {},
+    warn: typeof logger.warn === "function" ? logger.warn.bind(logger) : () => {},
+    error: typeof logger.error === "function" ? logger.error.bind(logger) : () => {},
+    fatal: typeof logger.fatal === "function" ? logger.fatal.bind(logger) : () => {},
+    child: typeof logger.child === "function" ? logger.child.bind(logger) : () => logger,
+  };
+}
+
+function createSubsystemLogger(subsystem = "unknown") {
+  const normalizedSubsystem = String(subsystem || "unknown").trim() || "unknown";
+  const logger = {
+    subsystem: normalizedSubsystem,
+    isEnabled(level, _target) {
+      return normalizeLogLevel(level, "info") !== "silent";
+    },
+    trace(_message, _meta) {},
+    debug(_message, _meta) {},
+    info(_message, _meta) {},
+    warn(_message, _meta) {},
+    error(_message, _meta) {},
+    fatal(_message, _meta) {},
+    raw(_message) {},
+    child(name) {
+      const childName = String(name || "").trim();
+      return createSubsystemLogger(
+        childName ? `${normalizedSubsystem}/${childName}` : normalizedSubsystem,
+      );
+    },
+  };
+  return logger;
+}
+
+function runtimeForLogger(logger) {
+  const resolved = logger || createSubsystemLogger("runtime");
+  return createLoggerBackedRuntime({
+    logger: {
+      info: (message) => {
+        if (typeof resolved.info === "function") {
+          resolved.info(String(message));
+        }
+      },
+      error: (message) => {
+        if (typeof resolved.error === "function") {
+          resolved.error(String(message));
+        }
+      },
+    },
+  });
+}
+
+function createSubsystemRuntime(subsystem) {
+  return runtimeForLogger(createSubsystemLogger(subsystem));
+}
+
+function getConsoleSettings() {
+  return { level: "info", style: "pretty" };
+}
+
+function getResolvedConsoleSettings() {
+  return getConsoleSettings();
+}
+
+function shouldLogSubsystemToConsole(_subsystem, level = "info") {
+  return normalizeLogLevel(level) !== "silent";
+}
+
+function getLogger() {
+  return createNoopPinoLikeLogger("root");
+}
+
+function getChildLogger(subsystem) {
+  return createNoopPinoLikeLogger(subsystem || "child");
+}
+
+function getResolvedLoggerSettings() {
+  return { level: "info" };
+}
+
+function isFileLogLevelEnabled(level) {
+  return levelToMinLevel(level) >= levelToMinLevel("debug");
+}
+
+function resetLogger() {}
+
+function setLoggerOverride() {}
+
+function enableConsoleCapture() {}
+
+function routeLogsToStderr() {}
+
+function setConsoleSubsystemFilter() {}
+
+function setConsoleConfigLoaderForTests() {}
+
+function setConsoleTimestampPrefix() {}
+
+function stripRedundantSubsystemPrefixForConsole(message, displaySubsystem) {
+  const text = String(message || "");
+  const prefix = String(displaySubsystem || "");
+  if (prefix && normalizeLowercaseStringOrEmpty(text).startsWith(prefix.toLowerCase())) {
+    return text.slice(prefix.length).replace(/^[:\s]+/u, "");
+  }
+  return text;
+}
+
+function ensureGlobalUndiciEnvProxyDispatcher() {}
+
+function isWSL2Sync() {
+  return false;
+}
+
+const runtimeEnvRuntime = {
+  ...runtimeRuntime,
+  ALLOWED_LOG_LEVELS: RUNTIME_ENV_LOG_LEVELS,
+  DEFAULT_LOG_DIR: "logs",
+  DEFAULT_LOG_FILE: "openclaw.log",
+  computeBackoff,
+  createSubsystemLogger,
+  createSubsystemRuntime,
+  danger: identityTheme,
+  enableConsoleCapture,
+  ensureGlobalUndiciEnvProxyDispatcher,
+  formatDurationPrecise,
+  formatDurationSeconds,
+  getChildLogger,
+  getConsoleSettings,
+  getLogger,
+  getResolvedConsoleSettings,
+  getResolvedLoggerSettings,
+  info: identityTheme,
+  isFileLogLevelEnabled,
+  isTruthyEnvValue,
+  isVerbose,
+  isWSL2Sync,
+  isYes,
+  levelToMinLevel,
+  logVerbose,
+  logVerboseConsole,
+  normalizeLogLevel,
+  registerUncaughtExceptionHandler,
+  registerUnhandledRejectionHandler,
+  resetLogger,
+  retryAsync,
+  routeLogsToStderr,
+  runtimeForLogger,
+  setConsoleConfigLoaderForTests,
+  setConsoleSubsystemFilter,
+  setConsoleTimestampPrefix,
+  setLoggerOverride,
+  setVerbose,
+  setYes,
+  shouldLogSubsystemToConsole,
+  shouldLogVerbose,
+  sleep: sleepMs,
+  sleepWithAbort,
+  stripRedundantSubsystemPrefixForConsole,
+  success: identityTheme,
+  toPinoLikeLogger,
+  waitForAbortSignal,
+  warn: identityTheme,
+  withTimeout,
 };
 
 async function nullChannelDirectorySelf(_ctx) {
@@ -31404,6 +32694,1415 @@ const conversationRuntime = {
   resolveConversationLabel,
 };
 
+function normalizeSessionBindingConversationRef(ref) {
+  const conversationId = normalizeOptionalString(ref && ref.conversationId) || "";
+  const parentConversationId = normalizeOptionalString(ref && ref.parentConversationId);
+  return {
+    channel: normalizeLowercaseStringOrEmpty(ref && ref.channel),
+    accountId: normalizeAccountId(ref && ref.accountId),
+    conversationId,
+    ...(parentConversationId && parentConversationId !== conversationId
+      ? { parentConversationId }
+      : {}),
+  };
+}
+
+function normalizeSessionBindingPlacement(raw) {
+  return raw === "current" || raw === "child" ? raw : undefined;
+}
+
+function inferSessionBindingPlacement(ref) {
+  return ref && ref.conversationId ? "current" : "child";
+}
+
+function getActiveSessionBindingAdapter(params) {
+  const entries = SESSION_BINDING_ADAPTERS.get(sessionBindingAdapterKey(params || {}));
+  return entries && entries.length > 0 ? entries[entries.length - 1] : null;
+}
+
+function getActiveSessionBindingAdapters() {
+  const adapters = [];
+  for (const entries of SESSION_BINDING_ADAPTERS.values()) {
+    if (entries && entries.length > 0) {
+      adapters.push(entries[entries.length - 1]);
+    }
+  }
+  return adapters;
+}
+
+function resolveSessionBindingAdapterPlacements(adapter) {
+  const configured = adapter && adapter.capabilities && adapter.capabilities.placements;
+  const placements = Array.isArray(configured)
+    ? configured.map(normalizeSessionBindingPlacement).filter(Boolean)
+    : [];
+  if (placements.length > 0) {
+    return Array.from(new Set(placements));
+  }
+  return ["current", "child"];
+}
+
+function resolveSessionBindingAdapterCapabilities(adapter) {
+  if (!adapter) {
+    return {
+      adapterAvailable: false,
+      bindSupported: false,
+      unbindSupported: false,
+      placements: [],
+    };
+  }
+  const bindSupported =
+    adapter.capabilities &&
+    Object.prototype.hasOwnProperty.call(adapter.capabilities, "bindSupported")
+      ? adapter.capabilities.bindSupported === true
+      : typeof adapter.bind === "function";
+  return {
+    adapterAvailable: true,
+    bindSupported,
+    unbindSupported:
+      adapter.capabilities &&
+      Object.prototype.hasOwnProperty.call(adapter.capabilities, "unbindSupported")
+        ? adapter.capabilities.unbindSupported === true
+        : typeof adapter.unbind === "function",
+    placements: bindSupported ? resolveSessionBindingAdapterPlacements(adapter) : [],
+  };
+}
+
+function createSessionBindingError(code, message, details) {
+  const error = new Error(message);
+  error.name = "SessionBindingError";
+  error.code = code;
+  error.details = details;
+  return error;
+}
+
+function dedupeSessionBindingRecords(records) {
+  const byId = new Map();
+  for (const record of records) {
+    if (record && record.bindingId) {
+      byId.set(record.bindingId, record);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+const DEFAULT_SESSION_BINDING_SERVICE = {
+  bind: async (input) => {
+    const conversation = normalizeSessionBindingConversationRef(input && input.conversation);
+    const adapter = getActiveSessionBindingAdapter(conversation);
+    if (!adapter) {
+      throw createSessionBindingError(
+        "BINDING_ADAPTER_UNAVAILABLE",
+        `Session binding adapter unavailable for ${conversation.channel}:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId },
+      );
+    }
+    if (typeof adapter.bind !== "function") {
+      throw createSessionBindingError(
+        "BINDING_CAPABILITY_UNSUPPORTED",
+        `Session binding adapter does not support binding for ${
+          conversation.channel
+        }:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId },
+      );
+    }
+    const placement =
+      normalizeSessionBindingPlacement(input && input.placement) ||
+      inferSessionBindingPlacement(conversation);
+    const supportedPlacements = resolveSessionBindingAdapterPlacements(adapter);
+    if (!supportedPlacements.includes(placement)) {
+      throw createSessionBindingError(
+        "BINDING_CAPABILITY_UNSUPPORTED",
+        `Session binding placement "${placement}" is not supported for ${
+          conversation.channel
+        }:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId, placement },
+      );
+    }
+    const bound = await adapter.bind({
+      ...input,
+      conversation,
+      placement,
+    });
+    if (!bound) {
+      throw createSessionBindingError(
+        "BINDING_CREATE_FAILED",
+        "Session binding adapter failed to bind target conversation",
+        { channel: conversation.channel, accountId: conversation.accountId, placement },
+      );
+    }
+    return bound;
+  },
+  getCapabilities: (params) =>
+    resolveSessionBindingAdapterCapabilities(getActiveSessionBindingAdapter(params || {})),
+  listBySession: (targetSessionKey) => {
+    const key = normalizeOptionalString(targetSessionKey);
+    if (!key) {
+      return [];
+    }
+    const records = [];
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.listBySession === "function") {
+        const entries = adapter.listBySession(key);
+        if (Array.isArray(entries)) {
+          records.push(...entries);
+        }
+      }
+    }
+    return dedupeSessionBindingRecords(records);
+  },
+  resolveByConversation: (ref) => {
+    const conversation = normalizeSessionBindingConversationRef(ref || {});
+    if (!conversation.channel || !conversation.conversationId) {
+      return null;
+    }
+    const adapter = getActiveSessionBindingAdapter(conversation);
+    return adapter && typeof adapter.resolveByConversation === "function"
+      ? adapter.resolveByConversation(conversation)
+      : null;
+  },
+  touch: (bindingId, at) => {
+    const normalizedBindingId = normalizeOptionalString(bindingId);
+    if (!normalizedBindingId) {
+      return;
+    }
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.touch === "function") {
+        adapter.touch(normalizedBindingId, at);
+      }
+    }
+  },
+  unbind: async (input) => {
+    const removed = [];
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.unbind !== "function") {
+        continue;
+      }
+      const entries = await adapter.unbind(input || {});
+      if (Array.isArray(entries)) {
+        removed.push(...entries);
+      }
+    }
+    return dedupeSessionBindingRecords(removed);
+  },
+};
+
+function getSessionBindingService() {
+  return DEFAULT_SESSION_BINDING_SERVICE;
+}
+
+function isPluginOwnedSessionBindingRecord(record) {
+  const metadata = record && record.metadata;
+  return Boolean(
+    metadata &&
+      typeof metadata === "object" &&
+      metadata.pluginBindingOwner === "plugin" &&
+      typeof metadata.pluginId === "string" &&
+      typeof metadata.pluginRoot === "string",
+  );
+}
+
+function resolveConversationBindingRouteRef(params) {
+  if (params && params.conversation) {
+    return normalizeSessionBindingConversationRef(params.conversation);
+  }
+  return normalizeSessionBindingConversationRef({
+    channel: params && params.channel,
+    accountId: params && params.accountId,
+    conversationId: params && params.conversationId,
+    parentConversationId: params && params.parentConversationId,
+  });
+}
+
+function configuredBindingMatchesConversation(binding, conversation) {
+  const match = (binding && binding.match) || binding || {};
+  const channel = normalizeLowercaseStringOrEmpty(match.channel || match.provider);
+  if (channel && channel !== conversation.channel) {
+    return false;
+  }
+  const accountId = normalizeOptionalString(match.accountId);
+  if (accountId && normalizeAccountId(accountId) !== conversation.accountId) {
+    return false;
+  }
+  const conversationId = normalizeOptionalString(
+    match.conversationId || match.peerId || match.to || binding.conversationId,
+  );
+  if (conversationId && conversationId !== conversation.conversationId) {
+    return false;
+  }
+  const parentConversationId = normalizeOptionalString(match.parentConversationId);
+  if (
+    parentConversationId &&
+    parentConversationId !== (conversation.parentConversationId || conversation.conversationId)
+  ) {
+    return false;
+  }
+  return Boolean(channel || conversationId);
+}
+
+function resolveConfiguredBinding(params) {
+  const cfg = (params && params.cfg) || {};
+  const conversation = resolveConversationBindingRouteRef(params || {});
+  const bindings = Array.isArray(cfg.bindings) ? cfg.bindings : [];
+  const binding = bindings.find((entry) =>
+    configuredBindingMatchesConversation(entry, conversation),
+  );
+  if (!binding) {
+    return null;
+  }
+  const route = (params && params.route) || {};
+  const agentId = normalizeAgentId(binding.agentId || route.agentId);
+  const sessionKey =
+    normalizeOptionalString(binding.sessionKey || binding.targetSessionKey) ||
+    `agent:${agentId}:binding:${conversation.channel}:${conversation.accountId}:${conversation.conversationId}`;
+  const statefulTarget = {
+    kind: "stateful",
+    driverId: normalizeOptionalString(binding.driverId) || "native",
+    sessionKey,
+    agentId,
+    ...(binding.label ? { label: String(binding.label) } : {}),
+  };
+  const record = {
+    bindingId: [
+      "configured",
+      conversation.channel,
+      conversation.accountId,
+      conversation.conversationId,
+    ].join(":"),
+    targetSessionKey: sessionKey,
+    targetKind: "session",
+    conversation,
+    status: "active",
+    boundAt: 0,
+    metadata: { configuredBinding: true },
+  };
+  return {
+    record,
+    statefulTarget,
+    conversation,
+    compiledBinding: {
+      channel: conversation.channel,
+      binding,
+      bindingConversationId: conversation.conversationId,
+      target: {
+        conversationId: conversation.conversationId,
+        ...(conversation.parentConversationId
+          ? { parentConversationId: conversation.parentConversationId }
+          : {}),
+      },
+      agentId,
+      targetFactory: {
+        driverId: statefulTarget.driverId,
+      },
+    },
+    match: (binding && binding.match) || {},
+  };
+}
+
+function normalizeAcpBindingMode(value) {
+  const raw = normalizeLowercaseStringOrEmpty(value);
+  return raw === "oneshot" ? "oneshot" : "persistent";
+}
+
+function normalizeAcpBindingText(value) {
+  return normalizeOptionalString(value);
+}
+
+function resolveAgentRuntimeAcpDefaultsFromConfig(cfg, agentId) {
+  const ownerAgentId = normalizeAgentId(agentId);
+  const agents = cfg && cfg.agents && Array.isArray(cfg.agents.list) ? cfg.agents.list : [];
+  const agent = agents.find((entry) => normalizeAgentId(entry && entry.id) === ownerAgentId);
+  if (!agent || !agent.runtime || agent.runtime.type !== "acp") {
+    return {};
+  }
+  const acp = agent.runtime.acp || {};
+  return {
+    acpAgentId: normalizeAcpBindingText(acp.agent),
+    mode: normalizeAcpBindingText(acp.mode),
+    cwd: normalizeAcpBindingText(acp.cwd),
+    backend: normalizeAcpBindingText(acp.backend),
+  };
+}
+
+function resolveConfiguredAcpWorkspaceCwd(cfg, agentId) {
+  const explicitAgentWorkspace = normalizeAcpBindingText(
+    resolveAgentConfigEntry(cfg, agentId) && resolveAgentConfigEntry(cfg, agentId).workspace,
+  );
+  if (explicitAgentWorkspace) {
+    return resolveAgentWorkspaceDirFromConfig(cfg, agentId);
+  }
+  const defaultAgentId = normalizeAgentId(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.id,
+  );
+  const defaultWorkspace = normalizeAcpBindingText(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.workspace,
+  );
+  if (defaultWorkspace && normalizeAgentId(agentId) === defaultAgentId) {
+    return resolveAgentWorkspaceDirFromConfig(cfg, agentId);
+  }
+  return undefined;
+}
+
+function resolveConfiguredAcpBindingConversation(params) {
+  const channel = normalizeLowercaseStringOrEmpty(params && params.channel);
+  const conversationId = normalizeAcpBindingText(params && params.conversationId);
+  if (!channel || !conversationId) {
+    return null;
+  }
+  return {
+    channel,
+    accountId: normalizeAccountId(params && params.accountId),
+    conversationId,
+    parentConversationId: normalizeAcpBindingText(params && params.parentConversationId),
+  };
+}
+
+function resolveConfiguredAcpBindingMatchId(binding) {
+  const match = (binding && binding.match) || {};
+  const peer = match && match.peer && typeof match.peer === "object" ? match.peer : {};
+  return normalizeAcpBindingText(
+    peer.id || match.conversationId || match.peerId || match.to || binding.conversationId,
+  );
+}
+
+function scoreConfiguredAcpBindingMatch(binding, conversation) {
+  if (!binding || binding.type !== "acp") {
+    return null;
+  }
+  const match = binding.match || {};
+  const channel = normalizeLowercaseStringOrEmpty(match.channel || match.provider);
+  if (!channel || channel !== conversation.channel) {
+    return null;
+  }
+  const matchAccountRaw = normalizeAcpBindingText(match.accountId);
+  let accountScore = 1;
+  if (matchAccountRaw && matchAccountRaw !== "*") {
+    if (normalizeAccountId(matchAccountRaw) !== conversation.accountId) {
+      return null;
+    }
+    accountScore = 4;
+  } else if (matchAccountRaw === "*") {
+    accountScore = 2;
+  }
+  const matchId = resolveConfiguredAcpBindingMatchId(binding);
+  if (!matchId) {
+    return null;
+  }
+  const candidates = [
+    { id: conversation.conversationId, score: 40 },
+    { id: conversation.parentConversationId, score: 20 },
+  ];
+  if (conversation.parentConversationId) {
+    candidates.push({
+      id: `${conversation.parentConversationId}:topic:${conversation.conversationId}`,
+      score: 35,
+    });
+  }
+  if (conversation.conversationId.includes(":sender:")) {
+    candidates.push({
+      id: conversation.conversationId.slice(0, conversation.conversationId.indexOf(":sender:")),
+      score: 30,
+    });
+  }
+  const matched = candidates.find((candidate) => candidate.id && candidate.id === matchId);
+  if (!matched) {
+    return null;
+  }
+  return {
+    score: accountScore + matched.score,
+    conversation: {
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: matchId,
+    },
+  };
+}
+
+function buildConfiguredAcpBindingHash(spec) {
+  return crypto
+    .createHash("sha256")
+    .update(`${spec.channel}:${spec.accountId}:${spec.conversationId}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function buildConfiguredAcpSessionKey(spec) {
+  const hash = buildConfiguredAcpBindingHash(spec);
+  return [
+    "agent",
+    sanitizeAgentId(spec.agentId),
+    "acp",
+    "binding",
+    spec.channel,
+    spec.accountId,
+    hash,
+  ].join(":");
+}
+
+function toConfiguredAcpBindingRecord(spec) {
+  return {
+    bindingId: `config:acp:${spec.channel}:${spec.accountId}:${spec.conversationId}`,
+    targetSessionKey: buildConfiguredAcpSessionKey(spec),
+    targetKind: "session",
+    conversation: {
+      channel: spec.channel,
+      accountId: spec.accountId,
+      conversationId: spec.conversationId,
+      ...(spec.parentConversationId ? { parentConversationId: spec.parentConversationId } : {}),
+    },
+    status: "active",
+    boundAt: 0,
+    metadata: {
+      source: "config",
+      mode: spec.mode,
+      agentId: spec.agentId,
+      ...(spec.acpAgentId ? { acpAgentId: spec.acpAgentId } : {}),
+      ...(spec.label ? { label: spec.label } : {}),
+      ...(spec.backend ? { backend: spec.backend } : {}),
+      ...(spec.cwd ? { cwd: spec.cwd } : {}),
+    },
+  };
+}
+
+function resolveConfiguredAcpBindingRecord(params = {}) {
+  const cfg = params.cfg || {};
+  const conversation = resolveConfiguredAcpBindingConversation(params);
+  if (!conversation) {
+    return null;
+  }
+  const matches = (Array.isArray(cfg.bindings) ? cfg.bindings : [])
+    .map((binding, index) => {
+      const matched = scoreConfiguredAcpBindingMatch(binding, conversation);
+      return matched ? { binding, index, matched } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.matched.score - left.matched.score || left.index - right.index);
+  if (matches.length === 0) {
+    return null;
+  }
+  const binding = matches[0].binding;
+  const materializedConversation = matches[0].matched.conversation;
+  const agentId = normalizeAgentId(binding.agentId);
+  const runtimeDefaults = resolveAgentRuntimeAcpDefaultsFromConfig(cfg, agentId);
+  const acpOverrides = binding.acp || {};
+  const mode = normalizeAcpBindingMode(acpOverrides.mode || runtimeDefaults.mode);
+  const cwd =
+    normalizeAcpBindingText(acpOverrides.cwd) ||
+    runtimeDefaults.cwd ||
+    resolveConfiguredAcpWorkspaceCwd(cfg, agentId);
+  const spec = {
+    channel: materializedConversation.channel,
+    accountId: materializedConversation.accountId,
+    conversationId: materializedConversation.conversationId,
+    ...(materializedConversation.parentConversationId
+      ? { parentConversationId: materializedConversation.parentConversationId }
+      : {}),
+    agentId,
+    ...(runtimeDefaults.acpAgentId ? { acpAgentId: runtimeDefaults.acpAgentId } : {}),
+    mode,
+    ...(cwd ? { cwd } : {}),
+    ...(normalizeAcpBindingText(acpOverrides.backend) || runtimeDefaults.backend
+      ? { backend: normalizeAcpBindingText(acpOverrides.backend) || runtimeDefaults.backend }
+      : {}),
+    ...(normalizeAcpBindingText(acpOverrides.label)
+      ? { label: normalizeAcpBindingText(acpOverrides.label) }
+      : {}),
+  };
+  const record = toConfiguredAcpBindingRecord(spec);
+  return {
+    spec,
+    record,
+  };
+}
+
+const CLAUDE_CLI_BACKEND_ID = "claude-cli";
+
+function isClaudeCliProvider(providerId) {
+  return normalizeOptionalLowercaseString(providerId) === CLAUDE_CLI_BACKEND_ID;
+}
+
+function normalizeOptionalSecretInputValue(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+const ANTHROPIC_VERTEX_DEFAULT_REGION = "global";
+const ANTHROPIC_VERTEX_REGION_RE = /^[a-z0-9-]+$/;
+
+function hasAnthropicVertexMetadataServerAdc(env = process.env) {
+  const explicitMetadataOptIn = normalizeOptionalSecretInputValue(
+    env && env.ANTHROPIC_VERTEX_USE_GCP_METADATA,
+  );
+  return (
+    explicitMetadataOptIn === "1" ||
+    normalizeLowercaseStringOrEmpty(explicitMetadataOptIn) === "true"
+  );
+}
+
+function resolveAnthropicVertexRegion(env = process.env) {
+  const region =
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_LOCATION) ||
+    normalizeOptionalSecretInputValue(env && env.CLOUD_ML_REGION);
+  return region && ANTHROPIC_VERTEX_REGION_RE.test(region)
+    ? region
+    : ANTHROPIC_VERTEX_DEFAULT_REGION;
+}
+
+function resolveAnthropicVertexRegionFromBaseUrl(baseUrl) {
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    return undefined;
+  }
+  let hostname;
+  try {
+    hostname = new URL(baseUrl).hostname.toLowerCase();
+  } catch (_error) {
+    return undefined;
+  }
+  if (hostname === "aiplatform.googleapis.com") {
+    return ANTHROPIC_VERTEX_DEFAULT_REGION;
+  }
+  const suffix = "-aiplatform.googleapis.com";
+  if (!hostname.endsWith(suffix)) {
+    return undefined;
+  }
+  const region = hostname.slice(0, -suffix.length);
+  return region ? region : undefined;
+}
+
+function resolveAnthropicVertexClientRegion(params = {}) {
+  return (
+    resolveAnthropicVertexRegionFromBaseUrl(params && params.baseUrl) ||
+    resolveAnthropicVertexRegion(params && params.env)
+  );
+}
+
+function resolveAnthropicVertexHomeDir(env = process.env) {
+  return (
+    normalizeOptionalSecretInputValue(env && env.HOME) ||
+    normalizeOptionalSecretInputValue(env && env.USERPROFILE) ||
+    os.homedir()
+  );
+}
+
+function resolveAnthropicVertexDefaultAdcPath(env = process.env) {
+  if (process.platform === "win32") {
+    return path.join(
+      normalizeOptionalSecretInputValue(env && env.APPDATA) ||
+        path.join(resolveAnthropicVertexHomeDir(env), "AppData", "Roaming"),
+      "gcloud",
+      "application_default_credentials.json",
+    );
+  }
+  return path.join(
+    resolveAnthropicVertexHomeDir(env),
+    ".config",
+    "gcloud",
+    "application_default_credentials.json",
+  );
+}
+
+function resolveAnthropicVertexAdcCredentialsPathCandidate(env = process.env) {
+  const explicit = normalizeOptionalSecretInputValue(env && env.GOOGLE_APPLICATION_CREDENTIALS);
+  if (explicit) {
+    return explicit;
+  }
+  return resolveAnthropicVertexDefaultAdcPath(env);
+}
+
+function canReadAnthropicVertexAdc(env = process.env) {
+  const credentialsPath = resolveAnthropicVertexAdcCredentialsPathCandidate(env);
+  if (!credentialsPath) {
+    return false;
+  }
+  try {
+    fs.readFileSync(credentialsPath, "utf8");
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function hasAnthropicVertexAvailableAuth(env = process.env) {
+  return hasAnthropicVertexMetadataServerAdc(env) || canReadAnthropicVertexAdc(env);
+}
+
+function resolveAnthropicVertexProjectIdFromAdc(env = process.env) {
+  const credentialsPath = resolveAnthropicVertexAdcCredentialsPathCandidate(env);
+  if (!credentialsPath) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
+    return (
+      normalizeOptionalSecretInputValue(parsed && parsed.project_id) ||
+      normalizeOptionalSecretInputValue(parsed && parsed.quota_project_id)
+    );
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function resolveAnthropicVertexProjectId(env = process.env) {
+  return (
+    normalizeOptionalSecretInputValue(env && env.ANTHROPIC_VERTEX_PROJECT_ID) ||
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_PROJECT) ||
+    normalizeOptionalSecretInputValue(env && env.GOOGLE_CLOUD_PROJECT_ID) ||
+    resolveAnthropicVertexProjectIdFromAdc(env)
+  );
+}
+
+function routeForSessionBinding(params) {
+  return {
+    ...params.route,
+    sessionKey: params.boundSessionKey,
+    agentId: params.boundAgentId,
+    lastRoutePolicy: deriveLastRoutePolicy({
+      sessionKey: params.boundSessionKey,
+      mainSessionKey: params.route && params.route.mainSessionKey,
+    }),
+    matchedBy: "binding.channel",
+  };
+}
+
+function resolveConfiguredBindingRoute(params = {}) {
+  const bindingResolution = resolveConfiguredBinding(params);
+  if (!bindingResolution) {
+    return {
+      bindingResolution: null,
+      route: params.route,
+    };
+  }
+  const boundSessionKey = normalizeOptionalString(bindingResolution.statefulTarget.sessionKey);
+  if (!boundSessionKey) {
+    return {
+      bindingResolution,
+      route: params.route,
+    };
+  }
+  const boundAgentId =
+    resolveAgentIdFromSessionKey(boundSessionKey) || bindingResolution.statefulTarget.agentId;
+  return {
+    bindingResolution,
+    boundSessionKey,
+    boundAgentId,
+    route: routeForSessionBinding({
+      route: params.route,
+      boundSessionKey,
+      boundAgentId,
+    }),
+  };
+}
+
+function resolveRuntimeConversationBindingRoute(params = {}) {
+  const conversation = resolveConversationBindingRouteRef(params);
+  const bindingRecord = getSessionBindingService().resolveByConversation(conversation);
+  const boundSessionKey = normalizeOptionalString(bindingRecord && bindingRecord.targetSessionKey);
+  if (!bindingRecord || !boundSessionKey) {
+    return {
+      bindingRecord: null,
+      route: params.route,
+    };
+  }
+  getSessionBindingService().touch(bindingRecord.bindingId);
+  if (isPluginOwnedSessionBindingRecord(bindingRecord)) {
+    return {
+      bindingRecord,
+      route: params.route,
+    };
+  }
+  const boundAgentId =
+    resolveAgentIdFromSessionKey(boundSessionKey) || (params.route && params.route.agentId);
+  return {
+    bindingRecord,
+    boundSessionKey,
+    boundAgentId,
+    route: routeForSessionBinding({
+      route: params.route,
+      boundSessionKey,
+      boundAgentId,
+    }),
+  };
+}
+
+async function ensureConfiguredBindingRouteReady(params = {}) {
+  const resolution = params.bindingResolution;
+  if (!resolution) {
+    return { ok: true };
+  }
+  const target = resolution.statefulTarget || {};
+  if (typeof target.ensureReady === "function") {
+    return await target.ensureReady({ cfg: params.cfg, bindingResolution: resolution });
+  }
+  if (target.ready === false) {
+    return { ok: false, error: target.error || "Configured binding route target is not ready" };
+  }
+  return { ok: true };
+}
+
+const conversationBindingRuntime = {
+  buildPairingReply,
+  ensureConfiguredBindingRouteReady,
+  getSessionBindingService,
+  isPluginOwnedSessionBindingRecord,
+  resolveConfiguredBindingRoute,
+  resolveRuntimeConversationBindingRoute,
+};
+
+const sessionBindingRuntimeTesting = {
+  resetSessionBindingAdaptersForTests: () => {
+    SESSION_BINDING_ADAPTERS.clear();
+  },
+  getRegisteredAdapterKeys: () => Array.from(SESSION_BINDING_ADAPTERS.keys()),
+};
+
+const sessionBindingRuntime = {
+  __testing: sessionBindingRuntimeTesting,
+  getSessionBindingService,
+  registerSessionBindingAdapter,
+};
+
+const threadBindingsSessionRuntime = {
+  registerSessionBindingAdapter,
+  resolveThreadBindingFarewellText,
+  resolveThreadBindingLifecycle,
+  unregisterSessionBindingAdapter,
+};
+
+const sessionKeyRuntime = {
+  parseAgentSessionKey,
+  resolveAgentIdFromSessionKey,
+};
+
+function normalizeStoreSessionKey(sessionKey) {
+  return normalizeLowercaseStringOrEmpty(sessionKey);
+}
+
+function cloneJsonRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function resolveSessionStoreEntry(params = {}) {
+  const store = params.store && typeof params.store === "object" ? params.store : {};
+  const trimmedKey = String(params.sessionKey || "").trim();
+  const normalizedKey = normalizeStoreSessionKey(trimmedKey);
+  const legacyKeySet = new Set();
+  if (
+    trimmedKey !== normalizedKey &&
+    Object.prototype.hasOwnProperty.call(store, trimmedKey)
+  ) {
+    legacyKeySet.add(trimmedKey);
+  }
+  let existing =
+    store[normalizedKey] ||
+    (legacyKeySet.size > 0 ? store[trimmedKey] : undefined);
+  let existingUpdatedAt =
+    existing && typeof existing.updatedAt === "number" ? existing.updatedAt : 0;
+  for (const [candidateKey, candidateEntry] of Object.entries(store)) {
+    if (candidateKey === normalizedKey) {
+      continue;
+    }
+    if (normalizeStoreSessionKey(candidateKey) !== normalizedKey) {
+      continue;
+    }
+    legacyKeySet.add(candidateKey);
+    const candidateUpdatedAt =
+      candidateEntry && typeof candidateEntry.updatedAt === "number"
+        ? candidateEntry.updatedAt
+        : 0;
+    if (!existing || candidateUpdatedAt > existingUpdatedAt) {
+      existing = candidateEntry;
+      existingUpdatedAt = candidateUpdatedAt;
+    }
+  }
+  return {
+    normalizedKey,
+    existing,
+    legacyKeys: Array.from(legacyKeySet),
+  };
+}
+
+function resolveSessionStateDir(env = process.env, homedir = () => os.homedir()) {
+  const stateDir =
+    env && typeof env.OPENCLAW_STATE_DIR === "string"
+      ? env.OPENCLAW_STATE_DIR.trim()
+      : "";
+  return path.resolve(stateDir || path.join(resolveRequiredHomeDir(env, homedir), ".openclaw"));
+}
+
+function resolveAgentSessionsDir(agentId, env = process.env, homedir = () => os.homedir()) {
+  return path.join(
+    resolveSessionStateDir(env, homedir),
+    "agents",
+    normalizeAgentId(agentId),
+    "sessions",
+  );
+}
+
+function resolveStorePath(store, opts = {}) {
+  const agentId = normalizeAgentId(opts.agentId || DEFAULT_AGENT_ID);
+  const env = opts.env || process.env;
+  const homedir = () => resolveRequiredHomeDir(env, os.homedir);
+  const rawStore = typeof store === "string" ? store.trim() : "";
+  if (!rawStore) {
+    return path.join(resolveAgentSessionsDir(agentId, env, homedir), "sessions.json");
+  }
+  let expanded = rawStore.includes("{agentId}")
+    ? rawStore.replaceAll("{agentId}", agentId)
+    : rawStore;
+  if (expanded.startsWith("~")) {
+    expanded = expandHomePrefix(expanded, {
+      home: resolveRequiredHomeDir(env, homedir),
+      env,
+      homedir,
+    });
+  }
+  return path.resolve(expanded);
+}
+
+function loadSessionStore(storePath, opts = {}) {
+  if (!storePath) {
+    return {};
+  }
+  if (storePath && typeof storePath === "object" && !Array.isArray(storePath)) {
+    const store = storePath.store && typeof storePath.store === "object" ? storePath.store : {};
+    return opts.clone === false ? store : cloneJsonRecord(store);
+  }
+  try {
+    const raw = fs.readFileSync(String(storePath), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return opts.clone === false ? parsed : cloneJsonRecord(parsed);
+  } catch (_error) {
+    return {};
+  }
+}
+
+async function saveSessionStore(storePath, store) {
+  const target = String(storePath || "").trim();
+  if (!target) {
+    throw new Error("saveSessionStore: storePath must be a non-empty string");
+  }
+  const record = store && typeof store === "object" && !Array.isArray(store) ? store : {};
+  fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(record, null, 2), "utf8");
+}
+
+function resolveSessionEntryUpdatedAt(entry, now = Date.now()) {
+  const value = entry && typeof entry.updatedAt === "number" ? entry.updatedAt : undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.min(value, now);
+}
+
+function mergeSessionEntryWithPolicy(existing, patch = {}, options = {}) {
+  const now = typeof options.now === "number" && Number.isFinite(options.now)
+    ? options.now
+    : Date.now();
+  const existingUpdatedAt = resolveSessionEntryUpdatedAt(existing, now);
+  const patchUpdatedAt = resolveSessionEntryUpdatedAt(patch, now);
+  const preserveActivity = options.policy === "preserve-activity" && existing;
+  const updatedAt = preserveActivity
+    ? existingUpdatedAt ?? patchUpdatedAt ?? now
+    : Math.max(existingUpdatedAt ?? 0, patchUpdatedAt ?? 0, now);
+  const sessionId =
+    patch.sessionId ||
+    (existing && existing.sessionId) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  if (!existing) {
+    return {
+      ...patch,
+      sessionId,
+      updatedAt,
+      sessionStartedAt: patch.sessionStartedAt ?? updatedAt,
+    };
+  }
+  return {
+    ...existing,
+    ...patch,
+    sessionId,
+    updatedAt,
+    sessionStartedAt:
+      patch.sessionStartedAt ??
+      (existing.sessionId === sessionId ? existing.sessionStartedAt : updatedAt),
+  };
+}
+
+function mergeSessionEntry(existing, patch = {}) {
+  return mergeSessionEntryWithPolicy(existing, patch);
+}
+
+function mergeSessionEntryPreserveActivity(existing, patch = {}) {
+  return mergeSessionEntryWithPolicy(existing, patch, { policy: "preserve-activity" });
+}
+
+function persistResolvedSessionEntry(params = {}) {
+  const store = params.store;
+  const resolved = params.resolved;
+  const next = params.next;
+  store[resolved.normalizedKey] = next;
+  for (const legacyKey of resolved.legacyKeys || []) {
+    delete store[legacyKey];
+  }
+  return next;
+}
+
+async function updateSessionStore(storePath, mutator, opts = {}) {
+  const store = loadSessionStore(storePath, { skipCache: true, clone: false });
+  const result = typeof mutator === "function" ? await mutator(store) : undefined;
+  await saveSessionStore(storePath, store, opts);
+  return result;
+}
+
+function readSessionUpdatedAt(params = {}) {
+  try {
+    const store = loadSessionStore(params.storePath);
+    const resolved = resolveSessionStoreEntry({
+      store,
+      sessionKey: params.sessionKey,
+    });
+    return resolved.existing && resolved.existing.updatedAt;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+const GROUP_SESSION_MARKERS = [":group:", ":channel:"];
+
+function getGroupSurfaces() {
+  return new Set([...ROUTING_KNOWN_GATEWAY_CHANNELS, "msteams", "teams", "webchat"]);
+}
+
+function resolveGroupSessionKey(ctx = {}) {
+  const from = normalizeOptionalString(ctx.From) || "";
+  const lowerFrom = normalizeLowercaseStringOrEmpty(from);
+  const chatType = normalizeOptionalLowercaseString(ctx.ChatType);
+  const normalizedChatType =
+    chatType === "channel" ? "channel" : chatType === "group" ? "group" : undefined;
+  const looksLikeGroup =
+    normalizedChatType === "group" ||
+    normalizedChatType === "channel" ||
+    lowerFrom.includes(":group:") ||
+    lowerFrom.includes(":channel:");
+  if (!looksLikeGroup) {
+    return null;
+  }
+  const providerHint = normalizeOptionalLowercaseString(ctx.Provider);
+  const parts = from.split(":").filter(Boolean);
+  const head = normalizeLowercaseStringOrEmpty(parts[0]);
+  const headIsSurface = head ? getGroupSurfaces().has(head) : false;
+  const provider = headIsSurface ? head : providerHint;
+  if (!provider) {
+    return null;
+  }
+  const second = normalizeOptionalLowercaseString(parts[1]);
+  const secondIsKind = second === "group" || second === "channel";
+  const kind = secondIsKind
+    ? second
+    : lowerFrom.includes(":channel:") || normalizedChatType === "channel"
+      ? "channel"
+      : "group";
+  const id = headIsSurface
+    ? secondIsKind
+      ? parts.slice(2).join(":")
+      : parts.slice(1).join(":")
+    : from;
+  const finalId = normalizeLowercaseStringOrEmpty(id);
+  if (!finalId) {
+    return null;
+  }
+  return {
+    key: `${provider}:${kind}:${finalId}`,
+    channel: provider,
+    id: finalId,
+    chatType: kind === "channel" ? "channel" : "group",
+  };
+}
+
+function deriveSessionKey(scope, ctx = {}) {
+  if (scope === "global") {
+    return "global";
+  }
+  const resolvedGroup = resolveGroupSessionKey(ctx);
+  if (resolvedGroup) {
+    return resolvedGroup.key;
+  }
+  const from = ctx.From ? normalizeE164(ctx.From) : "";
+  return from || "unknown";
+}
+
+function normalizeExplicitSessionKey(sessionKey) {
+  return normalizeStoreSessionKey(sessionKey);
+}
+
+function resolveSessionKey(scope, ctx = {}, mainKey, agentId = DEFAULT_AGENT_ID) {
+  const explicit = typeof ctx.SessionKey === "string" ? ctx.SessionKey.trim() : "";
+  if (explicit) {
+    return normalizeExplicitSessionKey(explicit);
+  }
+  const raw = deriveSessionKey(scope, ctx);
+  if (scope === "global") {
+    return raw;
+  }
+  const canonicalAgentId = normalizeAgentId(agentId);
+  const canonicalMainKey = normalizeMainKey(mainKey);
+  const canonical = buildAgentMainSessionKey({
+    agentId: canonicalAgentId,
+    mainKey: canonicalMainKey,
+  });
+  const isGroup = raw.includes(":group:") || raw.includes(":channel:");
+  if (!isGroup) {
+    return canonical;
+  }
+  return `agent:${canonicalAgentId}:${raw}`;
+}
+
+function canonicalizeMainSessionAlias(params = {}) {
+  const raw = String(params.sessionKey || "").trim();
+  if (!raw) {
+    return raw;
+  }
+  const cfg = params.cfg || {};
+  const agentId = normalizeAgentId(params.agentId);
+  const mainKey = normalizeMainKey(cfg.session && cfg.session.mainKey);
+  const agentMainSessionKey = buildAgentMainSessionKey({ agentId, mainKey });
+  const agentMainAliasKey = buildAgentMainSessionKey({ agentId, mainKey: "main" });
+  const legacyMainKey = buildAgentMainSessionKey({ agentId: DEFAULT_AGENT_ID, mainKey });
+  const legacyMainAliasKey = buildAgentMainSessionKey({
+    agentId: DEFAULT_AGENT_ID,
+    mainKey: "main",
+  });
+  const normalizedRaw = normalizeLowercaseStringOrEmpty(raw);
+  const isMainAlias =
+    normalizedRaw === "main" ||
+    normalizedRaw === mainKey ||
+    normalizedRaw === agentMainSessionKey ||
+    normalizedRaw === agentMainAliasKey ||
+    normalizedRaw === legacyMainKey ||
+    normalizedRaw === legacyMainAliasKey;
+  if (cfg.session && cfg.session.scope === "global" && isMainAlias) {
+    return "global";
+  }
+  if (isMainAlias) {
+    return agentMainSessionKey;
+  }
+  return raw;
+}
+
+function deriveSessionMetaPatch(params = {}) {
+  const ctx = params.ctx || {};
+  const sessionKey = params.sessionKey;
+  const groupResolution =
+    params.groupResolution === undefined
+      ? resolveGroupSessionKey(ctx)
+      : params.groupResolution;
+  const provider = normalizeOptionalString(ctx.Provider);
+  const from = normalizeOptionalString(ctx.From);
+  const to = normalizeOptionalString(ctx.To);
+  const chatType = normalizeOptionalLowercaseString(ctx.ChatType);
+  const origin = {
+    provider,
+    chatType,
+    from,
+    to,
+    nativeChannelId: groupResolution && groupResolution.id,
+    accountId: normalizeOptionalString(ctx.AccountId || ctx.accountId),
+    threadId: ctx.MessageThreadId || ctx.ThreadId || undefined,
+  };
+  Object.keys(origin).forEach((key) => {
+    if (origin[key] === undefined) {
+      delete origin[key];
+    }
+  });
+  if (groupResolution) {
+    return {
+      chatType: groupResolution.chatType,
+      channel: groupResolution.channel,
+      groupId: groupResolution.id,
+      subject: normalizeOptionalString(ctx.Subject),
+      groupChannel: normalizeOptionalString(ctx.GroupChannel),
+      space: normalizeOptionalString(ctx.Space),
+      origin,
+    };
+  }
+  if (provider || from || to || chatType) {
+    return {
+      chatType,
+      channel: provider,
+      origin,
+      lastInteractionAt: Date.now(),
+      sessionKey,
+    };
+  }
+  return null;
+}
+
+async function recordSessionMetaFromInbound(params = {}) {
+  const createIfMissing = params.createIfMissing !== false;
+  const sessionKey = params.sessionKey;
+  return await updateSessionStore(
+    params.storePath,
+    (store) => {
+      const resolved = resolveSessionStoreEntry({ store, sessionKey });
+      const existing = resolved.existing;
+      const patch = deriveSessionMetaPatch({
+        ctx: params.ctx || {},
+        sessionKey: resolved.normalizedKey,
+        existing,
+        groupResolution: params.groupResolution,
+      });
+      if (!patch) {
+        if (existing && resolved.legacyKeys.length > 0) {
+          persistResolvedSessionEntry({ store, resolved, next: existing });
+        }
+        return existing || null;
+      }
+      if (!existing && !createIfMissing) {
+        return null;
+      }
+      const next = existing
+        ? mergeSessionEntryPreserveActivity(existing, patch)
+        : mergeSessionEntry(existing, patch);
+      return persistResolvedSessionEntry({ store, resolved, next });
+    },
+    { activeSessionKey: normalizeStoreSessionKey(sessionKey) },
+  );
+}
+
+function normalizeDeliveryContext(input = {}) {
+  const channel = normalizeMessageChannel(input.channel);
+  const to = normalizeOptionalString(input.to);
+  const accountId = normalizeOptionalString(input.accountId);
+  const threadId =
+    input.threadId !== undefined && input.threadId !== null && String(input.threadId).trim()
+      ? String(input.threadId).trim()
+      : undefined;
+  const context = { channel, to, accountId, threadId };
+  Object.keys(context).forEach((key) => {
+    if (context[key] === undefined) {
+      delete context[key];
+    }
+  });
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+async function updateLastRoute(params = {}) {
+  const createIfMissing = params.createIfMissing !== false;
+  const sessionKey = params.sessionKey;
+  return await updateSessionStore(params.storePath, (store) => {
+    const resolved = resolveSessionStoreEntry({ store, sessionKey });
+    const existing = resolved.existing;
+    if (!existing && !createIfMissing) {
+      return null;
+    }
+    const inputContext = normalizeDeliveryContext(params.deliveryContext || {});
+    const inlineContext = normalizeDeliveryContext({
+      channel: params.channel,
+      to: params.to,
+      accountId: params.accountId,
+      threadId: params.threadId,
+    });
+    const deliveryContext = {
+      ...((existing && existing.deliveryContext) || {}),
+      ...(inputContext || {}),
+      ...(inlineContext || {}),
+    };
+    const normalizedDelivery = normalizeDeliveryContext(deliveryContext);
+    const metaPatch = params.ctx
+      ? deriveSessionMetaPatch({
+          ctx: params.ctx,
+          sessionKey: resolved.normalizedKey,
+          existing,
+          groupResolution: params.groupResolution,
+        })
+      : null;
+    const basePatch = {
+      deliveryContext: normalizedDelivery,
+      lastChannel: normalizedDelivery && normalizedDelivery.channel,
+      lastTo: normalizedDelivery && normalizedDelivery.to,
+      lastAccountId: normalizedDelivery && normalizedDelivery.accountId,
+      lastThreadId: normalizedDelivery && normalizedDelivery.threadId,
+    };
+    const next = mergeSessionEntryPreserveActivity(
+      existing,
+      metaPatch ? { ...basePatch, ...metaPatch } : basePatch,
+    );
+    return persistResolvedSessionEntry({ store, resolved, next });
+  });
+}
+
+function isThreadSessionKey(sessionKey) {
+  return Boolean(normalizeLowercaseStringOrEmpty(sessionKey).includes(":thread:"));
+}
+
+function resolveSessionResetType(params = {}) {
+  if (params.isThread || isThreadSessionKey(params.sessionKey)) {
+    return "thread";
+  }
+  if (params.isGroup) {
+    return "group";
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(params.sessionKey);
+  if (GROUP_SESSION_MARKERS.some((marker) => normalized.includes(marker))) {
+    return "group";
+  }
+  return "direct";
+}
+
+function resolveThreadFlag(params = {}) {
+  if (params.messageThreadId !== undefined && params.messageThreadId !== null) {
+    return true;
+  }
+  if (normalizeOptionalString(params.threadLabel)) {
+    return true;
+  }
+  if (normalizeOptionalString(params.threadStarterBody)) {
+    return true;
+  }
+  if (normalizeOptionalString(params.parentSessionKey)) {
+    return true;
+  }
+  return isThreadSessionKey(params.sessionKey);
+}
+
+function resolveChannelResetConfig(params = {}) {
+  const resetByChannel = params.sessionCfg && params.sessionCfg.resetByChannel;
+  if (!resetByChannel || typeof resetByChannel !== "object") {
+    return undefined;
+  }
+  const key =
+    normalizeMessageChannel(params.channel) || normalizeOptionalLowercaseString(params.channel);
+  return key ? resetByChannel[key] : undefined;
+}
+
+const DEFAULT_RESET_MODE = "daily";
+const DEFAULT_RESET_AT_HOUR = 4;
+const DEFAULT_IDLE_MINUTES = 0;
+
+function normalizeResetAtHour(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_RESET_AT_HOUR;
+  }
+  const normalized = Math.floor(value);
+  if (!Number.isFinite(normalized)) {
+    return DEFAULT_RESET_AT_HOUR;
+  }
+  if (normalized < 0) {
+    return 0;
+  }
+  if (normalized > 23) {
+    return 23;
+  }
+  return normalized;
+}
+
+function resolveDailyResetAtMs(now, atHour) {
+  const resetAt = new Date(now);
+  resetAt.setHours(normalizeResetAtHour(atHour), 0, 0, 0);
+  if (now < resetAt.getTime()) {
+    resetAt.setDate(resetAt.getDate() - 1);
+  }
+  return resetAt.getTime();
+}
+
+function resolveSessionResetPolicy(params = {}) {
+  const sessionCfg = params.sessionCfg || {};
+  const baseReset = params.resetOverride ?? sessionCfg.reset;
+  const resetByType = sessionCfg.resetByType || {};
+  const typeReset = params.resetOverride
+    ? undefined
+    : (resetByType[params.resetType] ??
+      (params.resetType === "direct" ? resetByType.dm : undefined));
+  const hasExplicitReset = Boolean(baseReset || sessionCfg.resetByType);
+  const legacyIdleMinutes = params.resetOverride ? undefined : sessionCfg.idleMinutes;
+  const configured = Boolean(baseReset || typeReset || legacyIdleMinutes !== undefined);
+  const mode =
+    (typeReset && typeReset.mode) ??
+    (baseReset && baseReset.mode) ??
+    (!hasExplicitReset && legacyIdleMinutes !== undefined ? "idle" : DEFAULT_RESET_MODE);
+  const atHour = normalizeResetAtHour(
+    (typeReset && typeReset.atHour) ??
+      (baseReset && baseReset.atHour) ??
+      DEFAULT_RESET_AT_HOUR,
+  );
+  const idleMinutesRaw =
+    (typeReset && typeReset.idleMinutes) ??
+    (baseReset && baseReset.idleMinutes) ??
+    legacyIdleMinutes;
+  let idleMinutes;
+  if (idleMinutesRaw !== undefined && idleMinutesRaw !== null) {
+    const normalized = Math.floor(Number(idleMinutesRaw));
+    if (Number.isFinite(normalized)) {
+      idleMinutes = Math.max(normalized, 0);
+    }
+  } else if (mode === "idle") {
+    idleMinutes = DEFAULT_IDLE_MINUTES;
+  }
+  return { mode, atHour, idleMinutes, configured };
+}
+
+function resolveFreshnessTimestamp(value, now) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  if (typeof now === "number" && Number.isFinite(now) && value > now) {
+    return undefined;
+  }
+  return value;
+}
+
+function evaluateSessionFreshness(params = {}) {
+  const policy = params.policy || resolveSessionResetPolicy({});
+  const now = typeof params.now === "number" && Number.isFinite(params.now)
+    ? params.now
+    : Date.now();
+  const updatedAt = resolveFreshnessTimestamp(params.updatedAt, now) || 0;
+  const sessionStartedAt =
+    resolveFreshnessTimestamp(params.sessionStartedAt, now) || updatedAt;
+  const lastInteractionAt =
+    resolveFreshnessTimestamp(params.lastInteractionAt, now) || sessionStartedAt;
+  const dailyResetAt =
+    policy.mode === "daily" ? resolveDailyResetAtMs(now, policy.atHour) : undefined;
+  const idleExpiresAt =
+    policy.idleMinutes !== undefined && policy.idleMinutes > 0
+      ? lastInteractionAt + policy.idleMinutes * 60_000
+      : undefined;
+  const staleDaily = dailyResetAt !== undefined && sessionStartedAt < dailyResetAt;
+  const staleIdle = idleExpiresAt !== undefined && now > idleExpiresAt;
+  return {
+    fresh: !(staleDaily || staleIdle),
+    dailyResetAt,
+    idleExpiresAt,
+  };
+}
+
+const sessionStoreRuntime = {
+  clearSessionStoreCacheForTest: () => {},
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+  resolveSessionKey,
+  resolveGroupSessionKey,
+  canonicalizeMainSessionAlias,
+  readSessionUpdatedAt,
+  recordSessionMetaFromInbound,
+  saveSessionStore,
+  updateLastRoute,
+  updateSessionStore,
+  evaluateSessionFreshness,
+  resolveChannelResetConfig,
+  resolveSessionResetPolicy,
+  resolveSessionResetType,
+  resolveThreadFlag,
+};
+
 async function resolveForwardedRuntimeMethod(params) {
   const runtime =
     typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
@@ -31931,6 +34630,2877 @@ const providerAuthFacadeRuntime = {
   writeOAuthCredentials: () => undefined,
 };
 
+const githubCopilotTokenRuntime = {
+  DEFAULT_COPILOT_API_BASE_URL,
+  deriveCopilotApiBaseUrlFromToken,
+  resolveCopilotApiToken,
+};
+
+function emptyPluginConfigSchema() {
+  const error = (message) => ({
+    success: false,
+    error: { issues: [{ path: [], message }] },
+  });
+  return {
+    safeParse(value) {
+      if (value === undefined) {
+        return { success: true, data: undefined };
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return error("expected config object");
+      }
+      if (Object.keys(value).length > 0) {
+        return error("config must be empty");
+      }
+      return { success: true, data: value };
+    },
+    jsonSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+  };
+}
+
+function emptyChannelConfigSchema() {
+  return {
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+    runtime: {
+      safeParse(value) {
+        if (value === undefined) {
+          return { success: true, data: undefined };
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return {
+            success: false,
+            issues: [{ path: [], message: "expected config object" }],
+          };
+        }
+        if (Object.keys(value).length > 0) {
+          return {
+            success: false,
+            issues: [{ path: [], message: "config must be empty" }],
+          };
+        }
+        return { success: true, data: value };
+      },
+    },
+  };
+}
+
+function cloneRuntimeIssue(issue) {
+  const record = issue && typeof issue === "object" ? issue : {};
+  const path = Array.isArray(record.path)
+    ? record.path.filter((segment) => typeof segment === "string" || typeof segment === "number")
+    : [];
+  return {
+    ...record,
+    path,
+  };
+}
+
+function safeParseRuntimeSchema(schema, value, channelMode = false) {
+  const result =
+    schema && typeof schema.safeParse === "function"
+      ? schema.safeParse(value)
+      : { success: true, data: value };
+  if (result && result.success) {
+    return { success: true, data: result.data };
+  }
+  const issues =
+    result && result.error && Array.isArray(result.error.issues)
+      ? result.error.issues
+      : result && Array.isArray(result.issues)
+        ? result.issues
+        : [{ path: [], message: "invalid config" }];
+  const cloned = issues.map((issue) => cloneRuntimeIssue(issue));
+  return channelMode
+    ? { success: false, issues: cloned }
+    : { success: false, error: { issues: cloned } };
+}
+
+function normalizeJsonSchema(schema) {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => normalizeJsonSchema(item));
+  }
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  const record = { ...schema };
+  delete record.$schema;
+  for (const [key, value] of Object.entries(record)) {
+    record[key] = normalizeJsonSchema(value);
+  }
+  if (
+    record.propertyNames &&
+    typeof record.propertyNames === "object" &&
+    !Array.isArray(record.propertyNames) &&
+    record.propertyNames.type === "string"
+  ) {
+    delete record.propertyNames;
+  }
+  if (Array.isArray(record.required) && record.required.length === 0) {
+    delete record.required;
+  }
+  return record;
+}
+
+function buildPluginConfigSchema(schema, options = {}) {
+  const safeParse =
+    typeof options.safeParse === "function"
+      ? options.safeParse
+      : (value) => safeParseRuntimeSchema(schema, value, false);
+  const jsonSchema =
+    schema && typeof schema.toJSONSchema === "function"
+      ? normalizeJsonSchema(
+          schema.toJSONSchema({
+            target: "draft-07",
+            io: "input",
+            unrepresentable: "any",
+          }),
+        )
+      : {
+          type: "object",
+          additionalProperties: true,
+        };
+  return {
+    safeParse,
+    ...(options.uiHints ? { uiHints: options.uiHints } : {}),
+    jsonSchema,
+  };
+}
+
+function buildChannelConfigSchema(schema, options = {}) {
+  const jsonSchema =
+    schema && typeof schema.toJSONSchema === "function"
+      ? schema.toJSONSchema({
+          target: "draft-07",
+          unrepresentable: "any",
+        })
+      : {
+          type: "object",
+          additionalProperties: true,
+        };
+  return {
+    schema: jsonSchema,
+    ...(options.uiHints ? { uiHints: options.uiHints } : {}),
+    runtime: {
+      safeParse: (value) => safeParseRuntimeSchema(schema, value, true),
+    },
+  };
+}
+
+const AllowFromEntrySchema = createSimpleSchema(
+  (value) =>
+    typeof value === "string" || typeof value === "number"
+      ? undefined
+      : "Expected string or number",
+  {
+    typeName: "ZodUnion",
+    jsonSchema: { anyOf: [{ type: "string" }, { type: "number" }] },
+  },
+);
+const AllowFromListSchema = createOptionalSchema(createArraySchema(AllowFromEntrySchema));
+const DmPolicySchema = createEnumSchema(["pairing", "allowlist", "open", "disabled"]);
+const GroupPolicySchema = createEnumSchema(["open", "disabled", "allowlist"]);
+const ContextVisibilityModeSchema = createEnumSchema(["all", "allowlist", "allowlist_quote"]);
+const MarkdownTableModeSchema = createEnumSchema(["off", "bullets", "code", "block"]);
+const MarkdownConfigSchema = createOptionalSchema(
+  createStrictObjectSchema({
+    tables: createOptionalSchema(MarkdownTableModeSchema),
+  }),
+);
+const BlockStreamingCoalesceSchema = createStrictObjectSchema({
+  minChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  maxChars: createOptionalSchema(createNumberSchema({ integer: true, positive: true })),
+  idleMs: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+});
+const DmConfigSchema = createStrictObjectSchema({
+  historyLimit: createOptionalSchema(createNumberSchema({ integer: true, min: 0 })),
+});
+
+function buildNestedDmConfigSchema(extraShape) {
+  return createOptionalSchema(
+    createStrictObjectSchema({
+      enabled: createOptionalSchema(createBooleanSchema()),
+      policy: createOptionalSchema(DmPolicySchema),
+      allowFrom: AllowFromListSchema,
+      ...(extraShape || {}),
+    }),
+  );
+}
+
+function buildCatchallMultiAccountChannelSchema(accountSchema) {
+  if (!accountSchema || typeof accountSchema.extend !== "function") {
+    return accountSchema;
+  }
+  return accountSchema.extend({
+    accounts: createOptionalSchema(createRecordSchema().catchall(accountSchema)),
+    defaultAccount: createOptionalSchema(createStringSchema()),
+  });
+}
+
+function requireOpenAllowFrom(params = {}) {
+  if (params.policy !== "open") {
+    return;
+  }
+  const allowFrom = normalizeStringEntries(params.allowFrom || []);
+  if (allowFrom.includes("*")) {
+    return;
+  }
+  if (params.ctx && typeof params.ctx.addIssue === "function") {
+    params.ctx.addIssue({
+      code: "custom",
+      path: Array.isArray(params.path) ? params.path : [],
+      message: params.message || 'policy "open" requires allowFrom to include "*"',
+    });
+  }
+}
+
+const channelConfigPrimitivesRuntime = {
+  AllowFromListSchema,
+  BlockStreamingCoalesceSchema,
+  DmConfigSchema,
+  DmPolicySchema,
+  GroupPolicySchema,
+  MarkdownConfigSchema,
+  ReplyRuntimeConfigSchemaShape,
+  buildCatchallMultiAccountChannelSchema,
+  buildChannelConfigSchema,
+  buildNestedDmConfigSchema,
+  requireOpenAllowFrom,
+};
+
+const channelConfigSchemaRuntime = {
+  ...channelConfigPrimitivesRuntime,
+  ContextVisibilityModeSchema,
+  ToolPolicySchema,
+};
+
+const providerChannelConfigSchema = createRecordSchema();
+const bundledChannelConfigSchemaRuntime = {
+  ...channelConfigSchemaRuntime,
+  DiscordConfigSchema: providerChannelConfigSchema,
+  GoogleChatConfigSchema: providerChannelConfigSchema,
+  IMessageConfigSchema: providerChannelConfigSchema,
+  MSTeamsConfigSchema: providerChannelConfigSchema,
+  SignalConfigSchema: providerChannelConfigSchema,
+  SlackConfigSchema: providerChannelConfigSchema,
+  TelegramConfigSchema: providerChannelConfigSchema,
+  WhatsAppConfigSchema: providerChannelConfigSchema,
+};
+
+function normalizeChannelDmPolicy(value) {
+  return value === "pairing" || value === "allowlist" || value === "open" || value === "disabled"
+    ? value
+    : undefined;
+}
+
+function channelConfigHelpersAsObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function cloneDmAccessRecordDm(entry) {
+  const dm = channelConfigHelpersAsObjectRecord(entry && entry.dm);
+  return dm ? { ...dm } : null;
+}
+
+function resolveDmFieldPaths(mode, kind) {
+  const topKey = kind === "policy" ? "dmPolicy" : "allowFrom";
+  const nestedKey = kind === "policy" ? "policy" : "allowFrom";
+  if (mode === "nestedOnly") {
+    return {
+      canonicalPath: ["dm", nestedKey],
+      legacyPath: [topKey],
+    };
+  }
+  return {
+    canonicalPath: [topKey],
+    legacyPath: ["dm", nestedKey],
+  };
+}
+
+function readChannelConfigHelperPath(entry, segments) {
+  let current = entry;
+  for (const segment of segments) {
+    const record = channelConfigHelpersAsObjectRecord(current);
+    if (!record) {
+      return undefined;
+    }
+    current = record[segment];
+  }
+  return current;
+}
+
+function deleteChannelConfigHelperPath(entry, segments) {
+  if (!entry || segments.length === 0) {
+    return false;
+  }
+  if (segments.length === 1) {
+    if (entry[segments[0]] === undefined) {
+      return false;
+    }
+    delete entry[segments[0]];
+    return true;
+  }
+  const parent = channelConfigHelpersAsObjectRecord(entry[segments[0]]);
+  if (!parent || parent[segments[1]] === undefined) {
+    return false;
+  }
+  delete parent[segments[1]];
+  if (Object.keys(parent).length === 0) {
+    delete entry[segments[0]];
+  } else {
+    entry[segments[0]] = parent;
+  }
+  return true;
+}
+
+function writeChannelConfigHelperPath(entry, segments, value) {
+  if (segments.length === 1) {
+    entry[segments[0]] = value;
+    return;
+  }
+  const parent = channelConfigHelpersAsObjectRecord(entry[segments[0]])
+    ? { ...entry[segments[0]] }
+    : {};
+  parent[segments[1]] = value;
+  entry[segments[0]] = parent;
+}
+
+function allowFromListsMatch(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return false;
+  }
+  const normalizedLeft = normalizeStringEntries(left);
+  const normalizedRight = normalizeStringEntries(right);
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  );
+}
+
+function formatChannelConfigHelperPath(pathPrefix, segments) {
+  return `${pathPrefix}.${segments.join(".")}`;
+}
+
+function readCanonicalOrLegacyDmField(entry, mode, kind) {
+  const paths = resolveDmFieldPaths(mode, kind);
+  return (
+    readChannelConfigHelperPath(entry, paths.canonicalPath) ??
+    readChannelConfigHelperPath(entry, paths.legacyPath)
+  );
+}
+
+function resolveChannelDmPolicy(params = {}) {
+  const mode = params.mode || "topOnly";
+  const value =
+    readCanonicalOrLegacyDmField(params.account, mode, "policy") ??
+    readCanonicalOrLegacyDmField(params.parent, mode, "policy") ??
+    params.defaultPolicy;
+  return typeof value === "string" ? normalizeChannelDmPolicy(value) : undefined;
+}
+
+function resolveChannelDmAllowFrom(params = {}) {
+  const mode = params.mode || "topOnly";
+  const value =
+    readCanonicalOrLegacyDmField(params.account, mode, "allowFrom") ??
+    readCanonicalOrLegacyDmField(params.parent, mode, "allowFrom");
+  return Array.isArray(value) ? value : undefined;
+}
+
+function resolveChannelDmAccess(params = {}) {
+  return {
+    dmPolicy: resolveChannelDmPolicy(params),
+    allowFrom: resolveChannelDmAllowFrom(params),
+  };
+}
+
+function setCanonicalDmAllowFrom(params = {}) {
+  const entry = channelConfigHelpersAsObjectRecord(params.entry) || {};
+  const mode = params.mode || "topOnly";
+  const paths = resolveDmFieldPaths(mode, "allowFrom");
+  writeChannelConfigHelperPath(entry, paths.canonicalPath, [...(params.allowFrom || [])]);
+  if (deleteChannelConfigHelperPath(entry, paths.legacyPath)) {
+    params.changes?.push(
+      `- ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        paths.legacyPath,
+      )}: removed after moving allowlist to ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        paths.canonicalPath,
+      )}`,
+    );
+  }
+  params.changes?.push(
+    `- ${formatChannelConfigHelperPath(params.pathPrefix, paths.canonicalPath)}: ${
+      params.reason || "updated"
+    }`,
+  );
+}
+
+function normalizeLegacyDmAliases(params = {}) {
+  let changed = false;
+  let updated = channelConfigHelpersAsObjectRecord(params.entry) || {};
+  const rawDm = updated.dm;
+  const dm = cloneDmAccessRecordDm(updated);
+  let dmChanged = false;
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = params.pathPrefix || "channel";
+
+  const topDmPolicy = updated.dmPolicy;
+  const legacyDmPolicy = dm && dm.policy;
+  if (topDmPolicy === undefined && legacyDmPolicy !== undefined) {
+    updated = { ...updated, dmPolicy: legacyDmPolicy };
+    changed = true;
+    if (dm) {
+      delete dm.policy;
+      dmChanged = true;
+    }
+    changes.push(`Moved ${pathPrefix}.dm.policy to ${pathPrefix}.dmPolicy.`);
+  } else if (
+    topDmPolicy !== undefined &&
+    legacyDmPolicy !== undefined &&
+    topDmPolicy === legacyDmPolicy
+  ) {
+    if (dm) {
+      delete dm.policy;
+      dmChanged = true;
+      changes.push(`Removed ${pathPrefix}.dm.policy (dmPolicy already set).`);
+    }
+  }
+
+  if (params.promoteAllowFrom !== false) {
+    const topAllowFrom = updated.allowFrom;
+    const legacyAllowFrom = dm && dm.allowFrom;
+    if (topAllowFrom === undefined && legacyAllowFrom !== undefined) {
+      updated = { ...updated, allowFrom: legacyAllowFrom };
+      changed = true;
+      if (dm) {
+        delete dm.allowFrom;
+        dmChanged = true;
+      }
+      changes.push(`Moved ${pathPrefix}.dm.allowFrom to ${pathPrefix}.allowFrom.`);
+    } else if (
+      topAllowFrom !== undefined &&
+      legacyAllowFrom !== undefined &&
+      allowFromListsMatch(topAllowFrom, legacyAllowFrom)
+    ) {
+      if (dm) {
+        delete dm.allowFrom;
+        dmChanged = true;
+        changes.push(`Removed ${pathPrefix}.dm.allowFrom (allowFrom already set).`);
+      }
+    }
+  }
+
+  if (dm && channelConfigHelpersAsObjectRecord(rawDm) && dmChanged) {
+    if (Object.keys(dm).length === 0) {
+      if (updated.dm !== undefined) {
+        const { dm: _ignored, ...rest } = updated;
+        updated = rest;
+        changed = true;
+        changes.push(`Removed empty ${pathPrefix}.dm after migration.`);
+      }
+    } else {
+      updated = { ...updated, dm };
+      changed = true;
+    }
+  }
+  return { entry: updated, changed };
+}
+
+function channelConfigHelperListHasWildcard(list) {
+  return Array.isArray(list) && list.some((value) => String(value).trim() === "*");
+}
+
+function ensureOpenDmPolicyAllowFromWildcard(params = {}) {
+  const entry = channelConfigHelpersAsObjectRecord(params.entry);
+  if (!entry) {
+    return;
+  }
+  const mode = params.mode || "topOnly";
+  const policy = resolveChannelDmPolicy({ account: entry, mode });
+  if (policy !== "open") {
+    return;
+  }
+  const policyPaths = resolveDmFieldPaths(mode, "policy");
+  const canonicalPolicy = readChannelConfigHelperPath(entry, policyPaths.canonicalPath);
+  const legacyPolicy = readChannelConfigHelperPath(entry, policyPaths.legacyPath);
+  if (canonicalPolicy === undefined && legacyPolicy === "open") {
+    writeChannelConfigHelperPath(entry, policyPaths.canonicalPath, "open");
+    deleteChannelConfigHelperPath(entry, policyPaths.legacyPath);
+    params.changes?.push(
+      `- ${formatChannelConfigHelperPath(
+        params.pathPrefix,
+        policyPaths.canonicalPath,
+      )}: set to "open"`,
+    );
+  }
+
+  const allowPaths = resolveDmFieldPaths(mode, "allowFrom");
+  const canonicalAllowFrom = readChannelConfigHelperPath(entry, allowPaths.canonicalPath);
+  const legacyAllowFrom = readChannelConfigHelperPath(entry, allowPaths.legacyPath);
+  const sourceAllowFrom = Array.isArray(canonicalAllowFrom)
+    ? canonicalAllowFrom
+    : Array.isArray(legacyAllowFrom)
+      ? legacyAllowFrom
+      : undefined;
+  if (channelConfigHelperListHasWildcard(sourceAllowFrom)) {
+    if (canonicalAllowFrom === undefined && sourceAllowFrom) {
+      setCanonicalDmAllowFrom({
+        entry,
+        mode,
+        allowFrom: sourceAllowFrom,
+        pathPrefix: params.pathPrefix,
+        changes: params.changes,
+        reason: `moved wildcard allowlist from ${formatChannelConfigHelperPath(
+          params.pathPrefix,
+          allowPaths.legacyPath,
+        )}`,
+      });
+    }
+    return;
+  }
+  setCanonicalDmAllowFrom({
+    entry,
+    mode,
+    allowFrom: [...(sourceAllowFrom || []), "*"],
+    pathPrefix: params.pathPrefix,
+    changes: params.changes,
+    reason: Array.isArray(sourceAllowFrom)
+      ? 'added "*" (required by dmPolicy="open")'
+      : 'set to ["*"] (required by dmPolicy="open")',
+  });
+}
+
+function resolveChannelConfigWrites(params = {}) {
+  const cfg = params.cfg || {};
+  const channelConfig =
+    params.channelId &&
+    cfg.channels &&
+    typeof cfg.channels === "object" &&
+    cfg.channels[params.channelId];
+  if (!channelConfig || typeof channelConfig !== "object") {
+    return true;
+  }
+  const accountConfig = resolveAccountEntry(
+    channelConfig.accounts,
+    normalizeAccountId(params.accountId),
+  );
+  const value =
+    (accountConfig && accountConfig.configWrites !== undefined
+      ? accountConfig.configWrites
+      : channelConfig.configWrites);
+  return value !== false;
+}
+
+function listConfigWriteTargetScopes(target) {
+  if (!target || target.kind === "global") {
+    return [];
+  }
+  if (target.kind === "ambiguous") {
+    return Array.isArray(target.scopes) ? target.scopes : [];
+  }
+  return target.scope ? [target.scope] : [];
+}
+
+function authorizeConfigWrite(params = {}) {
+  if (params.allowBypass) {
+    return { allowed: true };
+  }
+  if (params.target && params.target.kind === "ambiguous") {
+    return { allowed: false, reason: "ambiguous-target" };
+  }
+  if (
+    params.origin &&
+    params.origin.channelId &&
+    !resolveChannelConfigWrites({
+      cfg: params.cfg,
+      channelId: params.origin.channelId,
+      accountId: params.origin.accountId,
+    })
+  ) {
+    return {
+      allowed: false,
+      reason: "origin-disabled",
+      blockedScope: { kind: "origin", scope: params.origin },
+    };
+  }
+  const seen = new Set();
+  for (const target of listConfigWriteTargetScopes(params.target)) {
+    if (!target || !target.channelId) {
+      continue;
+    }
+    const accountId = normalizeAccountId(target.accountId);
+    const key = `${target.channelId}:${accountId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    if (
+      !resolveChannelConfigWrites({
+        cfg: params.cfg,
+        channelId: target.channelId,
+        accountId: target.accountId,
+      })
+    ) {
+      return {
+        allowed: false,
+        reason: "target-disabled",
+        blockedScope: { kind: "target", scope: target },
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+function canBypassConfigWritePolicy(params = {}) {
+  return (
+    normalizeOptionalLowercaseString(params.channel) === INTERNAL_MESSAGE_CHANNEL &&
+    Array.isArray(params.gatewayClientScopes) &&
+    params.gatewayClientScopes.includes("operator.admin")
+  );
+}
+
+function formatConfigWriteDeniedMessage(params = {}) {
+  const result = params.result || {};
+  if (result.reason === "ambiguous-target") {
+    return (
+      "Channel-initiated /config writes cannot replace channels, channel roots, " +
+      "or accounts collections. Use a more specific path or gateway operator.admin."
+    );
+  }
+  const blocked = result.blockedScope && result.blockedScope.scope;
+  const channelLabel = (blocked && blocked.channelId) || params.fallbackChannelId || "this channel";
+  const hint =
+    blocked && blocked.channelId
+      ? blocked.accountId
+        ? `channels.${blocked.channelId}.accounts.${blocked.accountId}.configWrites=true`
+        : `channels.${blocked.channelId}.configWrites=true`
+      : params.fallbackChannelId
+        ? `channels.${params.fallbackChannelId}.configWrites=true`
+        : "channels.<channel>.configWrites=true";
+  return `Config writes are disabled for ${channelLabel}. Set ${hint} to enable.`;
+}
+
+function mapAllowFromEntries(allowFrom) {
+  return (allowFrom || []).map((entry) => String(entry));
+}
+
+function formatTrimmedAllowFromEntries(allowFrom) {
+  return normalizeStringEntries(allowFrom);
+}
+
+function resolveOptionalConfigString(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized || undefined;
+}
+
+function adaptScopedAccountAccessor(accessor) {
+  return (cfg, accountId) => accessor({ cfg, accountId });
+}
+
+function createScopedAccountConfigAccessors(params = {}) {
+  const base = {
+    resolveAllowFrom({ cfg, accountId } = {}) {
+      return mapAllowFromEntries(
+        params.resolveAllowFrom(params.resolveAccount({ cfg, accountId })),
+      );
+    },
+    formatAllowFrom({ allowFrom } = {}) {
+      return params.formatAllowFrom(allowFrom);
+    },
+  };
+  if (typeof params.resolveDefaultTo !== "function") {
+    return base;
+  }
+  return {
+    ...base,
+    resolveDefaultTo({ cfg, accountId } = {}) {
+      return resolveOptionalConfigString(
+        params.resolveDefaultTo(params.resolveAccount({ cfg, accountId })),
+      );
+    },
+  };
+}
+
+function createNamedAccountConfigBase(params = {}) {
+  return {
+    listAccountIds(cfg) {
+      return params.listAccountIds(cfg);
+    },
+    resolveAccount(cfg, accountId) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    inspectAccount:
+      typeof params.inspectAccount === "function"
+        ? (cfg, accountId) => params.inspectAccount(cfg, accountId)
+        : undefined,
+    defaultAccountId(cfg) {
+      return params.defaultAccountId(cfg);
+    },
+    setAccountEnabled({ cfg, accountId, enabled } = {}) {
+      return params.setAccountEnabled({
+        cfg,
+        accountId: normalizeAccountId(accountId),
+        enabled,
+      });
+    },
+    deleteAccount({ cfg, accountId } = {}) {
+      return params.deleteAccount({ cfg, accountId: normalizeAccountId(accountId) });
+    },
+  };
+}
+
+function resolveAccessorAccountWithFallback(
+  resolveAccessorAccount,
+  fallbackResolveAccessorAccount,
+) {
+  return typeof resolveAccessorAccount === "function"
+    ? resolveAccessorAccount
+    : fallbackResolveAccessorAccount;
+}
+
+function createChannelConfigAdapterWithAccessors(params = {}) {
+  return {
+    ...params.base,
+    ...createScopedAccountConfigAccessors({
+      resolveAccount: resolveAccessorAccountWithFallback(
+        params.resolveAccessorAccount,
+        params.fallbackResolveAccessorAccount,
+      ),
+      resolveAllowFrom: params.resolveAllowFrom,
+      formatAllowFrom: params.formatAllowFrom,
+      resolveDefaultTo: params.resolveDefaultTo,
+    }),
+  };
+}
+
+function createChannelConfigAdapterFromBase(params = {}) {
+  return createChannelConfigAdapterWithAccessors({
+    base: params.base,
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    fallbackResolveAccessorAccount: params.resolveAccountForAccessors,
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function createScopedChannelConfigBase(params = {}) {
+  return createNamedAccountConfigBase({
+    listAccountIds: params.listAccountIds,
+    resolveAccount: params.resolveAccount,
+    inspectAccount: params.inspectAccount,
+    defaultAccountId: params.defaultAccountId,
+    setAccountEnabled({ cfg, accountId, enabled }) {
+      return setAccountEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        enabled,
+        allowTopLevel: params.allowTopLevel ?? true,
+      });
+    },
+    deleteAccount({ cfg, accountId }) {
+      return deleteAccountFromConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        clearBaseFields: params.clearBaseFields,
+      });
+    },
+  });
+}
+
+function createScopedChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createScopedChannelConfigBase({
+      sectionKey: params.sectionKey,
+      listAccountIds: params.listAccountIds,
+      resolveAccount: params.resolveAccount,
+      inspectAccount: params.inspectAccount,
+      defaultAccountId: params.defaultAccountId,
+      clearBaseFields: params.clearBaseFields,
+      allowTopLevel: params.allowTopLevel,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg, accountId } = {}) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function setTopLevelChannelEnabledInConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const section =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: {
+        ...section,
+        enabled: params.enabled,
+      },
+    },
+  };
+}
+
+function removeTopLevelChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const nextChannels = { ...channels };
+  delete nextChannels[params.sectionKey];
+  const nextCfg = { ...cfg };
+  if (Object.keys(nextChannels).length > 0) {
+    nextCfg.channels = nextChannels;
+  } else {
+    delete nextCfg.channels;
+  }
+  return nextCfg;
+}
+
+function clearTopLevelChannelConfigFields(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const section =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : undefined;
+  if (!section) {
+    return cfg;
+  }
+  const nextSection = { ...section };
+  for (const field of params.clearBaseFields || []) {
+    delete nextSection[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: nextSection,
+    },
+  };
+}
+
+function createTopLevelChannelConfigBase(params = {}) {
+  return {
+    listAccountIds(cfg) {
+      return typeof params.listAccountIds === "function"
+        ? params.listAccountIds(cfg)
+        : [DEFAULT_ACCOUNT_ID];
+    },
+    resolveAccount(cfg) {
+      return params.resolveAccount(cfg);
+    },
+    inspectAccount:
+      typeof params.inspectAccount === "function" ? (cfg) => params.inspectAccount(cfg) : undefined,
+    defaultAccountId(cfg) {
+      return typeof params.defaultAccountId === "function"
+        ? params.defaultAccountId(cfg)
+        : DEFAULT_ACCOUNT_ID;
+    },
+    setAccountEnabled({ cfg, enabled } = {}) {
+      return setTopLevelChannelEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        enabled,
+      });
+    },
+    deleteAccount({ cfg } = {}) {
+      return params.deleteMode === "clear-fields"
+        ? clearTopLevelChannelConfigFields({
+            cfg,
+            sectionKey: params.sectionKey,
+            clearBaseFields: params.clearBaseFields || [],
+          })
+        : removeTopLevelChannelConfigSection({
+            cfg,
+            sectionKey: params.sectionKey,
+          });
+    },
+  };
+}
+
+function createTopLevelChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createTopLevelChannelConfigBase({
+      sectionKey: params.sectionKey,
+      resolveAccount: params.resolveAccount,
+      listAccountIds: params.listAccountIds,
+      defaultAccountId: params.defaultAccountId,
+      inspectAccount: params.inspectAccount,
+      deleteMode: params.deleteMode,
+      clearBaseFields: params.clearBaseFields,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg } = {}) {
+      return params.resolveAccount(cfg);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+function createHybridChannelConfigBase(params = {}) {
+  return createNamedAccountConfigBase({
+    listAccountIds: params.listAccountIds,
+    resolveAccount: params.resolveAccount,
+    inspectAccount: params.inspectAccount,
+    defaultAccountId: params.defaultAccountId,
+    setAccountEnabled({ cfg, accountId, enabled }) {
+      if (normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID) {
+        return setTopLevelChannelEnabledInConfigSection({
+          cfg,
+          sectionKey: params.sectionKey,
+          enabled,
+        });
+      }
+      return setAccountEnabledInConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        enabled,
+      });
+    },
+    deleteAccount({ cfg, accountId }) {
+      if (normalizeAccountId(accountId) === DEFAULT_ACCOUNT_ID) {
+        if (params.preserveSectionOnDefaultDelete) {
+          return clearTopLevelChannelConfigFields({
+            cfg,
+            sectionKey: params.sectionKey,
+            clearBaseFields: params.clearBaseFields || [],
+          });
+        }
+        return deleteAccountFromConfigSection({
+          cfg,
+          sectionKey: params.sectionKey,
+          accountId,
+          clearBaseFields: params.clearBaseFields,
+        });
+      }
+      return deleteAccountFromConfigSection({
+        cfg,
+        sectionKey: params.sectionKey,
+        accountId,
+        clearBaseFields: params.clearBaseFields,
+      });
+    },
+  });
+}
+
+function createHybridChannelConfigAdapter(params = {}) {
+  return createChannelConfigAdapterFromBase({
+    base: createHybridChannelConfigBase({
+      sectionKey: params.sectionKey,
+      listAccountIds: params.listAccountIds,
+      resolveAccount: params.resolveAccount,
+      inspectAccount: params.inspectAccount,
+      defaultAccountId: params.defaultAccountId,
+      clearBaseFields: params.clearBaseFields,
+      preserveSectionOnDefaultDelete: params.preserveSectionOnDefaultDelete,
+    }),
+    resolveAccessorAccount: params.resolveAccessorAccount,
+    resolveAccountForAccessors({ cfg, accountId } = {}) {
+      return params.resolveAccount(cfg, accountId);
+    },
+    resolveAllowFrom: params.resolveAllowFrom,
+    formatAllowFrom: params.formatAllowFrom,
+    resolveDefaultTo: params.resolveDefaultTo,
+  });
+}
+
+const channelConfigHelpersRuntime = {
+  adaptScopedAccountAccessor,
+  authorizeConfigWrite,
+  buildAccountScopedDmSecurityPolicy,
+  canBypassConfigWritePolicy,
+  createHybridChannelConfigAdapter,
+  createHybridChannelConfigBase,
+  createScopedAccountConfigAccessors,
+  createScopedChannelConfigAdapter,
+  createScopedChannelConfigBase,
+  createScopedDmSecurityResolver,
+  createTopLevelChannelConfigAdapter,
+  createTopLevelChannelConfigBase,
+  ensureOpenDmPolicyAllowFromWildcard,
+  formatConfigWriteDeniedMessage,
+  formatTrimmedAllowFromEntries,
+  mapAllowFromEntries,
+  normalizeChannelDmPolicy,
+  normalizeLegacyDmAliases,
+  resolveChannelConfigWrites,
+  resolveChannelDmAccess,
+  resolveChannelDmAllowFrom,
+  resolveChannelDmPolicy,
+  resolveOptionalConfigString,
+  setCanonicalDmAllowFrom,
+};
+
+const channelConfigWritesRuntime = {
+  authorizeConfigWrite,
+  canBypassConfigWritePolicy,
+  formatConfigWriteDeniedMessage,
+  resolveChannelConfigWrites,
+};
+
+function createAccountStatusSink(params = {}) {
+  return (patch = {}) => {
+    params.setStatus?.({ accountId: params.accountId, ...patch });
+  };
+}
+
+function createRunStateMachine(params = {}) {
+  const heartbeatMs = params.heartbeatMs ?? 60000;
+  const now = params.now || Date.now;
+  let activeRuns = 0;
+  let runActivityHeartbeat = null;
+  let lifecycleActive = !(params.abortSignal && params.abortSignal.aborted);
+
+  const publish = () => {
+    if (!lifecycleActive) {
+      return;
+    }
+    params.setStatus?.({
+      activeRuns,
+      busy: activeRuns > 0,
+      lastRunActivityAt: now(),
+    });
+  };
+
+  const clearHeartbeat = () => {
+    if (!runActivityHeartbeat) {
+      return;
+    }
+    clearInterval(runActivityHeartbeat);
+    runActivityHeartbeat = null;
+  };
+
+  const ensureHeartbeat = () => {
+    if (runActivityHeartbeat || activeRuns <= 0 || !lifecycleActive) {
+      return;
+    }
+    runActivityHeartbeat = setInterval(() => {
+      if (!lifecycleActive || activeRuns <= 0) {
+        clearHeartbeat();
+        return;
+      }
+      publish();
+    }, heartbeatMs);
+    runActivityHeartbeat.unref?.();
+  };
+
+  const deactivate = () => {
+    lifecycleActive = false;
+    clearHeartbeat();
+  };
+
+  const onAbort = () => {
+    deactivate();
+  };
+
+  if (params.abortSignal && params.abortSignal.aborted) {
+    onAbort();
+  } else {
+    params.abortSignal?.addEventListener("abort", onAbort, { once: true });
+  }
+
+  if (lifecycleActive) {
+    params.setStatus?.({ activeRuns: 0, busy: false });
+  }
+
+  return {
+    isActive() {
+      return lifecycleActive;
+    },
+    onRunStart() {
+      activeRuns += 1;
+      publish();
+      ensureHeartbeat();
+    },
+    onRunEnd() {
+      activeRuns = Math.max(0, activeRuns - 1);
+      if (activeRuns <= 0) {
+        clearHeartbeat();
+      }
+      publish();
+    },
+    deactivate,
+  };
+}
+
+function createChannelRunQueue(params = {}) {
+  const queue = new KeyedAsyncQueue();
+  const runState = createRunStateMachine({
+    setStatus: params.setStatus,
+    abortSignal: params.abortSignal,
+  });
+  const reportError = (error) => {
+    try {
+      params.onError?.(error);
+    } catch {
+      // Keep queue error handling best-effort.
+    }
+  };
+  return {
+    enqueue(key, task) {
+      void queue
+        .enqueue(key, async () => {
+          if (!runState.isActive()) {
+            return;
+          }
+          runState.onRunStart();
+          try {
+            if (!runState.isActive()) {
+              return;
+            }
+            await task({ lifecycleSignal: params.abortSignal });
+          } finally {
+            runState.onRunEnd();
+          }
+        })
+        .catch(reportError);
+    },
+    deactivate: runState.deactivate,
+  };
+}
+
+function waitUntilAbort(signal, onAbort) {
+  return new Promise((resolve, reject) => {
+    const complete = () => {
+      Promise.resolve(onAbort?.()).then(() => resolve(), reject);
+    };
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      complete();
+      return;
+    }
+    signal.addEventListener("abort", complete, { once: true });
+  });
+}
+
+async function runPassiveAccountLifecycle(params = {}) {
+  const handle = await params.start();
+  try {
+    await waitUntilAbort(params.abortSignal);
+  } finally {
+    await params.stop?.(handle);
+    await params.onStop?.();
+  }
+}
+
+async function keepHttpServerTaskAlive(params = {}) {
+  const { server, abortSignal, onAbort } = params;
+  let abortTask = Promise.resolve();
+  let abortTriggered = false;
+  const triggerAbort = () => {
+    if (abortTriggered) {
+      return;
+    }
+    abortTriggered = true;
+    abortTask = Promise.resolve(onAbort?.()).then(() => undefined);
+  };
+  const onAbortSignal = () => {
+    triggerAbort();
+  };
+  if (abortSignal) {
+    if (abortSignal.aborted) {
+      triggerAbort();
+    } else {
+      abortSignal.addEventListener("abort", onAbortSignal, { once: true });
+    }
+  }
+  await new Promise((resolve) => {
+    server.once("close", () => resolve());
+  });
+  if (abortSignal) {
+    abortSignal.removeEventListener("abort", onAbortSignal);
+  }
+  await abortTask;
+}
+
+function createDraftStreamLoop(params = {}) {
+  let lastSentAt = 0;
+  let pendingText = "";
+  let inFlightPromise;
+  let timer;
+
+  const flush = async () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    while (!params.isStopped()) {
+      if (inFlightPromise) {
+        await inFlightPromise;
+        continue;
+      }
+      const text = pendingText;
+      if (!text.trim()) {
+        pendingText = "";
+        return;
+      }
+      pendingText = "";
+      const current = Promise.resolve(params.sendOrEditStreamMessage(text)).finally(() => {
+        if (inFlightPromise === current) {
+          inFlightPromise = undefined;
+        }
+      });
+      inFlightPromise = current;
+      const sent = await current;
+      if (sent === false) {
+        pendingText = text;
+        return;
+      }
+      lastSentAt = Date.now();
+      if (!pendingText) {
+        return;
+      }
+    }
+  };
+
+  const schedule = () => {
+    if (timer) {
+      return;
+    }
+    const delay = Math.max(0, (params.throttleMs || 0) - (Date.now() - lastSentAt));
+    timer = setTimeout(() => {
+      void flush();
+    }, delay);
+  };
+
+  return {
+    update(text) {
+      if (params.isStopped()) {
+        return;
+      }
+      pendingText = text;
+      if (inFlightPromise) {
+        schedule();
+        return;
+      }
+      if (!timer && Date.now() - lastSentAt >= (params.throttleMs || 0)) {
+        void flush();
+        return;
+      }
+      schedule();
+    },
+    flush,
+    stop() {
+      pendingText = "";
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+    resetPending() {
+      pendingText = "";
+    },
+    resetThrottleWindow() {
+      lastSentAt = 0;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+    async waitForInFlight() {
+      if (inFlightPromise) {
+        await inFlightPromise;
+      }
+    },
+  };
+}
+
+function createFinalizableDraftStreamControls(params = {}) {
+  const loop = createDraftStreamLoop({
+    throttleMs: params.throttleMs,
+    isStopped: params.isStopped,
+    sendOrEditStreamMessage: params.sendOrEditStreamMessage,
+  });
+  const update = (text) => {
+    if (params.isStopped() || params.isFinal()) {
+      return;
+    }
+    loop.update(text);
+  };
+  const stop = async () => {
+    params.markFinal();
+    await loop.flush();
+  };
+  const stopForClear = async () => {
+    params.markStopped();
+    loop.stop();
+    await loop.waitForInFlight();
+  };
+  const seal = async () => {
+    params.markFinal();
+    loop.stop();
+    await loop.waitForInFlight();
+  };
+  return {
+    loop,
+    update,
+    stop,
+    seal,
+    discardPending: stopForClear,
+    stopForClear,
+  };
+}
+
+function createFinalizableDraftStreamControlsForState(params = {}) {
+  return createFinalizableDraftStreamControls({
+    throttleMs: params.throttleMs,
+    isStopped: () => params.state.stopped,
+    isFinal: () => params.state.final,
+    markStopped: () => {
+      params.state.stopped = true;
+    },
+    markFinal: () => {
+      params.state.final = true;
+    },
+    sendOrEditStreamMessage: params.sendOrEditStreamMessage,
+  });
+}
+
+async function takeMessageIdAfterStop(params = {}) {
+  await params.stopForClear();
+  const messageId = params.readMessageId();
+  params.clearMessageId();
+  return messageId;
+}
+
+async function clearFinalizableDraftMessage(params = {}) {
+  const messageId = await takeMessageIdAfterStop({
+    stopForClear: params.stopForClear,
+    readMessageId: params.readMessageId,
+    clearMessageId: params.clearMessageId,
+  });
+  if (!params.isValidMessageId(messageId)) {
+    return;
+  }
+  try {
+    await params.deleteMessage(messageId);
+    params.onDeleteSuccess?.(messageId);
+  } catch (err) {
+    params.warn?.(`${params.warnPrefix}: ${formatErrorMessage(err)}`);
+  }
+}
+
+function createFinalizableDraftLifecycle(params = {}) {
+  const controls = createFinalizableDraftStreamControlsForState({
+    throttleMs: params.throttleMs,
+    state: params.state,
+    sendOrEditStreamMessage: params.sendOrEditStreamMessage,
+  });
+  const clear = async () => {
+    await clearFinalizableDraftMessage({
+      stopForClear: controls.stopForClear,
+      readMessageId: params.readMessageId,
+      clearMessageId: params.clearMessageId,
+      isValidMessageId: params.isValidMessageId,
+      deleteMessage: params.deleteMessage,
+      onDeleteSuccess: params.onDeleteSuccess,
+      warn: params.warn,
+      warnPrefix: params.warnPrefix,
+    });
+  };
+  return { ...controls, clear };
+}
+
+async function deliverFinalizableDraftPreview(params = {}) {
+  if (params.kind !== "final" || !params.draft) {
+    const delivered = await params.deliverNormally(params.payload);
+    if (delivered === false) {
+      return "normal-skipped";
+    }
+    await params.onNormalDelivered?.();
+    return "normal-delivered";
+  }
+  const edit = params.buildFinalEdit(params.payload);
+  if (edit !== undefined) {
+    await params.draft.flush();
+    const previewId = params.draft.id();
+    if (previewId !== undefined) {
+      await params.draft.seal?.();
+      try {
+        await params.editFinal(previewId, edit);
+        await params.onPreviewFinalized?.(previewId);
+        return "preview-finalized";
+      } catch (err) {
+        params.logPreviewEditFailure?.(err);
+      }
+    }
+  }
+  if (params.draft.discardPending) {
+    await params.draft.discardPending();
+  } else {
+    await params.draft.clear();
+  }
+  let delivered = false;
+  try {
+    const result = await params.deliverNormally(params.payload);
+    delivered = result !== false;
+    if (delivered) {
+      await params.onNormalDelivered?.();
+    }
+  } finally {
+    if (delivered) {
+      await params.draft.clear();
+    }
+  }
+  return delivered ? "normal-delivered" : "normal-skipped";
+}
+
+function createArmableStallWatchdog(params = {}) {
+  const timeoutMs = Math.max(1, Math.floor(params.timeoutMs));
+  const checkIntervalMs = Math.max(
+    100,
+    Math.floor(params.checkIntervalMs ?? Math.min(5000, Math.max(250, timeoutMs / 6))),
+  );
+  let armed = false;
+  let stopped = false;
+  let lastActivityAt = Date.now();
+  let timer = null;
+  const clearTimer = () => {
+    if (!timer) {
+      return;
+    }
+    clearInterval(timer);
+    timer = null;
+  };
+  const disarm = () => {
+    armed = false;
+  };
+  const stop = () => {
+    if (stopped) {
+      return;
+    }
+    stopped = true;
+    disarm();
+    clearTimer();
+    params.abortSignal?.removeEventListener("abort", stop);
+  };
+  const arm = (atMs) => {
+    if (stopped) {
+      return;
+    }
+    lastActivityAt = atMs ?? Date.now();
+    armed = true;
+  };
+  const touch = (atMs) => {
+    if (stopped) {
+      return;
+    }
+    lastActivityAt = atMs ?? Date.now();
+  };
+  const check = () => {
+    if (!armed || stopped) {
+      return;
+    }
+    const now = Date.now();
+    const idleMs = now - lastActivityAt;
+    if (idleMs < timeoutMs) {
+      return;
+    }
+    disarm();
+    params.runtime?.error?.(
+      `[${params.label}] transport watchdog timeout: idle ${Math.round(
+        idleMs / 1000,
+      )}s (limit ${Math.round(timeoutMs / 1000)}s)`,
+    );
+    params.onTimeout({ idleMs, timeoutMs });
+  };
+  if (params.abortSignal && params.abortSignal.aborted) {
+    stop();
+  } else {
+    params.abortSignal?.addEventListener("abort", stop, { once: true });
+    timer = setInterval(check, checkIntervalMs);
+    timer.unref?.();
+  }
+  return {
+    arm,
+    touch,
+    disarm,
+    stop,
+    isArmed: () => armed,
+  };
+}
+
+const channelLifecycleRuntime = {
+  clearFinalizableDraftMessage,
+  createAccountStatusSink,
+  createArmableStallWatchdog,
+  createChannelRunQueue,
+  createDraftStreamLoop,
+  createFinalizableDraftLifecycle,
+  createFinalizableDraftStreamControls,
+  createFinalizableDraftStreamControlsForState,
+  createRunStateMachine,
+  deliverFinalizableDraftPreview,
+  keepHttpServerTaskAlive,
+  runPassiveAccountLifecycle,
+  takeMessageIdAfterStop,
+  waitUntilAbort,
+};
+
+const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
+  discord: {
+    id: "discord",
+    label: "Discord",
+    selectionLabel: "Discord (Bot API)",
+    docsPath: "/channels/discord",
+    docsLabel: "discord",
+    detailLabel: "Discord Bot",
+    systemImage: "gamecontroller",
+  },
+  matrix: {
+    id: "matrix",
+    label: "Matrix",
+    selectionLabel: "Matrix (plugin)",
+    docsPath: "/channels/matrix",
+    docsLabel: "matrix",
+    detailLabel: "Matrix",
+    systemImage: "message",
+  },
+  slack: {
+    id: "slack",
+    label: "Slack",
+    selectionLabel: "Slack (Socket Mode)",
+    docsPath: "/channels/slack",
+    docsLabel: "slack",
+    detailLabel: "Slack App",
+    systemImage: "bubble.left.and.bubble.right",
+  },
+  telegram: {
+    id: "telegram",
+    label: "Telegram",
+    selectionLabel: "Telegram (Bot API)",
+    docsPath: "/channels/telegram",
+    docsLabel: "telegram",
+    detailLabel: "Telegram Bot",
+    systemImage: "paperplane",
+  },
+  whatsapp: {
+    id: "whatsapp",
+    label: "WhatsApp",
+    selectionLabel: "WhatsApp (QR link)",
+    docsPath: "/channels/whatsapp",
+    docsLabel: "whatsapp",
+    detailLabel: "WhatsApp",
+    systemImage: "phone.bubble.left",
+  },
+});
+
+function getChatChannelMeta(id) {
+  const key = normalizeLowercaseStringOrEmpty(id);
+  return OPENZUES_CHAT_CHANNEL_META[key];
+}
+
+function applyAccountNameToChannelSection(params) {
+  return applySetupAccountNameToChannelSection(params || {});
+}
+
+function migrateBaseNameToDefaultAccount(params) {
+  return migrateSetupBaseNameToDefaultAccount(params || {});
+}
+
+function setAccountEnabledInConfigSection(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : {};
+  const hasAccounts = Boolean(base.accounts && typeof base.accounts === "object");
+  if (params.allowTopLevel && accountKey === DEFAULT_ACCOUNT_ID && !hasAccounts) {
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          enabled: params.enabled,
+        },
+      },
+    };
+  }
+  const accounts = hasAccounts ? base.accounts : {};
+  const existing = accounts[accountKey] && typeof accounts[accountKey] === "object"
+    ? accounts[accountKey]
+    : {};
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.sectionKey]: {
+        ...base,
+        accounts: {
+          ...accounts,
+          [accountKey]: {
+            ...existing,
+            enabled: params.enabled,
+          },
+        },
+      },
+    },
+  };
+}
+
+function deleteAccountFromConfigSection(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base =
+    channels[params.sectionKey] && typeof channels[params.sectionKey] === "object"
+      ? channels[params.sectionKey]
+      : undefined;
+  if (!base) {
+    return cfg;
+  }
+  const accounts = base.accounts && typeof base.accounts === "object" ? { ...base.accounts } : {};
+  if (accountKey !== DEFAULT_ACCOUNT_ID) {
+    delete accounts[accountKey];
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...base,
+          accounts: Object.keys(accounts).length ? accounts : undefined,
+        },
+      },
+    };
+  }
+  if (Object.keys(accounts).length > 0) {
+    delete accounts[accountKey];
+    const nextBase = { ...base };
+    for (const field of params.clearBaseFields || []) {
+      if (field in nextBase) {
+        nextBase[field] = undefined;
+      }
+    }
+    return {
+      ...cfg,
+      channels: {
+        ...channels,
+        [params.sectionKey]: {
+          ...nextBase,
+          accounts: Object.keys(accounts).length ? accounts : undefined,
+        },
+      },
+    };
+  }
+  const nextChannels = { ...channels };
+  delete nextChannels[params.sectionKey];
+  const nextCfg = { ...cfg };
+  if (Object.keys(nextChannels).length > 0) {
+    nextCfg.channels = nextChannels;
+  } else {
+    delete nextCfg.channels;
+  }
+  return nextCfg;
+}
+
+function clearAccountEntryFields(params = {}) {
+  const accountKey = params.accountId || DEFAULT_ACCOUNT_ID;
+  const baseAccounts =
+    params.accounts && typeof params.accounts === "object" ? { ...params.accounts } : undefined;
+  if (!baseAccounts || !(accountKey in baseAccounts)) {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const entry = baseAccounts[accountKey];
+  if (!entry || typeof entry !== "object") {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const nextEntry = { ...entry };
+  const fields = Array.isArray(params.fields) ? params.fields : [];
+  if (!fields.some((field) => field in nextEntry)) {
+    return { nextAccounts: baseAccounts, changed: false, cleared: false };
+  }
+  const isValueSet =
+    typeof params.isValueSet === "function"
+      ? params.isValueSet
+      : (value) => (typeof value === "string" ? value.trim().length > 0 : Boolean(value));
+  let cleared = Boolean(params.markClearedOnFieldPresence);
+  for (const field of fields) {
+    if (!(field in nextEntry)) {
+      continue;
+    }
+    if (isValueSet(nextEntry[field])) {
+      cleared = true;
+    }
+    delete nextEntry[field];
+  }
+  if (Object.keys(nextEntry).length === 0) {
+    delete baseAccounts[accountKey];
+  } else {
+    baseAccounts[accountKey] = nextEntry;
+  }
+  return {
+    nextAccounts: Object.keys(baseAccounts).length > 0 ? baseAccounts : undefined,
+    changed: true,
+    cleared,
+  };
+}
+
+function createChannelPluginBase(params = {}) {
+  return {
+    id: params.id,
+    meta: {
+      ...(getChatChannelMeta(params.id) || {}),
+      ...(params.meta || {}),
+    },
+    ...(params.setupWizard ? { setupWizard: params.setupWizard } : {}),
+    ...(params.capabilities ? { capabilities: params.capabilities } : {}),
+    ...(params.commands ? { commands: params.commands } : {}),
+    ...(params.doctor ? { doctor: params.doctor } : {}),
+    ...(params.agentPrompt ? { agentPrompt: params.agentPrompt } : {}),
+    ...(params.streaming ? { streaming: params.streaming } : {}),
+    ...(params.reload ? { reload: params.reload } : {}),
+    ...(params.gatewayMethods ? { gatewayMethods: params.gatewayMethods } : {}),
+    ...(params.configSchema ? { configSchema: params.configSchema } : {}),
+    ...(params.config ? { config: params.config } : {}),
+    ...(params.security ? { security: params.security } : {}),
+    ...(params.groups ? { groups: params.groups } : {}),
+    setup: params.setup,
+  };
+}
+
+function createChatChannelPlugin(params = {}) {
+  const base = params.base || {};
+  return {
+    ...base,
+    conversationBindings: {
+      supportsCurrentConversationBinding: true,
+      ...(base.conversationBindings || {}),
+    },
+    ...(params.security ? { security: params.security } : {}),
+    ...(params.pairing ? { pairing: params.pairing } : {}),
+    ...(params.threading ? { threading: params.threading } : {}),
+    ...(params.outbound ? { outbound: params.outbound } : {}),
+  };
+}
+
+function parseOptionalDelimitedEntries(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const entries = value
+    .split(/[\n,;]+/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length > 0 ? entries : undefined;
+}
+
+function stripChannelTargetPrefix(raw, ...providers) {
+  const trimmed = String(raw || "").trim();
+  for (const provider of providers) {
+    const prefix = `${normalizeLowercaseStringOrEmpty(provider)}:`;
+    if (prefix !== ":" && normalizeLowercaseStringOrEmpty(trimmed).startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim();
+    }
+  }
+  return trimmed;
+}
+
+function stripTargetKindPrefix(raw) {
+  return String(raw || "")
+    .replace(/^(user|channel|group|conversation|room|dm):/iu, "")
+    .trim();
+}
+
+function buildChannelOutboundSessionRoute(params = {}) {
+  const baseSessionKey = buildOutboundBaseSessionKey({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  return {
+    sessionKey: baseSessionKey,
+    baseSessionKey,
+    peer: params.peer,
+    chatType: params.chatType,
+    from: params.from,
+    to: params.to,
+    ...(params.threadId !== undefined ? { threadId: params.threadId } : {}),
+  };
+}
+
+function recoverCurrentThreadSessionId(params = {}) {
+  const current = parseThreadSessionSuffix(params.currentSessionKey);
+  if (!current.baseSessionKey || !current.threadId) {
+    return undefined;
+  }
+  if (
+    normalizeOptionalLowercaseString(current.baseSessionKey) !==
+    normalizeOptionalLowercaseString(params.route && params.route.baseSessionKey)
+  ) {
+    return undefined;
+  }
+  const context = {
+    route: params.route,
+    currentBaseSessionKey: current.baseSessionKey,
+    currentThreadId: current.threadId,
+  };
+  if (typeof params.canRecover === "function" && !params.canRecover(context)) {
+    return undefined;
+  }
+  return current.threadId;
+}
+
+function resolveThreadAwareOutboundCandidate(threadId) {
+  const sessionThreadId = normalizeOutboundThreadId(threadId);
+  if (sessionThreadId === undefined) {
+    return undefined;
+  }
+  return {
+    routeThreadId: typeof threadId === "number" ? threadId : sessionThreadId,
+    sessionThreadId,
+  };
+}
+
+function buildThreadAwareOutboundSessionRoute(params = {}) {
+  const recoveredThreadId = recoverCurrentThreadSessionId({
+    route: params.route,
+    currentSessionKey: params.currentSessionKey,
+    canRecover: params.canRecoverCurrentThread,
+  });
+  const candidates = {
+    replyToId: resolveThreadAwareOutboundCandidate(params.replyToId),
+    threadId: resolveThreadAwareOutboundCandidate(params.threadId),
+    currentSession: resolveThreadAwareOutboundCandidate(recoveredThreadId),
+  };
+  const precedence = Array.isArray(params.precedence)
+    ? params.precedence
+    : ["replyToId", "threadId", "currentSession"];
+  const candidate = precedence.map((source) => candidates[source]).find(Boolean);
+  const threadKeys = resolveThreadSessionKeys({
+    baseSessionKey: params.route && params.route.baseSessionKey,
+    threadId: candidate && candidate.sessionThreadId,
+    parentSessionKey: candidate ? params.parentSessionKey : undefined,
+    useSuffix: params.useSuffix,
+    normalizeThreadId: params.normalizeThreadId,
+  });
+  return {
+    ...(params.route || {}),
+    sessionKey: threadKeys.sessionKey,
+    ...(candidate !== undefined ? { threadId: candidate.routeThreadId } : {}),
+  };
+}
+
+const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
+
+function loadSecretFileSync(filePath, label, options = {}) {
+  const trimmedPath = String(filePath || "").trim();
+  const resolvedPath = trimmedPath ? path.resolve(trimmedPath) : undefined;
+  if (!resolvedPath) {
+    return { ok: false, message: `${label} file path is empty.` };
+  }
+  const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
+  let previewStat;
+  try {
+    previewStat = fs.lstatSync(resolvedPath);
+  } catch (error) {
+    return {
+      ok: false,
+      resolvedPath,
+      error,
+      message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(error)}`,
+    };
+  }
+  if (options.rejectSymlink && previewStat.isSymbolicLink()) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} must not be a symlink.`,
+    };
+  }
+  if (!previewStat.isFile()) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} must be a regular file.`,
+    };
+  }
+  if (previewStat.size > maxBytes) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.`,
+    };
+  }
+  try {
+    const secret = fs.readFileSync(resolvedPath, "utf8").trim();
+    if (!secret) {
+      return {
+        ok: false,
+        resolvedPath,
+        message: `${label} file at ${resolvedPath} is empty.`,
+      };
+    }
+    return { ok: true, secret, resolvedPath };
+  } catch (error) {
+    return {
+      ok: false,
+      resolvedPath,
+      error,
+      message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
+    };
+  }
+}
+
+function readSecretFileSync(filePath, label, options = {}) {
+  const result = loadSecretFileSync(filePath, label, options);
+  if (result.ok) {
+    return result.secret;
+  }
+  throw new Error(result.message);
+}
+
+function tryReadSecretFileSync(filePath, label, options = {}) {
+  if (typeof filePath !== "string" || !filePath.trim()) {
+    return undefined;
+  }
+  const result = loadSecretFileSync(filePath, label, options);
+  return result.ok ? result.secret : undefined;
+}
+
+function defineChannelPluginEntry(options = {}) {
+  const resolvedConfigSchema =
+    typeof options.configSchema === "function"
+      ? options.configSchema()
+      : options.configSchema || emptyChannelConfigSchema();
+  const entry = {
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    configSchema: resolvedConfigSchema,
+    register(api = {}) {
+      if (api.registrationMode === "cli-metadata") {
+        options.registerCliMetadata?.(api);
+        return;
+      }
+      if (api.registrationMode === "tool-discovery") {
+        options.registerFull?.(api);
+        return;
+      }
+      api.registerChannel?.({ plugin: options.plugin });
+      options.setRuntime?.(api.runtime);
+      if (api.registrationMode === "discovery") {
+        options.registerCliMetadata?.(api);
+        return;
+      }
+      if (api.registrationMode !== "full") {
+        return;
+      }
+      options.registerCliMetadata?.(api);
+      options.registerFull?.(api);
+    },
+  };
+  return {
+    ...entry,
+    channelPlugin: options.plugin,
+    ...(options.setRuntime ? { setChannelRuntime: options.setRuntime } : {}),
+  };
+}
+
+function defineSetupPluginEntry(plugin) {
+  return { plugin };
+}
+
+const channelCoreRuntime = {
+  buildChannelConfigSchema,
+  buildChannelOutboundSessionRoute,
+  buildThreadAwareOutboundSessionRoute,
+  clearAccountEntryFields,
+  createChannelPluginBase,
+  createChatChannelPlugin,
+  defineChannelPluginEntry,
+  defineSetupPluginEntry,
+  parseOptionalDelimitedEntries,
+  recoverCurrentThreadSessionId,
+  stripChannelTargetPrefix,
+  stripTargetKindPrefix,
+  tryReadSecretFileSync,
+};
+
+const channelContractRuntime = Object.freeze({});
+
+function resolveChannelTurnDispatchCountsForContract(result) {
+  return {
+    tool: 0,
+    block: 0,
+    final: 0,
+    ...((result && typeof result === "object" && result.counts) || {}),
+  };
+}
+
+function hasVisibleChannelTurnDispatchForContract(result, signals = {}) {
+  const counts = resolveChannelTurnDispatchCountsForContract(result);
+  return (
+    signals.observedReplyDelivery === true ||
+    signals.fallbackDelivered === true ||
+    signals.deliverySummaryDelivered === true ||
+    (result && result.queuedFinal === true) ||
+    counts.tool > 0 ||
+    counts.block > 0 ||
+    counts.final > 0
+  );
+}
+
+function hasFinalChannelTurnDispatchForContract(result, signals = {}) {
+  const counts = resolveChannelTurnDispatchCountsForContract(result);
+  return (
+    signals.fallbackDelivered === true ||
+    signals.deliverySummaryDelivered === true ||
+    (result && result.queuedFinal === true) ||
+    counts.final > 0
+  );
+}
+
+function assertChannelContract(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function validateSenderIdentityForContract(ctx = {}) {
+  const issues = [];
+  const chatType = normalizeChatType(ctx.ChatType);
+  const isDirect = chatType === "direct";
+  const senderId = normalizeOptionalString(ctx.SenderId) || "";
+  const senderName = normalizeOptionalString(ctx.SenderName) || "";
+  const senderUsername = normalizeOptionalString(ctx.SenderUsername) || "";
+  const senderE164 = normalizeOptionalString(ctx.SenderE164) || "";
+  if (!isDirect && !senderId && !senderName && !senderUsername && !senderE164) {
+    issues.push("missing sender identity (SenderId/SenderName/SenderUsername/SenderE164)");
+  }
+  if (senderE164 && !/^\+\d{3,}$/u.test(senderE164)) {
+    issues.push(`invalid SenderE164: ${senderE164}`);
+  }
+  if (senderUsername) {
+    if (senderUsername.includes("@")) {
+      issues.push(`SenderUsername should not include "@": ${senderUsername}`);
+    }
+    if (/\s/u.test(senderUsername)) {
+      issues.push(`SenderUsername should not include whitespace: ${senderUsername}`);
+    }
+  }
+  if (ctx.SenderId != null && !senderId) {
+    issues.push("SenderId is set but empty");
+  }
+  return issues;
+}
+
+function expectChannelInboundContextContract(ctx = {}) {
+  const issues = validateSenderIdentityForContract(ctx);
+  assertChannelContract(
+    issues.length === 0,
+    `expected valid channel inbound context; ${issues.join("; ")}`,
+  );
+  for (const field of ["Body", "BodyForAgent", "BodyForCommands"]) {
+    assertChannelContract(
+      typeof ctx[field] === "string",
+      `expected channel inbound context ${field} to be string`,
+    );
+  }
+  const chatType = normalizeChatType(ctx.ChatType);
+  if (chatType && chatType !== "direct") {
+    const label = normalizeOptionalString(ctx.ConversationLabel) || resolveConversationLabel(ctx);
+    assertChannelContract(
+      Boolean(label),
+      "expected group channel inbound context to include conversation label",
+    );
+  }
+}
+
+function expectChannelTurnDispatchResultContract(result, expected = {}) {
+  const visible = hasVisibleChannelTurnDispatchForContract(result);
+  assertChannelContract(
+    visible === expected.visible,
+    `expected channel turn visible dispatch to be ${String(expected.visible)}`,
+  );
+  if (expected.final !== undefined) {
+    const final = hasFinalChannelTurnDispatchForContract(result);
+    assertChannelContract(
+      final === expected.final,
+      `expected channel turn final dispatch to be ${String(expected.final)}`,
+    );
+  }
+  if (expected.counts && typeof expected.counts === "object") {
+    const counts = resolveChannelTurnDispatchCountsForContract(result);
+    for (const [kind, count] of Object.entries(expected.counts)) {
+      assertChannelContract(
+        counts[kind] === count,
+        `expected channel turn dispatch count ${kind} to be ${String(count)}`,
+      );
+    }
+  }
+}
+
+function primeChannelOutboundSendMock(sendMock, fallbackResult, sendResults = []) {
+  sendMock.mockReset();
+  if (!Array.isArray(sendResults) || sendResults.length === 0) {
+    sendMock.mockResolvedValue(fallbackResult);
+    return;
+  }
+  for (const result of sendResults) {
+    sendMock.mockResolvedValueOnce(result);
+  }
+}
+
+function buildDispatchInboundCaptureMock(actual, setCtx) {
+  const dispatchInboundMessage = async (params = {}) => {
+    setCtx(params.ctx);
+    return { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } };
+  };
+  return {
+    ...(actual || {}),
+    dispatchInboundMessage,
+    dispatchInboundMessageWithDispatcher: dispatchInboundMessage,
+    dispatchInboundMessageWithBufferedDispatcher: dispatchInboundMessage,
+  };
+}
+
+function installChannelOutboundPayloadContractSuite() {}
+
+const channelContractTestingRuntime = {
+  buildDispatchInboundCaptureMock,
+  expectChannelInboundContextContract,
+  expectChannelTurnDispatchResultContract,
+  installChannelOutboundPayloadContractSuite,
+  primeChannelOutboundSendMock,
+};
+
+function applyChannelMatchMeta(result, match = {}) {
+  if (match.matchKey && match.matchSource) {
+    result.matchKey = match.matchKey;
+    result.matchSource = match.matchSource;
+  }
+  return result;
+}
+
+function resolveChannelMatchConfig(match = {}, resolveEntry) {
+  if (!match.entry) {
+    return null;
+  }
+  return applyChannelMatchMeta(resolveEntry(match.entry), match);
+}
+
+function normalizeChannelSlug(value) {
+  return normalizeLowercaseStringOrEmpty(value)
+    .replace(/^#/u, "")
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+function buildChannelKeyCandidates(...keys) {
+  const seen = new Set();
+  const candidates = [];
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      continue;
+    }
+    const trimmed = key.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    candidates.push(trimmed);
+  }
+  return candidates;
+}
+
+function resolveChannelEntryMatch(params = {}) {
+  const entries = params.entries || {};
+  const match = {};
+  for (const key of params.keys || []) {
+    if (!Object.prototype.hasOwnProperty.call(entries, key)) {
+      continue;
+    }
+    match.entry = entries[key];
+    match.key = key;
+    break;
+  }
+  if (
+    params.wildcardKey &&
+    Object.prototype.hasOwnProperty.call(entries, params.wildcardKey)
+  ) {
+    match.wildcardEntry = entries[params.wildcardKey];
+    match.wildcardKey = params.wildcardKey;
+  }
+  return match;
+}
+
+function resolveChannelEntryMatchWithFallback(params = {}) {
+  const direct = resolveChannelEntryMatch({
+    entries: params.entries,
+    keys: params.keys || [],
+    wildcardKey: params.wildcardKey,
+  });
+  if (direct.entry && direct.key) {
+    return { ...direct, matchKey: direct.key, matchSource: "direct" };
+  }
+  const normalizeKey = params.normalizeKey;
+  if (typeof normalizeKey === "function") {
+    const normalizedKeys = (params.keys || []).map((key) => normalizeKey(key)).filter(Boolean);
+    if (normalizedKeys.length > 0) {
+      for (const [entryKey, entry] of Object.entries(params.entries || {})) {
+        const normalizedEntry = normalizeKey(entryKey);
+        if (normalizedEntry && normalizedKeys.includes(normalizedEntry)) {
+          return {
+            ...direct,
+            entry,
+            key: entryKey,
+            matchKey: entryKey,
+            matchSource: "direct",
+          };
+        }
+      }
+    }
+  }
+  const parentKeys = params.parentKeys || [];
+  if (parentKeys.length > 0) {
+    const parent = resolveChannelEntryMatch({ entries: params.entries, keys: parentKeys });
+    if (parent.entry && parent.key) {
+      return {
+        ...direct,
+        entry: parent.entry,
+        key: parent.key,
+        parentEntry: parent.entry,
+        parentKey: parent.key,
+        matchKey: parent.key,
+        matchSource: "parent",
+      };
+    }
+    if (typeof normalizeKey === "function") {
+      const normalizedParentKeys = parentKeys.map((key) => normalizeKey(key)).filter(Boolean);
+      if (normalizedParentKeys.length > 0) {
+        for (const [entryKey, entry] of Object.entries(params.entries || {})) {
+          const normalizedEntry = normalizeKey(entryKey);
+          if (normalizedEntry && normalizedParentKeys.includes(normalizedEntry)) {
+            return {
+              ...direct,
+              entry,
+              key: entryKey,
+              parentEntry: entry,
+              parentKey: entryKey,
+              matchKey: entryKey,
+              matchSource: "parent",
+            };
+          }
+        }
+      }
+    }
+  }
+  if (direct.wildcardEntry && direct.wildcardKey) {
+    return {
+      ...direct,
+      entry: direct.wildcardEntry,
+      key: direct.wildcardKey,
+      matchKey: direct.wildcardKey,
+      matchSource: "wildcard",
+    };
+  }
+  return direct;
+}
+
+function resolveNestedAllowlistDecision(params = {}) {
+  if (!params.outerConfigured) {
+    return true;
+  }
+  if (!params.outerMatched) {
+    return false;
+  }
+  if (!params.innerConfigured) {
+    return true;
+  }
+  return Boolean(params.innerMatched);
+}
+
+function normalizeTargetId(kind, id) {
+  return normalizeLowercaseStringOrEmpty(`${kind}:${id}`);
+}
+
+function buildMessagingTarget(kind, id, raw) {
+  return {
+    kind,
+    id,
+    raw,
+    normalized: normalizeTargetId(kind, id),
+  };
+}
+
+function ensureTargetId(params = {}) {
+  if (!params.pattern.test(params.candidate)) {
+    throw new Error(params.errorMessage);
+  }
+  return params.candidate;
+}
+
+function parseTargetMention(params = {}) {
+  const match = String(params.raw || "").match(params.mentionPattern);
+  if (!match || !match[1]) {
+    return undefined;
+  }
+  return buildMessagingTarget(params.kind, match[1], params.raw);
+}
+
+function parseTargetPrefix(params = {}) {
+  const raw = String(params.raw || "");
+  if (!raw.startsWith(params.prefix)) {
+    return undefined;
+  }
+  const id = raw.slice(String(params.prefix || "").length).trim();
+  return id ? buildMessagingTarget(params.kind, id, params.raw) : undefined;
+}
+
+function parseTargetPrefixes(params = {}) {
+  for (const entry of params.prefixes || []) {
+    const parsed = parseTargetPrefix({
+      raw: params.raw,
+      prefix: entry.prefix,
+      kind: entry.kind,
+    });
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parseAtUserTarget(params = {}) {
+  const raw = String(params.raw || "");
+  if (!raw.startsWith("@")) {
+    return undefined;
+  }
+  const candidate = raw.slice(1).trim();
+  const id = ensureTargetId({
+    candidate,
+    pattern: params.pattern,
+    errorMessage: params.errorMessage,
+  });
+  return buildMessagingTarget("user", id, params.raw);
+}
+
+function parseMentionPrefixOrAtUserTarget(params = {}) {
+  const mentionTarget = parseTargetMention({
+    raw: params.raw,
+    mentionPattern: params.mentionPattern,
+    kind: "user",
+  });
+  if (mentionTarget) {
+    return mentionTarget;
+  }
+  const prefixedTarget = parseTargetPrefixes({
+    raw: params.raw,
+    prefixes: params.prefixes,
+  });
+  if (prefixedTarget) {
+    return prefixedTarget;
+  }
+  return parseAtUserTarget({
+    raw: params.raw,
+    pattern: params.atUserPattern,
+    errorMessage: params.atUserErrorMessage,
+  });
+}
+
+function requireTargetKind(params = {}) {
+  const kindLabel = params.kind;
+  if (!params.target) {
+    throw new Error(`${params.platform} ${kindLabel} id is required.`);
+  }
+  if (params.target.kind !== params.kind) {
+    throw new Error(`${params.platform} ${kindLabel} id is required (use ${kindLabel}:<id>).`);
+  }
+  return params.target.id;
+}
+
+function stripChatTargetPrefix(value, prefix) {
+  return value.slice(prefix.length).trim();
+}
+
+function startsWithAnyChatPrefix(value, prefixes) {
+  return prefixes.some((prefix) => value.startsWith(prefix));
+}
+
+function resolveServicePrefixedTarget(params = {}) {
+  for (const { prefix, service } of params.servicePrefixes || []) {
+    if (!params.lower.startsWith(prefix)) {
+      continue;
+    }
+    const remainder = stripChatTargetPrefix(params.trimmed, prefix);
+    if (!remainder) {
+      throw new Error(`${prefix} target is required`);
+    }
+    const remainderLower = normalizeLowercaseStringOrEmpty(remainder);
+    if (params.isChatTarget(remainderLower)) {
+      return params.parseTarget(remainder);
+    }
+    return { kind: "handle", to: remainder, service };
+  }
+  return null;
+}
+
+function resolveServicePrefixedChatTarget(params = {}) {
+  const chatPrefixes = [
+    ...(params.chatIdPrefixes || []),
+    ...(params.chatGuidPrefixes || []),
+    ...(params.chatIdentifierPrefixes || []),
+    ...(params.extraChatPrefixes || []),
+  ];
+  return resolveServicePrefixedTarget({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    servicePrefixes: params.servicePrefixes,
+    isChatTarget: (remainderLower) => startsWithAnyChatPrefix(remainderLower, chatPrefixes),
+    parseTarget: params.parseTarget,
+  });
+}
+
+function parseChatTargetPrefixesOrThrow(params = {}) {
+  for (const prefix of params.chatIdPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      const chatId = Number.parseInt(value, 10);
+      if (!Number.isFinite(chatId)) {
+        throw new Error(`Invalid chat_id: ${value}`);
+      }
+      return { kind: "chat_id", chatId };
+    }
+  }
+  for (const prefix of params.chatGuidPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (!value) {
+        throw new Error("chat_guid is required");
+      }
+      return { kind: "chat_guid", chatGuid: value };
+    }
+  }
+  for (const prefix of params.chatIdentifierPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (!value) {
+        throw new Error("chat_identifier is required");
+      }
+      return { kind: "chat_identifier", chatIdentifier: value };
+    }
+  }
+  return null;
+}
+
+function parseChatAllowTargetPrefixes(params = {}) {
+  for (const prefix of params.chatIdPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      const chatId = Number.parseInt(value, 10);
+      if (Number.isFinite(chatId)) {
+        return { kind: "chat_id", chatId };
+      }
+    }
+  }
+  for (const prefix of params.chatGuidPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (value) {
+        return { kind: "chat_guid", chatGuid: value };
+      }
+    }
+  }
+  for (const prefix of params.chatIdentifierPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (value) {
+        return { kind: "chat_identifier", chatIdentifier: value };
+      }
+    }
+  }
+  return null;
+}
+
+function resolveServicePrefixedAllowTarget(params = {}) {
+  for (const { prefix } of params.servicePrefixes || []) {
+    if (!params.lower.startsWith(prefix)) {
+      continue;
+    }
+    const remainder = stripChatTargetPrefix(params.trimmed, prefix);
+    if (!remainder) {
+      return { kind: "handle", handle: "" };
+    }
+    return params.parseAllowTarget(remainder);
+  }
+  return null;
+}
+
+function resolveServicePrefixedOrChatAllowTarget(params = {}) {
+  const servicePrefixed = resolveServicePrefixedAllowTarget({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    servicePrefixes: params.servicePrefixes,
+    parseAllowTarget: params.parseAllowTarget,
+  });
+  if (servicePrefixed) {
+    return servicePrefixed;
+  }
+  return parseChatAllowTargetPrefixes({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    chatIdPrefixes: params.chatIdPrefixes,
+    chatGuidPrefixes: params.chatGuidPrefixes,
+    chatIdentifierPrefixes: params.chatIdentifierPrefixes,
+  });
+}
+
+function isAllowedParsedChatSender(params = {}) {
+  const allowFrom = normalizeStringEntries(params.allowFrom || []);
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  if (allowFrom.includes("*")) {
+    return true;
+  }
+  const senderNormalized = params.normalizeSender(params.sender || "");
+  const chatId = params.chatId ?? undefined;
+  const chatGuid = normalizeOptionalString(params.chatGuid);
+  const chatIdentifier = normalizeOptionalString(params.chatIdentifier);
+  for (const entry of allowFrom) {
+    if (!entry) {
+      continue;
+    }
+    const parsed = params.parseAllowTarget(entry);
+    if (parsed.kind === "chat_id" && chatId !== undefined && parsed.chatId === chatId) {
+      return true;
+    }
+    if (parsed.kind === "chat_guid" && chatGuid && parsed.chatGuid === chatGuid) {
+      return true;
+    }
+    if (
+      parsed.kind === "chat_identifier" &&
+      chatIdentifier &&
+      parsed.chatIdentifier === chatIdentifier
+    ) {
+      return true;
+    }
+    if (parsed.kind === "handle" && senderNormalized && parsed.handle === senderNormalized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function createAllowedChatSenderMatcher(params = {}) {
+  return (input) =>
+    isAllowedParsedChatSender({
+      allowFrom: input.allowFrom,
+      sender: input.sender,
+      chatId: input.chatId,
+      chatGuid: input.chatGuid,
+      chatIdentifier: input.chatIdentifier,
+      normalizeSender: params.normalizeSender,
+      parseAllowTarget: params.parseAllowTarget,
+    });
+}
+
+function normalizeChannelId(raw) {
+  return normalizeOptionalLowercaseString(raw) || null;
+}
+
+function resolveChannelTtsVoiceDelivery() {
+  return undefined;
+}
+
+const channelTargetsRuntime = {
+  applyChannelMatchMeta,
+  buildChannelKeyCandidates,
+  buildMessagingTarget,
+  buildUnresolvedTargetResults,
+  createAllowedChatSenderMatcher,
+  ensureTargetId,
+  normalizeChannelId,
+  normalizeChannelSlug,
+  normalizeTargetId,
+  parseAtUserTarget,
+  parseChatAllowTargetPrefixes,
+  parseChatTargetPrefixesOrThrow,
+  parseMentionPrefixOrAtUserTarget,
+  parseTargetMention,
+  parseTargetPrefix,
+  parseTargetPrefixes,
+  requireTargetKind,
+  resolveChannelEntryMatch,
+  resolveChannelEntryMatchWithFallback,
+  resolveChannelMatchConfig,
+  resolveChannelTtsVoiceDelivery,
+  resolveNestedAllowlistDecision,
+  resolveServicePrefixedAllowTarget,
+  resolveServicePrefixedChatTarget,
+  resolveServicePrefixedOrChatAllowTarget,
+  resolveServicePrefixedTarget,
+  resolveTargetsWithOptionalToken,
+};
+
+const channelStreamingRuntime = {
+  getChannelStreamingConfigObject,
+  resolveChannelPreviewStreamMode,
+  resolveChannelStreamingBlockCoalesce,
+  resolveChannelStreamingBlockEnabled,
+  resolveChannelStreamingChunkMode,
+  resolveChannelStreamingNativeTransport,
+  resolveChannelStreamingPreviewChunk,
+  resolveChannelStreamingPreviewToolProgress,
+};
+
+const channelPluginCommonRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  PAIRING_APPROVED_MESSAGE,
+  applyAccountNameToChannelSection,
+  buildChannelConfigSchema,
+  clearAccountEntryFields,
+  deleteAccountFromConfigSection,
+  emptyPluginConfigSchema,
+  formatPairingApproveHint,
+  getChatChannelMeta,
+  migrateBaseNameToDefaultAccount,
+  normalizeAccountId,
+  setAccountEnabledInConfigSection,
+};
+
+const coreRuntime = {
+  ...channelPluginCommonRuntime,
+  buildPluginConfigSchema,
+  createChannelPluginBase,
+  createChatChannelPlugin,
+  emptyChannelConfigSchema,
+  emptyPluginConfigSchema,
+  normalizeOptionalAccountId,
+};
+
+function filePathFromImportMetaUrl(importMetaUrl) {
+  if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
+    return require("node:url").fileURLToPath(importMetaUrl);
+  }
+  return path.resolve(String(importMetaUrl || "."));
+}
+
+function resolveBundledEntrySpecifierCandidates(modulePath) {
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(modulePath));
+  if (ext === ".js") {
+    return [modulePath, modulePath.slice(0, -3) + ".ts"];
+  }
+  if (ext === ".mjs") {
+    return [modulePath, modulePath.slice(0, -4) + ".mts"];
+  }
+  if (ext === ".cjs") {
+    return [modulePath, modulePath.slice(0, -4) + ".cts"];
+  }
+  return [modulePath];
+}
+
+function resolveBundledEntryModulePath(importMetaUrl, specifier) {
+  const importerPath = filePathFromImportMetaUrl(importMetaUrl);
+  const importerDir = path.dirname(importerPath);
+  const primaryPath = path.resolve(importerDir, specifier);
+  const candidates = resolveBundledEntrySpecifierCandidates(primaryPath);
+  const sourceRelativeSpecifier = String(specifier || "").replace(/^\.\/src\//u, "./");
+  if (sourceRelativeSpecifier !== specifier) {
+    candidates.push(
+      ...resolveBundledEntrySpecifierCandidates(path.resolve(importerDir, sourceRelativeSpecifier)),
+    );
+  }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(
+    [
+      `bundled plugin entry "${specifier}" failed to open`,
+      `from "${importerPath}"`,
+      `(resolved "${primaryPath}", plugin root "${importerDir}",`,
+      `reason "path"): ENOENT: no such file or directory, lstat '${primaryPath}'`,
+    ].join(" "),
+  );
+}
+
+const loadedBundledEntryModules = new Map();
+
+function loadBundledEntryModuleSync(importMetaUrl, specifier) {
+  const modulePath = resolveBundledEntryModulePath(importMetaUrl, specifier);
+  if (loadedBundledEntryModules.has(modulePath)) {
+    return loadedBundledEntryModules.get(modulePath);
+  }
+  const loaded = require(modulePath);
+  loadedBundledEntryModules.set(modulePath, loaded);
+  return loaded;
+}
+
+function loadBundledEntryExportSync(importMetaUrl, reference, options = {}) {
+  const loaded = loadBundledEntryModuleSync(importMetaUrl, reference.specifier, options);
+  const resolved =
+    loaded && typeof loaded === "object" && Object.prototype.hasOwnProperty.call(loaded, "default")
+      ? loaded.default
+      : loaded;
+  if (!reference.exportName) {
+    return resolved;
+  }
+  const record = resolved ?? loaded;
+  if (!record || !Object.prototype.hasOwnProperty.call(record, reference.exportName)) {
+    throw new Error(
+      `missing export "${reference.exportName}" from bundled entry module ${reference.specifier}`,
+    );
+  }
+  return record[reference.exportName];
+}
+
+function defineBundledChannelEntry(options = {}) {
+  const resolvedConfigSchema =
+    typeof options.configSchema === "function"
+      ? options.configSchema()
+      : options.configSchema || emptyChannelConfigSchema();
+  const loadChannelPlugin = (loadOptions = {}) =>
+    loadBundledEntryExportSync(options.importMetaUrl, options.plugin, loadOptions);
+  const loadChannelSecrets = options.secrets
+    ? (loadOptions = {}) =>
+        loadBundledEntryExportSync(options.importMetaUrl, options.secrets, loadOptions)
+    : undefined;
+  const loadChannelAccountInspector = options.accountInspect
+    ? (loadOptions = {}) =>
+        loadBundledEntryExportSync(options.importMetaUrl, options.accountInspect, loadOptions)
+    : undefined;
+  const setChannelRuntime = options.runtime
+    ? (pluginRuntime) => {
+        const setter = loadBundledEntryExportSync(options.importMetaUrl, options.runtime);
+        setter(pluginRuntime);
+      }
+    : undefined;
+  return {
+    kind: "bundled-channel-entry",
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    configSchema: resolvedConfigSchema,
+    ...(options.features || options.accountInspect
+      ? {
+          features: {
+            ...(options.features || {}),
+            ...(options.accountInspect ? { accountInspect: true } : {}),
+          },
+        }
+      : {}),
+    register(api) {
+      if (api.registrationMode === "cli-metadata") {
+        if (typeof options.registerCliMetadata === "function") {
+          options.registerCliMetadata(api);
+        }
+        return;
+      }
+      if (api.registrationMode === "tool-discovery") {
+        if (typeof options.registerFull === "function") {
+          options.registerFull(api);
+        }
+        return;
+      }
+      const channelPlugin = loadChannelPlugin();
+      if (api && typeof api.registerChannel === "function") {
+        api.registerChannel({ plugin: channelPlugin });
+      }
+      if (setChannelRuntime) {
+        setChannelRuntime(api && api.runtime);
+      }
+      if (api.registrationMode === "discovery") {
+        if (typeof options.registerCliMetadata === "function") {
+          options.registerCliMetadata(api);
+        }
+        return;
+      }
+      if (api.registrationMode !== "full") {
+        return;
+      }
+      if (typeof options.registerCliMetadata === "function") {
+        options.registerCliMetadata(api);
+      }
+      if (typeof options.registerFull === "function") {
+        options.registerFull(api);
+      }
+    },
+    loadChannelPlugin,
+    ...(loadChannelSecrets ? { loadChannelSecrets } : {}),
+    ...(loadChannelAccountInspector ? { loadChannelAccountInspector } : {}),
+    ...(setChannelRuntime ? { setChannelRuntime } : {}),
+  };
+}
+
+function defineBundledChannelSetupEntry(options = {}) {
+  const setChannelRuntime = options.runtime
+    ? (pluginRuntime) => {
+        const setter = loadBundledEntryExportSync(options.importMetaUrl, options.runtime);
+        setter(pluginRuntime);
+      }
+    : undefined;
+  return {
+    kind: "bundled-channel-setup-entry",
+    loadSetupPlugin: (loadOptions = {}) =>
+      loadBundledEntryExportSync(options.importMetaUrl, options.plugin, loadOptions),
+    ...(options.secrets
+      ? {
+          loadSetupSecrets: (loadOptions = {}) =>
+            loadBundledEntryExportSync(options.importMetaUrl, options.secrets, loadOptions),
+        }
+      : {}),
+    ...(options.legacyStateMigrations
+      ? {
+          loadLegacyStateMigrationDetector: (loadOptions = {}) =>
+            loadBundledEntryExportSync(
+              options.importMetaUrl,
+              options.legacyStateMigrations,
+              loadOptions,
+            ),
+        }
+      : {}),
+    ...(options.legacySessionSurface
+      ? {
+          loadLegacySessionSurface: (loadOptions = {}) =>
+            loadBundledEntryExportSync(
+              options.importMetaUrl,
+              options.legacySessionSurface,
+              loadOptions,
+            ),
+        }
+      : {}),
+    ...(setChannelRuntime ? { setChannelRuntime } : {}),
+    ...(options.features ? { features: options.features } : {}),
+  };
+}
+
+const channelEntryContractRuntime = {
+  defineBundledChannelEntry,
+  defineBundledChannelSetupEntry,
+  loadBundledEntryExportSync,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -31991,6 +37561,15 @@ const channelInboundRuntime = {
   resolveMentionGating,
   resolveMentionGatingWithBypass,
   shouldDebounceTextInbound,
+  toLocationContext,
+};
+
+const channelInboundRootsRuntime = {
+  mergeInboundPathRoots,
+};
+
+const channelLocationRuntime = {
+  formatLocationText,
   toLocationContext,
 };
 
@@ -32147,6 +37726,10 @@ const channelPairingRuntime = {
   resolveChannelAllowFromPath,
 };
 
+const channelPairingPathsRuntime = {
+  resolveChannelAllowFromPath,
+};
+
 const commandStatusRuntime = {
   buildCommandsMessage,
   buildCommandsMessagePaginated,
@@ -32212,6 +37795,10 @@ const channelSetupRuntime = {
   formatDocsLink,
   setSetupChannelEnabled,
   splitSetupEntries,
+};
+
+const setupAdapterRuntime = {
+  createEnvPatchedAccountSetupAdapter,
 };
 
 const markdownTableRuntime = {
@@ -32285,6 +37872,13 @@ const tempPathRuntime = {
   withTempDownloadPath,
 };
 
+const statePathsRuntime = {
+  STATE_DIR,
+  resolveOAuthDir,
+  resolveRequiredHomeDir,
+  resolveStateDir,
+};
+
 const secretInputRuntime = {
   coerceSecretRef,
   hasConfiguredSecretInput,
@@ -32295,6 +37889,14 @@ const secretInputRuntime = {
   parseEnvTemplateSecretRef,
   parseLegacySecretRefEnvMarker,
   resolveSecretInputString,
+};
+
+const channelSecretTtsRuntime = {
+  collectNestedChannelTtsAssignments,
+};
+
+const talkConfigRuntime = {
+  resolveActiveTalkProviderConfig,
 };
 
 const routingRuntime = {
@@ -32337,6 +37939,16 @@ const accountHelpersRuntime = {
   describeWebhookAccountSnapshot,
   mergeAccountConfig,
   resolveMergedAccountConfig,
+};
+
+const accountConfiguredIdsRuntime = {
+  listConfiguredAccountIds,
+};
+
+const accountIdRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  normalizeAccountId,
+  normalizeOptionalAccountId,
 };
 
 const accountCoreRuntime = {
@@ -32473,16 +38085,63 @@ const replyPayloadRuntime = {
   sendTextMediaPayload,
 };
 
+const agentMediaPayloadRuntime = {
+  buildAgentMediaPayload,
+  getAgentScopedMediaLocalRoots,
+};
+
+const agentConfigPrimitivesRuntime = {
+  ReplyRuntimeConfigSchemaShape,
+  ToolPolicySchema,
+};
+
+const acpBindingResolveRuntime = {
+  resolveConfiguredAcpBindingRecord,
+};
+
+const anthropicCliRuntime = {
+  CLAUDE_CLI_BACKEND_ID,
+  isClaudeCliProvider,
+};
+
+const anthropicVertexRuntime = {
+  resolveAnthropicVertexClientRegion,
+  resolveAnthropicVertexProjectId,
+};
+
+const anthropicVertexAuthPresenceRuntime = {
+  hasAnthropicVertexAvailableAuth,
+};
+
 const genericSdk = new Proxy(
   {
+    CLAUDE_CLI_BACKEND_ID,
     DEFAULT_ACCOUNT_ID,
     DEFAULT_GROUP_HISTORY_LIMIT,
     DEFAULT_EMOJIS,
     DEFAULT_MAIN_KEY,
     DEFAULT_TIMING,
     PAIRING_APPROVED_MESSAGE,
+    ReplyRuntimeConfigSchemaShape,
+    resolveConfiguredAcpBindingRecord,
+    resolveAnthropicVertexClientRegion,
+    resolveAnthropicVertexProjectId,
+    hasAnthropicVertexAvailableAuth,
+    isClaudeCliProvider,
     SILENT_REPLY_TOKEN,
+    ToolPolicySchema,
     CODING_TOOL_TOKENS,
+    ...channelPluginCommonRuntime,
+    ...coreRuntime,
+    ...channelConfigSchemaRuntime,
+    ...bundledChannelConfigSchemaRuntime,
+    ...channelConfigHelpersRuntime,
+    ...channelLifecycleRuntime,
+    ...channelCoreRuntime,
+    ...channelContractTestingRuntime,
+    ...channelTargetsRuntime,
+    ...channelStreamingRuntime,
+    ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
     ...providerSelectionRuntime,
@@ -32520,10 +38179,16 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...runtimeEnvRuntime,
     ...runtimeRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
+    ...conversationBindingRuntime,
+    ...sessionBindingRuntime,
+    ...threadBindingsSessionRuntime,
+    ...sessionKeyRuntime,
+    ...sessionStoreRuntime,
     ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
@@ -32534,6 +38199,7 @@ const genericSdk = new Proxy(
     asString,
     buildRandomTempFilePath,
     buildAgentMainSessionKey,
+    buildAgentMediaPayload,
     buildAgentSessionKey,
     buildBaseAccountStatusSnapshot,
     buildBaseChannelStatusSummary,
@@ -32624,6 +38290,7 @@ const genericSdk = new Proxy(
     formatUncaughtError,
     generateSecureToken,
     generateSecureUuid,
+    getAgentScopedMediaLocalRoots,
     getSubagentDepth,
     getFileExtension,
     hasNonEmptyString,
@@ -32694,6 +38361,7 @@ const genericSdk = new Proxy(
     normalizeStringEntries,
     normalizeStringEntriesLower,
     normalizeStringifiedOptionalString,
+    normalizeXaiModelId,
     normalizeOutboundReplyPayload,
     parseAgentSessionKey,
     parseEnvTemplateSecretRef,
@@ -32746,16 +38414,19 @@ const genericSdk = new Proxy(
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
     resolveOutboundMediaUrls,
+    resolveOAuthDir,
     resolvePayloadMediaUrls,
     resolvePreferredOpenClawTmpDir,
     resolvePollMaxSelections,
     resolveReactionMessageId,
     resolveBatchedReplyThreadingPolicy,
+    resolveRequiredHomeDir,
     resolveChannelSourceReplyDeliveryMode,
     resolveChannelRouteTargetWithParser,
     resolveToolEmoji,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
+    resolveStateDir,
     resolveTextChunkLimit,
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
@@ -32949,6 +38620,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerModelIdNormalizeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/xai-model-id" ||
+    request === "@openclaw/plugin-sdk/xai-model-id"
+  ) {
+    return xaiModelIdRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-model-shared" ||
     request === "@openclaw/plugin-sdk/provider-model-shared"
   ) {
@@ -33009,6 +38686,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return runtimeLoggerRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/runtime-env" ||
+    request === "@openclaw/plugin-sdk/runtime-env"
+  ) {
+    return runtimeEnvRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/runtime" ||
     request === "@openclaw/plugin-sdk/runtime"
   ) {
@@ -33037,6 +38720,36 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/conversation-runtime"
   ) {
     return conversationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/conversation-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/conversation-binding-runtime"
+  ) {
+    return conversationBindingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/session-binding-runtime"
+  ) {
+    return sessionBindingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-bindings-session-runtime" ||
+    request === "@openclaw/plugin-sdk/thread-bindings-session-runtime"
+  ) {
+    return threadBindingsSessionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-key-runtime" ||
+    request === "@openclaw/plugin-sdk/session-key-runtime"
+  ) {
+    return sessionKeyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-store-runtime" ||
+    request === "@openclaw/plugin-sdk/session-store-runtime"
+  ) {
+    return sessionStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||
@@ -33093,6 +38806,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerAuthFacadeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/github-copilot-token" ||
+    request === "@openclaw/plugin-sdk/github-copilot-token"
+  ) {
+    return githubCopilotTokenRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/dedupe-runtime" ||
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
@@ -33127,6 +38846,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound"
   ) {
     return channelInboundRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-inbound-roots" ||
+    request === "@openclaw/plugin-sdk/channel-inbound-roots"
+  ) {
+    return channelInboundRootsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-location" ||
+    request === "@openclaw/plugin-sdk/channel-location"
+  ) {
+    return channelLocationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-route" ||
@@ -33207,6 +38938,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelPairingRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/channel-pairing-paths" ||
+    request === "@openclaw/plugin-sdk/channel-pairing-paths"
+  ) {
+    return channelPairingPathsRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-auth" ||
     request === "@openclaw/plugin-sdk/command-auth"
   ) {
@@ -33247,6 +38984,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-setup"
   ) {
     return channelSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/setup-adapter-runtime" ||
+    request === "@openclaw/plugin-sdk/setup-adapter-runtime"
+  ) {
+    return setupAdapterRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
@@ -33321,10 +39064,116 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return tempPathRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/state-paths" ||
+    request === "@openclaw/plugin-sdk/state-paths"
+  ) {
+    return statePathsRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/secret-input" ||
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-secret-tts-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-secret-tts-runtime"
+  ) {
+    return channelSecretTtsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/talk-config-runtime" ||
+    request === "@openclaw/plugin-sdk/talk-config-runtime"
+  ) {
+    return talkConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-plugin-common" ||
+    request === "@openclaw/plugin-sdk/channel-plugin-common"
+  ) {
+    return channelPluginCommonRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/core" ||
+    request === "@openclaw/plugin-sdk/core"
+  ) {
+    return coreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-primitives" ||
+    request === "@openclaw/plugin-sdk/channel-config-primitives"
+  ) {
+    return channelConfigPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-schema" ||
+    request === "@openclaw/plugin-sdk/channel-config-schema"
+  ) {
+    return channelConfigSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/bundled-channel-config-schema" ||
+    request === "@openclaw/plugin-sdk/bundled-channel-config-schema" ||
+    request === "openclaw/plugin-sdk/channel-config-schema-legacy" ||
+    request === "@openclaw/plugin-sdk/channel-config-schema-legacy"
+  ) {
+    return bundledChannelConfigSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-helpers" ||
+    request === "@openclaw/plugin-sdk/channel-config-helpers"
+  ) {
+    return channelConfigHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-writes" ||
+    request === "@openclaw/plugin-sdk/channel-config-writes"
+  ) {
+    return channelConfigWritesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-lifecycle" ||
+    request === "@openclaw/plugin-sdk/channel-lifecycle" ||
+    request === "openclaw/plugin-sdk/channel-lifecycle.core" ||
+    request === "@openclaw/plugin-sdk/channel-lifecycle.core"
+  ) {
+    return channelLifecycleRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-core" ||
+    request === "@openclaw/plugin-sdk/channel-core"
+  ) {
+    return channelCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-contract" ||
+    request === "@openclaw/plugin-sdk/channel-contract"
+  ) {
+    return channelContractRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-contract-testing" ||
+    request === "@openclaw/plugin-sdk/channel-contract-testing"
+  ) {
+    return channelContractTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-targets" ||
+    request === "@openclaw/plugin-sdk/channel-targets"
+  ) {
+    return channelTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-streaming" ||
+    request === "@openclaw/plugin-sdk/channel-streaming"
+  ) {
+    return channelStreamingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-entry-contract" ||
+    request === "@openclaw/plugin-sdk/channel-entry-contract"
+  ) {
+    return channelEntryContractRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/routing" ||
@@ -33337,6 +39186,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/account-helpers"
   ) {
     return accountHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-configured-ids" ||
+    request === "@openclaw/plugin-sdk/account-configured-ids"
+  ) {
+    return accountConfiguredIdsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-id" ||
+    request === "@openclaw/plugin-sdk/account-id"
+  ) {
+    return accountIdRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/account-core" ||
@@ -33399,6 +39260,42 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/reply-payload"
   ) {
     return replyPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-media-payload" ||
+    request === "@openclaw/plugin-sdk/agent-media-payload"
+  ) {
+    return agentMediaPayloadRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-config-primitives" ||
+    request === "@openclaw/plugin-sdk/agent-config-primitives"
+  ) {
+    return agentConfigPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-binding-resolve-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-binding-resolve-runtime"
+  ) {
+    return acpBindingResolveRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-cli" ||
+    request === "@openclaw/plugin-sdk/anthropic-cli"
+  ) {
+    return anthropicCliRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-vertex" ||
+    request === "@openclaw/plugin-sdk/anthropic-vertex"
+  ) {
+    return anthropicVertexRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-vertex-auth-presence" ||
+    request === "@openclaw/plugin-sdk/anthropic-vertex-auth-presence"
+  ) {
+    return anthropicVertexAuthPresenceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

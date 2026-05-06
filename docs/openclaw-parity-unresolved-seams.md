@@ -1,11 +1,11 @@
 # OpenClaw Parity Unresolved Seams
 
-Updated: 2026-05-05
+Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~78.7% overall, with a reasonable
-  band of ~76-81%.
+- Repo-wide OpenClaw parity is estimated at ~81.6% overall, with a reasonable
+  band of ~78-83%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -65,7 +65,17 @@ Current percentage rollup:
   provider-auth-login, provider-auth facade, provider web-search contract,
   provider web facade, device-bootstrap, runtime-store, runtime, and
   directory-runtime, directory-config-runtime, thread-bindings-runtime,
-  conversation-runtime, and outbound-runtime helper slices.
+  conversation-runtime, outbound-runtime, conversation-binding-runtime,
+  session-binding/session-key runtime alias, session-store runtime,
+  account-id/configured-id subpath, agent-media-payload,
+  agent-config-primitives, ACP binding resolve, Anthropic CLI facade,
+  Anthropic Vertex auth-presence, Anthropic Vertex facade, XAI model-id,
+  channel pairing path, channel inbound roots, channel location, state path,
+  setup adapter runtime, channel secret TTS runtime, talk config runtime,
+  GitHub Copilot token, channel plugin common/core, channel entry contract,
+  channel config primitives/schema, runtime-env, channel-config-helpers,
+  channel-config-writes, channel-lifecycle, exact channel-core,
+  channel-contract-testing, and channel-targets helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -1759,6 +1769,20 @@ schemas stay untouched before before-call hooks and executor dispatch. Remaining
 tool parity is future
 production runtime activation/import metadata beyond the native manifest
 snapshot adapter and deeper marketplace install/update/uninstall flows.
+Imported plugin SDK channel config primitives/schema subpaths are now no longer
+an unresolved queue head: `channel-config-primitives`, `channel-config-schema`,
+`bundled-channel-config-schema`, and `channel-config-schema-legacy` resolve to
+native OpenZues schema shims for policy enums, markdown/block-streaming
+schemas, nested DM config, multi-account builders, `requireOpenAllowFrom`,
+tool policy, and bundled provider schema handles. Remaining plugin SDK queue
+heads should continue with source-backed runtime/helper subpaths that still
+fall through the broad generic SDK proxy.
+Imported plugin SDK `runtime-env` is now also no longer an unresolved queue
+head: the exact subpath resolves to native OpenZues runtime IO, verbose/global
+flag, sleep/timeout/retry, truthy env parsing, duration/backoff, abort waiter,
+handler registration, subsystem logging, undici bootstrap, and WSL posture
+helpers. Remaining plugin SDK queue heads should continue with exact public
+barrels that still require fallback/passthrough behavior to execute.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
@@ -7462,6 +7486,331 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   ~78.7%. Verified with focused outbound-runtime pytest, adjacent helper proof,
   adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
   source/test checkpointed in `a0df1bba`.
+- Closed the imported OpenClaw plugin SDK conversation-binding-runtime seam from
+  `src/plugin-sdk/conversation-binding-runtime.ts`,
+  `src/channels/plugins/binding-routing.ts`,
+  `src/infra/outbound/session-binding-service.ts`,
+  `src/plugins/conversation-binding.ts`, and `src/pairing/pairing-messages.ts`:
+  native runtime entries can obtain the session binding service,
+  bind/list/resolve/touch/unbind through registered adapters, route runtime
+  conversation bindings to bound sessions while leaving plugin-owned bindings on
+  the original channel route, project configured binding routes, check binding
+  readiness, detect plugin-owned records, and render OpenClaw pairing replies.
+  Repo-wide parity is now estimated at ~78.8%. Verified with focused
+  conversation-binding-runtime pytest, adjacent helper proof, adjacent
+  imported-plugin/runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `230ec9d2`.
+- Closed the imported OpenClaw plugin SDK session-binding/session-key runtime
+  alias seam from `src/plugin-sdk/session-binding-runtime.ts`,
+  `src/plugin-sdk/thread-bindings-session-runtime.ts`, and
+  `src/plugin-sdk/session-key-runtime.ts`: native runtime entries can reset and
+  inspect registered session binding adapters for tests, bind/list/resolve
+  session binding records through the narrow service barrel, reuse thread
+  binding farewell/lifecycle helpers through the session barrel, and resolve
+  agent ids from session keys through the narrow session-key barrel. Repo-wide
+  parity is now estimated at ~78.9%. Verified with focused session-binding
+  pytest, adjacent helper proof, adjacent imported-plugin/runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `0307ca2f`.
+- Closed the imported OpenClaw plugin SDK session-store-runtime seam from
+  `src/plugin-sdk/session-store-runtime.ts`,
+  `src/config/sessions/store-entry.ts`, `src/config/sessions/paths.ts`,
+  `src/config/sessions/session-key.ts`, `src/config/sessions/group.ts`,
+  `src/config/sessions/main-session.ts`, `src/config/sessions/store.ts`, and
+  `src/config/sessions/reset.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/session-store-runtime`, resolve normalized store entries
+  while preserving newest legacy keys, compute agent-scoped session store paths,
+  resolve group/direct/explicit/main session keys, load/save/update file-backed
+  session stores, record inbound session metadata, update last-route delivery
+  context, and evaluate reset freshness policy helpers. Repo-wide parity is
+  now estimated at ~79.0%. Verified with focused session-store-runtime pytest,
+  adjacent helper proof, adjacent imported-plugin/runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `06e04786`.
+- Closed the imported OpenClaw plugin SDK account-id/configured-id subpath seam
+  from `src/plugin-sdk/account-id.ts`, `src/routing/account-id.ts`, and
+  `src/plugin-sdk/account-configured-ids.ts`: native runtime entries can import
+  slim `openclaw/plugin-sdk/account-id` and
+  `openclaw/plugin-sdk/account-configured-ids` barrels, receive only the
+  upstream-exported default/normalize/list helpers, and avoid the generic SDK
+  catch-all surface for these narrow modules. Repo-wide parity is now estimated
+  at ~79.1%. Verified with focused account-id subpath pytest, adjacent helper
+  proof, adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `2e012bc2`.
+- Closed the imported OpenClaw plugin SDK agent-media-payload seam from
+  `src/plugin-sdk/agent-media-payload.ts` and `src/media/local-roots.ts`:
+  native runtime entries can import `openclaw/plugin-sdk/agent-media-payload`,
+  build legacy agent media payload fields from media descriptors, and resolve
+  agent-scoped local media roots across config/state media directories, canvas,
+  workspace, sandboxes, preferred temp root, and configured agent workspace.
+  Repo-wide parity is now estimated at ~79.2%. Verified with focused
+  agent-media-payload pytest, adjacent helper proof, adjacent imported-plugin/
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `21126502`.
+- Closed the imported OpenClaw plugin SDK agent-config-primitives seam from
+  `src/plugin-sdk/agent-config-primitives.ts`,
+  `src/config/zod-schema.core.ts`, and
+  `src/config/zod-schema.agent-runtime.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/agent-config-primitives`, receive the exact
+  `ReplyRuntimeConfigSchemaShape` and `ToolPolicySchema` export surface, parse
+  optional reply runtime config primitive fields, and preserve the OpenClaw
+  tool-policy conflict guard for `allow` plus `alsoAllow`. Repo-wide parity is
+  now estimated at ~79.3%. Verified with focused agent-config-primitives pytest,
+  adjacent helper proof, adjacent imported-plugin/runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `99bb3098`.
+- Closed the imported OpenClaw plugin SDK ACP binding resolve seam from
+  `src/plugin-sdk/acp-binding-resolve-runtime.ts`,
+  `src/acp/persistent-bindings.resolve.ts`,
+  `src/acp/persistent-bindings.types.ts`, and the configured binding registry:
+  native runtime entries can import
+  `openclaw/plugin-sdk/acp-binding-resolve-runtime`, resolve top-level typed
+  ACP bindings with exact-account preference and parent conversation fallback,
+  and materialize OpenClaw-shaped `spec` plus session binding record metadata
+  with deterministic ACP binding session keys. Repo-wide parity is now
+  estimated at ~79.4%. Verified with focused ACP binding resolve pytest,
+  adjacent helper proof, adjacent imported-plugin/runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `4c9ed6d6`.
+- Closed the imported OpenClaw plugin SDK Anthropic CLI facade seam from
+  `src/plugin-sdk/anthropic-cli.ts` and
+  `extensions/anthropic/cli-shared.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/anthropic-cli`, receive `CLAUDE_CLI_BACKEND_ID`, and use
+  the same trimmed/case-insensitive Claude CLI provider predicate through
+  scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~79.5%. Verified with focused Anthropic CLI pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `8289eaff`.
+- Closed the imported OpenClaw plugin SDK Anthropic Vertex auth-presence seam
+  from `src/plugin-sdk/anthropic-vertex-auth-presence.ts`: native runtime
+  entries can import `openclaw/plugin-sdk/anthropic-vertex-auth-presence`,
+  detect explicit metadata server opt-in, trim explicit ADC credential paths
+  without stripping Unicode, and read the ADC file directly without an
+  existence preflight. Repo-wide parity is now estimated at ~79.6%. Verified
+  with focused Anthropic Vertex auth-presence pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `f7c9e174`.
+- Closed the imported OpenClaw plugin SDK Anthropic Vertex facade seam from
+  `src/plugin-sdk/anthropic-vertex.ts`,
+  `extensions/anthropic-vertex/api.ts`, `extensions/anthropic-vertex/region.ts`,
+  and `extensions/anthropic-vertex/provider-catalog.ts`: native runtime entries
+  can import `openclaw/plugin-sdk/anthropic-vertex`, resolve regional/global
+  Vertex endpoint regions before env fallback, validate env regions, and
+  resolve project IDs from Anthropic/GCP env vars plus ADC
+  `project_id`/`quota_project_id`. Repo-wide parity is now estimated at
+  ~79.7%. Verified with focused Anthropic Vertex facade pytest, adjacent
+  helper proof, adjacent imported-plugin/runtime proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `0ea37843`.
+- Closed the imported OpenClaw plugin SDK XAI model-id seam from
+  `src/plugin-sdk/xai-model-id.ts` and
+  `src/plugin-sdk/provider-model-shared.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/xai-model-id`, receive the `normalizeXaiModelId`
+  export, and normalize stale Grok fast/reasoning plus 4.20 beta IDs through
+  scoped, unscoped, and broad SDK paths. Repo-wide parity is now estimated at
+  ~79.8%. Verified with focused XAI model-id pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `6743ca28`.
+- Closed the imported OpenClaw plugin SDK channel pairing paths seam from
+  `src/plugin-sdk/channel-pairing-paths.ts` and
+  `src/pairing/allow-from-store-read.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-pairing-paths` and resolve sanitized
+  legacy/account allow-from file paths through scoped, unscoped, and broad SDK
+  paths. Repo-wide parity is now estimated at ~79.9%. Verified with focused
+  channel pairing paths pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `fa95764e`.
+- Closed the imported OpenClaw plugin SDK channel inbound roots seam from
+  `src/plugin-sdk/channel-inbound-roots.ts` and
+  `src/media/inbound-path-policy.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-inbound-roots` and merge/dedupe valid wildcard
+  media roots through scoped, unscoped, and broad SDK paths. Repo-wide parity
+  is now estimated at ~80.0%. Verified with focused channel inbound roots
+  pytest, adjacent helper proof, adjacent imported-plugin runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `1e1d6c23`.
+- Closed the imported OpenClaw plugin SDK channel location seam from
+  `src/plugin-sdk/channel-location.ts` and `src/channels/location.ts`: native
+  runtime entries can import `openclaw/plugin-sdk/channel-location` and format
+  normalized location text/context through scoped, unscoped, and broad SDK
+  paths. Repo-wide parity is now estimated at ~80.1%. Verified with focused
+  channel location pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `ad24fdc2`.
+- Closed the imported OpenClaw plugin SDK state paths seam from
+  `src/plugin-sdk/state-paths.ts`, `src/config/paths.ts`, and
+  `src/infra/home-dir.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/state-paths`, receive `STATE_DIR`,
+  `resolveStateDir`, `resolveOAuthDir`, and `resolveRequiredHomeDir`, and
+  resolve OpenClaw home/state/OAuth directories through scoped, unscoped, and
+  broad SDK paths. Repo-wide parity is now estimated at ~80.2%. Verified with
+  focused state paths pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `8c3128bf`.
+- Closed the imported OpenClaw plugin SDK setup adapter runtime seam from
+  `src/plugin-sdk/setup-adapter-runtime.ts` and
+  `src/channels/plugins/setup-helpers.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/setup-adapter-runtime`, receive
+  `createEnvPatchedAccountSetupAdapter`, validate env-only/default-account and
+  missing-credential setup inputs, normalize account ids, migrate base account
+  names, and patch top-level or account-scoped channel config. Repo-wide
+  parity is now estimated at ~80.3%. Verified with focused setup adapter
+  pytest, adjacent helper proof, adjacent imported-plugin runtime proof,
+  `ruff check`, and `mypy`; source/test checkpointed in `c0f33006`.
+- Closed the imported OpenClaw plugin SDK channel secret TTS runtime seam from
+  `src/plugin-sdk/channel-secret-tts-runtime.ts` and
+  `src/secrets/channel-secret-tts-runtime.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/channel-secret-tts-runtime`, receive
+  `collectNestedChannelTtsAssignments`, collect top-level and account-scoped
+  nested TTS provider API-key SecretRef assignments, preserve assignment apply
+  callbacks, and emit inactive-surface warnings. Repo-wide parity is now
+  estimated at ~80.4%. Verified with focused channel secret TTS pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `59936359`.
+- Closed the imported OpenClaw plugin SDK talk config runtime seam from
+  `src/plugin-sdk/talk-config-runtime.ts` and `src/config/talk.ts`: native
+  runtime entries can import `openclaw/plugin-sdk/talk-config-runtime`, receive
+  `resolveActiveTalkProviderConfig`, trim and preserve provider config values,
+  reject explicit providers missing from the provider map, and use the
+  single-provider fallback when no explicit provider is set. Repo-wide parity
+  is now estimated at ~80.5%. Verified with focused talk config pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `ef516298`.
+- Closed the imported OpenClaw plugin SDK GitHub Copilot token seam from
+  `src/plugin-sdk/github-copilot-token.ts`,
+  `src/agents/github-copilot-token.ts`, and `src/plugin-sdk/provider-auth.ts`:
+  native runtime entries can import
+  `openclaw/plugin-sdk/github-copilot-token`, receive
+  `DEFAULT_COPILOT_API_BASE_URL`, `deriveCopilotApiBaseUrlFromToken`, and
+  `resolveCopilotApiToken`, derive API base URLs from valid proxy-token hints,
+  reuse cached tokens, save fetched token metadata, and reach the helper
+  through scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~80.6%. Verified with focused GitHub Copilot token pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `8ccd0928`.
+- Closed the imported OpenClaw plugin SDK channel plugin common/core seam from
+  `src/plugin-sdk/channel-plugin-common.ts`, `src/plugin-sdk/core.ts`,
+  `src/channels/chat-meta.ts`, `src/plugins/config-schema.ts`, and channel
+  plugin setup/config helpers: native runtime entries can import
+  `openclaw/plugin-sdk/channel-plugin-common` and `openclaw/plugin-sdk/core`,
+  receive the channel prelude, empty plugin/channel config schema helpers,
+  channel metadata, account config mutation helpers, pairing approval text, and
+  `createChannelPluginBase` through scoped, unscoped, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~80.7%. Verified with focused channel
+  plugin common/core pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `b669ff0b`.
+- Closed the imported OpenClaw plugin SDK channel entry contract seam from
+  `src/plugin-sdk/channel-entry-contract.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-entry-contract`, receive
+  `defineBundledChannelEntry`, `defineBundledChannelSetupEntry`, and
+  `loadBundledEntryExportSync`, load CommonJS sidecar exports relative to the
+  entry import URL, preserve default empty channel config schema behavior, run
+  OpenClaw registration-mode branches, and set channel runtimes through scoped,
+  unscoped, and generic SDK aliases. Repo-wide parity is now estimated at
+  ~80.8%. Verified with focused channel entry contract pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `e0bb22bf`.
+- Closed the imported OpenClaw plugin SDK channel config primitives/schema seam
+  from `src/plugin-sdk/channel-config-primitives.ts`,
+  `src/plugin-sdk/channel-config-schema.ts`,
+  `src/plugin-sdk/bundled-channel-config-schema.ts`,
+  `src/channels/plugins/config-schema.ts`, and
+  `src/config/zod-schema.core.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-config-primitives`,
+  `openclaw/plugin-sdk/channel-config-schema`,
+  `openclaw/plugin-sdk/bundled-channel-config-schema`, and legacy
+  `channel-config-schema-legacy`, receiving DM/group policy schemas,
+  markdown/block-streaming config schemas, nested DM and catchall account
+  builders, `requireOpenAllowFrom`, tool/context schemas, and bundled provider
+  schema placeholders through scoped and unscoped SDK aliases. Repo-wide
+  parity is now estimated at ~80.9%. Verified with focused channel config
+  primitives pytest, adjacent helper proof, adjacent imported-plugin runtime
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `7f046836`.
+- Closed the imported OpenClaw plugin SDK runtime-env seam from
+  `src/plugin-sdk/runtime-env.ts`, `src/runtime.ts`, `src/globals.ts`,
+  `src/infra/env.ts`, `src/logging.ts`, `src/infra/retry.ts`,
+  `src/infra/backoff.ts`, `src/utils/with-timeout.ts`,
+  `src/infra/abort-signal.ts`, and
+  `src/infra/format-time/format-duration.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/runtime-env`, receiving runtime IO helpers,
+  verbose/yes state, sleep/timeout/retry, truthy env parsing, duration/backoff
+  helpers, abort waiters, handler registration, subsystem logging facades,
+  undici proxy bootstrap posture, and WSL detection through scoped and
+  unscoped SDK aliases. Repo-wide parity is now estimated at ~81.0%. Verified
+  with focused runtime-env pytest, adjacent runtime helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `4e364149`.
+- Closed the imported OpenClaw plugin SDK channel-config-helpers seam from
+  `src/plugin-sdk/channel-config-helpers.ts`,
+  `src/channels/plugins/dm-access.ts`,
+  `src/channels/plugins/config-write-policy-shared.ts`,
+  `src/channels/plugins/config-helpers.ts`, and
+  `src/channels/plugins/helpers.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-config-helpers`, receiving DM access
+  normalization/migration helpers, config-write authorization helpers,
+  allowFrom/default-target accessors, scoped/top-level/hybrid channel config
+  adapters, and account-scoped DM security resolver helpers through scoped,
+  unscoped, and generic SDK aliases. Repo-wide parity is now estimated at
+  ~81.1%. Verified with focused channel-config-helpers pytest, adjacent helper
+  proof, adjacent imported-plugin runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `02ec0b78`.
+- Closed the imported OpenClaw plugin SDK channel-config-writes seam from
+  `src/plugin-sdk/channel-config-writes.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/channel-config-writes`, receiving the narrow
+  config-write policy barrel for `resolveChannelConfigWrites`,
+  `authorizeConfigWrite`, `canBypassConfigWritePolicy`, and
+  `formatConfigWriteDeniedMessage` through scoped and unscoped SDK aliases
+  without falling back to the broad root SDK object. Repo-wide parity is now
+  estimated at ~81.2%. Verified with focused channel-config-writes pytest,
+  adjacent helper proof, adjacent imported-plugin runtime proof, `ruff check`,
+  and `mypy`; source/test checkpointed in `7b668b3c`.
+- Closed the imported OpenClaw plugin SDK channel-lifecycle seam from
+  `src/plugin-sdk/channel-lifecycle.ts`,
+  `src/plugin-sdk/channel-lifecycle.core.ts`,
+  `src/channels/draft-preview-finalizer.ts`,
+  `src/channels/draft-stream-controls.ts`,
+  `src/channels/draft-stream-loop.ts`,
+  `src/channels/run-state-machine.ts`, and
+  `src/channels/transport/stall-watchdog.ts`: native runtime entries can
+  import `openclaw/plugin-sdk/channel-lifecycle`, receiving account status
+  sinks, abort/passive/server lifecycle waiters, run-state and keyed run
+  queues, finalizable draft stream controls, preview finalization helpers, and
+  armable stall watchdogs through scoped, unscoped, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~81.3%. Verified with focused
+  channel-lifecycle pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `d3bc5720`.
+- Closed the imported OpenClaw plugin SDK channel-core seam from
+  `src/plugin-sdk/channel-core.ts` and `src/plugin-sdk/core.ts`: native
+  runtime entries can import `openclaw/plugin-sdk/channel-core`, receiving
+  channel plugin base builders, chat-channel composition, channel/setup entry
+  registration helpers, outbound session route builders, thread-aware route
+  recovery, target-prefix parsing, optional delimited-entry parsing, channel
+  config schema construction, account config cleanup, and best-effort
+  secret-file reads through scoped, unscoped, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~81.4%. Verified with focused
+  channel-core pytest, adjacent helper proof, adjacent imported-plugin runtime
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `20c12150`.
+- Closed the imported OpenClaw plugin SDK channel-contract-testing seam from
+  `src/plugin-sdk/channel-contract-testing.ts` and
+  `src/channels/plugins/contracts/*`: native runtime entries can import
+  inbound context contract assertions, turn dispatch visible/final/count
+  assertions, outbound send mock priming, inbound capture mock wiring, and the
+  outbound payload contract-suite entrypoint through scoped, unscoped, and
+  generic SDK aliases. The pure type-only `channel-contract` barrel now
+  resolves as an empty runtime object instead of the broad SDK proxy.
+  Repo-wide parity is now estimated at ~81.5%. Verified with focused
+  channel-contract-testing pytest, adjacent helper proof, adjacent
+  imported-plugin runtime proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `2fdb744c`.
+- Closed the imported OpenClaw plugin SDK channel-targets seam from
+  `src/plugin-sdk/channel-targets.ts`, `src/channels/targets.ts`,
+  `src/channels/channel-config.ts`,
+  `src/channels/plugins/chat-target-prefixes.ts`, and
+  `src/channels/plugins/target-resolvers.ts`: native runtime entries can import
+  channel entry matching, nested allowlist decisions, messaging target parsing,
+  service-prefixed chat/allow target parsing, allowed sender matching, channel
+  id/slug normalization, unresolved target fallback rows, and optional-token
+  target resolution through scoped, unscoped, and generic SDK aliases.
+  Repo-wide parity is now estimated at ~81.6%. Verified with focused
+  channel-targets pytest, adjacent helper proof, adjacent imported-plugin
+  runtime proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `27bb6438`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7470,8 +7819,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
   facade/provider-web-search-contract/provider-web facade/device-bootstrap
   runtime-store/runtime/directory-runtime/directory-config-runtime/
-  thread-bindings-runtime/conversation-runtime/outbound-runtime path, starting
-  with the next source-backed SDK helper subpath.
+  thread-bindings-runtime/conversation-runtime/outbound-runtime/
+  conversation-binding-runtime/session-binding-runtime/thread-bindings-session-runtime/
+  session-key-runtime/session-store-runtime/account-id/account-configured-ids/
+  agent-media-payload/agent-config-primitives/acp-binding-resolve-runtime/
+  anthropic-cli/anthropic-vertex-auth-presence/anthropic-vertex/xai-model-id/
+  channel-pairing-paths/channel-inbound-roots/channel-location/state-paths/
+  setup-adapter-runtime/channel-secret-tts-runtime/talk-config-runtime/
+  github-copilot-token/channel-plugin-common/core/channel-core/
+  channel-contract-testing/channel-targets/channel-entry-contract/
+  channel-config-primitives/channel-config-schema/runtime-env/
+  channel-config-helpers/channel-config-writes/channel-lifecycle path,
+  starting with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

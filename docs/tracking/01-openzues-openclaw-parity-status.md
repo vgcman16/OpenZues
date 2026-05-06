@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~78.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~81.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -563,6 +563,160 @@ may lag behind this tracker.
   context, plain-text sanitizer, payload planning/projection, fakeable delivery
   entry point, scoped/unscoped SDK aliases, and generic SDK re-exports.
   - Status: checkpointed in `a0df1bba`
+
+- [x] Imported plugin SDK conversation-binding-runtime helper shim for session
+  binding service access, adapter bind/list/resolve/touch/unbind, runtime route
+  rewriting, plugin-owned no-rewrite behavior, configured binding route
+  projection, readiness checks, pairing replies, scoped/unscoped SDK aliases,
+  and generic SDK re-exports.
+  - Status: checkpointed in `230ec9d2`
+
+- [x] Imported plugin SDK session-binding/session-key runtime alias shim for
+  narrow session-binding service access, test reset/inspection, thread binding
+  lifecycle/farewell reuse, session-key agent-id resolution, scoped/unscoped SDK
+  aliases, and generic SDK re-exports.
+  - Status: checkpointed in `0307ca2f`
+
+- [x] Imported plugin SDK session-store-runtime helper shim for normalized
+  session-store entry lookup, legacy-key cleanup, agent-scoped store path
+  resolution, group/direct/explicit/main session-key resolution, file-backed
+  load/save/update helpers, inbound metadata recording, last-route delivery
+  context updates, reset type/thread/channel config helpers, and freshness
+  evaluation.
+  - Status: checkpointed in `06e04786`
+
+- [x] Imported plugin SDK account-id/configured-id subpath shim for slim
+  `account-id` and `account-configured-ids` export surfaces, preserving
+  account id normalization and configured account id listing without leaking
+  the generic SDK object.
+  - Status: checkpointed in `2e012bc2`
+
+- [x] Imported plugin SDK agent-media-payload helper shim for legacy agent
+  media payload field projection and agent-scoped media local roots across
+  config/state media directories, canvas/workspace/sandbox roots, preferred
+  temp root, and configured agent workspace.
+  - Status: checkpointed in `21126502`
+
+- [x] Imported plugin SDK agent-config-primitives helper shim for the narrow
+  `ReplyRuntimeConfigSchemaShape` and `ToolPolicySchema` export surface,
+  optional reply runtime primitive parsing, and the OpenClaw tool-policy
+  `allow` plus `alsoAllow` conflict guard.
+  - Status: checkpointed in `99bb3098`
+
+- [x] Imported plugin SDK ACP binding resolve helper shim for
+  `openclaw/plugin-sdk/acp-binding-resolve-runtime`, top-level typed ACP
+  binding resolution, exact-account preference, parent conversation fallback,
+  and deterministic ACP binding session-key metadata.
+  - Status: checkpointed in `4c9ed6d6`
+
+- [x] Imported plugin SDK Anthropic CLI facade shim for
+  `CLAUDE_CLI_BACKEND_ID` and trimmed/case-insensitive Claude CLI provider
+  detection through scoped and unscoped SDK aliases.
+  - Status: checkpointed in `8289eaff`
+
+- [x] Imported plugin SDK Anthropic Vertex auth-presence helper shim for
+  metadata-server opt-in, Unicode-preserving explicit ADC credential paths, and
+  direct ADC file-read probing.
+  - Status: checkpointed in `f7c9e174`
+
+- [x] Imported plugin SDK Anthropic Vertex facade helper shim for endpoint
+  region precedence, env region validation, and env/ADC project ID resolution.
+  - Status: checkpointed in `0ea37843`
+
+- [x] Imported plugin SDK XAI model-id helper shim for the narrow
+  `normalizeXaiModelId` alias and stale Grok model ID normalization.
+  - Status: checkpointed in `6743ca28`
+
+- [x] Imported plugin SDK channel pairing paths helper shim for the narrow
+  `resolveChannelAllowFromPath` alias and sanitized allow-from file paths.
+  - Status: checkpointed in `fa95764e`
+
+- [x] Imported plugin SDK channel inbound roots helper shim for the narrow
+  `mergeInboundPathRoots` alias and wildcard media-root deduping.
+  - Status: checkpointed in `1e1d6c23`
+
+- [x] Imported plugin SDK channel location helper shim for the narrow
+  `formatLocationText` and `toLocationContext` aliases.
+  - Status: checkpointed in `ad24fdc2`
+
+- [x] Imported plugin SDK state paths helper shim for the narrow
+  `STATE_DIR`, `resolveStateDir`, `resolveOAuthDir`, and
+  `resolveRequiredHomeDir` aliases.
+  - Status: checkpointed in `8c3128bf`
+
+- [x] Imported plugin SDK setup adapter runtime helper shim for the narrow
+  `createEnvPatchedAccountSetupAdapter` alias and scoped account setup config
+  patching.
+  - Status: checkpointed in `c0f33006`
+
+- [x] Imported plugin SDK channel secret TTS runtime helper shim for the narrow
+  `collectNestedChannelTtsAssignments` alias and nested voice TTS SecretRef
+  assignment collection.
+  - Status: checkpointed in `59936359`
+
+- [x] Imported plugin SDK talk config runtime helper shim for the narrow
+  `resolveActiveTalkProviderConfig` alias and active talk provider selection.
+  - Status: checkpointed in `ef516298`
+
+- [x] Imported plugin SDK GitHub Copilot token helper shim for the narrow
+  `DEFAULT_COPILOT_API_BASE_URL`, `deriveCopilotApiBaseUrlFromToken`, and
+  `resolveCopilotApiToken` aliases.
+  - Status: checkpointed in `8ccd0928`
+
+- [x] Imported plugin SDK channel plugin common/core helper shim for channel
+  prelude exports, empty config schemas, channel metadata, account config
+  mutation helpers, pairing approval text, and `createChannelPluginBase`.
+  - Status: checkpointed in `b669ff0b`
+
+- [x] Imported plugin SDK channel entry contract helper shim for bundled
+  channel/setup entry definition, sidecar export loading, registration-mode
+  behavior, and runtime setter wiring.
+  - Status: checkpointed in `e0bb22bf`
+
+- [x] Imported plugin SDK channel config primitives/schema helper shim for
+  DM/group policy schemas, context visibility, tool policy, markdown and
+  block-streaming schemas, nested DM config builders, multi-account extension
+  helpers, `requireOpenAllowFrom`, and bundled provider schema handles.
+  - Status: checkpointed in `7f046836`
+
+- [x] Imported plugin SDK runtime-env helper shim for runtime IO, verbose/yes
+  flags, sleep/timeout/retry, truthy env parsing, duration/backoff helpers,
+  abort waiters, handler registration, subsystem logging facades, undici
+  bootstrap posture, and WSL detection.
+  - Status: checkpointed in `4e364149`
+
+- [x] Imported plugin SDK channel-config-helpers shim for DM access
+  normalization/migration helpers, config-write authorization helpers,
+  allowFrom/default-target accessors, scoped/top-level/hybrid channel config
+  adapters, and account-scoped DM security resolver helpers.
+  - Status: checkpointed in `02ec0b78`
+
+- [x] Imported plugin SDK channel-config-writes alias shim for the narrow
+  config-write policy helper barrel.
+  - Status: checkpointed in `7b668b3c`
+
+- [x] Imported plugin SDK channel-lifecycle shim for account status sinks,
+  abort/passive/server lifecycle waiters, run-state/keyed queues, finalizable
+  draft stream controls, preview finalizers, and stall watchdogs.
+  - Status: checkpointed in `d3bc5720`
+
+- [x] Imported plugin SDK channel-core shim for exact channel plugin base,
+  chat-channel composition, channel/setup entry registration, outbound route,
+  thread-aware route recovery, target parsing, optional-entry parsing, and
+  secret-file helper imports.
+  - Status: checkpointed in `20c12150`
+
+- [x] Imported plugin SDK channel-contract-testing shim for inbound context
+  contract assertions, turn dispatch visible/final/count assertions, outbound
+  send mock priming, inbound capture mock wiring, and pure type-only
+  `channel-contract` runtime shape.
+  - Status: checkpointed in `2fdb744c`
+
+- [x] Imported plugin SDK channel-targets shim for channel entry matching,
+  messaging target parsing, service-prefixed chat/allow target parsing,
+  allowed sender matching, channel id/slug normalization, unresolved target
+  fallback rows, and optional-token target resolution.
+  - Status: checkpointed in `27bb6438`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
