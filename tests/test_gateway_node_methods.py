@@ -22793,6 +22793,151 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_secret_input_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-secret-input-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const secretInputRuntime = require("openclaw/plugin-sdk/secret-input-runtime");
+const scopedSecretInputRuntime = require("@openclaw/plugin-sdk/secret-input-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_input_runtime",
+      description: "Use OpenClaw secret-input-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const config = {
+          secrets: {
+            defaults: { env: "workspace" },
+            providers: {
+              workspace: { source: "env", allowlist: ["OPENAI_API_KEY"] }
+            }
+          }
+        };
+        const env = { OPENAI_API_KEY: "  resolved-secret  " };
+        const missing = await secretInputRuntime.resolveConfiguredSecretInputString({
+          config,
+          env,
+          value: "${MISSING_SECRET}",
+          path: "providers.openai.apiKey",
+          unresolvedReasonStyle: "detailed"
+        });
+        return {
+          keys: Object.keys(secretInputRuntime).sort(),
+          scopedType: typeof scopedSecretInputRuntime.resolveConfiguredSecretInputString,
+          resolved: await secretInputRuntime.resolveConfiguredSecretInputString({
+            config,
+            env,
+            value: "${OPENAI_API_KEY}",
+            path: "providers.openai.apiKey"
+          }),
+          literal: await secretInputRuntime.resolveConfiguredSecretInputString({
+            config,
+            env,
+            value: "  inline-secret  ",
+            path: "providers.openai.apiKey"
+          }),
+          fallback: await secretInputRuntime.resolveConfiguredSecretInputWithFallback({
+            config,
+            env,
+            value: "${MISSING_SECRET}",
+            path: "providers.openai.apiKey",
+            readFallback: () => "fallback-secret"
+          }),
+          required: await secretInputRuntime.resolveRequiredConfiguredSecretRefInputString({
+            config,
+            env,
+            value: "${OPENAI_API_KEY}",
+            path: "providers.openai.apiKey"
+          }),
+          missingReason: missing.unresolvedRefReason
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-input-runtime-plugin",
+                    "name": "Runtime Secret Input Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-secret-input-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_input_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_input_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "coerceSecretRef",
+            "hasConfiguredSecretInput",
+            "isSecretRef",
+            "normalizeResolvedSecretInputString",
+            "normalizeSecretInputString",
+            "resolveConfiguredSecretInputString",
+            "resolveConfiguredSecretInputWithFallback",
+            "resolveRequiredConfiguredSecretRefInputString",
+            "resolveSecretInputString",
+        ],
+        "scopedType": "function",
+        "resolved": {"value": "resolved-secret"},
+        "literal": {"value": "inline-secret"},
+        "fallback": {
+            "value": "fallback-secret",
+            "source": "fallback",
+            "secretRefConfigured": True,
+        },
+        "required": "resolved-secret",
+        "missingReason": (
+            "providers.openai.apiKey SecretRef is unresolved "
+            "(env:workspace:MISSING_SECRET)."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

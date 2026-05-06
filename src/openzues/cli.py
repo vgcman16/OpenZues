@@ -24269,6 +24269,18 @@ function coerceSecretRef(value, defaults) {
   return parseEnvTemplateSecretRef(value, defaults && defaults.env);
 }
 
+function resolveSecretInputRef(params) {
+  const explicitRef = coerceSecretRef(params && params.refValue, params && params.defaults);
+  const inlineRef = explicitRef
+    ? null
+    : coerceSecretRef(params && params.value, params && params.defaults);
+  return {
+    explicitRef,
+    inlineRef,
+    ref: explicitRef || inlineRef,
+  };
+}
+
 function normalizeSecretInputString(value) {
   if (typeof value !== "string") {
     return undefined;
@@ -24305,7 +24317,7 @@ function resolveSecretInputString(params) {
   if (normalized) {
     return { status: "available", value: normalized, ref: null };
   }
-  const ref = coerceSecretRef(params && params.value, params && params.defaults);
+  const ref = resolveSecretInputRef(params || {}).ref;
   if (!ref) {
     return { status: "missing", value: undefined, ref: null };
   }
@@ -24321,6 +24333,179 @@ function resolveSecretInputString(params) {
 function normalizeResolvedSecretInputString(params) {
   const resolved = resolveSecretInputString({ ...(params || {}), mode: "strict" });
   return resolved.status === "available" ? resolved.value : undefined;
+}
+
+function resolveDefaultSecretProviderAliasFromConfig(config, source) {
+  const defaults = config && config.secrets && config.secrets.defaults;
+  const configured =
+    source === "env"
+      ? defaults && defaults.env
+      : source === "file"
+        ? defaults && defaults.file
+        : defaults && defaults.exec;
+  if (typeof configured === "string" && configured.trim()) {
+    return configured.trim();
+  }
+  return DEFAULT_SECRET_PROVIDER_ALIAS;
+}
+
+function resolveConfiguredSecretProvider(ref, config) {
+  const providers = config && config.secrets && config.secrets.providers;
+  const providerConfig = providers && providers[ref.provider];
+  if (!providerConfig) {
+    if (
+      ref.source === "env" &&
+      ref.provider === resolveDefaultSecretProviderAliasFromConfig(config, "env")
+    ) {
+      return { source: "env" };
+    }
+    throw new Error(
+      `Secret provider "${ref.provider}" is not configured ` +
+        `(ref: ${ref.source}:${ref.provider}:${ref.id}).`,
+    );
+  }
+  if (providerConfig.source !== ref.source) {
+    throw new Error(
+      `Secret provider "${ref.provider}" has source "${providerConfig.source}" ` +
+        `but ref requests "${ref.source}".`,
+    );
+  }
+  return providerConfig;
+}
+
+function buildConfiguredSecretInputUnresolvedReason(params) {
+  if (params.style === "generic") {
+    return `${params.path} SecretRef is unresolved (${params.refLabel}).`;
+  }
+  if (params.kind === "non-string") {
+    return `${params.path} SecretRef resolved to a non-string value.`;
+  }
+  if (params.kind === "empty") {
+    return `${params.path} SecretRef resolved to an empty value.`;
+  }
+  return `${params.path} SecretRef is unresolved (${params.refLabel}).`;
+}
+
+async function resolveConfiguredSecretRefValue(ref, params) {
+  const providerConfig = resolveConfiguredSecretProvider(ref, params.config || {});
+  if (ref.source !== "env") {
+    throw new Error(`Secret source "${ref.source}" is unavailable in this runtime context.`);
+  }
+  const allowlist = Array.isArray(providerConfig.allowlist)
+    ? new Set(providerConfig.allowlist)
+    : null;
+  if (allowlist && !allowlist.has(ref.id)) {
+    throw new Error(
+      `Environment variable "${ref.id}" is not allowlisted in ` +
+        `secrets.providers.${ref.provider}.allowlist.`,
+    );
+  }
+  const env = (params && params.env) || {};
+  return env[ref.id];
+}
+
+async function resolveConfiguredSecretInputString(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  if (!ref) {
+    return { value: normalizeSecretInputString(params && params.value) };
+  }
+  const style = (params && params.unresolvedReasonStyle) || "generic";
+  const path = (params && params.path) || "secret";
+  const refLabel = formatSecretRefLabel(ref);
+  try {
+    const resolvedValue = await resolveConfiguredSecretRefValue(ref, {
+      config,
+      env: params && params.env,
+    });
+    if (typeof resolvedValue !== "string") {
+      return {
+        unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+          path,
+          style,
+          kind: "non-string",
+          refLabel,
+        }),
+      };
+    }
+    const trimmed = normalizeSecretInputString(resolvedValue);
+    if (!trimmed) {
+      return {
+        unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+          path,
+          style,
+          kind: "empty",
+          refLabel,
+        }),
+      };
+    }
+    return { value: trimmed };
+  } catch {
+    return {
+      unresolvedRefReason: buildConfiguredSecretInputUnresolvedReason({
+        path,
+        style,
+        kind: "unresolved",
+        refLabel,
+      }),
+    };
+  }
+}
+
+async function resolveConfiguredSecretInputWithFallback(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  const configValue = ref ? undefined : normalizeSecretInputString(params && params.value);
+  if (configValue) {
+    return { value: configValue, source: "config", secretRefConfigured: false };
+  }
+  if (!ref) {
+    const fallback = params && params.readFallback ? params.readFallback() : undefined;
+    if (fallback) {
+      return { value: fallback, source: "fallback", secretRefConfigured: false };
+    }
+    return { secretRefConfigured: false };
+  }
+  const resolved = await resolveConfiguredSecretInputString(params || {});
+  if (resolved.value) {
+    return { value: resolved.value, source: "secretRef", secretRefConfigured: true };
+  }
+  const fallback = params && params.readFallback ? params.readFallback() : undefined;
+  if (fallback) {
+    return { value: fallback, source: "fallback", secretRefConfigured: true };
+  }
+  return {
+    unresolvedRefReason: resolved.unresolvedRefReason,
+    secretRefConfigured: true,
+  };
+}
+
+async function resolveRequiredConfiguredSecretRefInputString(params) {
+  const config = (params && params.config) || {};
+  const defaults = config.secrets && config.secrets.defaults;
+  const ref = resolveSecretInputRef({
+    value: params && params.value,
+    defaults,
+  }).ref;
+  if (!ref) {
+    return undefined;
+  }
+  const resolved = await resolveConfiguredSecretInputString(params || {});
+  if (resolved.value) {
+    return resolved.value;
+  }
+  throw new Error(
+    resolved.unresolvedRefReason ||
+      `${(params && params.path) || "secret"} resolved to an empty value.`,
+  );
 }
 
 function pushSecretRuntimeWarning(context, warning) {
@@ -38356,6 +38541,18 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const secretInputConfiguredRuntime = {
+  coerceSecretRef,
+  hasConfiguredSecretInput,
+  isSecretRef,
+  normalizeResolvedSecretInputString,
+  normalizeSecretInputString,
+  resolveConfiguredSecretInputString,
+  resolveConfiguredSecretInputWithFallback,
+  resolveRequiredConfiguredSecretRefInputString,
+  resolveSecretInputString,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -39584,6 +39781,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/secret-input-runtime" ||
+    request === "@openclaw/plugin-sdk/secret-input-runtime"
+  ) {
+    return secretInputConfiguredRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
