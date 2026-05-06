@@ -28165,6 +28165,138 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_events_alias_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-host-events-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-events.cjs"
+    runtime_entry.write_text(
+        f"""
+const path = require("path");
+const events = require("openclaw/plugin-sdk/memory-host-events");
+const scopedEvents = require("@openclaw/plugin-sdk/memory-host-events");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_host_events",
+      description: "Use OpenClaw memory-host-events SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        await events.appendMemoryHostEvent(workspaceDir, {{
+          type: "memory.promotion.applied",
+          timestamp: "2026-05-06T10:02:00.000Z",
+          memoryPath: "MEMORY.md",
+          applied: 1,
+          candidates: [
+            {{
+              key: "candidate-1",
+              path: "MEMORY.md",
+              startLine: 2,
+              endLine: 4,
+              score: 0.75,
+              recallCount: 3
+            }}
+          ]
+        }});
+        const readBack = await scopedEvents.readMemoryHostEvents({{ workspaceDir }});
+        const logPath = scopedEvents.resolveMemoryHostEventLogPath(workspaceDir);
+        return {{
+          keys: Object.keys(events).sort(),
+          scopedType: typeof scopedEvents.appendMemoryHostEvent,
+          relativeParts: events.MEMORY_HOST_EVENT_LOG_RELATIVE_PATH.split(/[\\\\/]/),
+          logPathEndsWithRelative: logPath.endsWith(
+            path.join("memory", ".dreams", "events.jsonl")
+          ),
+          readBack
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-events-plugin",
+                    "name": "Memory Host Events Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-events.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_events"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_events"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MEMORY_HOST_EVENT_LOG_RELATIVE_PATH",
+            "appendMemoryHostEvent",
+            "readMemoryHostEvents",
+            "resolveMemoryHostEventLogPath",
+        ],
+        "scopedType": "function",
+        "relativeParts": ["memory", ".dreams", "events.jsonl"],
+        "logPathEndsWithRelative": True,
+        "readBack": [
+            {
+                "type": "memory.promotion.applied",
+                "timestamp": "2026-05-06T10:02:00.000Z",
+                "memoryPath": "MEMORY.md",
+                "applied": 1,
+                "candidates": [
+                    {
+                        "key": "candidate-1",
+                        "path": "MEMORY.md",
+                        "startLine": 2,
+                        "endLine": 4,
+                        "score": 0.75,
+                        "recallCount": 3,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_status_helpers(
     tmp_path,
 ) -> None:

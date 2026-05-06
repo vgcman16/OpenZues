@@ -49424,7 +49424,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-events" ||
-    request === "@openclaw/plugin-sdk/memory-core-host-events"
+    request === "@openclaw/plugin-sdk/memory-core-host-events" ||
+    request === "openclaw/plugin-sdk/memory-host-events" ||
+    request === "@openclaw/plugin-sdk/memory-host-events"
   ) {
     return memoryCoreHostEventsRuntime;
   }
