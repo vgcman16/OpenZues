@@ -4,7 +4,7 @@ Updated: 2026-05-05
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~79.4% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~79.5% overall, with a reasonable
   band of ~77-82%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -68,7 +68,8 @@ Current percentage rollup:
   conversation-runtime, outbound-runtime, conversation-binding-runtime,
   session-binding/session-key runtime alias, session-store runtime,
   account-id/configured-id subpath, agent-media-payload,
-  agent-config-primitives, and ACP binding resolve helper slices.
+  agent-config-primitives, ACP binding resolve, and Anthropic CLI facade helper
+  slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -7547,6 +7548,15 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~79.4%. Verified with focused ACP binding resolve pytest,
   adjacent helper proof, adjacent imported-plugin/runtime proof, `ruff check`,
   and `mypy`; source/test checkpointed in `4c9ed6d6`.
+- Closed the imported OpenClaw plugin SDK Anthropic CLI facade seam from
+  `src/plugin-sdk/anthropic-cli.ts` and
+  `extensions/anthropic/cli-shared.ts`: native runtime entries can import
+  `openclaw/plugin-sdk/anthropic-cli`, receive `CLAUDE_CLI_BACKEND_ID`, and use
+  the same trimmed/case-insensitive Claude CLI provider predicate through
+  scoped and unscoped SDK aliases. Repo-wide parity is now estimated at
+  ~79.5%. Verified with focused Anthropic CLI pytest, adjacent helper proof,
+  adjacent imported-plugin/runtime proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `8289eaff`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -7558,8 +7568,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   thread-bindings-runtime/conversation-runtime/outbound-runtime/
   conversation-binding-runtime/session-binding-runtime/thread-bindings-session-runtime/
   session-key-runtime/session-store-runtime/account-id/account-configured-ids/
-  agent-media-payload/agent-config-primitives/acp-binding-resolve-runtime path,
-  starting with the next source-backed SDK helper subpath.
+  agent-media-payload/agent-config-primitives/acp-binding-resolve-runtime/
+  anthropic-cli path, starting with the next source-backed SDK helper subpath.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
