@@ -28033,6 +28033,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_events_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-events-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-events.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const events = require("openclaw/plugin-sdk/memory-core-host-events");
+const scopedEvents = require("@openclaw/plugin-sdk/memory-core-host-events");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_events",
+      description: "Use OpenClaw memory-core-host-events SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const first = {{
+          type: "memory.recall.recorded",
+          timestamp: "2026-05-06T10:00:00.000Z",
+          query: "api bug",
+          resultCount: 1,
+          results: [{{ path: "MEMORY.md", startLine: 1, endLine: 3, score: 0.9 }}]
+        }};
+        const second = {{
+          type: "memory.dream.completed",
+          timestamp: "2026-05-06T10:01:00.000Z",
+          phase: "light",
+          inlinePath: "memory/dreams/light.md",
+          lineCount: 4,
+          storageMode: "inline"
+        }};
+        await events.appendMemoryHostEvent(workspaceDir, first);
+        const logPath = events.resolveMemoryHostEventLogPath(workspaceDir);
+        await fs.promises.appendFile(logPath, "not-json\\n", "utf8");
+        await events.appendMemoryHostEvent(workspaceDir, second);
+
+        const all = await events.readMemoryHostEvents({{ workspaceDir }});
+        const last = await events.readMemoryHostEvents({{ workspaceDir, limit: 1.8 }});
+        const zero = await events.readMemoryHostEvents({{ workspaceDir, limit: 0 }});
+        const missing = await events.readMemoryHostEvents({{
+          workspaceDir: path.join(workspaceDir, "missing")
+        }});
+        return {{
+          keys: Object.keys(events).sort(),
+          scopedType: typeof scopedEvents.appendMemoryHostEvent,
+          relativeParts: events.MEMORY_HOST_EVENT_LOG_RELATIVE_PATH.split(/[\\\\/]/),
+          logPathEndsWithRelative: logPath.endsWith(
+            path.join("memory", ".dreams", "events.jsonl")
+          ),
+          allTypes: all.map((entry) => entry.type),
+          firstQuery: all[0] && all[0].query,
+          lastTypes: last.map((entry) => entry.type),
+          zero,
+          missing
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-events-plugin",
+                    "name": "Memory Events Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-events.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_events"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_events"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MEMORY_HOST_EVENT_LOG_RELATIVE_PATH",
+            "appendMemoryHostEvent",
+            "readMemoryHostEvents",
+            "resolveMemoryHostEventLogPath",
+        ],
+        "scopedType": "function",
+        "relativeParts": ["memory", ".dreams", "events.jsonl"],
+        "logPathEndsWithRelative": True,
+        "allTypes": ["memory.recall.recorded", "memory.dream.completed"],
+        "firstQuery": "api bug",
+        "lastTypes": ["memory.dream.completed"],
+        "zero": [],
+        "missing": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:
