@@ -21981,6 +21981,185 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_inbound_envelope_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-inbound-envelope.cjs"
+    runtime_entry.write_text(
+        """
+const inboundEnvelope = require("openclaw/plugin-sdk/inbound-envelope");
+const scopedInboundEnvelope = require("@openclaw/plugin-sdk/inbound-envelope");
+
+function resolveStorePath(store, opts) {
+  return `${store || "default-store"}:${opts.agentId}`;
+}
+
+function readSessionUpdatedAt(params) {
+  return params.sessionKey === "s1" ? 1000 : 2000;
+}
+
+function resolveEnvelopeFormatOptions(cfg) {
+  return { timezone: cfg.timezone || "local" };
+}
+
+function formatAgentEnvelope(params) {
+  return [
+    params.channel,
+    params.from,
+    params.previousTimestamp,
+    params.envelope.timezone,
+    params.body
+  ].join("|");
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.inbound_envelope",
+      description: "Use OpenClaw inbound envelope SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const directBuilder = inboundEnvelope.createInboundEnvelopeBuilder({
+          cfg: { timezone: "utc" },
+          route: { agentId: "assistant", sessionKey: "s1" },
+          sessionStore: "store",
+          resolveStorePath,
+          readSessionUpdatedAt,
+          resolveEnvelopeFormatOptions,
+          formatAgentEnvelope
+        });
+        const direct = directBuilder({
+          channel: "slack",
+          from: "team",
+          body: "hello",
+          timestamp: 1234
+        });
+        const resolved = inboundEnvelope.resolveInboundRouteEnvelopeBuilder({
+          cfg: { timezone: "America/Chicago" },
+          channel: "matrix",
+          accountId: "default",
+          peer: { kind: "room", id: "R1" },
+          sessionStore: "sessions",
+          resolveAgentRoute: (params) => ({
+            agentId: `${params.channel}:${params.accountId}`,
+            sessionKey: `${params.peer.kind}:${params.peer.id}`
+          }),
+          resolveStorePath,
+          readSessionUpdatedAt,
+          resolveEnvelopeFormatOptions,
+          formatAgentEnvelope
+        });
+        const resolvedEnvelope = resolved.buildEnvelope({
+          channel: "matrix",
+          from: "room",
+          body: "ping"
+        });
+        const runtimeResolved = inboundEnvelope.resolveInboundRouteEnvelopeBuilderWithRuntime({
+          cfg: { timezone: "runtime" },
+          channel: "telegram",
+          accountId: "bot",
+          peer: { kind: "chat", id: 42 },
+          runtime: {
+            routing: {
+              resolveAgentRoute: (params) => ({
+                agentId: `${params.channel}:${params.accountId}`,
+                sessionKey: `${params.peer.kind}:${params.peer.id}`
+              })
+            },
+            session: { resolveStorePath, readSessionUpdatedAt },
+            reply: { resolveEnvelopeFormatOptions, formatAgentEnvelope }
+          }
+        });
+        const runtimeEnvelope = runtimeResolved.buildEnvelope({
+          channel: "telegram",
+          from: "chat",
+          body: "yo"
+        });
+        return {
+          keys: Object.keys(inboundEnvelope).sort(),
+          scopedType: typeof scopedInboundEnvelope.createInboundEnvelopeBuilder,
+          direct,
+          resolvedRoute: resolved.route,
+          resolvedEnvelope,
+          runtimeRoute: runtimeResolved.route,
+          runtimeEnvelope
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-inbound-envelope-plugin",
+                    "name": "Runtime Inbound Envelope Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-inbound-envelope.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.inbound_envelope"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.inbound_envelope"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createInboundEnvelopeBuilder",
+            "resolveInboundRouteEnvelopeBuilder",
+            "resolveInboundRouteEnvelopeBuilderWithRuntime",
+        ],
+        "scopedType": "function",
+        "direct": {"storePath": "store:assistant", "body": "slack|team|1000|utc|hello"},
+        "resolvedRoute": {"agentId": "matrix:default", "sessionKey": "room:R1"},
+        "resolvedEnvelope": {
+            "storePath": "sessions:matrix:default",
+            "body": "matrix|room|2000|America/Chicago|ping",
+        },
+        "runtimeRoute": {"agentId": "telegram:bot", "sessionKey": "chat:42"},
+        "runtimeEnvelope": {
+            "storePath": "default-store:telegram:bot",
+            "body": "telegram|chat|2000|runtime|yo",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

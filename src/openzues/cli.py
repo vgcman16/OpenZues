@@ -37372,6 +37372,69 @@ const channelActivityRuntime = {
   recordChannelActivity,
 };
 
+function createInboundEnvelopeBuilder(params) {
+  const storePath = params.resolveStorePath(params.sessionStore, {
+    agentId: params.route.agentId,
+  });
+  const envelopeOptions = params.resolveEnvelopeFormatOptions(params.cfg);
+  return (input) => {
+    const previousTimestamp = params.readSessionUpdatedAt({
+      storePath,
+      sessionKey: params.route.sessionKey,
+    });
+    const body = params.formatAgentEnvelope({
+      channel: input.channel,
+      from: input.from,
+      timestamp: input.timestamp,
+      previousTimestamp,
+      envelope: envelopeOptions,
+      body: input.body,
+    });
+    return { storePath, body };
+  };
+}
+
+function resolveInboundRouteEnvelopeBuilder(params) {
+  const route = params.resolveAgentRoute({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  const buildEnvelope = createInboundEnvelopeBuilder({
+    cfg: params.cfg,
+    route,
+    sessionStore: params.sessionStore,
+    resolveStorePath: params.resolveStorePath,
+    readSessionUpdatedAt: params.readSessionUpdatedAt,
+    resolveEnvelopeFormatOptions: params.resolveEnvelopeFormatOptions,
+    formatAgentEnvelope: params.formatAgentEnvelope,
+  });
+  return { route, buildEnvelope };
+}
+
+function resolveInboundRouteEnvelopeBuilderWithRuntime(params) {
+  return resolveInboundRouteEnvelopeBuilder({
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+    resolveAgentRoute: (routeParams) =>
+      params.runtime.routing.resolveAgentRoute(routeParams),
+    sessionStore: params.sessionStore,
+    resolveStorePath: params.runtime.session.resolveStorePath,
+    readSessionUpdatedAt: params.runtime.session.readSessionUpdatedAt,
+    resolveEnvelopeFormatOptions: params.runtime.reply.resolveEnvelopeFormatOptions,
+    formatAgentEnvelope: params.runtime.reply.formatAgentEnvelope,
+  });
+}
+
+const inboundEnvelopeRuntime = {
+  createInboundEnvelopeBuilder,
+  resolveInboundRouteEnvelopeBuilder,
+  resolveInboundRouteEnvelopeBuilderWithRuntime,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38244,6 +38307,7 @@ const genericSdk = new Proxy(
     ...channelMentionGatingRuntime,
     ...channelRuntimeContextRuntime,
     ...channelActivityRuntime,
+    ...inboundEnvelopeRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39295,6 +39359,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-activity-runtime"
   ) {
     return channelActivityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/inbound-envelope" ||
+    request === "@openclaw/plugin-sdk/inbound-envelope"
+  ) {
+    return inboundEnvelopeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
