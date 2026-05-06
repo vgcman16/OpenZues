@@ -34556,6 +34556,117 @@ function readAcpSessionEntry(params = {}) {
   };
 }
 
+function acpSessionMatchesConfiguredBinding(params = {}) {
+  const meta = params.meta || {};
+  const spec = params.spec || {};
+  const cfg = params.cfg || {};
+  if (meta.state === "error") {
+    return false;
+  }
+  const desiredAgent = normalizeLowercaseStringOrEmpty(spec.acpAgentId || spec.agentId);
+  const currentAgent = normalizeLowercaseStringOrEmpty(meta.agent);
+  if (!currentAgent || currentAgent !== desiredAgent) {
+    return false;
+  }
+  if (meta.mode !== spec.mode) {
+    return false;
+  }
+  const desiredBackend =
+    normalizeAcpBindingText(spec.backend) ||
+    normalizeAcpBindingText(cfg && cfg.acp && cfg.acp.backend) ||
+    "";
+  if (desiredBackend) {
+    const currentBackend = String(meta.backend || "").trim();
+    if (!currentBackend || currentBackend !== desiredBackend) {
+      return false;
+    }
+  }
+  const desiredCwd = normalizeAcpBindingText(spec.cwd);
+  if (desiredCwd !== undefined) {
+    const runtimeOptions = meta.runtimeOptions || {};
+    const currentCwd = String(runtimeOptions.cwd || meta.cwd || "").trim();
+    if (desiredCwd !== currentCwd) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function ensureConfiguredAcpBindingSession(params = {}) {
+  const cfg = params.cfg || {};
+  const spec = params.spec || {};
+  const sessionKey = buildConfiguredAcpSessionKey(spec);
+  const acpManager = getAcpSessionManager();
+  try {
+    const resolution =
+      typeof acpManager.resolveSession === "function"
+        ? acpManager.resolveSession({ cfg, sessionKey })
+        : { kind: "none" };
+    if (
+      resolution &&
+      resolution.kind === "ready" &&
+      acpSessionMatchesConfiguredBinding({
+        cfg,
+        spec,
+        meta: resolution.meta,
+      })
+    ) {
+      return {
+        ok: true,
+        sessionKey,
+      };
+    }
+    if (resolution && resolution.kind !== "none" && typeof acpManager.closeSession === "function") {
+      await acpManager.closeSession({
+        cfg,
+        sessionKey,
+        reason: "config-binding-reconfigure",
+        clearMeta: false,
+        allowBackendUnavailable: true,
+        requireAcpSession: false,
+      });
+    }
+    if (typeof acpManager.initializeSession !== "function") {
+      throw new Error("ACP session manager is missing initializeSession");
+    }
+    await acpManager.initializeSession({
+      cfg,
+      sessionKey,
+      agent: spec.acpAgentId || spec.agentId,
+      mode: spec.mode,
+      cwd: spec.cwd,
+      backendId: spec.backend,
+    });
+    return {
+      ok: true,
+      sessionKey,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      sessionKey,
+      error: formatErrorMessage(error),
+    };
+  }
+}
+
+async function ensureConfiguredAcpBindingReady(params = {}) {
+  if (!params.configuredBinding) {
+    return { ok: true };
+  }
+  const ensured = await ensureConfiguredAcpBindingSession({
+    cfg: params.cfg || {},
+    spec: params.configuredBinding.spec,
+  });
+  if (ensured.ok) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: ensured.error || "unknown error",
+  };
+}
+
 const acpRuntimeBackendRuntime = {
   AcpRuntimeError,
   getAcpRuntimeBackend,
@@ -34571,6 +34682,11 @@ const acpRuntimeRuntime = {
   __testing: acpRuntimeTesting,
   getAcpSessionManager,
   readAcpSessionEntry,
+};
+
+const acpBindingRuntime = {
+  ensureConfiguredAcpBindingReady,
+  resolveConfiguredAcpBindingRecord,
 };
 
 const acpxRuntime = {
@@ -45871,6 +45987,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/acp-runtime"
   ) {
     return acpRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-binding-runtime"
+  ) {
+    return acpBindingRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;

@@ -33144,6 +33144,208 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_binding_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-binding.cjs"
+    runtime_entry.write_text(
+        """
+const acpRuntime = require("openclaw/plugin-sdk/acp-runtime");
+const binding = require("openclaw/plugin-sdk/acp-binding-runtime");
+const scopedBinding = require("@openclaw/plugin-sdk/acp-binding-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp_binding",
+      description: "Use OpenClaw ACP binding runtime SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const calls = [];
+        acpRuntime.__testing.setAcpSessionManagerForTests({
+          resolveSession(input) {
+            calls.push(["resolve", input.sessionKey]);
+            return { kind: "none" };
+          },
+          async closeSession(input) {
+            calls.push(["close", input.reason, input.sessionKey]);
+          },
+          async initializeSession(input) {
+            calls.push([
+              "initialize",
+              input.sessionKey,
+              input.agent,
+              input.mode,
+              input.cwd,
+              input.backendId
+            ]);
+          }
+        });
+        const cfg = {
+          bindings: [
+            {
+              type: "acp",
+              agentId: "claude",
+              match: {
+                channel: "discord",
+                accountId: "work",
+                peer: { kind: "channel", id: args.parentConversationId }
+              },
+              acp: {
+                mode: "oneshot",
+                backend: "acpx",
+                cwd: args.cwd,
+                label: "Work ACP"
+              }
+            }
+          ]
+        };
+        const configuredBinding = binding.resolveConfiguredAcpBindingRecord({
+          cfg,
+          channel: "discord",
+          accountId: "work",
+          conversationId: args.threadId,
+          parentConversationId: args.parentConversationId
+        });
+        const ensured = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding
+        });
+        const noBinding = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding: null
+        });
+        acpRuntime.__testing.setAcpSessionManagerForTests({
+          resolveSession() {
+            return {
+              kind: "ready",
+              meta: {
+                state: "ready",
+                agent: "claude",
+                mode: "oneshot",
+                backend: "acpx",
+                runtimeOptions: { cwd: args.cwd }
+              }
+            };
+          },
+          async closeSession() {
+            calls.push(["unexpected-close"]);
+          },
+          async initializeSession() {
+            calls.push(["unexpected-initialize"]);
+          }
+        });
+        const ready = await binding.ensureConfiguredAcpBindingReady({
+          cfg,
+          configuredBinding
+        });
+        acpRuntime.__testing.resetAcpSessionManagerForTests();
+        return {
+          keys: Object.keys(binding).sort(),
+          scopedType: typeof scopedBinding.ensureConfiguredAcpBindingReady,
+          configuredSpec: configuredBinding && configuredBinding.spec,
+          ensured,
+          noBinding,
+          ready,
+          calls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-binding-plugin",
+                    "name": "Runtime ACP Binding Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-binding-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp_binding"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.acp_binding",
+            "args": {
+                "threadId": "thread-123",
+                "parentConversationId": "channel-parent-1",
+                "cwd": str(tmp_path / "workspace"),
+            },
+        },
+    )
+
+    target_session_prefix = "agent:claude:acp:binding:discord:work:"
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "ensureConfiguredAcpBindingReady",
+        "resolveConfiguredAcpBindingRecord",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["configuredSpec"] == {
+        "channel": "discord",
+        "accountId": "work",
+        "conversationId": "channel-parent-1",
+        "agentId": "claude",
+        "mode": "oneshot",
+        "cwd": str(tmp_path / "workspace"),
+        "backend": "acpx",
+        "label": "Work ACP",
+    }
+    assert payload["result"]["ensured"] == {"ok": True}
+    assert payload["result"]["noBinding"] == {"ok": True}
+    assert payload["result"]["ready"] == {"ok": True}
+    calls = payload["result"]["calls"]
+    assert calls[0][0] == "resolve"
+    assert calls[0][1].startswith(target_session_prefix)
+    assert calls[1] == [
+        "initialize",
+        calls[0][1],
+        "claude",
+        "oneshot",
+        str(tmp_path / "workspace"),
+        "acpx",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
