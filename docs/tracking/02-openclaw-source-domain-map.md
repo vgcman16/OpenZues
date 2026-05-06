@@ -36,8 +36,11 @@ Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/infra/net/ssrf.ts` is checkpointed in `3aa66305` with focused,
 adjacent, imported-plugin, `ruff`, and `mypy` evidence; `cli-backend` from
 `src/plugin-sdk/cli-backend.ts` and `src/agents/cli-watchdog-defaults.ts` is
-checkpointed in `be724e3f` with the same evidence class. Count both with the
-plugin/extension system row above.
+checkpointed in `be724e3f` with the same evidence class; type-only SDK barrels
+`config-types`, `document-extractor`, `music-generation`,
+`provider-model-types`, `qa-channel-protocol`, and `tts-runtime.types` are
+checkpointed in `fceeecc8`. Count all with the plugin/extension system row
+above.
 
 ## How To Use This Map
 
