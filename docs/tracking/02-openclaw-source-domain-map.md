@@ -39,8 +39,10 @@ adjacent, imported-plugin, `ruff`, and `mypy` evidence; `cli-backend` from
 checkpointed in `be724e3f` with the same evidence class; type-only SDK barrels
 `config-types`, `document-extractor`, `music-generation`,
 `provider-model-types`, `qa-channel-protocol`, and `tts-runtime.types` are
-checkpointed in `fceeecc8`. Count all with the plugin/extension system row
-above.
+checkpointed in `fceeecc8`; `config-schema` from
+`src/plugin-sdk/config-schema.ts`, `src/config/zod-schema.ts`, and
+`src/plugins/schema-validator.ts` is checkpointed in `ae5489b2`. Count all with
+the plugin/extension system row above.
 
 ## How To Use This Map
 

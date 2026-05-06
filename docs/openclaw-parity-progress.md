@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~88.0% overall, with a reasonable band of ~78-88%.
+- Estimated repo-wide parity: ~88.1% overall, with a reasonable band of ~78-88%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -15059,6 +15059,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`172 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `fceeecc8`.
+- Imported OpenClaw plugin runtime entries now have the exact `config-schema`
+  SDK subpath from `src/plugin-sdk/config-schema.ts`,
+  `src/config/zod-schema.ts`, and `src/plugins/schema-validator.ts`: scoped
+  and unscoped imports expose root config object parsing plus JSON Schema value
+  validation with required-property, additional-property, enum allowed-values,
+  and default-application behavior. This closes `OZ-PLUGIN-001YN`; repo-wide
+  parity is now estimated at ~88.1%. Remaining plugin SDK breadth stays on the
+  broader unresolved helper/runtime queue.
+- Verified the config-schema slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_config_schema_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "config_schema or type_only_sdk_barrels or cli_backend"`
+  (`13 passed, 972 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`173 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `ae5489b2`.
 
 ## References
 
