@@ -15356,6 +15356,204 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_adapter_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-adapter.cjs"
+    runtime_entry.write_text(
+        """
+const handlerAdapter = require("openclaw/plugin-sdk/approval-handler-adapter-runtime");
+const scopedHandlerAdapter = require("@openclaw/plugin-sdk/approval-handler-adapter-runtime");
+
+let loadCount = 0;
+const observed = [];
+const lazy = handlerAdapter.createLazyChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  resolveApprovalKind: (request) => (request.id.startsWith("plugin:") ? "plugin" : "exec"),
+  isConfigured: ({ accountId }) => accountId === "ops",
+  shouldHandle: (request) => request.id !== "skip",
+  load: async () => {
+    loadCount += 1;
+    return {
+      presentation: {
+        buildPendingPayload: async ({ request }) => `pending:${request.id}`,
+        buildResolvedResult: async ({ resolved }) => ({ resolved: resolved.id }),
+        buildExpiredResult: async ({ request }) => ({ expired: request.id })
+      },
+      transport: {
+        prepareTarget: async ({ plannedTarget }) => ({
+          prepared: plannedTarget.target.to
+        }),
+        deliverPending: async ({ preparedTarget, pendingPayload }) => ({
+          delivered: preparedTarget.prepared,
+          pendingPayload
+        }),
+        updateEntry: async ({ entry }) => ({ updated: entry.id }),
+        deleteEntry: async ({ entry }) => ({ deleted: entry.id })
+      },
+      interactions: {
+        bindPending: async ({ entry }) => ({ binding: entry.id }),
+        unbindPending: async ({ binding }) => ({ unbound: binding.id }),
+        clearPendingActions: async ({ entry }) => ({ cleared: entry.id })
+      },
+      observe: {
+        onDeliveryError: ({ plannedTarget }) =>
+          observed.push(`error:${plannedTarget.target.to}`),
+        onDuplicateSkipped: ({ plannedTarget }) =>
+          observed.push(`duplicate:${plannedTarget.target.to}`),
+        onDelivered: ({ entry }) => observed.push(`delivered:${entry.id}`)
+      }
+    };
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_adapter",
+      description: "Use OpenClaw approval handler adapter runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        lazy.observe.onDelivered({ entry: { id: "before-load" } });
+        const pending = await lazy.presentation.buildPendingPayload({
+          request: { id: "req-1" }
+        });
+        const prepared = await lazy.transport.prepareTarget({
+          plannedTarget: { target: { to: "owner" } }
+        });
+        const delivered = await lazy.transport.deliverPending({
+          preparedTarget: prepared,
+          pendingPayload: pending
+        });
+        const resolved = await lazy.presentation.buildResolvedResult({
+          resolved: { id: "req-1" }
+        });
+        const expired = await lazy.presentation.buildExpiredResult({
+          request: { id: "req-expired" }
+        });
+        const updated = await lazy.transport.updateEntry({ entry: { id: "entry-1" } });
+        const deleted = await lazy.transport.deleteEntry({ entry: { id: "entry-2" } });
+        const binding = await lazy.interactions.bindPending({ entry: { id: "entry-3" } });
+        const unbound = await lazy.interactions.unbindPending({
+          binding: { id: "binding-1" }
+        });
+        const cleared = await lazy.interactions.clearPendingActions({
+          entry: { id: "entry-4" }
+        });
+        lazy.observe.onDelivered({ entry: { id: "after-load" } });
+        lazy.observe.onDuplicateSkipped({ plannedTarget: { target: { to: "owner" } } });
+        lazy.observe.onDeliveryError({ plannedTarget: { target: { to: "owner" } } });
+        return {
+          keys: Object.keys(handlerAdapter).sort(),
+          scopedType: typeof scopedHandlerAdapter.createLazyChannelApprovalNativeRuntimeAdapter,
+          capability: handlerAdapter.CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+          eventKinds: lazy.eventKinds,
+          approvalKind: lazy.resolveApprovalKind({ id: "plugin:req-1" }),
+          configured: [
+            lazy.availability.isConfigured({ accountId: "ops" }),
+            lazy.availability.isConfigured({ accountId: "other" })
+          ],
+          shouldHandle: [
+            lazy.availability.shouldHandle({ id: "req-1" }),
+            lazy.availability.shouldHandle({ id: "skip" })
+          ],
+          loadCount,
+          pending,
+          prepared,
+          delivered,
+          resolved,
+          expired,
+          updated,
+          deleted,
+          binding,
+          unbound,
+          cleared,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-adapter-plugin",
+                    "name": "Runtime Approval Handler Adapter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-adapter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_adapter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_adapter"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
+            "createLazyChannelApprovalNativeRuntimeAdapter",
+        ],
+        "scopedType": "function",
+        "capability": "approval.native",
+        "eventKinds": ["exec", "plugin"],
+        "approvalKind": "plugin",
+        "configured": [True, False],
+        "shouldHandle": [True, False],
+        "loadCount": 1,
+        "pending": "pending:req-1",
+        "prepared": {"prepared": "owner"},
+        "delivered": {"delivered": "owner", "pendingPayload": "pending:req-1"},
+        "resolved": {"resolved": "req-1"},
+        "expired": {"expired": "req-expired"},
+        "updated": {"updated": "entry-1"},
+        "deleted": {"deleted": "entry-2"},
+        "binding": {"binding": "entry-3"},
+        "unbound": {"unbound": "binding-1"},
+        "cleared": {"cleared": "entry-4"},
+        "observed": ["delivered:after-load", "duplicate:owner", "error:owner"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

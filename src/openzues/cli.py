@@ -37282,6 +37282,101 @@ const approvalNativeRuntime = {
   resolveChannelNativeApprovalDeliveryPlan,
 };
 
+const CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY = "approval.native";
+
+function createLazyRuntimeModuleLoader(load) {
+  let runtimePromise = null;
+  return () => {
+    if (!runtimePromise) {
+      runtimePromise = Promise.resolve(load());
+    }
+    return runtimePromise;
+  };
+}
+
+function createLazyChannelApprovalNativeRuntimeAdapter(params = {}) {
+  const loadRuntime = createLazyRuntimeModuleLoader(params.load || (() => ({})));
+  let loadedRuntime = null;
+  const loadResolvedRuntime = async () => {
+    const runtime = await loadRuntime();
+    loadedRuntime = runtime;
+    return runtime;
+  };
+  const loadRequired = async (select) => select(await loadResolvedRuntime());
+  const loadOptional = async (select) => select(await loadResolvedRuntime());
+  const isConfigured =
+    typeof params.isConfigured === "function" ? params.isConfigured : () => false;
+  const shouldHandle =
+    typeof params.shouldHandle === "function" ? params.shouldHandle : () => false;
+
+  return {
+    ...(params.eventKinds ? { eventKinds: params.eventKinds } : {}),
+    ...(params.resolveApprovalKind ? { resolveApprovalKind: params.resolveApprovalKind } : {}),
+    availability: {
+      isConfigured,
+      shouldHandle,
+    },
+    presentation: {
+      buildPendingPayload: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildPendingPayload))(
+          runtimeParams,
+        ),
+      buildResolvedResult: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildResolvedResult))(
+          runtimeParams,
+        ),
+      buildExpiredResult: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildExpiredResult))(
+          runtimeParams,
+        ),
+    },
+    transport: {
+      prepareTarget: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.transport.prepareTarget))(runtimeParams),
+      deliverPending: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.transport.deliverPending))(runtimeParams),
+      updateEntry: async (runtimeParams) => {
+        const updateEntry = await loadOptional((runtime) => runtime.transport.updateEntry);
+        return updateEntry ? await updateEntry(runtimeParams) : undefined;
+      },
+      deleteEntry: async (runtimeParams) => {
+        const deleteEntry = await loadOptional((runtime) => runtime.transport.deleteEntry);
+        return deleteEntry ? await deleteEntry(runtimeParams) : undefined;
+      },
+    },
+    interactions: {
+      bindPending: async (runtimeParams) => {
+        const bindPending = await loadOptional((runtime) => runtime.interactions?.bindPending);
+        return bindPending ? await bindPending(runtimeParams) : null;
+      },
+      unbindPending: async (runtimeParams) => {
+        const unbindPending = await loadOptional(
+          (runtime) => runtime.interactions?.unbindPending,
+        );
+        return unbindPending ? await unbindPending(runtimeParams) : undefined;
+      },
+      clearPendingActions: async (runtimeParams) => {
+        const clearPendingActions = await loadOptional(
+          (runtime) => runtime.interactions?.clearPendingActions,
+        );
+        return clearPendingActions ? await clearPendingActions(runtimeParams) : undefined;
+      },
+    },
+    observe: {
+      onDeliveryError: (runtimeParams) =>
+        loadedRuntime?.observe?.onDeliveryError?.(runtimeParams),
+      onDuplicateSkipped: (runtimeParams) =>
+        loadedRuntime?.observe?.onDuplicateSkipped?.(runtimeParams),
+      onDelivered: (runtimeParams) => loadedRuntime?.observe?.onDelivered?.(runtimeParams),
+    },
+  };
+}
+
+const approvalHandlerAdapterRuntime = {
+  CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+  createLazyChannelApprovalNativeRuntimeAdapter,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42568,6 +42663,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-native-runtime"
   ) {
     return approvalNativeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-handler-adapter-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-handler-adapter-runtime"
+  ) {
+    return approvalHandlerAdapterRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
