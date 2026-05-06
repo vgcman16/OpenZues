@@ -37463,6 +37463,43 @@ const approvalHandlerRuntime = new Proxy(
   },
 );
 
+const approvalRuntimeAggregate = new Proxy(
+  {
+    buildApprovalPendingReplyPayload,
+    buildExecApprovalPendingReplyPayload,
+    buildPluginApprovalPendingReplyPayload,
+    createApproverRestrictedNativeApprovalAdapter,
+    createApproverRestrictedNativeApprovalCapability,
+    createChannelApprovalCapability,
+    createChannelApproverDmTargetResolver,
+    createChannelExecApprovalProfile,
+    createChannelNativeOriginTargetResolver,
+    createResolvedApproverActionAuthAdapter,
+    getExecApprovalApproverDmNoticeText,
+    getExecApprovalReplyMetadata,
+    isChannelExecApprovalClientEnabledFromConfig,
+    isChannelExecApprovalTargetRecipient,
+    matchesApprovalRequestFilters,
+    matchesApprovalRequestSessionFilter,
+    resolveApprovalApprovers,
+    resolveExecApprovalAllowedDecisions,
+    resolveExecApprovalCommandDisplay,
+    resolveExecApprovalRequestAllowedDecisions,
+    splitChannelApprovalCapability,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42761,6 +42798,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-handler-runtime"
   ) {
     return approvalHandlerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-runtime"
+  ) {
+    return approvalRuntimeAggregate;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
