@@ -34536,6 +34536,209 @@ const coreRuntime = {
   normalizeOptionalAccountId,
 };
 
+function filePathFromImportMetaUrl(importMetaUrl) {
+  if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
+    return require("node:url").fileURLToPath(importMetaUrl);
+  }
+  return path.resolve(String(importMetaUrl || "."));
+}
+
+function resolveBundledEntrySpecifierCandidates(modulePath) {
+  const ext = normalizeLowercaseStringOrEmpty(path.extname(modulePath));
+  if (ext === ".js") {
+    return [modulePath, modulePath.slice(0, -3) + ".ts"];
+  }
+  if (ext === ".mjs") {
+    return [modulePath, modulePath.slice(0, -4) + ".mts"];
+  }
+  if (ext === ".cjs") {
+    return [modulePath, modulePath.slice(0, -4) + ".cts"];
+  }
+  return [modulePath];
+}
+
+function resolveBundledEntryModulePath(importMetaUrl, specifier) {
+  const importerPath = filePathFromImportMetaUrl(importMetaUrl);
+  const importerDir = path.dirname(importerPath);
+  const primaryPath = path.resolve(importerDir, specifier);
+  const candidates = resolveBundledEntrySpecifierCandidates(primaryPath);
+  const sourceRelativeSpecifier = String(specifier || "").replace(/^\.\/src\//u, "./");
+  if (sourceRelativeSpecifier !== specifier) {
+    candidates.push(
+      ...resolveBundledEntrySpecifierCandidates(path.resolve(importerDir, sourceRelativeSpecifier)),
+    );
+  }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error(
+    [
+      `bundled plugin entry "${specifier}" failed to open`,
+      `from "${importerPath}"`,
+      `(resolved "${primaryPath}", plugin root "${importerDir}",`,
+      `reason "path"): ENOENT: no such file or directory, lstat '${primaryPath}'`,
+    ].join(" "),
+  );
+}
+
+const loadedBundledEntryModules = new Map();
+
+function loadBundledEntryModuleSync(importMetaUrl, specifier) {
+  const modulePath = resolveBundledEntryModulePath(importMetaUrl, specifier);
+  if (loadedBundledEntryModules.has(modulePath)) {
+    return loadedBundledEntryModules.get(modulePath);
+  }
+  const loaded = require(modulePath);
+  loadedBundledEntryModules.set(modulePath, loaded);
+  return loaded;
+}
+
+function loadBundledEntryExportSync(importMetaUrl, reference, options = {}) {
+  const loaded = loadBundledEntryModuleSync(importMetaUrl, reference.specifier, options);
+  const resolved =
+    loaded && typeof loaded === "object" && Object.prototype.hasOwnProperty.call(loaded, "default")
+      ? loaded.default
+      : loaded;
+  if (!reference.exportName) {
+    return resolved;
+  }
+  const record = resolved ?? loaded;
+  if (!record || !Object.prototype.hasOwnProperty.call(record, reference.exportName)) {
+    throw new Error(
+      `missing export "${reference.exportName}" from bundled entry module ${reference.specifier}`,
+    );
+  }
+  return record[reference.exportName];
+}
+
+function defineBundledChannelEntry(options = {}) {
+  const resolvedConfigSchema =
+    typeof options.configSchema === "function"
+      ? options.configSchema()
+      : options.configSchema || emptyChannelConfigSchema();
+  const loadChannelPlugin = (loadOptions = {}) =>
+    loadBundledEntryExportSync(options.importMetaUrl, options.plugin, loadOptions);
+  const loadChannelSecrets = options.secrets
+    ? (loadOptions = {}) =>
+        loadBundledEntryExportSync(options.importMetaUrl, options.secrets, loadOptions)
+    : undefined;
+  const loadChannelAccountInspector = options.accountInspect
+    ? (loadOptions = {}) =>
+        loadBundledEntryExportSync(options.importMetaUrl, options.accountInspect, loadOptions)
+    : undefined;
+  const setChannelRuntime = options.runtime
+    ? (pluginRuntime) => {
+        const setter = loadBundledEntryExportSync(options.importMetaUrl, options.runtime);
+        setter(pluginRuntime);
+      }
+    : undefined;
+  return {
+    kind: "bundled-channel-entry",
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    configSchema: resolvedConfigSchema,
+    ...(options.features || options.accountInspect
+      ? {
+          features: {
+            ...(options.features || {}),
+            ...(options.accountInspect ? { accountInspect: true } : {}),
+          },
+        }
+      : {}),
+    register(api) {
+      if (api.registrationMode === "cli-metadata") {
+        if (typeof options.registerCliMetadata === "function") {
+          options.registerCliMetadata(api);
+        }
+        return;
+      }
+      if (api.registrationMode === "tool-discovery") {
+        if (typeof options.registerFull === "function") {
+          options.registerFull(api);
+        }
+        return;
+      }
+      const channelPlugin = loadChannelPlugin();
+      if (api && typeof api.registerChannel === "function") {
+        api.registerChannel({ plugin: channelPlugin });
+      }
+      if (setChannelRuntime) {
+        setChannelRuntime(api && api.runtime);
+      }
+      if (api.registrationMode === "discovery") {
+        if (typeof options.registerCliMetadata === "function") {
+          options.registerCliMetadata(api);
+        }
+        return;
+      }
+      if (api.registrationMode !== "full") {
+        return;
+      }
+      if (typeof options.registerCliMetadata === "function") {
+        options.registerCliMetadata(api);
+      }
+      if (typeof options.registerFull === "function") {
+        options.registerFull(api);
+      }
+    },
+    loadChannelPlugin,
+    ...(loadChannelSecrets ? { loadChannelSecrets } : {}),
+    ...(loadChannelAccountInspector ? { loadChannelAccountInspector } : {}),
+    ...(setChannelRuntime ? { setChannelRuntime } : {}),
+  };
+}
+
+function defineBundledChannelSetupEntry(options = {}) {
+  const setChannelRuntime = options.runtime
+    ? (pluginRuntime) => {
+        const setter = loadBundledEntryExportSync(options.importMetaUrl, options.runtime);
+        setter(pluginRuntime);
+      }
+    : undefined;
+  return {
+    kind: "bundled-channel-setup-entry",
+    loadSetupPlugin: (loadOptions = {}) =>
+      loadBundledEntryExportSync(options.importMetaUrl, options.plugin, loadOptions),
+    ...(options.secrets
+      ? {
+          loadSetupSecrets: (loadOptions = {}) =>
+            loadBundledEntryExportSync(options.importMetaUrl, options.secrets, loadOptions),
+        }
+      : {}),
+    ...(options.legacyStateMigrations
+      ? {
+          loadLegacyStateMigrationDetector: (loadOptions = {}) =>
+            loadBundledEntryExportSync(
+              options.importMetaUrl,
+              options.legacyStateMigrations,
+              loadOptions,
+            ),
+        }
+      : {}),
+    ...(options.legacySessionSurface
+      ? {
+          loadLegacySessionSurface: (loadOptions = {}) =>
+            loadBundledEntryExportSync(
+              options.importMetaUrl,
+              options.legacySessionSurface,
+              loadOptions,
+            ),
+        }
+      : {}),
+    ...(setChannelRuntime ? { setChannelRuntime } : {}),
+    ...(options.features ? { features: options.features } : {}),
+  };
+}
+
+const channelEntryContractRuntime = {
+  defineBundledChannelEntry,
+  defineBundledChannelSetupEntry,
+  loadBundledEntryExportSync,
+};
+
 const dedupeRuntime = {
   createDedupeCache,
   resolveGlobalDedupeCache,
@@ -35168,6 +35371,7 @@ const genericSdk = new Proxy(
     CODING_TOOL_TOKENS,
     ...channelPluginCommonRuntime,
     ...coreRuntime,
+    ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
     ...providerSelectionRuntime,
@@ -36117,6 +36321,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/core"
   ) {
     return coreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-entry-contract" ||
+    request === "@openclaw/plugin-sdk/channel-entry-contract"
+  ) {
+    return channelEntryContractRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/routing" ||

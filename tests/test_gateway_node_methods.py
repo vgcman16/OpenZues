@@ -14483,6 +14483,287 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_entry_contract_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-entry-contract.cjs"
+    runtime_entry.write_text(
+        """
+const contract = require("openclaw/plugin-sdk/channel-entry-contract");
+const scopedContract = require("@openclaw/plugin-sdk/channel-entry-contract");
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+function createApi(registrationMode) {
+  return {
+    registrationMode,
+    runtime: { registrationMode },
+    channels: [],
+    tools: [],
+    registerChannel(value) {
+      this.channels.push(value);
+    },
+    registerTool(tool) {
+      this.tools.push(tool.name);
+    }
+  };
+}
+
+function parseChannelConfig(entry, value) {
+  const parsed = entry.configSchema.runtime.safeParse(value);
+  return parsed.success
+    ? { success: true, data: parsed.data }
+    : { success: false, issues: parsed.issues };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_entry_contract",
+      description: "Use OpenClaw channel-entry-contract SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const sidecarPath = path.join(__dirname, "channel-sidecar.cjs");
+        const runtimeMarkerPath = path.join(__dirname, "runtime-marker.txt");
+        fs.writeFileSync(
+          sidecarPath,
+          `
+module.exports = {
+  channelPlugin: {
+    id: "telegram",
+    meta: { id: "telegram", label: "Telegram" },
+    config: { listAccountIds: () => [], resolveAccount: () => null }
+  },
+  channelSecrets: { TELEGRAM_TOKEN: { env: "TELEGRAM_TOKEN" } },
+  inspectAccount: () => ({ ok: true }),
+  setRuntime: (runtime) => {
+    require("node:fs").writeFileSync(
+      ${JSON.stringify(runtimeMarkerPath)},
+      runtime.registrationMode,
+      "utf8"
+    );
+  },
+  namedValue: 42
+};
+`,
+          "utf8"
+        );
+        const defaultSidecarPath = path.join(__dirname, "default-sidecar.cjs");
+        fs.writeFileSync(
+          defaultSidecarPath,
+          'module.exports = { default: { defaultExport: true } };\\n',
+          "utf8"
+        );
+        const importMetaUrl = pathToFileURL(__filename).href;
+        const loadedNamed = contract.loadBundledEntryExportSync(importMetaUrl, {
+          specifier: "./channel-sidecar.cjs",
+          exportName: "namedValue"
+        });
+        const loadedDefault = contract.loadBundledEntryExportSync(importMetaUrl, {
+          specifier: "./default-sidecar.cjs"
+        });
+        let missingExportError;
+        try {
+          contract.loadBundledEntryExportSync(importMetaUrl, {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "missingValue"
+          });
+        } catch (error) {
+          missingExportError = error.message;
+        }
+        const entry = contract.defineBundledChannelEntry({
+          id: "telegram",
+          name: "Telegram",
+          description: "Telegram channel entry",
+          importMetaUrl,
+          plugin: { specifier: "./channel-sidecar.cjs", exportName: "channelPlugin" },
+          secrets: { specifier: "./channel-sidecar.cjs", exportName: "channelSecrets" },
+          runtime: { specifier: "./channel-sidecar.cjs", exportName: "setRuntime" },
+          accountInspect: { specifier: "./channel-sidecar.cjs", exportName: "inspectAccount" },
+          registerCliMetadata(api) {
+            api.registerTool({ name: "cli_tool" });
+          },
+          registerFull(api) {
+            api.registerTool({ name: "full_tool" });
+          }
+        });
+        const toolDiscoveryApi = createApi("tool-discovery");
+        entry.register(toolDiscoveryApi);
+        const discoveryApi = createApi("discovery");
+        entry.register(discoveryApi);
+        const setupRuntimeApi = createApi("setup-runtime");
+        entry.register(setupRuntimeApi);
+        const fullApi = createApi("full");
+        entry.register(fullApi);
+        const setupEntry = scopedContract.defineBundledChannelSetupEntry({
+          importMetaUrl,
+          plugin: { specifier: "./channel-sidecar.cjs", exportName: "channelPlugin" },
+          secrets: { specifier: "./channel-sidecar.cjs", exportName: "channelSecrets" },
+          runtime: { specifier: "./channel-sidecar.cjs", exportName: "setRuntime" },
+          legacyStateMigrations: {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "inspectAccount"
+          },
+          legacySessionSurface: {
+            specifier: "./channel-sidecar.cjs",
+            exportName: "inspectAccount"
+          },
+          features: { legacyStateMigrations: true, legacySessionSurfaces: true }
+        });
+        setupEntry.setChannelRuntime({ registrationMode: "setup-entry" });
+        return {
+          exportKeys: Object.keys(contract).sort(),
+          scopedDefineType: typeof scopedContract.defineBundledChannelEntry,
+          loadedNamed,
+          loadedDefault,
+          missingExportError,
+          entry: {
+            kind: entry.kind,
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            features: entry.features,
+            configEmpty: parseChannelConfig(entry, {}),
+            configExtra: parseChannelConfig(entry, { extra: true }),
+            pluginId: entry.loadChannelPlugin().id,
+            secrets: entry.loadChannelSecrets(),
+            inspectorType: typeof entry.loadChannelAccountInspector(),
+            runtimeMarker: fs.readFileSync(runtimeMarkerPath, "utf8")
+          },
+          registrations: {
+            toolDiscovery: {
+              channels: toolDiscoveryApi.channels.length,
+              tools: toolDiscoveryApi.tools
+            },
+            discovery: {
+              channels: discoveryApi.channels.length,
+              tools: discoveryApi.tools
+            },
+            setupRuntime: {
+              channels: setupRuntimeApi.channels.length,
+              tools: setupRuntimeApi.tools
+            },
+            full: {
+              channels: fullApi.channels.length,
+              tools: fullApi.tools
+            }
+          },
+          setupEntry: {
+            kind: setupEntry.kind,
+            features: setupEntry.features,
+            pluginId: setupEntry.loadSetupPlugin().id,
+            secrets: setupEntry.loadSetupSecrets(),
+            legacyStateType: typeof setupEntry.loadLegacyStateMigrationDetector(),
+            legacySessionType: typeof setupEntry.loadLegacySessionSurface(),
+            runtimeMarker: fs.readFileSync(runtimeMarkerPath, "utf8")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-entry-contract-plugin",
+                    "name": "Runtime Channel Entry Contract Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-entry-contract.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_entry_contract"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_entry_contract"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "defineBundledChannelEntry",
+            "defineBundledChannelSetupEntry",
+            "loadBundledEntryExportSync",
+        ],
+        "scopedDefineType": "function",
+        "loadedNamed": 42,
+        "loadedDefault": {"defaultExport": True},
+        "missingExportError": (
+            'missing export "missingValue" from bundled entry module '
+            "./channel-sidecar.cjs"
+        ),
+        "entry": {
+            "kind": "bundled-channel-entry",
+            "id": "telegram",
+            "name": "Telegram",
+            "description": "Telegram channel entry",
+            "features": {"accountInspect": True},
+            "configEmpty": {"success": True, "data": {}},
+            "configExtra": {
+                "success": False,
+                "issues": [{"path": [], "message": "config must be empty"}],
+            },
+            "pluginId": "telegram",
+            "secrets": {"TELEGRAM_TOKEN": {"env": "TELEGRAM_TOKEN"}},
+            "inspectorType": "function",
+            "runtimeMarker": "setup-entry",
+        },
+        "registrations": {
+            "toolDiscovery": {"channels": 0, "tools": ["full_tool"]},
+            "discovery": {"channels": 1, "tools": ["cli_tool"]},
+            "setupRuntime": {"channels": 1, "tools": []},
+            "full": {"channels": 1, "tools": ["cli_tool", "full_tool"]},
+        },
+        "setupEntry": {
+            "kind": "bundled-channel-setup-entry",
+            "features": {
+                "legacyStateMigrations": True,
+                "legacySessionSurfaces": True,
+            },
+            "pluginId": "telegram",
+            "secrets": {"TELEGRAM_TOKEN": {"env": "TELEGRAM_TOKEN"}},
+            "legacyStateType": "function",
+            "legacySessionType": "function",
+            "runtimeMarker": "setup-entry",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_web_search_contract_helpers(
     tmp_path,
 ) -> None:
