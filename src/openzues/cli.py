@@ -18443,6 +18443,104 @@ function resolveHeartbeatVisibility(params) {
   };
 }
 
+function parseJsonOrNull(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function loadJsonFile(pathname) {
+  try {
+    return JSON.parse(fs.readFileSync(pathname, "utf8"));
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function renameJsonFileWithFallback(tmpPath, pathname) {
+  try {
+    fs.renameSync(tmpPath, pathname);
+    return;
+  } catch (error) {
+    if (!error || (error.code !== "EPERM" && error.code !== "EEXIST")) {
+      throw error;
+    }
+  }
+  fs.copyFileSync(tmpPath, pathname);
+  fs.rmSync(tmpPath, { force: true });
+}
+
+function saveJsonFile(pathname, data) {
+  const tmpPath = `${pathname}.${crypto.randomUUID()}.tmp`;
+  const payload = `${JSON.stringify(data, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(pathname), { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(tmpPath, payload, { encoding: "utf8", mode: 0o600 });
+    try {
+      fs.chmodSync(tmpPath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    renameJsonFileWithFallback(tmpPath, pathname);
+    try {
+      fs.chmodSync(pathname, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch (_error) {
+      // Best effort cleanup.
+    }
+  }
+}
+
+async function readJsonFileWithFallback(filePath, fallback) {
+  try {
+    const raw = await fs.promises.readFile(filePath, "utf8");
+    const parsed = parseJsonOrNull(raw);
+    if (parsed == null) {
+      return { value: fallback, exists: true };
+    }
+    return { value: parsed, exists: true };
+  } catch (_error) {
+    return { value: fallback, exists: false };
+  }
+}
+
+async function writeJsonFileAtomically(filePath, value) {
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  try {
+    await fs.promises.writeFile(tmpPath, payload, { encoding: "utf8", mode: 0o600 });
+    try {
+      await fs.promises.chmod(tmpPath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    try {
+      await fs.promises.rename(tmpPath, filePath);
+    } catch (error) {
+      if (!error || (error.code !== "EPERM" && error.code !== "EEXIST")) {
+        throw error;
+      }
+      await fs.promises.copyFile(tmpPath, filePath);
+      await fs.promises.rm(tmpPath, { force: true });
+    }
+    try {
+      await fs.promises.chmod(filePath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32735,6 +32833,13 @@ const heartbeatRuntime = {
   resolveIndicatorType,
 };
 
+const jsonStoreRuntime = {
+  loadJsonFile,
+  readJsonFileWithFallback,
+  saveJsonFile,
+  writeJsonFileAtomically,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43511,6 +43616,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/heartbeat-runtime"
   ) {
     return heartbeatRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/json-store" ||
+    request === "@openclaw/plugin-sdk/json-store"
+  ) {
+    return jsonStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||

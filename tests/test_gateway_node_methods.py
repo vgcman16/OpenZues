@@ -30011,6 +30011,132 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_json_store_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-json-store.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const jsonStore = require("openclaw/plugin-sdk/json-store");
+const scopedJsonStore = require("@openclaw/plugin-sdk/json-store");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.json_store",
+      description: "Use OpenClaw json-store SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const syncPath = args.syncPath;
+        const atomicPath = args.atomicPath;
+        const invalidPath = args.invalidPath;
+        const missingPath = args.missingPath;
+        jsonStore.saveJsonFile(syncPath, { from: "save", nested: { ok: true } });
+        fs.writeFileSync(invalidPath, "{bad json", "utf8");
+        const missing = await jsonStore.readJsonFileWithFallback(missingPath, { fallback: true });
+        const invalid = await jsonStore.readJsonFileWithFallback(invalidPath, { fallback: true });
+        await scopedJsonStore.writeJsonFileAtomically(atomicPath, {
+          from: "atomic",
+          values: [1, 2, 3]
+        });
+        const atomic = await jsonStore.readJsonFileWithFallback(atomicPath, {});
+        return {
+          keys: Object.keys(jsonStore).sort(),
+          scopedType: typeof scopedJsonStore.writeJsonFileAtomically,
+          syncLoaded: jsonStore.loadJsonFile(syncPath),
+          missingLoaded: jsonStore.loadJsonFile(missingPath) || null,
+          missing,
+          invalid,
+          atomic,
+          atomicRaw: fs.readFileSync(atomicPath, "utf8")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-json-store-plugin",
+                    "name": "Runtime Json Store Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-json-store-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.json_store"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.json_store",
+            "args": {
+                "syncPath": str(tmp_path / "sync" / "state.json"),
+                "atomicPath": str(tmp_path / "atomic" / "state.json"),
+                "invalidPath": str(tmp_path / "invalid.json"),
+                "missingPath": str(tmp_path / "missing.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "loadJsonFile",
+            "readJsonFileWithFallback",
+            "saveJsonFile",
+            "writeJsonFileAtomically",
+        ],
+        "scopedType": "function",
+        "syncLoaded": {"from": "save", "nested": {"ok": True}},
+        "missingLoaded": None,
+        "missing": {"value": {"fallback": True}, "exists": False},
+        "invalid": {"value": {"fallback": True}, "exists": True},
+        "atomic": {
+            "value": {"from": "atomic", "values": [1, 2, 3]},
+            "exists": True,
+        },
+        "atomicRaw": '{\n  "from": "atomic",\n  "values": [\n    1,\n    2,\n    3\n  ]\n}\n',
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
