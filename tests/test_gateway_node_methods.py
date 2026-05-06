@@ -19083,6 +19083,115 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_account_id_subpath_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-account-id-subpaths.cjs"
+    runtime_entry.write_text(
+        """
+const accountIds = require("openclaw/plugin-sdk/account-id");
+const configuredIds = require("openclaw/plugin-sdk/account-configured-ids");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.account_id_subpaths",
+      description: "Use OpenClaw account-id SDK subpath shims",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          accountIdExports: Object.keys(accountIds).sort(),
+          configuredIdExports: Object.keys(configuredIds).sort(),
+          defaultAccountId: accountIds.DEFAULT_ACCOUNT_ID,
+          normalized: [
+            accountIds.normalizeAccountId(" Workspace One! "),
+            accountIds.normalizeAccountId(" "),
+            accountIds.normalizeOptionalAccountId(" ") ?? null
+          ],
+          configuredIds: configuredIds.listConfiguredAccountIds({
+            accounts: {
+              "Router D": {},
+              "router-d": {},
+              " Personal A ": {},
+              "": {}
+            },
+            normalizeAccountId: accountIds.normalizeAccountId
+          }),
+          genericTypes: [
+            typeof genericSdk.normalizeAccountId,
+            typeof genericSdk.listConfiguredAccountIds
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-account-id-subpaths-plugin",
+                    "name": "Runtime Account Id Subpaths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-account-id-subpaths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.account_id_subpaths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.account_id_subpaths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "accountIdExports": [
+            "DEFAULT_ACCOUNT_ID",
+            "normalizeAccountId",
+            "normalizeOptionalAccountId",
+        ],
+        "configuredIdExports": ["listConfiguredAccountIds"],
+        "defaultAccountId": "default",
+        "normalized": ["workspace-one", "default", None],
+        "configuredIds": ["router-d", "personal-a"],
+        "genericTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_tool_payload_helpers(
     tmp_path,
 ) -> None:

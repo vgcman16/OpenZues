@@ -33397,6 +33397,16 @@ const accountHelpersRuntime = {
   resolveMergedAccountConfig,
 };
 
+const accountConfiguredIdsRuntime = {
+  listConfiguredAccountIds,
+};
+
+const accountIdRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  normalizeAccountId,
+  normalizeOptionalAccountId,
+};
+
 const accountCoreRuntime = {
   ...accountHelpersRuntime,
   DEFAULT_ACCOUNT_ID,
@@ -34430,6 +34440,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/account-helpers"
   ) {
     return accountHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-configured-ids" ||
+    request === "@openclaw/plugin-sdk/account-configured-ids"
+  ) {
+    return accountConfiguredIdsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/account-id" ||
+    request === "@openclaw/plugin-sdk/account-id"
+  ) {
+    return accountIdRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/account-core" ||
