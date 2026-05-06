@@ -28365,6 +28365,130 @@ function createRecordSchema() {
   );
 }
 
+const OpenClawSchema = createRecordSchema();
+
+function cloneJsonSchemaValidationValue(value) {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function makeJsonSchemaValidationError(path, message, allowedValues) {
+  const error = {
+    path,
+    message,
+    text: `${path}: ${message}`,
+  };
+  if (Array.isArray(allowedValues)) {
+    error.allowedValues = allowedValues;
+    error.allowedValuesHiddenCount = 0;
+  }
+  return error;
+}
+
+function jsonSchemaTypeMatches(type, value) {
+  if (type === "object") {
+    return value && typeof value === "object" && !Array.isArray(value);
+  }
+  if (type === "array") {
+    return Array.isArray(value);
+  }
+  if (type === "number") {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  if (type === "integer") {
+    return typeof value === "number" && Number.isInteger(value);
+  }
+  if (type === "boolean") {
+    return typeof value === "boolean";
+  }
+  if (type === "string") {
+    return typeof value === "string";
+  }
+  if (type === "null") {
+    return value === null;
+  }
+  return true;
+}
+
+function validateJsonSchemaNode(schema, value, path, applyDefaults) {
+  if (!schema || typeof schema !== "object") {
+    return [];
+  }
+  const type = schema.type;
+  if (typeof type === "string" && !jsonSchemaTypeMatches(type, value)) {
+    return [makeJsonSchemaValidationError(path, `must be ${type}`)];
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.some((entry) => Object.is(entry, value))) {
+    const allowedValues = schema.enum.map((entry) => String(entry));
+    return [
+      makeJsonSchemaValidationError(
+        path,
+        `must be equal to one of the allowed values (allowed: ${allowedValues.join(", ")})`,
+        allowedValues,
+      ),
+    ];
+  }
+  if (type !== "object" || !value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const properties =
+    schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+  for (const key of schema.required || []) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      return [
+        makeJsonSchemaValidationError(key, `must have required property '${key}'`),
+      ];
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(value)) {
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+        return [makeJsonSchemaValidationError(key, "must NOT have additional properties")];
+      }
+    }
+  }
+  for (const [key, childSchema] of Object.entries(properties)) {
+    if (
+      applyDefaults &&
+      value[key] === undefined &&
+      childSchema &&
+      typeof childSchema === "object" &&
+      Object.prototype.hasOwnProperty.call(childSchema, "default")
+    ) {
+      value[key] = cloneJsonSchemaValidationValue(childSchema.default);
+    }
+    if (value[key] === undefined) {
+      continue;
+    }
+    const childErrors = validateJsonSchemaNode(childSchema, value[key], key, applyDefaults);
+    if (childErrors.length > 0) {
+      return childErrors;
+    }
+  }
+  return [];
+}
+
+function validateJsonSchemaValue(params) {
+  const value = params && params.applyDefaults
+    ? cloneJsonSchemaValidationValue(params.value)
+    : params && params.value;
+  const errors = validateJsonSchemaNode(
+    params && params.schema,
+    value,
+    "<root>",
+    Boolean(params && params.applyDefaults),
+  );
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+  return { ok: true, value };
+}
+
 function createArraySchema(itemSchema) {
   return createSimpleSchema(
     (value) => {
@@ -34195,6 +34319,11 @@ const CLI_RESUME_WATCHDOG_DEFAULTS = Object.freeze({
 const cliBackendRuntime = {
   CLI_FRESH_WATCHDOG_DEFAULTS,
   CLI_RESUME_WATCHDOG_DEFAULTS,
+};
+
+const configSchemaRuntime = {
+  OpenClawSchema,
+  validateJsonSchemaValue,
 };
 
 const typeOnlyPluginSdkRuntime = Object.freeze({});
@@ -45072,6 +45201,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/cli-backend"
   ) {
     return cliBackendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-schema" ||
+    request === "@openclaw/plugin-sdk/config-schema"
+  ) {
+    return configSchemaRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;

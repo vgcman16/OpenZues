@@ -32047,6 +32047,164 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_config_schema_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-config-schema.cjs"
+    runtime_entry.write_text(
+        """
+const configSchema = require("openclaw/plugin-sdk/config-schema");
+const scopedConfigSchema = require("@openclaw/plugin-sdk/config-schema");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.config_schema",
+      description: "Use OpenClaw config-schema SDK shim",
+      parameters: { type: "object", properties: {} },
+      execute() {
+        const schema = {
+          type: "object",
+          required: ["mode"],
+          properties: {
+            mode: { type: "string", enum: ["fast", "slow"] },
+            retries: { type: "number", default: 2 },
+            enabled: { type: "boolean" }
+          },
+          additionalProperties: false
+        };
+        return {
+          keys: Object.keys(configSchema).sort(),
+          scopedType: typeof scopedConfigSchema.validateJsonSchemaValue,
+          openClawSchema: {
+            object: configSchema.OpenClawSchema.safeParse({ agents: [] }).success,
+            primitive: configSchema.OpenClawSchema.safeParse(null).success
+          },
+          valid: configSchema.validateJsonSchemaValue({
+            schema,
+            cacheKey: "demo",
+            value: { mode: "fast", enabled: true },
+            applyDefaults: true
+          }),
+          missing: configSchema.validateJsonSchemaValue({
+            schema,
+            cacheKey: "demo",
+            value: { retries: 1 }
+          }),
+          extra: configSchema.validateJsonSchemaValue({
+            schema,
+            cacheKey: "demo",
+            value: { mode: "slow", extra: true }
+          }),
+          enumError: configSchema.validateJsonSchemaValue({
+            schema,
+            cacheKey: "demo",
+            value: { mode: "medium" }
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-schema-plugin",
+                    "name": "Runtime Config Schema Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-config-schema.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.config_schema"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.config_schema", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["OpenClawSchema", "validateJsonSchemaValue"],
+        "scopedType": "function",
+        "openClawSchema": {"object": True, "primitive": False},
+        "valid": {
+            "ok": True,
+            "value": {"mode": "fast", "enabled": True, "retries": 2},
+        },
+        "missing": {
+            "ok": False,
+            "errors": [
+                {
+                    "path": "mode",
+                    "message": "must have required property 'mode'",
+                    "text": "mode: must have required property 'mode'",
+                }
+            ],
+        },
+        "extra": {
+            "ok": False,
+            "errors": [
+                {
+                    "path": "extra",
+                    "message": "must NOT have additional properties",
+                    "text": "extra: must NOT have additional properties",
+                }
+            ],
+        },
+        "enumError": {
+            "ok": False,
+            "errors": [
+                {
+                    "path": "mode",
+                    "message": "must be equal to one of the allowed values "
+                    "(allowed: fast, slow)",
+                    "text": "mode: must be equal to one of the allowed values "
+                    "(allowed: fast, slow)",
+                    "allowedValues": ["fast", "slow"],
+                    "allowedValuesHiddenCount": 0,
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
