@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~90.5% overall, with a reasonable band of ~79-91%.
+- Estimated repo-wide parity: ~90.6% overall, with a reasonable band of ~79-91%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,10 +3403,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported plugin SDK `memory-host-status` now has scoped and unscoped native
-  runtime entries as the upstream compatibility alias for
-  `memory-core-host-status`; the broader plugin SDK helper/runtime queue
-  continues with `memory-core-host-runtime-cli`.
+- Imported plugin SDK `memory-core-host-runtime-cli` now has scoped and
+  unscoped native runtime entries for CLI helper exports such as manager
+  lifecycle wrappers, progress wrappers, help formatting, docs links,
+  verbosity state, default runtime, theme/color helpers, home-path shortening,
+  and no-target command-secret resolution; the broader plugin SDK
+  helper/runtime queue continues with `memory-core-engine-runtime`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15528,6 +15530,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `2317c1e7`.
+- Imported OpenClaw plugin runtime entries now have the
+  `memory-core-host-runtime-cli` SDK subpath from
+  `src/plugin-sdk/memory-core-host-runtime-cli.ts`,
+  `packages/memory-host-sdk/src/runtime-cli.ts`, and adjacent CLI/runtime
+  helpers. The native shim covers manager lifecycle handling, progress
+  wrappers, help example formatting, docs link fallback formatting, verbosity
+  state, default runtime shape, theme/color helpers, home-path shortening, and
+  the no-target command-secret resolution fast path. This closes
+  `OZ-PLUGIN-001ZM`; repo-wide parity is now estimated at ~90.6%. Remaining
+  plugin SDK breadth stays on the broader unresolved helper/runtime queue.
+- Verified the memory-core-host-runtime-cli slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_core_host_runtime_cli_helpers -q`
+  (`1 passed`), regression proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_runtime_secret_resolution_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_core_host_runtime_cli or memory_host_status or memory_host_search or memory_host_markdown"`
+  (`4 passed, 1006 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`198 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `762da43c`.
 
 ## References
 

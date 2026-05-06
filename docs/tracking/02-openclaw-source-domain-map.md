@@ -100,8 +100,11 @@ checkpointed in `97885bb6`; `memory-host-markdown` from
 `src/plugin-sdk/memory-host-search.runtime.ts`, and
 `src/plugins/memory-runtime.ts` is checkpointed in `a76a8d50`;
 `memory-host-status` from `src/plugin-sdk/memory-host-status.ts` is
-checkpointed in `2317c1e7`. Count all with the plugin/extension system row
-above.
+checkpointed in `2317c1e7`; `memory-core-host-runtime-cli` from
+`src/plugin-sdk/memory-core-host-runtime-cli.ts`,
+`packages/memory-host-sdk/src/runtime-cli.ts`, and adjacent
+CLI/runtime/theme/progress/home-path helper behavior is checkpointed in
+`762da43c`. Count all with the plugin/extension system row above.
 
 ## How To Use This Map
 
