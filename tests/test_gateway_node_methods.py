@@ -28740,6 +28740,281 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-runtime-core-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-runtime-core.cjs"
+    runtime_entry.write_text(
+        f"""
+const path = require("path");
+const core = require("openclaw/plugin-sdk/memory-core-host-runtime-core");
+const scopedCore = require("@openclaw/plugin-sdk/memory-core-host-runtime-core");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+function rel(value) {{
+  const relative = path.relative(workspaceDir, value).replace(/\\\\/g, "/");
+  return relative || ".";
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_runtime_core",
+      description: "Use OpenClaw memory-core-host-runtime-core SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+        process.env.OPENCLAW_STATE_DIR = path.join(workspaceDir, "state");
+        core.clearMemoryPluginState();
+        core.registerMemoryCapability("memory-core", {{
+          promptBuilder({{ availableTools, citationsMode }}) {{
+            return availableTools.has("memory_search")
+              ? ["## Memory Recall", `citations=${{citationsMode ?? "default"}}`, ""]
+              : [];
+          }},
+          publicArtifacts: {{
+            async listArtifacts() {{
+              return [
+                {{
+                  kind: "daily-note",
+                  workspaceDir: path.join(workspaceDir, "b"),
+                  relativePath: "memory/b.md",
+                  absolutePath: path.join(workspaceDir, "b", "memory", "b.md"),
+                  agentIds: ["beta"],
+                  contentType: "markdown"
+                }},
+                {{
+                  kind: "memory-root",
+                  workspaceDir: path.join(workspaceDir, "a"),
+                  relativePath: "MEMORY.md",
+                  absolutePath: path.join(workspaceDir, "a", "MEMORY.md"),
+                  agentIds: ["main"],
+                  contentType: "markdown"
+                }}
+              ];
+            }}
+          }}
+        }});
+        core.registerMemoryCorpusSupplement("memory-wiki", {{
+          async search({{ query }}) {{
+            return [{{ corpus: "wiki", path: "sources/alpha.md", score: 1, snippet: query }}];
+          }},
+          async get() {{
+            return null;
+          }}
+        }});
+        const prompt = core.buildActiveMemoryPromptSection({{
+          availableTools: new Set(["memory_search"]),
+          citationsMode: "off"
+        }});
+        const artifacts = await core.listActiveMemoryPublicArtifacts({{ cfg: {{}} }});
+        const supplementSearch = await core
+          .listMemoryCorpusSupplements()[0]
+          .supplement.search({{ query: "alpha" }});
+        const parsedSession = core.parseAgentSessionKey(
+          " Agent:Research-Agent:Slack:Workspace:Channel:ABC "
+        );
+        const cronNow = core.resolveCronStyleNow(
+          {{ agents: {{ defaults: {{ userTimezone: "UTC", timeFormat: "24" }} }} }},
+          Date.UTC(2026, 4, 6, 14, 30)
+        );
+        const sessionsDir = core.resolveSessionTranscriptsDirForAgent("Research Agent");
+        const result = {{
+          selectedTypes: {{
+            asToolParamsRecord: typeof core.asToolParamsRecord,
+            getRuntimeConfig: typeof core.getRuntimeConfig,
+            loadConfig: typeof core.loadConfig,
+            registerMemoryCapability: typeof scopedCore.registerMemoryCapability
+          }},
+          defaults: {{
+            compactionFloor: core.DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR,
+            silentReply: core.SILENT_REPLY_TOKEN
+          }},
+          params: {{
+            emptyRecord: core.asToolParamsRecord(null),
+            objectRecord: core.asToolParamsRecord({{ ok: true }}),
+            jsonDetails: core.jsonResult({{ ok: true }}).details,
+            string: core.readStringParam({{ message_id: "  abc  " }}, "messageId"),
+            number: core.readNumberParam({{ limit: "12.9px" }}, "limit", {{ integer: true }}),
+            strictNumber:
+              core.readNumberParam(
+                {{ limit: "12.9px" }},
+                "limit",
+                {{ strict: true }}
+              ) ?? null,
+            bytes: [
+              core.parseNonNegativeByteSize("1.5kb"),
+              core.parseNonNegativeByteSize(3.9),
+              core.parseNonNegativeByteSize("-1"),
+              core.parseNonNegativeByteSize("bad")
+            ]
+          }},
+          config: {{
+            defaultAgent: core.resolveDefaultAgentId({{
+              agents: {{ list: [{{ id: "alpha" }}, {{ id: "Beta Agent", default: true }}] }}
+            }}),
+            memorySearch: core.resolveMemorySearchConfig({{
+              agents: {{
+                defaults: {{ memorySearch: {{ extraPaths: ["docs"] }} }},
+                list: [{{ id: "beta", memorySearch: {{ extraPaths: ["notes", "docs"] }} }}]
+              }}
+            }}, "beta"),
+            sessionsDir: rel(sessionsDir)
+          }},
+          parsedSession,
+          cronNow,
+          prompt,
+          capabilityPluginId: core.getMemoryCapabilityRegistration().pluginId,
+          supplementSearch,
+          artifacts: artifacts.map((entry) => ({{
+            kind: entry.kind,
+            workspaceDir: rel(entry.workspaceDir),
+            relativePath: entry.relativePath,
+            agentIds: entry.agentIds,
+            contentType: entry.contentType
+          }}))
+        }};
+        core.clearMemoryPluginState();
+        result.afterClear = {{
+          prompt: core.buildActiveMemoryPromptSection({{
+            availableTools: new Set(["memory_search"])
+          }}),
+          supplements: core.listMemoryCorpusSupplements()
+        }};
+        if (previousStateDir === undefined) {{
+          delete process.env.OPENCLAW_STATE_DIR;
+        }} else {{
+          process.env.OPENCLAW_STATE_DIR = previousStateDir;
+        }}
+        return result;
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-runtime-core-plugin",
+                    "name": "Memory Runtime Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-runtime-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.memory_core_host_runtime_core"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_runtime_core"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "asToolParamsRecord": "function",
+            "getRuntimeConfig": "function",
+            "loadConfig": "function",
+            "registerMemoryCapability": "function",
+        },
+        "defaults": {
+            "compactionFloor": 20000,
+            "silentReply": "NO_REPLY",
+        },
+        "params": {
+            "emptyRecord": {},
+            "objectRecord": {"ok": True},
+            "jsonDetails": {"ok": True},
+            "string": "abc",
+            "number": 12,
+            "strictNumber": None,
+            "bytes": [1536, 3, None, None],
+        },
+        "config": {
+            "defaultAgent": "beta-agent",
+            "memorySearch": {
+                "enabled": True,
+                "extraPaths": ["docs", "notes"],
+            },
+            "sessionsDir": "state/agents/research-agent/sessions",
+        },
+        "parsedSession": {
+            "agentId": "research-agent",
+            "rest": "slack:workspace:channel:abc",
+        },
+        "cronNow": {
+            "userTimezone": "UTC",
+            "formattedTime": "Wednesday, May 6th, 2026 - 14:30",
+            "timeLine": (
+                "Current time: Wednesday, May 6th, 2026 - 14:30 "
+                "(UTC) / 2026-05-06 14:30 UTC"
+            ),
+        },
+        "prompt": ["## Memory Recall", "citations=off", ""],
+        "capabilityPluginId": "memory-core",
+        "supplementSearch": [
+            {"corpus": "wiki", "path": "sources/alpha.md", "score": 1, "snippet": "alpha"}
+        ],
+        "artifacts": [
+            {
+                "kind": "memory-root",
+                "workspaceDir": "a",
+                "relativePath": "MEMORY.md",
+                "agentIds": ["main"],
+                "contentType": "markdown",
+            },
+            {
+                "kind": "daily-note",
+                "workspaceDir": "b",
+                "relativePath": "memory/b.md",
+                "agentIds": ["beta"],
+                "contentType": "markdown",
+            },
+        ],
+        "afterClear": {
+            "prompt": [],
+            "supplements": [],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

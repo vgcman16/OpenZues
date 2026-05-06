@@ -47917,6 +47917,289 @@ const memoryCoreHostRuntimeFilesRuntime = {
   resolveMemoryBackendConfig,
 };
 
+const DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20000;
+const BYTE_SIZE_MULTIPLIERS = {
+  b: 1,
+  kb: 1024,
+  k: 1024,
+  mb: 1024 ** 2,
+  m: 1024 ** 2,
+  gb: 1024 ** 3,
+  g: 1024 ** 3,
+  tb: 1024 ** 4,
+  t: 1024 ** 4,
+};
+const MEMORY_RUNTIME_CORE_STATE_KEY = Symbol.for("openclaw.memoryRuntimeCore.state");
+
+function asToolParamsRecord(params) {
+  return params && typeof params === "object" && !Array.isArray(params) ? params : {};
+}
+
+function parseNonNegativeByteSize(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const intValue = Math.floor(value);
+    return intValue >= 0 ? intValue : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = normalizeLowercaseStringOrEmpty(normalizeOptionalString(value) || "");
+  if (!trimmed) {
+    return null;
+  }
+  const match = /^(\d+(?:\.\d+)?)([a-z]+)?$/.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const numeric = Number(match[1]);
+  const unit = normalizeLowercaseStringOrEmpty(match[2] || "b");
+  const multiplier = BYTE_SIZE_MULTIPLIERS[unit];
+  if (!Number.isFinite(numeric) || numeric < 0 || !multiplier) {
+    return null;
+  }
+  const bytes = Math.round(numeric * multiplier);
+  return Number.isFinite(bytes) ? bytes : null;
+}
+
+function resolveUserTimezone(configured) {
+  const trimmed = normalizeOptionalString(configured);
+  if (trimmed) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: trimmed }).format(new Date());
+      return trimmed;
+    } catch {}
+  }
+  const host = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return normalizeOptionalString(host) || "UTC";
+}
+
+function resolveUserTimeFormat(preference) {
+  return preference === "12" || preference === "24" ? preference : "12";
+}
+
+function ordinalSuffix(day) {
+  if (day >= 11 && day <= 13) {
+    return "th";
+  }
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+function formatUserTime(date, timeZone, format) {
+  const use24Hour = format === "24";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: use24Hour ? "2-digit" : "numeric",
+      minute: "2-digit",
+      hourCycle: use24Hour ? "h23" : "h12",
+    }).formatToParts(date);
+    const mapped = {};
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        mapped[part.type] = part.value;
+      }
+    }
+    if (
+      !mapped.weekday ||
+      !mapped.year ||
+      !mapped.month ||
+      !mapped.day ||
+      !mapped.hour ||
+      !mapped.minute
+    ) {
+      return undefined;
+    }
+    const dayNum = Number.parseInt(mapped.day, 10);
+    const timePart = use24Hour
+      ? `${mapped.hour}:${mapped.minute}`
+      : `${mapped.hour}:${mapped.minute} ${mapped.dayPeriod || ""}`.trim();
+    return `${mapped.weekday}, ${mapped.month} ${dayNum}${ordinalSuffix(dayNum)}, ${
+      mapped.year
+    } - ${timePart}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCronStyleNow(cfg = {}, nowMs) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults;
+  const userTimezone = resolveUserTimezone(defaults && defaults.userTimezone);
+  const userTimeFormat = resolveUserTimeFormat(defaults && defaults.timeFormat);
+  const date = new Date(nowMs);
+  const formattedTime = formatUserTime(date, userTimezone, userTimeFormat) || date.toISOString();
+  const utcTime = `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  const timeLine = `Current time: ${formattedTime} (${userTimezone}) / ${utcTime}`;
+  return { userTimezone, formattedTime, timeLine };
+}
+
+function resolveDefaultAgentId(cfg = {}) {
+  return memoryRuntimeResolveDefaultAgentId(cfg);
+}
+
+function resolveSessionAgentId(params = {}) {
+  const defaultAgentId = resolveDefaultAgentId(params.config || {});
+  const rawSessionKey = normalizeOptionalString(params.sessionKey);
+  const parsed = rawSessionKey ? parseAgentSessionKey(rawSessionKey) : null;
+  return parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId;
+}
+
+function resolveMemorySearchConfig(cfg = {}, agentId) {
+  return memoryRuntimeResolveMemorySearchConfig(cfg, agentId);
+}
+
+function resolveSessionTranscriptsDirForAgent(
+  agentId,
+  env = process.env,
+  homedir = () => resolveRequiredHomeDir(env, () => os.homedir()),
+) {
+  const root = resolveStateDir(env, homedir);
+  const id = normalizeAgentId(agentId || DEFAULT_AGENT_ID);
+  return path.join(root, "agents", id, "sessions");
+}
+
+function getMemoryRuntimeCoreState() {
+  return resolveGlobalSingleton(MEMORY_RUNTIME_CORE_STATE_KEY, () => ({
+    capability: undefined,
+    corpusSupplements: [],
+  }));
+}
+
+function cloneMemoryCapabilityRegistration(registration) {
+  return registration
+    ? {
+        pluginId: registration.pluginId,
+        capability: { ...registration.capability },
+      }
+    : undefined;
+}
+
+function registerMemoryCapability(pluginId, capability) {
+  getMemoryRuntimeCoreState().capability = {
+    pluginId,
+    capability: { ...(capability || {}) },
+  };
+}
+
+function getMemoryCapabilityRegistration() {
+  return cloneMemoryCapabilityRegistration(getMemoryRuntimeCoreState().capability);
+}
+
+function registerMemoryCorpusSupplement(pluginId, supplement) {
+  const state = getMemoryRuntimeCoreState();
+  state.corpusSupplements = state.corpusSupplements.filter(
+    (registration) => registration.pluginId !== pluginId,
+  );
+  state.corpusSupplements.push({ pluginId, supplement });
+}
+
+function listMemoryCorpusSupplements() {
+  return [...getMemoryRuntimeCoreState().corpusSupplements];
+}
+
+function normalizeMemoryPromptLines(value) {
+  return Array.isArray(value) ? value.filter((line) => typeof line === "string") : [];
+}
+
+function buildActiveMemoryPromptSection(params = {}) {
+  const registration = getMemoryRuntimeCoreState().capability;
+  const builder = registration && registration.capability && registration.capability.promptBuilder;
+  return normalizeMemoryPromptLines(typeof builder === "function" ? builder(params) : []);
+}
+
+function cloneMemoryPublicArtifact(artifact) {
+  return {
+    ...artifact,
+    agentIds: Array.isArray(artifact && artifact.agentIds) ? [...artifact.agentIds] : [],
+  };
+}
+
+async function listActiveMemoryPublicArtifacts(params = {}) {
+  const registration = getMemoryRuntimeCoreState().capability;
+  const provider =
+    registration &&
+    registration.capability &&
+    registration.capability.publicArtifacts &&
+    registration.capability.publicArtifacts.listArtifacts;
+  const artifacts = typeof provider === "function" ? await provider(params) : [];
+  return (Array.isArray(artifacts) ? artifacts : [])
+    .map(cloneMemoryPublicArtifact)
+    .sort((left, right) => {
+      const workspaceOrder = String(left.workspaceDir || "").localeCompare(
+        String(right.workspaceDir || ""),
+      );
+      if (workspaceOrder !== 0) {
+        return workspaceOrder;
+      }
+      const relativePathOrder = String(left.relativePath || "").localeCompare(
+        String(right.relativePath || ""),
+      );
+      if (relativePathOrder !== 0) {
+        return relativePathOrder;
+      }
+      const kindOrder = String(left.kind || "").localeCompare(String(right.kind || ""));
+      if (kindOrder !== 0) {
+        return kindOrder;
+      }
+      const contentTypeOrder = String(left.contentType || "").localeCompare(
+        String(right.contentType || ""),
+      );
+      if (contentTypeOrder !== 0) {
+        return contentTypeOrder;
+      }
+      const agentOrder = left.agentIds.join("\0").localeCompare(right.agentIds.join("\0"));
+      if (agentOrder !== 0) {
+        return agentOrder;
+      }
+      return String(left.absolutePath || "").localeCompare(String(right.absolutePath || ""));
+    });
+}
+
+function clearMemoryPluginState() {
+  const state = getMemoryRuntimeCoreState();
+  state.capability = undefined;
+  state.corpusSupplements = [];
+}
+
+const memoryCoreHostRuntimeCoreRuntime = {
+  DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR,
+  SILENT_REPLY_TOKEN,
+  asToolParamsRecord,
+  buildActiveMemoryPromptSection,
+  clearMemoryPluginState,
+  emptyPluginConfigSchema,
+  getMemoryCapabilityRegistration,
+  getRuntimeConfig,
+  jsonResult,
+  listActiveMemoryPublicArtifacts,
+  listMemoryCorpusSupplements,
+  loadConfig: getRuntimeConfig,
+  parseAgentSessionKey,
+  parseNonNegativeByteSize,
+  readNumberParam,
+  readStringParam,
+  registerMemoryCapability,
+  registerMemoryCorpusSupplement,
+  resolveCronStyleNow,
+  resolveDefaultAgentId,
+  resolveMemorySearchConfig,
+  resolveSessionAgentId,
+  resolveSessionTranscriptsDirForAgent,
+  resolveStateDir,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -49162,6 +49445,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-files"
   ) {
     return memoryCoreHostRuntimeFilesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-runtime-core" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-runtime-core"
+  ) {
+    return memoryCoreHostRuntimeCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
