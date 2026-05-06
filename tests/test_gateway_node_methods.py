@@ -30928,6 +30928,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_fetch_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-fetch.cjs"
+    runtime_entry.write_text(
+        """
+const runtimeFetch = require("openclaw/plugin-sdk/runtime-fetch");
+const scopedRuntimeFetch = require("@openclaw/plugin-sdk/runtime-fetch");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.fetch",
+      description: "Use OpenClaw runtime-fetch SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const keys = Object.keys(runtimeFetch).sort();
+        if (!keys.includes("fetchWithRuntimeDispatcher")) {
+          return {
+            keys,
+            scopedType: typeof scopedRuntimeFetch.fetchWithRuntimeDispatcher
+          };
+        }
+        const directResponse = await runtimeFetch.fetchWithRuntimeDispatcher(
+          "data:text/plain,hello-runtime"
+        );
+        const directText = await directResponse.text();
+        const originalFetch = globalThis.fetch;
+        const mockCalls = [];
+        const mockedFetch = async (input, init) => {
+          mockCalls.push({
+            input: String(input),
+            method: init && init.method,
+            header: init && init.headers && init.headers["x-test"]
+          });
+          return new Response(JSON.stringify({ ok: true, input: String(input) }), {
+            status: 201,
+            headers: { "content-type": "application/json" }
+          });
+        };
+        mockedFetch.mock = { calls: mockCalls };
+        globalThis.fetch = mockedFetch;
+        try {
+          const mockedResponse =
+            await scopedRuntimeFetch.fetchWithRuntimeDispatcherOrMockedGlobal(
+              "https://example.test/runtime",
+              { method: "POST", headers: { "x-test": "yes" } }
+            );
+          return {
+            keys,
+            scopedType: typeof scopedRuntimeFetch.fetchWithRuntimeDispatcher,
+            direct: { status: directResponse.status, text: directText },
+            mocked: {
+              isMocked: runtimeFetch.isMockedFetch(globalThis.fetch),
+              missingMock: runtimeFetch.isMockedFetch(undefined),
+              status: mockedResponse.status,
+              body: await mockedResponse.json(),
+              calls: mockCalls
+            }
+          };
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-fetch-plugin",
+                    "name": "Runtime Fetch Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-runtime-fetch-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.fetch"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.fetch"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "fetchWithRuntimeDispatcher",
+            "fetchWithRuntimeDispatcherOrMockedGlobal",
+            "isMockedFetch",
+        ],
+        "scopedType": "function",
+        "direct": {"status": 200, "text": "hello-runtime"},
+        "mocked": {
+            "isMocked": True,
+            "missingMock": False,
+            "status": 201,
+            "body": {"ok": True, "input": "https://example.test/runtime"},
+            "calls": [
+                {
+                    "input": "https://example.test/runtime",
+                    "method": "POST",
+                    "header": "yes",
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

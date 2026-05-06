@@ -19166,6 +19166,24 @@ function selectApplicableRuntimeConfig(params = {}) {
   return inputConfig;
 }
 
+function isMockedFetch(fetchImpl) {
+  return typeof fetchImpl === "function" && typeof fetchImpl.mock === "object";
+}
+
+async function fetchWithRuntimeDispatcher(input, init) {
+  if (typeof globalThis.fetch !== "function") {
+    throw new Error("runtime fetch is not available in this Node.js runtime");
+  }
+  return await globalThis.fetch(input, init);
+}
+
+async function fetchWithRuntimeDispatcherOrMockedGlobal(input, init) {
+  if (isMockedFetch(globalThis.fetch)) {
+    return await globalThis.fetch(input, init);
+  }
+  return await fetchWithRuntimeDispatcher(input, init);
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -33504,6 +33522,12 @@ const runtimeConfigSnapshotRuntime = {
   setRuntimeConfigSnapshot,
 };
 
+const runtimeFetchRuntime = {
+  fetchWithRuntimeDispatcher,
+  fetchWithRuntimeDispatcherOrMockedGlobal,
+  isMockedFetch,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -44310,6 +44334,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-config-snapshot"
   ) {
     return runtimeConfigSnapshotRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-fetch" ||
+    request === "@openclaw/plugin-sdk/runtime-fetch"
+  ) {
+    return runtimeFetchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
