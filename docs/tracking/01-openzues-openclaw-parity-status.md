@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~79.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~79.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -602,6 +602,12 @@ may lag behind this tracker.
   optional reply runtime primitive parsing, and the OpenClaw tool-policy
   `allow` plus `alsoAllow` conflict guard.
   - Status: checkpointed in `99bb3098`
+
+- [x] Imported plugin SDK ACP binding resolve helper shim for
+  `openclaw/plugin-sdk/acp-binding-resolve-runtime`, top-level typed ACP
+  binding resolution, exact-account preference, parent conversation fallback,
+  and deterministic ACP binding session-key metadata.
+  - Status: checkpointed in `4c9ed6d6`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
