@@ -49535,7 +49535,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
-    request === "@openclaw/plugin-sdk/memory-core-host-status"
+    request === "@openclaw/plugin-sdk/memory-core-host-status" ||
+    request === "openclaw/plugin-sdk/memory-host-status" ||
+    request === "@openclaw/plugin-sdk/memory-host-status"
   ) {
     return memoryCoreHostStatusRuntime;
   }

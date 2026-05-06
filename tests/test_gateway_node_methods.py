@@ -35922,6 +35922,106 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_status_alias_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-status.cjs"
+    runtime_entry.write_text(
+        """
+const status = require("openclaw/plugin-sdk/memory-host-status");
+const scopedStatus = require("@openclaw/plugin-sdk/memory-host-status");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_host_status",
+      description: "Use OpenClaw memory-host-status SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(status).sort(),
+          scopedType: typeof scopedStatus.resolveMemoryCacheSummary,
+          vector: status.resolveMemoryVectorState({
+            enabled: true,
+            available: false
+          }),
+          fts: scopedStatus.resolveMemoryFtsState({
+            enabled: true,
+            available: true
+          }),
+          cache: status.resolveMemoryCacheSummary({
+            enabled: true,
+            entries: 7
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-status-plugin",
+                    "name": "Memory Host Status Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-status.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_status"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_status"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "resolveMemoryCacheSummary",
+            "resolveMemoryFtsState",
+            "resolveMemoryVectorState",
+        ],
+        "scopedType": "function",
+        "vector": {"tone": "warn", "state": "unavailable"},
+        "fts": {"tone": "ok", "state": "ready"},
+        "cache": {"tone": "ok", "text": "cache on (7)"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:
