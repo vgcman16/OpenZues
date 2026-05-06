@@ -36708,6 +36708,475 @@ const channelContractTestingRuntime = {
   primeChannelOutboundSendMock,
 };
 
+function applyChannelMatchMeta(result, match = {}) {
+  if (match.matchKey && match.matchSource) {
+    result.matchKey = match.matchKey;
+    result.matchSource = match.matchSource;
+  }
+  return result;
+}
+
+function resolveChannelMatchConfig(match = {}, resolveEntry) {
+  if (!match.entry) {
+    return null;
+  }
+  return applyChannelMatchMeta(resolveEntry(match.entry), match);
+}
+
+function normalizeChannelSlug(value) {
+  return normalizeLowercaseStringOrEmpty(value)
+    .replace(/^#/u, "")
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+}
+
+function buildChannelKeyCandidates(...keys) {
+  const seen = new Set();
+  const candidates = [];
+  for (const key of keys) {
+    if (typeof key !== "string") {
+      continue;
+    }
+    const trimmed = key.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    candidates.push(trimmed);
+  }
+  return candidates;
+}
+
+function resolveChannelEntryMatch(params = {}) {
+  const entries = params.entries || {};
+  const match = {};
+  for (const key of params.keys || []) {
+    if (!Object.prototype.hasOwnProperty.call(entries, key)) {
+      continue;
+    }
+    match.entry = entries[key];
+    match.key = key;
+    break;
+  }
+  if (
+    params.wildcardKey &&
+    Object.prototype.hasOwnProperty.call(entries, params.wildcardKey)
+  ) {
+    match.wildcardEntry = entries[params.wildcardKey];
+    match.wildcardKey = params.wildcardKey;
+  }
+  return match;
+}
+
+function resolveChannelEntryMatchWithFallback(params = {}) {
+  const direct = resolveChannelEntryMatch({
+    entries: params.entries,
+    keys: params.keys || [],
+    wildcardKey: params.wildcardKey,
+  });
+  if (direct.entry && direct.key) {
+    return { ...direct, matchKey: direct.key, matchSource: "direct" };
+  }
+  const normalizeKey = params.normalizeKey;
+  if (typeof normalizeKey === "function") {
+    const normalizedKeys = (params.keys || []).map((key) => normalizeKey(key)).filter(Boolean);
+    if (normalizedKeys.length > 0) {
+      for (const [entryKey, entry] of Object.entries(params.entries || {})) {
+        const normalizedEntry = normalizeKey(entryKey);
+        if (normalizedEntry && normalizedKeys.includes(normalizedEntry)) {
+          return {
+            ...direct,
+            entry,
+            key: entryKey,
+            matchKey: entryKey,
+            matchSource: "direct",
+          };
+        }
+      }
+    }
+  }
+  const parentKeys = params.parentKeys || [];
+  if (parentKeys.length > 0) {
+    const parent = resolveChannelEntryMatch({ entries: params.entries, keys: parentKeys });
+    if (parent.entry && parent.key) {
+      return {
+        ...direct,
+        entry: parent.entry,
+        key: parent.key,
+        parentEntry: parent.entry,
+        parentKey: parent.key,
+        matchKey: parent.key,
+        matchSource: "parent",
+      };
+    }
+    if (typeof normalizeKey === "function") {
+      const normalizedParentKeys = parentKeys.map((key) => normalizeKey(key)).filter(Boolean);
+      if (normalizedParentKeys.length > 0) {
+        for (const [entryKey, entry] of Object.entries(params.entries || {})) {
+          const normalizedEntry = normalizeKey(entryKey);
+          if (normalizedEntry && normalizedParentKeys.includes(normalizedEntry)) {
+            return {
+              ...direct,
+              entry,
+              key: entryKey,
+              parentEntry: entry,
+              parentKey: entryKey,
+              matchKey: entryKey,
+              matchSource: "parent",
+            };
+          }
+        }
+      }
+    }
+  }
+  if (direct.wildcardEntry && direct.wildcardKey) {
+    return {
+      ...direct,
+      entry: direct.wildcardEntry,
+      key: direct.wildcardKey,
+      matchKey: direct.wildcardKey,
+      matchSource: "wildcard",
+    };
+  }
+  return direct;
+}
+
+function resolveNestedAllowlistDecision(params = {}) {
+  if (!params.outerConfigured) {
+    return true;
+  }
+  if (!params.outerMatched) {
+    return false;
+  }
+  if (!params.innerConfigured) {
+    return true;
+  }
+  return Boolean(params.innerMatched);
+}
+
+function normalizeTargetId(kind, id) {
+  return normalizeLowercaseStringOrEmpty(`${kind}:${id}`);
+}
+
+function buildMessagingTarget(kind, id, raw) {
+  return {
+    kind,
+    id,
+    raw,
+    normalized: normalizeTargetId(kind, id),
+  };
+}
+
+function ensureTargetId(params = {}) {
+  if (!params.pattern.test(params.candidate)) {
+    throw new Error(params.errorMessage);
+  }
+  return params.candidate;
+}
+
+function parseTargetMention(params = {}) {
+  const match = String(params.raw || "").match(params.mentionPattern);
+  if (!match || !match[1]) {
+    return undefined;
+  }
+  return buildMessagingTarget(params.kind, match[1], params.raw);
+}
+
+function parseTargetPrefix(params = {}) {
+  const raw = String(params.raw || "");
+  if (!raw.startsWith(params.prefix)) {
+    return undefined;
+  }
+  const id = raw.slice(String(params.prefix || "").length).trim();
+  return id ? buildMessagingTarget(params.kind, id, params.raw) : undefined;
+}
+
+function parseTargetPrefixes(params = {}) {
+  for (const entry of params.prefixes || []) {
+    const parsed = parseTargetPrefix({
+      raw: params.raw,
+      prefix: entry.prefix,
+      kind: entry.kind,
+    });
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parseAtUserTarget(params = {}) {
+  const raw = String(params.raw || "");
+  if (!raw.startsWith("@")) {
+    return undefined;
+  }
+  const candidate = raw.slice(1).trim();
+  const id = ensureTargetId({
+    candidate,
+    pattern: params.pattern,
+    errorMessage: params.errorMessage,
+  });
+  return buildMessagingTarget("user", id, params.raw);
+}
+
+function parseMentionPrefixOrAtUserTarget(params = {}) {
+  const mentionTarget = parseTargetMention({
+    raw: params.raw,
+    mentionPattern: params.mentionPattern,
+    kind: "user",
+  });
+  if (mentionTarget) {
+    return mentionTarget;
+  }
+  const prefixedTarget = parseTargetPrefixes({
+    raw: params.raw,
+    prefixes: params.prefixes,
+  });
+  if (prefixedTarget) {
+    return prefixedTarget;
+  }
+  return parseAtUserTarget({
+    raw: params.raw,
+    pattern: params.atUserPattern,
+    errorMessage: params.atUserErrorMessage,
+  });
+}
+
+function requireTargetKind(params = {}) {
+  const kindLabel = params.kind;
+  if (!params.target) {
+    throw new Error(`${params.platform} ${kindLabel} id is required.`);
+  }
+  if (params.target.kind !== params.kind) {
+    throw new Error(`${params.platform} ${kindLabel} id is required (use ${kindLabel}:<id>).`);
+  }
+  return params.target.id;
+}
+
+function stripChatTargetPrefix(value, prefix) {
+  return value.slice(prefix.length).trim();
+}
+
+function startsWithAnyChatPrefix(value, prefixes) {
+  return prefixes.some((prefix) => value.startsWith(prefix));
+}
+
+function resolveServicePrefixedTarget(params = {}) {
+  for (const { prefix, service } of params.servicePrefixes || []) {
+    if (!params.lower.startsWith(prefix)) {
+      continue;
+    }
+    const remainder = stripChatTargetPrefix(params.trimmed, prefix);
+    if (!remainder) {
+      throw new Error(`${prefix} target is required`);
+    }
+    const remainderLower = normalizeLowercaseStringOrEmpty(remainder);
+    if (params.isChatTarget(remainderLower)) {
+      return params.parseTarget(remainder);
+    }
+    return { kind: "handle", to: remainder, service };
+  }
+  return null;
+}
+
+function resolveServicePrefixedChatTarget(params = {}) {
+  const chatPrefixes = [
+    ...(params.chatIdPrefixes || []),
+    ...(params.chatGuidPrefixes || []),
+    ...(params.chatIdentifierPrefixes || []),
+    ...(params.extraChatPrefixes || []),
+  ];
+  return resolveServicePrefixedTarget({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    servicePrefixes: params.servicePrefixes,
+    isChatTarget: (remainderLower) => startsWithAnyChatPrefix(remainderLower, chatPrefixes),
+    parseTarget: params.parseTarget,
+  });
+}
+
+function parseChatTargetPrefixesOrThrow(params = {}) {
+  for (const prefix of params.chatIdPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      const chatId = Number.parseInt(value, 10);
+      if (!Number.isFinite(chatId)) {
+        throw new Error(`Invalid chat_id: ${value}`);
+      }
+      return { kind: "chat_id", chatId };
+    }
+  }
+  for (const prefix of params.chatGuidPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (!value) {
+        throw new Error("chat_guid is required");
+      }
+      return { kind: "chat_guid", chatGuid: value };
+    }
+  }
+  for (const prefix of params.chatIdentifierPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (!value) {
+        throw new Error("chat_identifier is required");
+      }
+      return { kind: "chat_identifier", chatIdentifier: value };
+    }
+  }
+  return null;
+}
+
+function parseChatAllowTargetPrefixes(params = {}) {
+  for (const prefix of params.chatIdPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      const chatId = Number.parseInt(value, 10);
+      if (Number.isFinite(chatId)) {
+        return { kind: "chat_id", chatId };
+      }
+    }
+  }
+  for (const prefix of params.chatGuidPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (value) {
+        return { kind: "chat_guid", chatGuid: value };
+      }
+    }
+  }
+  for (const prefix of params.chatIdentifierPrefixes || []) {
+    if (params.lower.startsWith(prefix)) {
+      const value = stripChatTargetPrefix(params.trimmed, prefix);
+      if (value) {
+        return { kind: "chat_identifier", chatIdentifier: value };
+      }
+    }
+  }
+  return null;
+}
+
+function resolveServicePrefixedAllowTarget(params = {}) {
+  for (const { prefix } of params.servicePrefixes || []) {
+    if (!params.lower.startsWith(prefix)) {
+      continue;
+    }
+    const remainder = stripChatTargetPrefix(params.trimmed, prefix);
+    if (!remainder) {
+      return { kind: "handle", handle: "" };
+    }
+    return params.parseAllowTarget(remainder);
+  }
+  return null;
+}
+
+function resolveServicePrefixedOrChatAllowTarget(params = {}) {
+  const servicePrefixed = resolveServicePrefixedAllowTarget({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    servicePrefixes: params.servicePrefixes,
+    parseAllowTarget: params.parseAllowTarget,
+  });
+  if (servicePrefixed) {
+    return servicePrefixed;
+  }
+  return parseChatAllowTargetPrefixes({
+    trimmed: params.trimmed,
+    lower: params.lower,
+    chatIdPrefixes: params.chatIdPrefixes,
+    chatGuidPrefixes: params.chatGuidPrefixes,
+    chatIdentifierPrefixes: params.chatIdentifierPrefixes,
+  });
+}
+
+function isAllowedParsedChatSender(params = {}) {
+  const allowFrom = normalizeStringEntries(params.allowFrom || []);
+  if (allowFrom.length === 0) {
+    return false;
+  }
+  if (allowFrom.includes("*")) {
+    return true;
+  }
+  const senderNormalized = params.normalizeSender(params.sender || "");
+  const chatId = params.chatId ?? undefined;
+  const chatGuid = normalizeOptionalString(params.chatGuid);
+  const chatIdentifier = normalizeOptionalString(params.chatIdentifier);
+  for (const entry of allowFrom) {
+    if (!entry) {
+      continue;
+    }
+    const parsed = params.parseAllowTarget(entry);
+    if (parsed.kind === "chat_id" && chatId !== undefined && parsed.chatId === chatId) {
+      return true;
+    }
+    if (parsed.kind === "chat_guid" && chatGuid && parsed.chatGuid === chatGuid) {
+      return true;
+    }
+    if (
+      parsed.kind === "chat_identifier" &&
+      chatIdentifier &&
+      parsed.chatIdentifier === chatIdentifier
+    ) {
+      return true;
+    }
+    if (parsed.kind === "handle" && senderNormalized && parsed.handle === senderNormalized) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function createAllowedChatSenderMatcher(params = {}) {
+  return (input) =>
+    isAllowedParsedChatSender({
+      allowFrom: input.allowFrom,
+      sender: input.sender,
+      chatId: input.chatId,
+      chatGuid: input.chatGuid,
+      chatIdentifier: input.chatIdentifier,
+      normalizeSender: params.normalizeSender,
+      parseAllowTarget: params.parseAllowTarget,
+    });
+}
+
+function normalizeChannelId(raw) {
+  return normalizeOptionalLowercaseString(raw) || null;
+}
+
+function resolveChannelTtsVoiceDelivery() {
+  return undefined;
+}
+
+const channelTargetsRuntime = {
+  applyChannelMatchMeta,
+  buildChannelKeyCandidates,
+  buildMessagingTarget,
+  buildUnresolvedTargetResults,
+  createAllowedChatSenderMatcher,
+  ensureTargetId,
+  normalizeChannelId,
+  normalizeChannelSlug,
+  normalizeTargetId,
+  parseAtUserTarget,
+  parseChatAllowTargetPrefixes,
+  parseChatTargetPrefixesOrThrow,
+  parseMentionPrefixOrAtUserTarget,
+  parseTargetMention,
+  parseTargetPrefix,
+  parseTargetPrefixes,
+  requireTargetKind,
+  resolveChannelEntryMatch,
+  resolveChannelEntryMatchWithFallback,
+  resolveChannelMatchConfig,
+  resolveChannelTtsVoiceDelivery,
+  resolveNestedAllowlistDecision,
+  resolveServicePrefixedAllowTarget,
+  resolveServicePrefixedChatTarget,
+  resolveServicePrefixedOrChatAllowTarget,
+  resolveServicePrefixedTarget,
+  resolveTargetsWithOptionalToken,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -37574,6 +38043,7 @@ const genericSdk = new Proxy(
     ...channelLifecycleRuntime,
     ...channelCoreRuntime,
     ...channelContractTestingRuntime,
+    ...channelTargetsRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -38589,6 +39059,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-contract-testing"
   ) {
     return channelContractTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-targets" ||
+    request === "@openclaw/plugin-sdk/channel-targets"
+  ) {
+    return channelTargetsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

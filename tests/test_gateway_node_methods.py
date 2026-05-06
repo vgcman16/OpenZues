@@ -20888,6 +20888,371 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-targets.cjs"
+    runtime_entry.write_text(
+        """
+const targets = require("openclaw/plugin-sdk/channel-targets");
+const scopedTargets = require("@openclaw/plugin-sdk/channel-targets");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_targets",
+      description: "Use OpenClaw channel targets SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = {
+          "team-alpha": { id: "direct" },
+          parent: { id: "parent" },
+          "*": { id: "wildcard" },
+        };
+        const directMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["team-alpha"],
+          parentKeys: ["parent"],
+          wildcardKey: "*",
+        });
+        const normalizedMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["#Team Alpha"],
+          parentKeys: ["parent"],
+          wildcardKey: "*",
+          normalizeKey: targets.normalizeChannelSlug,
+        });
+        const wildcardMatch = targets.resolveChannelEntryMatchWithFallback({
+          entries,
+          keys: ["missing"],
+          wildcardKey: "*",
+        });
+        const matchConfig = targets.resolveChannelMatchConfig(
+          directMatch,
+          (entry) => ({ value: entry.id }),
+        );
+        const metaApplied = targets.applyChannelMatchMeta({ value: "ok" }, directMatch);
+
+        const mention = targets.parseTargetMention({
+          raw: "<@U123>",
+          mentionPattern: /^<@([^>]+)>$/,
+          kind: "user",
+        });
+        const prefixed = targets.parseTargetPrefix({
+          raw: "channel:C123",
+          prefix: "channel:",
+          kind: "channel",
+        });
+        const prefixedMulti = targets.parseTargetPrefixes({
+          raw: "user:U456",
+          prefixes: [
+            { prefix: "channel:", kind: "channel" },
+            { prefix: "user:", kind: "user" },
+          ],
+        });
+        const atUser = targets.parseAtUserTarget({
+          raw: "@Ada",
+          pattern: /^[A-Za-z]+$/,
+          errorMessage: "invalid user",
+        });
+        const mentionPrefixOrAt = targets.parseMentionPrefixOrAtUserTarget({
+          raw: "@Grace",
+          mentionPattern: /^<@([^>]+)>$/,
+          prefixes: [{ prefix: "channel:", kind: "channel" }],
+          atUserPattern: /^[A-Za-z]+$/,
+          atUserErrorMessage: "invalid user",
+        });
+        let requiredError = "";
+        try {
+          targets.requireTargetKind({
+            platform: "Slack",
+            target: prefixedMulti,
+            kind: "channel",
+          });
+        } catch (error) {
+          requiredError = error.message;
+        }
+
+        const chatParams = {
+          trimmed: "chat_id:42",
+          lower: "chat_id:42",
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+        };
+        const chatTarget = targets.parseChatTargetPrefixesOrThrow(chatParams);
+        const chatAllow = targets.parseChatAllowTargetPrefixes({
+          ...chatParams,
+          trimmed: "chat_guid:room-guid",
+          lower: "chat_guid:room-guid",
+        });
+        const servicePrefixed = targets.resolveServicePrefixedTarget({
+          trimmed: "sms:+15551234567",
+          lower: "sms:+15551234567",
+          servicePrefixes: [{ prefix: "sms:", service: "sms" }],
+          isChatTarget: () => false,
+          parseTarget: (value) => ({ kind: "chat", value }),
+        });
+        const serviceChat = targets.resolveServicePrefixedChatTarget({
+          trimmed: "imessage:chat_id:99",
+          lower: "imessage:chat_id:99",
+          servicePrefixes: [{ prefix: "imessage:", service: "imessage" }],
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+          parseTarget: (value) => ({ parsed: value }),
+        });
+        const serviceAllow = targets.resolveServicePrefixedAllowTarget({
+          trimmed: "sms:+1555",
+          lower: "sms:+1555",
+          servicePrefixes: [{ prefix: "sms:" }],
+          parseAllowTarget: (value) => ({ kind: "handle", handle: value }),
+        });
+        const serviceOrChatAllow = targets.resolveServicePrefixedOrChatAllowTarget({
+          trimmed: "chat_identifier:team",
+          lower: "chat_identifier:team",
+          servicePrefixes: [{ prefix: "sms:" }],
+          chatIdPrefixes: ["chat_id:"],
+          chatGuidPrefixes: ["chat_guid:"],
+          chatIdentifierPrefixes: ["chat_identifier:"],
+          parseAllowTarget: (value) => ({ kind: "handle", handle: value }),
+        });
+        const matcher = targets.createAllowedChatSenderMatcher({
+          normalizeSender: (sender) => sender.toLowerCase(),
+          parseAllowTarget: (entry) =>
+            entry.startsWith("chat_id:")
+              ? { kind: "chat_id", chatId: Number.parseInt(entry.slice(8), 10) }
+              : { kind: "handle", handle: entry.toLowerCase() },
+        });
+        const matched = matcher({
+          allowFrom: ["chat_id:42", "ada"],
+          sender: "Grace",
+          chatId: 42,
+        });
+        const unresolved = targets.buildUnresolvedTargetResults(["a", "b"], "missing token");
+        const missingToken = await targets.resolveTargetsWithOptionalToken({
+          token: "",
+          inputs: ["a"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async () => [{ id: "never" }],
+          mapResolved: (entry) => ({ input: entry.id, resolved: true }),
+        });
+        const resolved = await targets.resolveTargetsWithOptionalToken({
+          token: " tok ",
+          inputs: ["a"],
+          missingTokenNote: "missing token",
+          resolveWithToken: async ({ token, inputs }) =>
+            inputs.map((input) => ({ input, token })),
+          mapResolved: (entry) => ({
+            input: entry.input,
+            resolved: true,
+            note: entry.token,
+          }),
+        });
+
+        return {
+          keys: Object.keys(targets).sort(),
+          scopedType: typeof scopedTargets.buildMessagingTarget,
+          slug: targets.normalizeChannelSlug("#Team Alpha!"),
+          candidates: targets.buildChannelKeyCandidates(" a ", "a", "", "b"),
+          directMatch,
+          normalizedMatch,
+          wildcardMatch,
+          matchConfig,
+          metaApplied,
+          target: targets.buildMessagingTarget("channel", "C123", "channel:C123"),
+          targetId: targets.normalizeTargetId("user", "Ada"),
+          ensured: targets.ensureTargetId({
+            candidate: "U123",
+            pattern: /^U\\d+$/,
+            errorMessage: "invalid user",
+          }),
+          mention,
+          prefixed,
+          prefixedMulti,
+          atUser,
+          mentionPrefixOrAt,
+          required: targets.requireTargetKind({
+            platform: "Slack",
+            target: prefixed,
+            kind: "channel",
+          }),
+          requiredError,
+          chatTarget,
+          chatAllow,
+          servicePrefixed,
+          serviceChat,
+          serviceAllow,
+          serviceOrChatAllow,
+          matched,
+          normalizedChannel: targets.normalizeChannelId("Slack"),
+          voice: targets.resolveChannelTtsVoiceDelivery("missing") ?? null,
+          unresolved,
+          missingToken,
+          resolved,
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-targets-plugin",
+                    "name": "Runtime Channel Targets Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-targets.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_targets"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_targets"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyChannelMatchMeta",
+            "buildChannelKeyCandidates",
+            "buildMessagingTarget",
+            "buildUnresolvedTargetResults",
+            "createAllowedChatSenderMatcher",
+            "ensureTargetId",
+            "normalizeChannelId",
+            "normalizeChannelSlug",
+            "normalizeTargetId",
+            "parseAtUserTarget",
+            "parseChatAllowTargetPrefixes",
+            "parseChatTargetPrefixesOrThrow",
+            "parseMentionPrefixOrAtUserTarget",
+            "parseTargetMention",
+            "parseTargetPrefix",
+            "parseTargetPrefixes",
+            "requireTargetKind",
+            "resolveChannelEntryMatch",
+            "resolveChannelEntryMatchWithFallback",
+            "resolveChannelMatchConfig",
+            "resolveChannelTtsVoiceDelivery",
+            "resolveNestedAllowlistDecision",
+            "resolveServicePrefixedAllowTarget",
+            "resolveServicePrefixedChatTarget",
+            "resolveServicePrefixedOrChatAllowTarget",
+            "resolveServicePrefixedTarget",
+            "resolveTargetsWithOptionalToken",
+        ],
+        "scopedType": "function",
+        "slug": "team-alpha",
+        "candidates": ["a", "b"],
+        "directMatch": {
+            "entry": {"id": "direct"},
+            "key": "team-alpha",
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "matchKey": "team-alpha",
+            "matchSource": "direct",
+        },
+        "normalizedMatch": {
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "entry": {"id": "direct"},
+            "key": "team-alpha",
+            "matchKey": "team-alpha",
+            "matchSource": "direct",
+        },
+        "wildcardMatch": {
+            "wildcardEntry": {"id": "wildcard"},
+            "wildcardKey": "*",
+            "entry": {"id": "wildcard"},
+            "key": "*",
+            "matchKey": "*",
+            "matchSource": "wildcard",
+        },
+        "matchConfig": {"value": "direct", "matchKey": "team-alpha", "matchSource": "direct"},
+        "metaApplied": {"value": "ok", "matchKey": "team-alpha", "matchSource": "direct"},
+        "target": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel:C123",
+            "normalized": "channel:c123",
+        },
+        "targetId": "user:ada",
+        "ensured": "U123",
+        "mention": {"kind": "user", "id": "U123", "raw": "<@U123>", "normalized": "user:u123"},
+        "prefixed": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel:C123",
+            "normalized": "channel:c123",
+        },
+        "prefixedMulti": {
+            "kind": "user",
+            "id": "U456",
+            "raw": "user:U456",
+            "normalized": "user:u456",
+        },
+        "atUser": {"kind": "user", "id": "Ada", "raw": "@Ada", "normalized": "user:ada"},
+        "mentionPrefixOrAt": {
+            "kind": "user",
+            "id": "Grace",
+            "raw": "@Grace",
+            "normalized": "user:grace",
+        },
+        "required": "C123",
+        "requiredError": "Slack channel id is required (use channel:<id>).",
+        "chatTarget": {"kind": "chat_id", "chatId": 42},
+        "chatAllow": {"kind": "chat_guid", "chatGuid": "room-guid"},
+        "servicePrefixed": {"kind": "handle", "to": "+15551234567", "service": "sms"},
+        "serviceChat": {"parsed": "chat_id:99"},
+        "serviceAllow": {"kind": "handle", "handle": "+1555"},
+        "serviceOrChatAllow": {"kind": "chat_identifier", "chatIdentifier": "team"},
+        "matched": True,
+        "normalizedChannel": "slack",
+        "voice": None,
+        "unresolved": [
+            {"input": "a", "resolved": False, "note": "missing token"},
+            {"input": "b", "resolved": False, "note": "missing token"},
+        ],
+        "missingToken": [{"input": "a", "resolved": False, "note": "missing token"}],
+        "resolved": [{"input": "a", "resolved": True, "note": "tok"}],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
