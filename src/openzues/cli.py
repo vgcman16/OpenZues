@@ -36315,6 +36315,251 @@ function createChatChannelPlugin(params = {}) {
   };
 }
 
+function parseOptionalDelimitedEntries(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const entries = value
+    .split(/[\n,;]+/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length > 0 ? entries : undefined;
+}
+
+function stripChannelTargetPrefix(raw, ...providers) {
+  const trimmed = String(raw || "").trim();
+  for (const provider of providers) {
+    const prefix = `${normalizeLowercaseStringOrEmpty(provider)}:`;
+    if (prefix !== ":" && normalizeLowercaseStringOrEmpty(trimmed).startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim();
+    }
+  }
+  return trimmed;
+}
+
+function stripTargetKindPrefix(raw) {
+  return String(raw || "")
+    .replace(/^(user|channel|group|conversation|room|dm):/iu, "")
+    .trim();
+}
+
+function buildChannelOutboundSessionRoute(params = {}) {
+  const baseSessionKey = buildOutboundBaseSessionKey({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: params.channel,
+    accountId: params.accountId,
+    peer: params.peer,
+  });
+  return {
+    sessionKey: baseSessionKey,
+    baseSessionKey,
+    peer: params.peer,
+    chatType: params.chatType,
+    from: params.from,
+    to: params.to,
+    ...(params.threadId !== undefined ? { threadId: params.threadId } : {}),
+  };
+}
+
+function recoverCurrentThreadSessionId(params = {}) {
+  const current = parseThreadSessionSuffix(params.currentSessionKey);
+  if (!current.baseSessionKey || !current.threadId) {
+    return undefined;
+  }
+  if (
+    normalizeOptionalLowercaseString(current.baseSessionKey) !==
+    normalizeOptionalLowercaseString(params.route && params.route.baseSessionKey)
+  ) {
+    return undefined;
+  }
+  const context = {
+    route: params.route,
+    currentBaseSessionKey: current.baseSessionKey,
+    currentThreadId: current.threadId,
+  };
+  if (typeof params.canRecover === "function" && !params.canRecover(context)) {
+    return undefined;
+  }
+  return current.threadId;
+}
+
+function resolveThreadAwareOutboundCandidate(threadId) {
+  const sessionThreadId = normalizeOutboundThreadId(threadId);
+  if (sessionThreadId === undefined) {
+    return undefined;
+  }
+  return {
+    routeThreadId: typeof threadId === "number" ? threadId : sessionThreadId,
+    sessionThreadId,
+  };
+}
+
+function buildThreadAwareOutboundSessionRoute(params = {}) {
+  const recoveredThreadId = recoverCurrentThreadSessionId({
+    route: params.route,
+    currentSessionKey: params.currentSessionKey,
+    canRecover: params.canRecoverCurrentThread,
+  });
+  const candidates = {
+    replyToId: resolveThreadAwareOutboundCandidate(params.replyToId),
+    threadId: resolveThreadAwareOutboundCandidate(params.threadId),
+    currentSession: resolveThreadAwareOutboundCandidate(recoveredThreadId),
+  };
+  const precedence = Array.isArray(params.precedence)
+    ? params.precedence
+    : ["replyToId", "threadId", "currentSession"];
+  const candidate = precedence.map((source) => candidates[source]).find(Boolean);
+  const threadKeys = resolveThreadSessionKeys({
+    baseSessionKey: params.route && params.route.baseSessionKey,
+    threadId: candidate && candidate.sessionThreadId,
+    parentSessionKey: candidate ? params.parentSessionKey : undefined,
+    useSuffix: params.useSuffix,
+    normalizeThreadId: params.normalizeThreadId,
+  });
+  return {
+    ...(params.route || {}),
+    sessionKey: threadKeys.sessionKey,
+    ...(candidate !== undefined ? { threadId: candidate.routeThreadId } : {}),
+  };
+}
+
+const DEFAULT_SECRET_FILE_MAX_BYTES = 16 * 1024;
+
+function loadSecretFileSync(filePath, label, options = {}) {
+  const trimmedPath = String(filePath || "").trim();
+  const resolvedPath = trimmedPath ? path.resolve(trimmedPath) : undefined;
+  if (!resolvedPath) {
+    return { ok: false, message: `${label} file path is empty.` };
+  }
+  const maxBytes = options.maxBytes ?? DEFAULT_SECRET_FILE_MAX_BYTES;
+  let previewStat;
+  try {
+    previewStat = fs.lstatSync(resolvedPath);
+  } catch (error) {
+    return {
+      ok: false,
+      resolvedPath,
+      error,
+      message: `Failed to inspect ${label} file at ${resolvedPath}: ${String(error)}`,
+    };
+  }
+  if (options.rejectSymlink && previewStat.isSymbolicLink()) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} must not be a symlink.`,
+    };
+  }
+  if (!previewStat.isFile()) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} must be a regular file.`,
+    };
+  }
+  if (previewStat.size > maxBytes) {
+    return {
+      ok: false,
+      resolvedPath,
+      message: `${label} file at ${resolvedPath} exceeds ${maxBytes} bytes.`,
+    };
+  }
+  try {
+    const secret = fs.readFileSync(resolvedPath, "utf8").trim();
+    if (!secret) {
+      return {
+        ok: false,
+        resolvedPath,
+        message: `${label} file at ${resolvedPath} is empty.`,
+      };
+    }
+    return { ok: true, secret, resolvedPath };
+  } catch (error) {
+    return {
+      ok: false,
+      resolvedPath,
+      error,
+      message: `Failed to read ${label} file at ${resolvedPath}: ${String(error)}`,
+    };
+  }
+}
+
+function readSecretFileSync(filePath, label, options = {}) {
+  const result = loadSecretFileSync(filePath, label, options);
+  if (result.ok) {
+    return result.secret;
+  }
+  throw new Error(result.message);
+}
+
+function tryReadSecretFileSync(filePath, label, options = {}) {
+  if (typeof filePath !== "string" || !filePath.trim()) {
+    return undefined;
+  }
+  const result = loadSecretFileSync(filePath, label, options);
+  return result.ok ? result.secret : undefined;
+}
+
+function defineChannelPluginEntry(options = {}) {
+  const resolvedConfigSchema =
+    typeof options.configSchema === "function"
+      ? options.configSchema()
+      : options.configSchema || emptyChannelConfigSchema();
+  const entry = {
+    id: options.id,
+    name: options.name,
+    description: options.description,
+    configSchema: resolvedConfigSchema,
+    register(api = {}) {
+      if (api.registrationMode === "cli-metadata") {
+        options.registerCliMetadata?.(api);
+        return;
+      }
+      if (api.registrationMode === "tool-discovery") {
+        options.registerFull?.(api);
+        return;
+      }
+      api.registerChannel?.({ plugin: options.plugin });
+      options.setRuntime?.(api.runtime);
+      if (api.registrationMode === "discovery") {
+        options.registerCliMetadata?.(api);
+        return;
+      }
+      if (api.registrationMode !== "full") {
+        return;
+      }
+      options.registerCliMetadata?.(api);
+      options.registerFull?.(api);
+    },
+  };
+  return {
+    ...entry,
+    channelPlugin: options.plugin,
+    ...(options.setRuntime ? { setChannelRuntime: options.setRuntime } : {}),
+  };
+}
+
+function defineSetupPluginEntry(plugin) {
+  return { plugin };
+}
+
+const channelCoreRuntime = {
+  buildChannelConfigSchema,
+  buildChannelOutboundSessionRoute,
+  buildThreadAwareOutboundSessionRoute,
+  clearAccountEntryFields,
+  createChannelPluginBase,
+  createChatChannelPlugin,
+  defineChannelPluginEntry,
+  defineSetupPluginEntry,
+  parseOptionalDelimitedEntries,
+  recoverCurrentThreadSessionId,
+  stripChannelTargetPrefix,
+  stripTargetKindPrefix,
+  tryReadSecretFileSync,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -37179,6 +37424,7 @@ const genericSdk = new Proxy(
     ...bundledChannelConfigSchemaRuntime,
     ...channelConfigHelpersRuntime,
     ...channelLifecycleRuntime,
+    ...channelCoreRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -38176,6 +38422,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-lifecycle.core"
   ) {
     return channelLifecycleRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-core" ||
+    request === "@openclaw/plugin-sdk/channel-core"
+  ) {
+    return channelCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||

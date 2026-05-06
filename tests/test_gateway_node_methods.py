@@ -20426,6 +20426,264 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-core.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const core = require("openclaw/plugin-sdk/channel-core");
+const scopedCore = require("@openclaw/plugin-sdk/channel-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_core",
+      description: "Use OpenClaw channel core SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const base = core.createChannelPluginBase({
+          id: "discord",
+          meta: { label: "Discord Custom", docsLabel: "discord-custom" },
+          setup: { kind: "setup" },
+          capabilities: { reactions: true }
+        });
+        const chat = core.createChatChannelPlugin({
+          base,
+          threading: { supportsCurrentConversationBinding: true }
+        });
+
+        const registered = [];
+        const runtimes = [];
+        const calls = [];
+        const entry = core.defineChannelPluginEntry({
+          id: "discord",
+          name: "Discord",
+          description: "Discord channel",
+          plugin: chat,
+          setRuntime: (runtime) => runtimes.push(runtime.name),
+          registerCliMetadata: (api) => calls.push(`cli:${api.registrationMode}`),
+          registerFull: (api) => calls.push(`full:${api.registrationMode}`)
+        });
+        entry.register({
+          registrationMode: "full",
+          runtime: { name: "runtime-full" },
+          registerChannel: ({ plugin }) => registered.push(plugin.id)
+        });
+        entry.register({
+          registrationMode: "cli-metadata",
+          runtime: { name: "runtime-cli" },
+          registerChannel: ({ plugin }) => registered.push(`unexpected:${plugin.id}`)
+        });
+        entry.register({
+          registrationMode: "tool-discovery",
+          runtime: { name: "runtime-tool" },
+          registerChannel: ({ plugin }) => registered.push(`unexpected:${plugin.id}`)
+        });
+
+        const cfg = { session: { dmScope: "per-account-channel-peer" } };
+        const route = core.buildChannelOutboundSessionRoute({
+          cfg,
+          agentId: "Assistant",
+          channel: "Discord",
+          accountId: "Work",
+          peer: { kind: "direct", id: "User-42" },
+          chatType: "direct",
+          from: "bot",
+          to: "user",
+          threadId: 123
+        });
+        const recovered = core.recoverCurrentThreadSessionId({
+          route,
+          currentSessionKey: `${route.baseSessionKey}:thread:old-thread`
+        });
+        const threaded = core.buildThreadAwareOutboundSessionRoute({
+          route,
+          replyToId: " reply-1 ",
+          currentSessionKey: `${route.baseSessionKey}:thread:old-thread`,
+          precedence: ["currentSession", "replyToId"],
+          useSuffix: true
+        });
+        const noSuffix = core.buildThreadAwareOutboundSessionRoute({
+          route,
+          replyToId: " Reply A ",
+          threadId: 999,
+          precedence: ["replyToId", "threadId"],
+          useSuffix: false
+        });
+
+        const secretPath = path.join(os.tmpdir(), `openzues-channel-core-${process.pid}.txt`);
+        fs.writeFileSync(secretPath, " secret-value \\n", "utf8");
+        const secret = core.tryReadSecretFileSync(secretPath, "token") ?? null;
+        fs.unlinkSync(secretPath);
+
+        return {
+          keys: Object.keys(core).sort(),
+          scopedType: typeof scopedCore.createChannelPluginBase,
+          base: {
+            id: base.id,
+            label: base.meta.label,
+            docsLabel: base.meta.docsLabel,
+            setupKind: base.setup.kind,
+            reactions: base.capabilities.reactions
+          },
+          chat: {
+            id: chat.id,
+            supportsBinding: chat.conversationBindings.supportsCurrentConversationBinding
+          },
+          entry: {
+            id: entry.id,
+            channelPluginId: entry.channelPlugin.id,
+            setType: typeof entry.setChannelRuntime,
+            registered,
+            runtimes,
+            calls,
+            setupPlugin: core.defineSetupPluginEntry({ id: "setup" }).plugin.id
+          },
+          route,
+          recovered,
+          threaded,
+          noSuffix,
+          strings: {
+            strippedChannel: core.stripChannelTargetPrefix(" discord: 123 ", "discord"),
+            notStrippedChannel: core.stripChannelTargetPrefix(" slack: 123 ", "discord"),
+            strippedKind: core.stripTargetKindPrefix("user: abc"),
+            parsed: core.parseOptionalDelimitedEntries(" a, b;c\\n d "),
+            emptyParsed: core.parseOptionalDelimitedEntries("  ") ?? null
+          },
+          secret
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-core-plugin",
+                    "name": "Runtime Channel Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_core"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildChannelConfigSchema",
+            "buildChannelOutboundSessionRoute",
+            "buildThreadAwareOutboundSessionRoute",
+            "clearAccountEntryFields",
+            "createChannelPluginBase",
+            "createChatChannelPlugin",
+            "defineChannelPluginEntry",
+            "defineSetupPluginEntry",
+            "parseOptionalDelimitedEntries",
+            "recoverCurrentThreadSessionId",
+            "stripChannelTargetPrefix",
+            "stripTargetKindPrefix",
+            "tryReadSecretFileSync",
+        ],
+        "scopedType": "function",
+        "base": {
+            "id": "discord",
+            "label": "Discord Custom",
+            "docsLabel": "discord-custom",
+            "setupKind": "setup",
+            "reactions": True,
+        },
+        "chat": {"id": "discord", "supportsBinding": True},
+        "entry": {
+            "id": "discord",
+            "channelPluginId": "discord",
+            "setType": "function",
+            "registered": ["discord"],
+            "runtimes": ["runtime-full"],
+            "calls": ["cli:full", "full:full", "cli:cli-metadata", "full:tool-discovery"],
+            "setupPlugin": "setup",
+        },
+        "route": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": 123,
+        },
+        "recovered": "old-thread",
+        "threaded": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42:thread:old-thread",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": "old-thread",
+        },
+        "noSuffix": {
+            "sessionKey": "agent:assistant:discord:work:direct:user-42",
+            "baseSessionKey": "agent:assistant:discord:work:direct:user-42",
+            "peer": {"kind": "direct", "id": "User-42"},
+            "chatType": "direct",
+            "from": "bot",
+            "to": "user",
+            "threadId": "Reply A",
+        },
+        "strings": {
+            "strippedChannel": "123",
+            "notStrippedChannel": "slack: 123",
+            "strippedKind": "abc",
+            "parsed": ["a", "b", "c", "d"],
+            "emptyParsed": None,
+        },
+        "secret": "secret-value",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
