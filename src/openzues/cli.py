@@ -35415,6 +35415,380 @@ const providerSetupRuntime = {
   promptAndConfigureOpenAICompatibleSelfHostedProviderAuth,
 };
 
+const LMSTUDIO_DEFAULT_BASE_URL = "http://localhost:1234";
+const LMSTUDIO_DEFAULT_INFERENCE_BASE_URL = `${LMSTUDIO_DEFAULT_BASE_URL}/v1`;
+const LMSTUDIO_DEFAULT_EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5";
+const LMSTUDIO_PROVIDER_LABEL = "LM Studio";
+const LMSTUDIO_DEFAULT_API_KEY_ENV_VAR = "LM_API_TOKEN";
+const LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER = "lmstudio-local";
+const LMSTUDIO_MODEL_PLACEHOLDER = "model-key-from-api-v1-models";
+const LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH = 64000;
+const LMSTUDIO_DEFAULT_MODEL_ID = "qwen/qwen3.5-9b";
+const LMSTUDIO_PROVIDER_ID = "lmstudio";
+
+function normalizeLmstudioReasoningOption(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
+
+function isLmstudioReasoningEnabledOption(value) {
+  const normalized = normalizeLmstudioReasoningOption(value);
+  return Boolean(normalized && normalized !== "off");
+}
+
+function normalizeLmstudioReasoningOptions(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [
+    ...new Set(
+      value
+        .map((option) => normalizeLmstudioReasoningOption(option))
+        .filter((option) => option !== null),
+    ),
+  ];
+}
+
+function resolveLmstudioEnabledReasoningOption(allowedOptions, reasoning = {}) {
+  const normalizedDefault = normalizeLmstudioReasoningOption(reasoning.default);
+  if (
+    normalizedDefault &&
+    isLmstudioReasoningEnabledOption(normalizedDefault) &&
+    allowedOptions.includes(normalizedDefault)
+  ) {
+    return normalizedDefault;
+  }
+  return (
+    allowedOptions.find((option) => option === "on" || option === "default") ||
+    allowedOptions.find((option) => isLmstudioReasoningEnabledOption(option))
+  );
+}
+
+function resolveLmstudioDisabledReasoningOption(allowedOptions) {
+  return allowedOptions.find((option) => option === "off") ||
+    allowedOptions.find((option) => option === "none");
+}
+
+function resolveLmstudioReasoningCompat(entry = {}) {
+  const reasoning = entry.capabilities && entry.capabilities.reasoning;
+  if (reasoning === undefined || reasoning === null) {
+    return undefined;
+  }
+  const allowedOptions = normalizeLmstudioReasoningOptions(reasoning.allowed_options);
+  if (allowedOptions.length === 0) {
+    return undefined;
+  }
+  const enabled = resolveLmstudioEnabledReasoningOption(allowedOptions, reasoning);
+  if (!enabled) {
+    return undefined;
+  }
+  const disabled = resolveLmstudioDisabledReasoningOption(allowedOptions);
+  return {
+    supportsReasoningEffort: true,
+    supportedReasoningEfforts: allowedOptions,
+    reasoningEffortMap: {
+      ...(disabled ? { off: disabled, none: disabled } : {}),
+      minimal: enabled,
+      low: enabled,
+      medium: enabled,
+      high: enabled,
+      xhigh: enabled,
+      adaptive: enabled,
+      max: enabled,
+    },
+  };
+}
+
+function resolveLmstudioReasoningCapability(entry = {}) {
+  const reasoning = entry.capabilities && entry.capabilities.reasoning;
+  if (reasoning === undefined || reasoning === null) {
+    return false;
+  }
+  const allowedOptions = normalizeLmstudioReasoningOptions(reasoning.allowed_options);
+  if (allowedOptions.length > 0) {
+    return allowedOptions.some((option) => isLmstudioReasoningEnabledOption(option));
+  }
+  return isLmstudioReasoningEnabledOption(reasoning.default);
+}
+
+function resolveLoadedContextWindow(entry = {}) {
+  const loadedInstances = Array.isArray(entry.loaded_instances) ? entry.loaded_instances : [];
+  let contextWindow = null;
+  for (const instance of loadedInstances) {
+    const length = instance && instance.config && instance.config.context_length;
+    if (!Number.isFinite(length) || length <= 0) {
+      continue;
+    }
+    const normalized = Math.floor(length);
+    contextWindow = contextWindow === null ? normalized : Math.max(contextWindow, normalized);
+  }
+  return contextWindow;
+}
+
+function normalizeLmstudioUrlPath(pathname) {
+  const trimmed = String(pathname || "").replace(/\/+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed.replace(/\/api\/v1$/i, "").replace(/\/v1$/i, "");
+}
+
+function lmstudioHasExplicitHttpScheme(value) {
+  return /^https?:\/\//i.test(String(value || ""));
+}
+
+function isLikelyLmstudioHostBaseUrl(value) {
+  const text = String(value || "").trim();
+  return Boolean(
+    text &&
+      !text.includes(" ") &&
+      (/^localhost(?::|\/|$)/i.test(text) || text.includes(".")),
+  );
+}
+
+function toFetchableLmstudioBaseUrl(value) {
+  if (lmstudioHasExplicitHttpScheme(value) || !isLikelyLmstudioHostBaseUrl(value)) {
+    return value;
+  }
+  return `http://${value}`;
+}
+
+function resolveLmstudioServerBase(configuredBaseUrl) {
+  const configured = normalizeOptionalString(configuredBaseUrl);
+  const resolved = configured || LMSTUDIO_DEFAULT_BASE_URL;
+  const fetchableBaseUrl = toFetchableLmstudioBaseUrl(resolved);
+  try {
+    const parsed = new URL(fetchableBaseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new TypeError(`Unsupported LM Studio protocol: ${parsed.protocol}`);
+    }
+    const pathname = normalizeLmstudioUrlPath(parsed.pathname);
+    parsed.pathname = pathname.length > 0 ? pathname : "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    const trimmed = resolved.replace(/\/+$/, "");
+    const normalized = normalizeLmstudioUrlPath(trimmed);
+    return normalized.length > 0 ? normalized : LMSTUDIO_DEFAULT_BASE_URL;
+  }
+}
+
+function resolveLmstudioInferenceBase(configuredBaseUrl) {
+  return `${resolveLmstudioServerBase(configuredBaseUrl)}/v1`;
+}
+
+function normalizeLmstudioProviderConfig(provider = {}) {
+  const configuredBaseUrl =
+    typeof provider.baseUrl === "string" ? provider.baseUrl.trim() : "";
+  if (!configuredBaseUrl) {
+    return provider;
+  }
+  const request =
+    provider.request && typeof provider.request === "object" && !Array.isArray(provider.request)
+      ? provider.request
+      : undefined;
+  const requestWithPrivateNetworkDefault =
+    request && typeof request.allowPrivateNetwork === "boolean"
+      ? request
+      : {
+          ...(request || {}),
+          allowPrivateNetwork: true,
+        };
+  return {
+    ...provider,
+    baseUrl: resolveLmstudioInferenceBase(configuredBaseUrl),
+    request: requestWithPrivateNetworkDefault,
+  };
+}
+
+function isLmstudioNonSecretApiKeyMarker(value) {
+  const normalized = String(value || "").trim();
+  return (
+    normalized === LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER ||
+    (/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(normalized) &&
+      normalized !== "${AWS_SECRET_ACCESS_KEY}")
+  );
+}
+
+function buildLmstudioAuthHeaders(params = {}) {
+  const headers = { ...(params.headers || {}) };
+  const apiKey = normalizeOptionalString(params.apiKey);
+  if (apiKey && !isLmstudioNonSecretApiKeyMarker(apiKey)) {
+    for (const headerName of Object.keys(headers)) {
+      if (headerName.toLowerCase() === "authorization") {
+        delete headers[headerName];
+      }
+    }
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (params.json) {
+    headers["Content-Type"] = "application/json";
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+function mapLmstudioWireEntry(entry = {}) {
+  if (entry.type !== "llm") {
+    return null;
+  }
+  const id = normalizeOptionalString(entry.key) || "";
+  if (!id) {
+    return null;
+  }
+  const loadedContextWindow = resolveLoadedContextWindow(entry);
+  const advertisedContextWindow =
+    Number.isFinite(entry.max_context_length) && entry.max_context_length > 0
+      ? Math.floor(entry.max_context_length)
+      : null;
+  const contextWindow = advertisedContextWindow || SELF_HOSTED_DEFAULT_CONTEXT_WINDOW;
+  const contextTokens = Math.min(contextWindow, LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH);
+  const displayName = normalizeOptionalString(entry.display_name) || id;
+  const compat = resolveLmstudioReasoningCompat(entry);
+  return {
+    id,
+    displayName,
+    format: entry.format || null,
+    vision: entry.capabilities && entry.capabilities.vision === true,
+    trainedForToolUse:
+      entry.capabilities && entry.capabilities.trained_for_tool_use === true,
+    loaded: loadedContextWindow !== null,
+    reasoning: resolveLmstudioReasoningCapability(entry),
+    input: entry.capabilities && entry.capabilities.vision ? ["text", "image"] : ["text"],
+    cost: SELF_HOSTED_DEFAULT_COST,
+    ...(compat ? { compat } : {}),
+    contextWindow,
+    contextTokens,
+    maxTokens: Math.max(1, Math.min(contextWindow, SELF_HOSTED_DEFAULT_MAX_TOKENS)),
+  };
+}
+
+async function fetchLmstudioModels(params = {}) {
+  const fetchImpl = params.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") {
+    return { reachable: false, models: [], error: "fetch unavailable" };
+  }
+  const baseUrl = resolveLmstudioServerBase(params.baseUrl);
+  try {
+    const response = await fetchImpl(`${baseUrl}/api/v0/models`, {
+      headers: buildLmstudioAuthHeaders({
+        apiKey: params.apiKey,
+        headers: params.headers,
+      }),
+    });
+    if (!response || !response.ok) {
+      return {
+        reachable: false,
+        status: response && response.status,
+        models: [],
+      };
+    }
+    const data = await response.json();
+    return {
+      reachable: true,
+      status: response.status,
+      models: Array.isArray(data && data.data) ? data.data : [],
+    };
+  } catch (error) {
+    return { reachable: false, models: [], error: formatErrorMessage(error) };
+  }
+}
+
+async function discoverLmstudioModels(params = {}) {
+  const fetched = await fetchLmstudioModels(params);
+  return (fetched.models || []).map(mapLmstudioWireEntry).filter(Boolean);
+}
+
+async function ensureLmstudioModelLoaded(params = {}) {
+  return {
+    ok: false,
+    error: "lmstudio-load-unavailable",
+    params,
+  };
+}
+
+async function resolveLmstudioConfiguredApiKey(params = {}) {
+  const providerConfig =
+    params.config &&
+    params.config.models &&
+    params.config.models.providers &&
+    params.config.models.providers[LMSTUDIO_PROVIDER_ID];
+  const apiKeyInput = providerConfig && providerConfig.apiKey;
+  if (apiKeyInput === undefined || apiKeyInput === null) {
+    return undefined;
+  }
+  const normalized = normalizeOptionalString(apiKeyInput);
+  if (!normalized) {
+    return undefined;
+  }
+  if (/^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.test(normalized)) {
+    const envName = normalized.slice(2, -1);
+    return params.env && params.env[envName] ? params.env[envName] : undefined;
+  }
+  return normalized;
+}
+
+function resolveLmstudioProviderHeaders(params = {}) {
+  const headers = params.headers || {};
+  const sanitized = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const normalized = normalizeOptionalString(value);
+    if (normalized) {
+      sanitized[key] = normalized;
+    }
+  }
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+async function resolveLmstudioRequestContext(params = {}) {
+  return {
+    apiKey:
+      params.apiKey ||
+      (await resolveLmstudioConfiguredApiKey({
+        config: params.config,
+        env: params.env,
+      })),
+    headers: resolveLmstudioProviderHeaders(params),
+  };
+}
+
+async function resolveLmstudioRuntimeApiKey(params = {}) {
+  return resolveLmstudioConfiguredApiKey({
+    config: params.config,
+    env: params.env,
+  });
+}
+
+const lmstudioRuntime = {
+  LMSTUDIO_DEFAULT_API_KEY_ENV_VAR,
+  LMSTUDIO_DEFAULT_BASE_URL,
+  LMSTUDIO_DEFAULT_EMBEDDING_MODEL,
+  LMSTUDIO_DEFAULT_INFERENCE_BASE_URL,
+  LMSTUDIO_DEFAULT_LOAD_CONTEXT_LENGTH,
+  LMSTUDIO_DEFAULT_MODEL_ID,
+  LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER,
+  LMSTUDIO_MODEL_PLACEHOLDER,
+  LMSTUDIO_PROVIDER_ID,
+  LMSTUDIO_PROVIDER_LABEL,
+  buildLmstudioAuthHeaders,
+  discoverLmstudioModels,
+  ensureLmstudioModelLoaded,
+  fetchLmstudioModels,
+  mapLmstudioWireEntry,
+  normalizeLmstudioProviderConfig,
+  resolveLoadedContextWindow,
+  resolveLmstudioConfiguredApiKey,
+  resolveLmstudioInferenceBase,
+  resolveLmstudioProviderHeaders,
+  resolveLmstudioReasoningCapability,
+  resolveLmstudioRequestContext,
+  resolveLmstudioRuntimeApiKey,
+  resolveLmstudioServerBase,
+};
+
 const configSchemaRuntime = {
   OpenClawSchema,
   validateJsonSchemaValue,
@@ -47039,6 +47413,14 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/self-hosted-provider-setup"
   ) {
     return providerSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/lmstudio" ||
+    request === "@openclaw/plugin-sdk/lmstudio" ||
+    request === "openclaw/plugin-sdk/lmstudio-runtime" ||
+    request === "@openclaw/plugin-sdk/lmstudio-runtime"
+  ) {
+    return lmstudioRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-doctor" ||

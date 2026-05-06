@@ -34109,6 +34109,214 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lmstudio_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lmstudio-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const lmstudio = require("openclaw/plugin-sdk/lmstudio");
+const runtime = require("@openclaw/plugin-sdk/lmstudio-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lmstudio_runtime",
+      description: "Use OpenClaw LM Studio runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const wire = {
+          type: "llm",
+          key: " qwen/qwen3 ",
+          display_name: " Qwen 3 ",
+          max_context_length: 32000.8,
+          format: "gguf",
+          capabilities: {
+            vision: true,
+            trained_for_tool_use: true,
+            reasoning: {
+              allowed_options: ["off", "low", "low"],
+              default: "off"
+            }
+          },
+          loaded_instances: [
+            null,
+            {},
+            { config: { context_length: 2048.9 } },
+            { config: { context_length: 4096 } }
+          ]
+        };
+        const headers = lmstudio.buildLmstudioAuthHeaders({
+          apiKey: " sk-test ",
+          json: true,
+          headers: { Authorization: "old", "X-Test": "ok" }
+        });
+        return {
+          keys: Object.keys(lmstudio).sort(),
+          scopedType: typeof runtime.mapLmstudioWireEntry,
+          constants: [
+            lmstudio.LMSTUDIO_DEFAULT_BASE_URL,
+            lmstudio.LMSTUDIO_DEFAULT_INFERENCE_BASE_URL,
+            lmstudio.LMSTUDIO_DEFAULT_API_KEY_ENV_VAR,
+            lmstudio.LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER,
+            lmstudio.LMSTUDIO_PROVIDER_ID,
+            lmstudio.LMSTUDIO_PROVIDER_LABEL
+          ],
+          bases: [
+            lmstudio.resolveLmstudioServerBase(),
+            lmstudio.resolveLmstudioInferenceBase(),
+            lmstudio.resolveLmstudioServerBase("localhost:1234/api/v1/"),
+            lmstudio.resolveLmstudioInferenceBase("http://localhost:1234/api/v1/")
+          ],
+          normalizedProvider: lmstudio.normalizeLmstudioProviderConfig({
+            baseUrl: "localhost:1234/api/v1/",
+            request: {}
+          }),
+          reasoning: [
+            lmstudio.resolveLmstudioReasoningCapability({ capabilities: undefined }),
+            lmstudio.resolveLmstudioReasoningCapability({
+              capabilities: { reasoning: { allowed_options: ["off"], default: "off" } }
+            }),
+            lmstudio.resolveLmstudioReasoningCapability({
+              capabilities: { reasoning: { allowed_options: ["off", "low"] } }
+            })
+          ],
+          contextWindow: lmstudio.resolveLoadedContextWindow(wire),
+          mapped: lmstudio.mapLmstudioWireEntry(wire),
+          invalidMap: lmstudio.mapLmstudioWireEntry({ type: "embedding", key: "embed" }),
+          headers,
+          placeholderHeaders: lmstudio.buildLmstudioAuthHeaders({
+            apiKey: lmstudio.LMSTUDIO_LOCAL_API_KEY_PLACEHOLDER
+          }) ?? null,
+          genericLeak: typeof lmstudio.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "lmstudio-runtime-plugin",
+                    "name": "LM Studio Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lmstudio-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lmstudio_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.lmstudio_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["constants"] == [
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+        "LM_API_TOKEN",
+        "lmstudio-local",
+        "lmstudio",
+        "LM Studio",
+    ]
+    assert result["bases"] == [
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+        "http://localhost:1234",
+        "http://localhost:1234/v1",
+    ]
+    assert result["normalizedProvider"] == {
+        "baseUrl": "http://localhost:1234/v1",
+        "request": {"allowPrivateNetwork": True},
+    }
+    assert result["reasoning"] == [False, False, True]
+    assert result["contextWindow"] == 4096
+    assert result["mapped"] == {
+        "id": "qwen/qwen3",
+        "displayName": "Qwen 3",
+        "format": "gguf",
+        "vision": True,
+        "trainedForToolUse": True,
+        "loaded": True,
+        "reasoning": True,
+        "input": ["text", "image"],
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "compat": {
+            "supportsReasoningEffort": True,
+            "supportedReasoningEfforts": ["off", "low"],
+            "reasoningEffortMap": {
+                "off": "off",
+                "none": "off",
+                "minimal": "low",
+                "low": "low",
+                "medium": "low",
+                "high": "low",
+                "xhigh": "low",
+                "adaptive": "low",
+                "max": "low",
+            },
+        },
+        "contextWindow": 32000,
+        "contextTokens": 32000,
+        "maxTokens": 8192,
+    }
+    assert result["invalidMap"] is None
+    assert result["headers"] == {
+        "X-Test": "ok",
+        "Authorization": "Bearer sk-test",
+        "Content-Type": "application/json",
+    }
+    assert result["placeholderHeaders"] is None
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "LMSTUDIO_DEFAULT_BASE_URL",
+        "buildLmstudioAuthHeaders",
+        "mapLmstudioWireEntry",
+        "normalizeLmstudioProviderConfig",
+        "resolveLmstudioInferenceBase",
+        "resolveLmstudioServerBase",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
