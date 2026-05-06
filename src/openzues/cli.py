@@ -18231,6 +18231,218 @@ function createCachedLazyValueGetter(value, fallback) {
   };
 }
 
+function createLazyRuntimeSurface(importer, select) {
+  let cached = null;
+  return () => {
+    if (!cached) {
+      cached = importer().then(select);
+    }
+    return cached;
+  };
+}
+
+function createLazyRuntimeModule(importer) {
+  return createLazyRuntimeSurface(importer, (module) => module);
+}
+
+function createLazyRuntimeNamedExport(importer, key) {
+  return createLazyRuntimeSurface(importer, (module) => module[key]);
+}
+
+function createLazyRuntimeMethod(load, select) {
+  return async (...args) => {
+    const method = select(await load());
+    return await method(...args);
+  };
+}
+
+function createLazyRuntimeMethodBinder(load) {
+  return (select) => createLazyRuntimeMethod(load, select);
+}
+
+function resolveChannelAccountConfigBasePath(params) {
+  const channels = params && params.cfg && params.cfg.channels;
+  const channelSection = channels && channels[params.channelKey];
+  const accounts = channelSection && channelSection.accounts;
+  const useAccountPath = Boolean(accounts && accounts[params.accountId]);
+  return useAccountPath
+    ? `channels.${params.channelKey}.accounts.${params.accountId}.`
+    : `channels.${params.channelKey}.`;
+}
+
+function resolveDefaultContextVisibility(cfg) {
+  return cfg && cfg.channels && cfg.channels.defaults
+    ? cfg.channels.defaults.contextVisibility
+    : undefined;
+}
+
+function resolveChannelContextVisibilityMode(params) {
+  if (params && params.configuredContextVisibility) {
+    return params.configuredContextVisibility;
+  }
+  const cfg = (params && params.cfg) || {};
+  const channels = cfg.channels || {};
+  const channelConfig = channels[params && params.channel];
+  const accountId = normalizeAccountId(params && params.accountId);
+  const accountEntry = resolveAccountEntry(
+    channelConfig && channelConfig.accounts,
+    accountId,
+  );
+  return (
+    (accountEntry && accountEntry.contextVisibility) ||
+    (channelConfig && channelConfig.contextVisibility) ||
+    resolveDefaultContextVisibility(cfg) ||
+    "all"
+  );
+}
+
+function evaluateSupplementalContextVisibility(params) {
+  if (params && params.mode === "all") {
+    return { include: true, reason: "mode_all" };
+  }
+  if (params && params.senderAllowed) {
+    return { include: true, reason: "sender_allowed" };
+  }
+  if (params && params.mode === "allowlist_quote" && params.kind === "quote") {
+    return { include: true, reason: "quote_override" };
+  }
+  return { include: false, reason: "blocked" };
+}
+
+function shouldIncludeSupplementalContext(params) {
+  return evaluateSupplementalContextVisibility(params).include;
+}
+
+function filterSupplementalContextItems(params) {
+  const items = Array.isArray(params && params.items) ? params.items : [];
+  const filtered = items.filter((item) =>
+    shouldIncludeSupplementalContext({
+      mode: params && params.mode,
+      kind: params && params.kind,
+      senderAllowed:
+        params && typeof params.isSenderAllowed === "function"
+          ? params.isSenderAllowed(item)
+          : false,
+    }),
+  );
+  return {
+    items: filtered,
+    omitted: items.length - filtered.length,
+  };
+}
+
+const HEARTBEAT_EVENT_STATE_KEY = Symbol.for("openclaw.heartbeatEvents.state");
+const HEARTBEAT_DEFAULT_VISIBILITY = {
+  showOk: false,
+  showAlerts: true,
+  useIndicator: true,
+};
+
+function getHeartbeatEventState() {
+  return resolveGlobalSingleton(HEARTBEAT_EVENT_STATE_KEY, () => ({
+    lastHeartbeat: null,
+    listeners: new Set(),
+  }));
+}
+
+function resolveIndicatorType(status) {
+  switch (status) {
+    case "ok-empty":
+    case "ok-token":
+      return "ok";
+    case "sent":
+      return "alert";
+    case "failed":
+      return "error";
+    case "skipped":
+      return undefined;
+    default:
+      throw new Error("Unsupported heartbeat status");
+  }
+}
+
+function emitHeartbeatEvent(evt) {
+  const state = getHeartbeatEventState();
+  const enriched = { ts: Date.now(), ...evt };
+  state.lastHeartbeat = enriched;
+  for (const listener of Array.from(state.listeners)) {
+    try {
+      listener(enriched);
+    } catch (_error) {
+      // Listener failures are isolated by OpenClaw's listener helper.
+    }
+  }
+}
+
+function onHeartbeatEvent(listener) {
+  const state = getHeartbeatEventState();
+  state.listeners.add(listener);
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+function getLastHeartbeatEvent() {
+  return getHeartbeatEventState().lastHeartbeat;
+}
+
+function resetHeartbeatEventsForTest() {
+  const state = getHeartbeatEventState();
+  state.lastHeartbeat = null;
+  state.listeners.clear();
+}
+
+function resolveHeartbeatVisibility(params) {
+  const cfg = (params && params.cfg) || {};
+  const channel = params && params.channel;
+  const channels = cfg.channels || {};
+  if (channel === "webchat") {
+    const channelDefaults = channels.defaults && channels.defaults.heartbeat;
+    return {
+      showOk: channelDefaults && channelDefaults.showOk !== undefined
+        ? channelDefaults.showOk
+        : HEARTBEAT_DEFAULT_VISIBILITY.showOk,
+      showAlerts: channelDefaults && channelDefaults.showAlerts !== undefined
+        ? channelDefaults.showAlerts
+        : HEARTBEAT_DEFAULT_VISIBILITY.showAlerts,
+      useIndicator: channelDefaults && channelDefaults.useIndicator !== undefined
+        ? channelDefaults.useIndicator
+        : HEARTBEAT_DEFAULT_VISIBILITY.useIndicator,
+    };
+  }
+  const channelDefaults = channels.defaults && channels.defaults.heartbeat;
+  const channelCfg = channels[channel];
+  const perChannel = channelCfg && channelCfg.heartbeat;
+  const accountCfg =
+    params && params.accountId && channelCfg && channelCfg.accounts
+      ? channelCfg.accounts[params.accountId]
+      : undefined;
+  const perAccount = accountCfg && accountCfg.heartbeat;
+  return {
+    showOk: perAccount && perAccount.showOk !== undefined
+      ? perAccount.showOk
+      : perChannel && perChannel.showOk !== undefined
+        ? perChannel.showOk
+        : channelDefaults && channelDefaults.showOk !== undefined
+          ? channelDefaults.showOk
+          : HEARTBEAT_DEFAULT_VISIBILITY.showOk,
+    showAlerts: perAccount && perAccount.showAlerts !== undefined
+      ? perAccount.showAlerts
+      : perChannel && perChannel.showAlerts !== undefined
+        ? perChannel.showAlerts
+        : channelDefaults && channelDefaults.showAlerts !== undefined
+          ? channelDefaults.showAlerts
+          : HEARTBEAT_DEFAULT_VISIBILITY.showAlerts,
+    useIndicator: perAccount && perAccount.useIndicator !== undefined
+      ? perAccount.useIndicator
+      : perChannel && perChannel.useIndicator !== undefined
+        ? perChannel.useIndicator
+        : channelDefaults && channelDefaults.useIndicator !== undefined
+          ? channelDefaults.useIndicator
+          : HEARTBEAT_DEFAULT_VISIBILITY.useIndicator,
+  };
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -26558,6 +26770,74 @@ function resolvePollMaxSelections(optionCount, allowMultiselect) {
   return allowMultiselect ? Math.max(2, optionCount) : 1;
 }
 
+function normalizePollInput(input = {}, options = {}) {
+  const question = String(input.question || "").trim();
+  if (!question) {
+    throw new Error("Poll question is required");
+  }
+  const pollOptions = (Array.isArray(input.options) ? input.options : []).map((option) =>
+    String(option || "").trim(),
+  );
+  const cleaned = pollOptions.filter(Boolean);
+  if (cleaned.length < 2) {
+    throw new Error("Poll requires at least 2 options");
+  }
+  if (options.maxOptions !== undefined && cleaned.length > options.maxOptions) {
+    throw new Error(`Poll supports at most ${options.maxOptions} options`);
+  }
+  const maxSelectionsRaw = input.maxSelections;
+  const maxSelections =
+    typeof maxSelectionsRaw === "number" && Number.isFinite(maxSelectionsRaw)
+      ? Math.floor(maxSelectionsRaw)
+      : 1;
+  if (maxSelections < 1) {
+    throw new Error("maxSelections must be at least 1");
+  }
+  if (maxSelections > cleaned.length) {
+    throw new Error("maxSelections cannot exceed option count");
+  }
+  const durationSecondsRaw = input.durationSeconds;
+  const durationSeconds =
+    typeof durationSecondsRaw === "number" && Number.isFinite(durationSecondsRaw)
+      ? Math.floor(durationSecondsRaw)
+      : undefined;
+  if (durationSeconds !== undefined && durationSeconds < 1) {
+    throw new Error("durationSeconds must be at least 1");
+  }
+  const durationHoursRaw = input.durationHours;
+  const durationHours =
+    typeof durationHoursRaw === "number" && Number.isFinite(durationHoursRaw)
+      ? Math.floor(durationHoursRaw)
+      : undefined;
+  if (durationHours !== undefined && durationHours < 1) {
+    throw new Error("durationHours must be at least 1");
+  }
+  if (durationSeconds !== undefined && durationHours !== undefined) {
+    throw new Error("durationSeconds and durationHours are mutually exclusive");
+  }
+  return {
+    question,
+    options: cleaned,
+    maxSelections,
+    ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    ...(durationHours !== undefined ? { durationHours } : {}),
+  };
+}
+
+function normalizePollDurationHours(value, options = {}) {
+  const defaultHours =
+    typeof options.defaultHours === "number" && Number.isFinite(options.defaultHours)
+      ? Math.floor(options.defaultHours)
+      : 1;
+  const maxHours =
+    typeof options.maxHours === "number" && Number.isFinite(options.maxHours)
+      ? Math.floor(options.maxHours)
+      : defaultHours;
+  const base =
+    typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : defaultHours;
+  return Math.min(Math.max(base, 1), maxHours);
+}
+
 function enumValuesFrom(values) {
   if (Array.isArray(values)) {
     return values;
@@ -32426,9 +32706,44 @@ const lazyValueRuntime = {
   createCachedLazyValueGetter,
 };
 
+const lazyRuntime = {
+  createLazyRuntimeMethod,
+  createLazyRuntimeMethodBinder,
+  createLazyRuntimeModule,
+  createLazyRuntimeNamedExport,
+  createLazyRuntimeSurface,
+};
+
+const configPathsRuntime = {
+  resolveChannelAccountConfigBasePath,
+};
+
+const contextVisibilityRuntime = {
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  resolveChannelContextVisibilityMode,
+  resolveDefaultContextVisibility,
+  shouldIncludeSupplementalContext,
+};
+
+const heartbeatRuntime = {
+  emitHeartbeatEvent,
+  getLastHeartbeatEvent,
+  onHeartbeatEvent,
+  resetHeartbeatEventsForTest,
+  resolveHeartbeatVisibility,
+  resolveIndicatorType,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
+};
+
+const pollRuntime = {
+  normalizePollDurationHours,
+  normalizePollInput,
+  resolvePollMaxSelections,
 };
 
 const commandDetectionRuntime = {
@@ -36207,6 +36522,22 @@ function resolveApprovalApprovers(params = {}) {
   ]);
 }
 
+const IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION = Symbol(
+  "openclaw.implicitSameChatApprovalAuthorization",
+);
+
+function markImplicitSameChatApprovalAuthorization(result) {
+  Object.defineProperty(result, IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION, {
+    value: true,
+    enumerable: false,
+  });
+  return result;
+}
+
+function isImplicitSameChatApprovalAuthorization(result) {
+  return Boolean(result && result[IMPLICIT_SAME_CHAT_APPROVAL_AUTHORIZATION]);
+}
+
 function createResolvedApproverActionAuthAdapter(params = {}) {
   const normalizeSenderId =
     typeof params.normalizeSenderId === "function"
@@ -36222,7 +36553,7 @@ function createResolvedApproverActionAuthAdapter(params = {}) {
         accountId: actionParams.accountId,
       });
       if (!Array.isArray(approvers) || approvers.length === 0) {
-        return { authorized: true };
+        return markImplicitSameChatApprovalAuthorization({ authorized: true });
       }
       const normalizedSenderId =
         actionParams.senderId != null ? normalizeSenderId(actionParams.senderId) : undefined;
@@ -36241,6 +36572,15 @@ function createResolvedApproverActionAuthAdapter(params = {}) {
 const approvalAuthRuntime = {
   createResolvedApproverActionAuthAdapter,
   resolveApprovalApprovers,
+};
+
+const approvalApproversRuntime = {
+  resolveApprovalApprovers,
+};
+
+const approvalAuthHelpersRuntime = {
+  createResolvedApproverActionAuthAdapter,
+  isImplicitSameChatApprovalAuthorization,
 };
 
 const DEFAULT_EXEC_APPROVAL_DECISIONS = ["allow-once", "allow-always", "deny"];
@@ -36472,6 +36812,20 @@ function buildApprovalPendingReplyPayload(params = {}) {
   };
 }
 
+function buildApprovalResolvedReplyPayload(params = {}) {
+  return {
+    text: params.text,
+    channelData: {
+      execApproval: {
+        approvalId: params.approvalId,
+        approvalSlug: params.approvalSlug,
+        state: "resolved",
+      },
+      ...(params.channelData || {}),
+    },
+  };
+}
+
 function buildPluginApprovalRequestMessage(request, nowMs) {
   const payload = (request && request.request) || {};
   const lines = [];
@@ -36495,6 +36849,22 @@ function buildPluginApprovalRequestMessage(request, nowMs) {
   return lines.join("\n");
 }
 
+function approvalDecisionLabel(decision) {
+  if (decision === "allow-once") {
+    return "allowed once";
+  }
+  if (decision === "allow-always") {
+    return "allowed always";
+  }
+  return "denied";
+}
+
+function buildPluginApprovalResolvedMessage(resolved = {}) {
+  const base = `Plugin approval ${approvalDecisionLabel(resolved.decision)}.`;
+  const by = resolved.resolvedBy ? ` Resolved by ${resolved.resolvedBy}.` : "";
+  return `${base}${by} ID: ${resolved.id || ""}`;
+}
+
 function buildPluginApprovalPendingReplyPayload(params = {}) {
   const request = params.request || {};
   const approvalId = normalizeOptionalString(request.id) || "";
@@ -36506,6 +36876,17 @@ function buildPluginApprovalPendingReplyPayload(params = {}) {
       params.text ||
       buildPluginApprovalRequestMessage(request, Number(params.nowMs || Date.now())),
     allowedDecisions: params.allowedDecisions,
+    channelData: params.channelData,
+  });
+}
+
+function buildPluginApprovalResolvedReplyPayload(params = {}) {
+  const resolved = params.resolved || {};
+  const approvalId = normalizeOptionalString(resolved.id) || "";
+  return buildApprovalResolvedReplyPayload({
+    approvalId,
+    approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalId.slice(0, 8),
+    text: params.text || buildPluginApprovalResolvedMessage(resolved),
     channelData: params.channelData,
   });
 }
@@ -36588,6 +36969,13 @@ const approvalReplyRuntime = {
   resolveExecApprovalAllowedDecisions,
   resolveExecApprovalCommandDisplay,
   resolveExecApprovalRequestAllowedDecisions,
+};
+
+const approvalRenderersRuntime = {
+  buildApprovalPendingReplyPayload,
+  buildApprovalResolvedReplyPayload,
+  buildPluginApprovalPendingReplyPayload,
+  buildPluginApprovalResolvedReplyPayload,
 };
 
 function matchesApprovalRequestSessionFilter(sessionKey, patterns = []) {
@@ -38048,8 +38436,10 @@ const approvalHandlerRuntime = new Proxy(
 const approvalRuntimeAggregate = new Proxy(
   {
     buildApprovalPendingReplyPayload,
+    buildApprovalResolvedReplyPayload,
     buildExecApprovalPendingReplyPayload,
     buildPluginApprovalPendingReplyPayload,
+    buildPluginApprovalResolvedReplyPayload,
     createApproverRestrictedNativeApprovalAdapter,
     createApproverRestrictedNativeApprovalCapability,
     createChannelApprovalCapability,
@@ -43099,10 +43489,40 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return lazyValueRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/lazy-runtime" ||
+    request === "@openclaw/plugin-sdk/lazy-runtime"
+  ) {
+    return lazyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-paths" ||
+    request === "@openclaw/plugin-sdk/config-paths"
+  ) {
+    return configPathsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/context-visibility-runtime" ||
+    request === "@openclaw/plugin-sdk/context-visibility-runtime"
+  ) {
+    return contextVisibilityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/heartbeat-runtime" ||
+    request === "@openclaw/plugin-sdk/heartbeat-runtime"
+  ) {
+    return heartbeatRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
     return commandPrimitivesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/poll-runtime" ||
+    request === "@openclaw/plugin-sdk/poll-runtime"
+  ) {
+    return pollRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-detection" ||
@@ -43339,14 +43759,34 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return approvalAuthRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/approval-approvers" ||
+    request === "@openclaw/plugin-sdk/approval-approvers"
+  ) {
+    return approvalApproversRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-auth-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-auth-helpers"
+  ) {
+    return approvalAuthHelpersRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/approval-reply-runtime" ||
     request === "@openclaw/plugin-sdk/approval-reply-runtime"
   ) {
     return approvalReplyRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/approval-renderers" ||
+    request === "@openclaw/plugin-sdk/approval-renderers"
+  ) {
+    return approvalRenderersRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/approval-client-helpers" ||
-    request === "@openclaw/plugin-sdk/approval-client-helpers"
+    request === "@openclaw/plugin-sdk/approval-client-helpers" ||
+    request === "openclaw/plugin-sdk/approval-client-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-client-runtime"
   ) {
     return approvalClientHelpersRuntime;
   }

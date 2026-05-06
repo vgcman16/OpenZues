@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~85.9% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~86.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -927,6 +927,49 @@ may lag behind this tracker.
 - [x] Imported plugin SDK approval-native-runtime expiration scheduling for
   timer-based expiry finalization and timer cleanup on resolution/stop.
   - Status: checkpointed in `fa7cacbd`
+
+- [x] Imported plugin SDK approval-renderers shim for scoped/unscoped
+  `approval-renderers` imports, exec/plugin pending payloads, exec/plugin
+  resolved payloads, `execApproval` channel data, and aggregate
+  `approval-runtime` re-export coverage.
+  - Status: checkpointed in `d6bb4129`
+
+- [x] Imported plugin SDK approval-client-runtime alias shim for the exact
+  runtime subpath re-exporting approval client enablement, target matching,
+  request filters, profiles, and reply metadata.
+  - Status: checkpointed in `f24a7746`
+
+- [x] Imported plugin SDK approval-approvers alias shim for the exact
+  `approval-approvers` subpath exposing only `resolveApprovalApprovers` with
+  explicit precedence, fallback inference, normalization, and deduplication.
+  - Status: checkpointed in `0740c2ab`
+
+- [x] Imported plugin SDK approval-auth-helpers shim for exact helper imports,
+  native auth adapter construction, and implicit same-chat authorization marker
+  inspection.
+  - Status: checkpointed in `8511485f`
+
+- [x] Imported plugin SDK poll-runtime shim for exact poll helper imports,
+  poll input normalization/validation, duration hour clamping, and multiselect
+  max-selection resolution.
+  - Status: checkpointed in `83f15bfa`
+
+- [x] Imported plugin SDK lazy-runtime shim for exact cached module, surface,
+  named-export, method, and method-binder helper imports.
+  - Status: checkpointed in `6f66d9b8`
+
+- [x] Imported plugin SDK config-paths shim for exact account-specific channel
+  config base-path resolution and channel-root fallback.
+  - Status: checkpointed in `c1a26ebe`
+
+- [x] Imported plugin SDK context-visibility-runtime shim for default/channel/
+  account visibility precedence plus supplemental-context decision/filter
+  helpers.
+  - Status: checkpointed in `1e503fde`
+
+- [x] Imported plugin SDK heartbeat-runtime shim for indicator mapping, shared
+  heartbeat event state/listeners, reset helpers, and visibility precedence.
+  - Status: checkpointed in `a5863a1d`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

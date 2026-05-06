@@ -13885,6 +13885,10 @@ async def test_tools_invoke_imported_openclaw_approval_auth_runtime_helpers(
         """
 const approvalAuth = require("openclaw/plugin-sdk/approval-auth-runtime");
 const scopedApprovalAuth = require("@openclaw/plugin-sdk/approval-auth-runtime");
+const approvalApprovers = require("openclaw/plugin-sdk/approval-approvers");
+const scopedApprovalApprovers = require("@openclaw/plugin-sdk/approval-approvers");
+const approvalAuthHelpers = require("openclaw/plugin-sdk/approval-auth-helpers");
+const scopedApprovalAuthHelpers = require("@openclaw/plugin-sdk/approval-auth-helpers");
 
 function normalizeApprover(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -13917,9 +13921,33 @@ module.exports = {
           action: "approve",
           approvalKind: "plugin"
         });
+        const implicit = implicitAdapter.authorizeActorAction({
+          cfg: {},
+          senderId: "anyone",
+          action: "approve",
+          approvalKind: "exec"
+        });
+        const helperAdapter = approvalAuthHelpers.createResolvedApproverActionAuthAdapter({
+          channelLabel: "Matrix",
+          normalizeSenderId: normalizeApprover,
+          resolveApprovers() {
+            return ["owner"];
+          }
+        });
+        const helperDenied = helperAdapter.authorizeActorAction({
+          cfg: {},
+          senderId: "other",
+          action: "approve",
+          approvalKind: "exec"
+        });
         return {
           keys: Object.keys(approvalAuth).sort(),
           scopedType: typeof scopedApprovalAuth.resolveApprovalApprovers,
+          approverKeys: Object.keys(approvalApprovers).sort(),
+          approverScopedType: typeof scopedApprovalApprovers.resolveApprovalApprovers,
+          helperKeys: Object.keys(approvalAuthHelpers).sort(),
+          helperScopedType:
+            typeof scopedApprovalAuthHelpers.isImplicitSameChatApprovalAuthorization,
           explicit: approvalAuth.resolveApprovalApprovers({
             explicit: [" Alice ", "alice", 42, ""],
             allowFrom: ["bob"],
@@ -13931,6 +13959,13 @@ module.exports = {
             allowFrom: [" Bob ", "bob"],
             extraAllowFrom: ["Carol"],
             defaultTo: "  Dave  ",
+            normalizeApprover
+          }),
+          approverSubpath: approvalApprovers.resolveApprovalApprovers({
+            explicit: [],
+            allowFrom: [" Erin ", "erin"],
+            extraAllowFrom: ["Frank"],
+            defaultTo: "  Grace  ",
             normalizeApprover
           }),
           authorized: adapter.authorizeActorAction({
@@ -13945,12 +13980,27 @@ module.exports = {
             denied.reason.includes("plugin"),
             denied.reason.includes("Telegram")
           ],
-          implicit: implicitAdapter.authorizeActorAction({
-            cfg: {},
-            senderId: "anyone",
-            action: "approve",
-            approvalKind: "exec"
-          })
+          implicit,
+          implicitMarker: [
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization(implicit),
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization({ ...implicit }),
+            approvalAuthHelpers.isImplicitSameChatApprovalAuthorization(
+              adapter.authorizeActorAction({
+                cfg: {},
+                senderId: " Alice ",
+                action: "approve",
+                approvalKind: "exec"
+              })
+            )
+          ],
+          helperDenied: {
+            authorized: helperDenied.authorized,
+            reasonIncludes: [
+              helperDenied.reason.includes("not authorized"),
+              helperDenied.reason.includes("exec"),
+              helperDenied.reason.includes("Matrix")
+            ]
+          }
         };
       }
     });
@@ -14010,8 +14060,16 @@ module.exports = {
             "resolveApprovalApprovers",
         ],
         "scopedType": "function",
+        "approverKeys": ["resolveApprovalApprovers"],
+        "approverScopedType": "function",
+        "helperKeys": [
+            "createResolvedApproverActionAuthAdapter",
+            "isImplicitSameChatApprovalAuthorization",
+        ],
+        "helperScopedType": "function",
         "explicit": ["alice", "42"],
         "inferred": ["bob", "carol", "dave"],
+        "approverSubpath": ["erin", "frank", "grace"],
         "authorized": {"authorized": True},
         "denied": {
             "authorized": False,
@@ -14019,6 +14077,8 @@ module.exports = {
         },
         "deniedReasonIncludes": [True, True, True],
         "implicit": {"authorized": True},
+        "implicitMarker": [True, False, False],
+        "helperDenied": {"authorized": False, "reasonIncludes": [True, True, True]},
     }
 
 
@@ -14274,6 +14334,214 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_renderers_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-renderers.cjs"
+    runtime_entry.write_text(
+        """
+const renderers = require("openclaw/plugin-sdk/approval-renderers");
+const scopedRenderers = require("@openclaw/plugin-sdk/approval-renderers");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_renderers",
+      description: "Use OpenClaw approval renderers SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const pending = renderers.buildApprovalPendingReplyPayload({
+          approvalId: "exec-approval-id",
+          approvalSlug: "exec-slug",
+          text: "Exec approval asks",
+          agentId: "agent-1",
+          allowedDecisions: ["allow-once", "deny"],
+          sessionKey: "session-1",
+          channelData: { extra: "pending" }
+        });
+        const resolved = renderers.buildApprovalResolvedReplyPayload({
+          approvalId: "exec-approval-id",
+          approvalSlug: "exec-slug",
+          text: "Exec approval done",
+          channelData: { extra: "resolved" }
+        });
+        const pluginPending = renderers.buildPluginApprovalPendingReplyPayload({
+          request: {
+            id: "plugin-pending-abcdef",
+            request: {
+              pluginId: "demo-plugin",
+              title: "Use plugin tool",
+              description: "Need permission",
+              toolName: "demo.tool",
+              agentId: "agent-2"
+            },
+            createdAtMs: 0,
+            expiresAtMs: 70000
+          },
+          nowMs: 10000,
+          channelData: { extra: "plugin-pending" }
+        });
+        const pluginResolved = renderers.buildPluginApprovalResolvedReplyPayload({
+          resolved: {
+            id: "plugin-resolved-abcdef",
+            decision: "allow-once",
+            resolvedBy: "alice",
+            ts: 12345
+          },
+          channelData: { extra: "plugin-resolved" }
+        });
+        return {
+          keys: Object.keys(renderers).sort(),
+          scopedType: typeof scopedRenderers.buildPluginApprovalResolvedReplyPayload,
+          pending: {
+            text: pending.text,
+            metadata: pending.channelData.execApproval,
+            extra: pending.channelData.extra,
+            buttons: pending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          resolved: {
+            text: resolved.text,
+            metadata: resolved.channelData.execApproval,
+            extra: resolved.channelData.extra
+          },
+          pluginPending: {
+            textIncludes: [
+              pluginPending.text.includes("Plugin approval required"),
+              pluginPending.text.includes("Title: Use plugin tool"),
+              pluginPending.text.includes("Tool: demo.tool"),
+              pluginPending.text.includes("Expires in: 60s")
+            ],
+            metadata: pluginPending.channelData.execApproval,
+            extra: pluginPending.channelData.extra,
+            buttons: pluginPending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          pluginResolved: {
+            textIncludes: [
+              pluginResolved.text.includes("Plugin approval allowed once"),
+              pluginResolved.text.includes("Resolved by alice"),
+              pluginResolved.text.includes("ID: plugin-resolved-abcdef")
+            ],
+            metadata: pluginResolved.channelData.execApproval,
+            extra: pluginResolved.channelData.extra
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-renderers-plugin",
+                    "name": "Runtime Approval Renderers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-renderers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_renderers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_renderers"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
+        ],
+        "scopedType": "function",
+        "pending": {
+            "text": "Exec approval asks",
+            "metadata": {
+                "approvalId": "exec-approval-id",
+                "approvalSlug": "exec-slug",
+                "approvalKind": "exec",
+                "agentId": "agent-1",
+                "allowedDecisions": ["allow-once", "deny"],
+                "sessionKey": "session-1",
+                "state": "pending",
+            },
+            "extra": "pending",
+            "buttons": [
+                "/approve exec-approval-id allow-once",
+                "/approve exec-approval-id deny",
+            ],
+        },
+        "resolved": {
+            "text": "Exec approval done",
+            "metadata": {
+                "approvalId": "exec-approval-id",
+                "approvalSlug": "exec-slug",
+                "state": "resolved",
+            },
+            "extra": "resolved",
+        },
+        "pluginPending": {
+            "textIncludes": [True, True, True, True],
+            "metadata": {
+                "approvalId": "plugin-pending-abcdef",
+                "approvalSlug": "plugin-p",
+                "approvalKind": "plugin",
+                "allowedDecisions": ["allow-once", "allow-always", "deny"],
+                "state": "pending",
+            },
+            "extra": "plugin-pending",
+            "buttons": [
+                "/approve plugin-pending-abcdef allow-once",
+                "/approve plugin-pending-abcdef allow-always",
+                "/approve plugin-pending-abcdef deny",
+            ],
+        },
+        "pluginResolved": {
+            "textIncludes": [True, True, True],
+            "metadata": {
+                "approvalId": "plugin-resolved-abcdef",
+                "approvalSlug": "plugin-r",
+                "state": "resolved",
+            },
+            "extra": "plugin-resolved",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_client_helpers(
     tmp_path,
 ) -> None:
@@ -14284,6 +14552,8 @@ async def test_tools_invoke_imported_openclaw_approval_client_helpers(
         """
 const client = require("openclaw/plugin-sdk/approval-client-helpers");
 const scopedClient = require("@openclaw/plugin-sdk/approval-client-helpers");
+const runtimeClient = require("openclaw/plugin-sdk/approval-client-runtime");
+const scopedRuntimeClient = require("@openclaw/plugin-sdk/approval-client-runtime");
 
 const cfg = {
   approvals: {
@@ -14344,6 +14614,8 @@ module.exports = {
         return {
           keys: Object.keys(client).sort(),
           scopedType: typeof scopedClient.createChannelExecApprovalProfile,
+          runtimeKeys: Object.keys(runtimeClient).sort(),
+          runtimeScopedType: typeof scopedRuntimeClient.createChannelExecApprovalProfile,
           enabled: [
             client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 1 }),
             client.isChannelExecApprovalClientEnabledFromConfig({
@@ -14400,6 +14672,20 @@ module.exports = {
               agentFilter: ["main"]
             })
           ],
+          runtime: {
+            enabled:
+              runtimeClient.isChannelExecApprovalClientEnabledFromConfig({
+                enabled: "auto",
+                approverCount: 1
+              }) === true,
+            filters:
+              runtimeClient.matchesApprovalRequestFilters({
+                request: request.request,
+                agentFilter: ["ops"],
+                sessionFilter: ["tail$"]
+              }) === true,
+            metadata: runtimeClient.getExecApprovalReplyMetadata(approvalPayload) || null
+          },
           profile: {
             clientEnabled: profile.isClientEnabled({ cfg: {} }),
             approver: profile.isApprover({ cfg: {}, senderId: "owner" }),
@@ -14487,9 +14773,26 @@ module.exports = {
             "matchesApprovalRequestFilters",
         ],
         "scopedType": "function",
+        "runtimeKeys": [
+            "createChannelExecApprovalProfile",
+            "getExecApprovalReplyMetadata",
+            "isChannelExecApprovalClientEnabledFromConfig",
+            "isChannelExecApprovalTargetRecipient",
+            "matchesApprovalRequestFilters",
+        ],
+        "runtimeScopedType": "function",
         "enabled": [False, True, True, False, False],
         "targets": [True, False, False],
         "filters": [True, True, False],
+        "runtime": {
+            "enabled": True,
+            "filters": True,
+            "metadata": {
+                "approvalId": "req-1",
+                "approvalSlug": "req-1",
+                "approvalKind": "exec",
+            },
+        },
         "profile": {
             "clientEnabled": True,
             "approver": True,
@@ -16762,7 +17065,9 @@ module.exports = {
           scopedType: typeof scopedApproval.createChannelApprovalCapability,
           selectedKeys: [
             "buildExecApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
             "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
             "createApproverRestrictedNativeApprovalCapability",
             "createChannelExecApprovalProfile",
             "createChannelNativeOriginTargetResolver",
@@ -16874,7 +17179,9 @@ module.exports = {
         "scopedType": "function",
         "selectedKeys": [
             "buildExecApprovalPendingReplyPayload",
+            "buildApprovalResolvedReplyPayload",
             "buildPluginApprovalPendingReplyPayload",
+            "buildPluginApprovalResolvedReplyPayload",
             "createApproverRestrictedNativeApprovalCapability",
             "createChannelExecApprovalProfile",
             "createChannelNativeOriginTargetResolver",
@@ -29099,6 +29406,611 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_lazy_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-lazy-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const lazyRuntime = require("openclaw/plugin-sdk/lazy-runtime");
+const scopedLazyRuntime = require("@openclaw/plugin-sdk/lazy-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.lazy_runtime",
+      description: "Use OpenClaw lazy-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let moduleImports = 0;
+        let surfaceImports = 0;
+        let namedImports = 0;
+        const loadModule = lazyRuntime.createLazyRuntimeModule(async () => {
+          moduleImports += 1;
+          return {
+            value: "module",
+            add(left, right) {
+              return left + right;
+            }
+          };
+        });
+        const loadSurface = lazyRuntime.createLazyRuntimeSurface(
+          async () => {
+            surfaceImports += 1;
+            return { nested: { label: "surface" } };
+          },
+          (module) => module.nested
+        );
+        const loadNamed = lazyRuntime.createLazyRuntimeNamedExport(
+          async () => {
+            namedImports += 1;
+            return { answer: "forty-two" };
+          },
+          "answer"
+        );
+        const firstModule = await loadModule();
+        const secondModule = await loadModule();
+        const method = lazyRuntime.createLazyRuntimeMethod(loadModule, (runtime) => runtime.add);
+        const bind = lazyRuntime.createLazyRuntimeMethodBinder(loadModule);
+        const boundMethod = bind((runtime) => runtime.add);
+        return {
+          keys: Object.keys(lazyRuntime).sort(),
+          scopedType: typeof scopedLazyRuntime.createLazyRuntimeMethodBinder,
+          module: {
+            same: firstModule === secondModule,
+            imports: moduleImports,
+            value: firstModule.value
+          },
+          surface: [await loadSurface(), await loadSurface(), surfaceImports],
+          named: [await loadNamed(), await loadNamed(), namedImports],
+          method: await method(2, 3),
+          boundMethod: await boundMethod(5, 7)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-lazy-runtime-plugin",
+                    "name": "Runtime Lazy Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-lazy-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.lazy_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.lazy_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createLazyRuntimeMethod",
+            "createLazyRuntimeMethodBinder",
+            "createLazyRuntimeModule",
+            "createLazyRuntimeNamedExport",
+            "createLazyRuntimeSurface",
+        ],
+        "scopedType": "function",
+        "module": {"same": True, "imports": 1, "value": "module"},
+        "surface": [{"label": "surface"}, {"label": "surface"}, 1],
+        "named": ["forty-two", "forty-two", 1],
+        "method": 5,
+        "boundMethod": 12,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_config_paths_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-config-paths.cjs"
+    runtime_entry.write_text(
+        """
+const configPaths = require("openclaw/plugin-sdk/config-paths");
+const scopedConfigPaths = require("@openclaw/plugin-sdk/config-paths");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.config_paths",
+      description: "Use OpenClaw config-paths SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            slack: {
+              enabled: true,
+              accounts: {
+                primary: { token: "xoxb-token" },
+                blank: {}
+              }
+            },
+            telegram: {}
+          }
+        };
+        return {
+          keys: Object.keys(configPaths).sort(),
+          scopedType: typeof scopedConfigPaths.resolveChannelAccountConfigBasePath,
+          accountPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "primary"
+          }),
+          blankAccountPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "blank"
+          }),
+          fallbackPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "missing"
+          }),
+          channelOnlyPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "telegram",
+            accountId: "primary"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-paths-plugin",
+                    "name": "Runtime Config Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-config-paths-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.config_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.config_paths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveChannelAccountConfigBasePath"],
+        "scopedType": "function",
+        "accountPath": "channels.slack.accounts.primary.",
+        "blankAccountPath": "channels.slack.accounts.blank.",
+        "fallbackPath": "channels.slack.",
+        "channelOnlyPath": "channels.telegram.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_context_visibility_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-context-visibility.cjs"
+    runtime_entry.write_text(
+        """
+const contextVisibility = require("openclaw/plugin-sdk/context-visibility-runtime");
+const scopedContextVisibility = require("@openclaw/plugin-sdk/context-visibility-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.context_visibility",
+      description: "Use OpenClaw context-visibility-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            defaults: { contextVisibility: "allowlist_quote" },
+            slack: {
+              contextVisibility: "allowlist",
+              accounts: {
+                WORK: { contextVisibility: "all" }
+              }
+            }
+          }
+        };
+        const filtered = contextVisibility.filterSupplementalContextItems({
+          items: [
+            { id: "allowed", senderAllowed: true },
+            { id: "blocked", senderAllowed: false }
+          ],
+          mode: "allowlist",
+          kind: "thread",
+          isSenderAllowed: (item) => item.senderAllowed
+        });
+        return {
+          keys: Object.keys(contextVisibility).sort(),
+          scopedType: typeof scopedContextVisibility.evaluateSupplementalContextVisibility,
+          defaultMode: contextVisibility.resolveDefaultContextVisibility(cfg),
+          accountMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            accountId: "work"
+          }),
+          channelMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            accountId: "missing"
+          }),
+          fallbackMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "telegram"
+          }),
+          explicitMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            configuredContextVisibility: "allowlist_quote"
+          }),
+          allDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "all",
+            kind: "history",
+            senderAllowed: false
+          }),
+          senderAllowedDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist",
+            kind: "thread",
+            senderAllowed: true
+          }),
+          quoteDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist_quote",
+            kind: "quote",
+            senderAllowed: false
+          }),
+          blockedDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist_quote",
+            kind: "history",
+            senderAllowed: false
+          }),
+          shouldBlockHistory: contextVisibility.shouldIncludeSupplementalContext({
+            mode: "allowlist_quote",
+            kind: "history",
+            senderAllowed: false
+          }),
+          filtered
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-context-visibility-plugin",
+                    "name": "Runtime Context Visibility Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-context-visibility-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.context_visibility"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.context_visibility"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "evaluateSupplementalContextVisibility",
+            "filterSupplementalContextItems",
+            "resolveChannelContextVisibilityMode",
+            "resolveDefaultContextVisibility",
+            "shouldIncludeSupplementalContext",
+        ],
+        "scopedType": "function",
+        "defaultMode": "allowlist_quote",
+        "accountMode": "all",
+        "channelMode": "allowlist",
+        "fallbackMode": "allowlist_quote",
+        "explicitMode": "allowlist_quote",
+        "allDecision": {"include": True, "reason": "mode_all"},
+        "senderAllowedDecision": {"include": True, "reason": "sender_allowed"},
+        "quoteDecision": {"include": True, "reason": "quote_override"},
+        "blockedDecision": {"include": False, "reason": "blocked"},
+        "shouldBlockHistory": False,
+        "filtered": {
+            "items": [{"id": "allowed", "senderAllowed": True}],
+            "omitted": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_heartbeat_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-heartbeat.cjs"
+    runtime_entry.write_text(
+        """
+const heartbeat = require("openclaw/plugin-sdk/heartbeat-runtime");
+const scopedHeartbeat = require("@openclaw/plugin-sdk/heartbeat-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.heartbeat",
+      description: "Use OpenClaw heartbeat-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        heartbeat.resetHeartbeatEventsForTest();
+        const seen = [];
+        const unsubscribe = heartbeat.onHeartbeatEvent((event) => {
+          seen.push(`${event.status}:${event.ts}:${event.preview || ""}`);
+        });
+        heartbeat.onHeartbeatEvent(() => {
+          throw new Error("listener boom");
+        });
+        const originalNow = Date.now;
+        Date.now = () => 1234567890;
+        try {
+          scopedHeartbeat.emitHeartbeatEvent({
+            status: "ok-token",
+            preview: "pong",
+            channel: "slack"
+          });
+        } finally {
+          Date.now = originalNow;
+        }
+        const lastBeforeUnsubscribe = heartbeat.getLastHeartbeatEvent();
+        unsubscribe();
+        scopedHeartbeat.emitHeartbeatEvent({ status: "failed", reason: "offline" });
+        const lastAfterUnsubscribe = heartbeat.getLastHeartbeatEvent();
+        const accountVisibility = heartbeat.resolveHeartbeatVisibility({
+          cfg: {
+            channels: {
+              defaults: {
+                heartbeat: { showOk: false, showAlerts: true, useIndicator: true }
+              },
+              telegram: {
+                heartbeat: { showOk: false, showAlerts: false },
+                accounts: {
+                  primary: { heartbeat: { showOk: true, showAlerts: true } }
+                }
+              }
+            }
+          },
+          channel: "telegram",
+          accountId: "primary"
+        });
+        const webchatVisibility = heartbeat.resolveHeartbeatVisibility({
+          cfg: {
+            channels: {
+              defaults: {
+                heartbeat: { showOk: true, showAlerts: false, useIndicator: false }
+              },
+              webchat: {
+                heartbeat: { showOk: false, showAlerts: true, useIndicator: true }
+              }
+            }
+          },
+          channel: "webchat",
+          accountId: "ignored"
+        });
+        heartbeat.resetHeartbeatEventsForTest();
+        return {
+          keys: Object.keys(heartbeat).sort(),
+          scopedType: typeof scopedHeartbeat.resolveHeartbeatVisibility,
+          indicatorTypes: {
+            okEmpty: heartbeat.resolveIndicatorType("ok-empty"),
+            okToken: heartbeat.resolveIndicatorType("ok-token"),
+            sent: heartbeat.resolveIndicatorType("sent"),
+            failed: heartbeat.resolveIndicatorType("failed"),
+            skipped: heartbeat.resolveIndicatorType("skipped") || null
+          },
+          seen,
+          lastBeforeUnsubscribe,
+          lastAfterUnsubscribe,
+          accountVisibility,
+          webchatVisibility,
+          resetLast: heartbeat.getLastHeartbeatEvent()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-heartbeat-plugin",
+                    "name": "Runtime Heartbeat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-heartbeat-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.heartbeat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.heartbeat"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "emitHeartbeatEvent",
+            "getLastHeartbeatEvent",
+            "onHeartbeatEvent",
+            "resetHeartbeatEventsForTest",
+            "resolveHeartbeatVisibility",
+            "resolveIndicatorType",
+        ],
+        "scopedType": "function",
+        "indicatorTypes": {
+            "okEmpty": "ok",
+            "okToken": "ok",
+            "sent": "alert",
+            "failed": "error",
+            "skipped": None,
+        },
+        "seen": ["ok-token:1234567890:pong"],
+        "lastBeforeUnsubscribe": {
+            "ts": 1234567890,
+            "status": "ok-token",
+            "preview": "pong",
+            "channel": "slack",
+        },
+        "lastAfterUnsubscribe": {
+            "ts": payload["result"]["lastAfterUnsubscribe"]["ts"],
+            "status": "failed",
+            "reason": "offline",
+        },
+        "accountVisibility": {
+            "showOk": True,
+            "showAlerts": True,
+            "useIndicator": True,
+        },
+        "webchatVisibility": {
+            "showOk": True,
+            "showAlerts": False,
+            "useIndicator": False,
+        },
+        "resetLast": None,
+    }
+    assert isinstance(payload["result"]["lastAfterUnsubscribe"]["ts"], int)
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -29194,6 +30106,138 @@ module.exports = {
     assert payload["result"] == {
         "abort": [True, True, True, True, True, True, False, False, False, True],
         "btw": [True, True, True, False],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_poll_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-poll-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const poll = require("openclaw/plugin-sdk/poll-runtime");
+const scopedPoll = require("@openclaw/plugin-sdk/poll-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.poll",
+      description: "Use OpenClaw poll-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const errors = [];
+        for (const input of [
+          { question: "  ", options: ["a", "b"] },
+          { question: "q", options: ["only"] },
+          { question: "q", options: ["a", "b", "c"], maxSelections: 4 },
+          { question: "q", options: ["a", "b"], durationSeconds: 10, durationHours: 1 }
+        ]) {
+          try {
+            poll.normalizePollInput(input, { maxOptions: 2 });
+          } catch (error) {
+            errors.push(error.message);
+          }
+        }
+        return {
+          keys: Object.keys(poll).sort(),
+          scopedType: typeof scopedPoll.normalizePollInput,
+          maxSelections: [
+            poll.resolvePollMaxSelections(3, true),
+            poll.resolvePollMaxSelections(3, false),
+            poll.resolvePollMaxSelections(1, true)
+          ],
+          normalized: poll.normalizePollInput(
+            {
+              question: "  Choose one  ",
+              options: ["  Alpha  ", "", "Beta"],
+              maxSelections: 1.9,
+              durationSeconds: 90.8
+            },
+            { maxOptions: 2 }
+          ),
+          hours: [
+            poll.normalizePollDurationHours(undefined, { defaultHours: 24, maxHours: 48 }),
+            poll.normalizePollDurationHours(0, { defaultHours: 24, maxHours: 48 }),
+            poll.normalizePollDurationHours(99.9, { defaultHours: 24, maxHours: 48 })
+          ],
+          errors
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-poll-plugin",
+                    "name": "Runtime Poll Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-poll-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.poll"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.poll"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "normalizePollDurationHours",
+            "normalizePollInput",
+            "resolvePollMaxSelections",
+        ],
+        "scopedType": "function",
+        "maxSelections": [3, 1, 2],
+        "normalized": {
+            "question": "Choose one",
+            "options": ["Alpha", "Beta"],
+            "maxSelections": 1,
+            "durationSeconds": 90,
+        },
+        "hours": [24, 1, 48],
+        "errors": [
+            "Poll question is required",
+            "Poll requires at least 2 options",
+            "Poll supports at most 2 options",
+            "durationSeconds and durationHours are mutually exclusive",
+        ],
     }
 
 
