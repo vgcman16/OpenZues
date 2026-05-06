@@ -15995,6 +15995,7 @@ module.exports = {
         "keys": [
             "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
             "createChannelApprovalHandler",
+            "createChannelApprovalHandlerFromCapability",
             "createChannelApprovalNativeRuntimeAdapter",
             "createLazyChannelApprovalNativeRuntimeAdapter",
             "resolveApprovalOverGateway",
@@ -16260,6 +16261,312 @@ module.exports = {
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_from_capability(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-capability.cjs"
+    runtime_entry.write_text(
+        """
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const nativeRuntime = handler.createChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  availability: {
+    isConfigured: ({ accountId, context }) => {
+      observed.push({ hook: "configured", accountId, context });
+      return accountId === "ops";
+    },
+    shouldHandle: ({ request, accountId }) => {
+      observed.push({ hook: "shouldHandle", requestId: request.id, accountId });
+      return request.id !== "skip";
+    }
+  },
+  presentation: {
+    buildPendingPayload: async ({ request, approvalKind, view, context }) => {
+      observed.push({
+        hook: "pendingPayload",
+        requestId: request.id,
+        approvalKind,
+        view: {
+          approvalId: view.approvalId,
+          approvalKind: view.approvalKind,
+          phase: view.phase,
+          title: view.title,
+          severity: view.severity
+        },
+        context
+      });
+      return { text: `pending:${view.title}` };
+    },
+    buildResolvedResult: async ({ resolved, view, entry }) => {
+      observed.push({
+        hook: "resolvedPayload",
+        resolved: resolved.id,
+        view: {
+          approvalId: view.approvalId,
+          approvalKind: view.approvalKind,
+          phase: view.phase,
+          decision: view.decision
+        },
+        entry
+      });
+      return { kind: "update", payload: { resolved: resolved.id, decision: view.decision } };
+    },
+    buildExpiredResult: async ({ request, view, entry }) => ({
+      kind: "delete",
+      expired: request.id,
+      phase: view.phase,
+      entry
+    })
+  },
+  transport: {
+    prepareTarget: async ({ plannedTarget, pendingPayload, view }) => {
+      observed.push({ hook: "prepare", plannedTarget, pendingPayload, phase: view.phase });
+      return { dedupeKey: plannedTarget.target.to, target: { to: plannedTarget.target.to } };
+    },
+    deliverPending: async ({ preparedTarget, pendingPayload, view }) => {
+      observed.push({ hook: "deliver", preparedTarget, pendingPayload, phase: view.phase });
+      return { id: `entry:${preparedTarget.to}` };
+    },
+    updateEntry: async ({ entry, payload, phase }) => {
+      observed.push({ hook: "update", entry, payload, phase });
+      return { updated: entry.id, payload, phase };
+    }
+  },
+  interactions: {
+    bindPending: async ({ entry, pendingPayload }) => {
+      observed.push({ hook: "bind", entry, pendingPayload });
+      return { id: `binding:${entry.id}` };
+    },
+    unbindPending: async ({ entry, binding, approvalKind }) => {
+      observed.push({ hook: "unbind", entry, binding, approvalKind });
+    }
+  },
+  observe: {
+    onDelivered: ({ entry, approvalKind }) =>
+      observed.push({ hook: "observed", entry, approvalKind })
+  }
+});
+
+const capability = {
+  nativeRuntime,
+  native: {
+    describeDeliveryCapabilities: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "capabilities", approvalKind, accountId, requestId: request.id });
+      return {
+        enabled: true,
+        preferredSurface: "approver-dm",
+        supportsOriginSurface: false,
+        supportsApproverDmSurface: true
+      };
+    },
+    resolveApproverDmTargets: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "targets", approvalKind, accountId, requestId: request.id });
+      return [{ to: `${approvalKind}:${accountId}` }];
+    }
+  }
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_capability",
+      description: "Use OpenClaw approval handler capability SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const runtime = await handler.createChannelApprovalHandlerFromCapability({
+          capability,
+          label: "test/capability",
+          clientDisplayName: "Capability",
+          channel: "telegram",
+          channelLabel: "Telegram",
+          cfg: {},
+          accountId: "ops",
+          gatewayUrl: "ws://gateway.example.test",
+          context: { source: "unit" },
+          nowMs: () => 7000
+        });
+        const missing = await handler.createChannelApprovalHandlerFromCapability({
+          capability: {},
+          label: "missing",
+          clientDisplayName: "Missing",
+          channel: "telegram",
+          channelLabel: "Telegram",
+          cfg: {}
+        });
+        const configured = runtime.isConfigured();
+        const entries = await runtime.handleRequested({
+          id: "plugin:req-capability",
+          request: {
+            pluginId: "demo",
+            title: "Plugin asks",
+            description: "Needs access",
+            severity: "critical"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 60000
+        });
+        await runtime.handleResolved({
+          id: "plugin:req-capability",
+          decision: "allow-once",
+          resolvedBy: "owner",
+          ts: 10
+        });
+        return {
+          factoryType: typeof handler.createChannelApprovalHandlerFromCapability,
+          missing,
+          configured,
+          entries,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-capability-plugin",
+                    "name": "Runtime Approval Handler Capability Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-capability.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_capability"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_capability"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["factoryType"] == "function"
+    assert payload["result"]["missing"] is None
+    assert payload["result"]["configured"] is True
+    assert payload["result"]["entries"] == [
+        {
+            "entry": {"id": "entry:plugin:ops"},
+            "binding": {"id": "binding:entry:plugin:ops"},
+        }
+    ]
+    assert payload["result"]["observed"] == [
+        {"hook": "configured", "accountId": "ops", "context": {"source": "unit"}},
+        {"hook": "shouldHandle", "requestId": "plugin:req-capability", "accountId": "ops"},
+        {
+            "hook": "pendingPayload",
+            "requestId": "plugin:req-capability",
+            "approvalKind": "plugin",
+            "view": {
+                "approvalId": "plugin:req-capability",
+                "approvalKind": "plugin",
+                "phase": "pending",
+                "title": "Plugin asks",
+                "severity": "critical",
+            },
+            "context": {"source": "unit"},
+        },
+        {
+            "hook": "capabilities",
+            "approvalKind": "plugin",
+            "accountId": "ops",
+            "requestId": "plugin:req-capability",
+        },
+        {
+            "hook": "targets",
+            "approvalKind": "plugin",
+            "accountId": "ops",
+            "requestId": "plugin:req-capability",
+        },
+        {
+            "hook": "prepare",
+            "plannedTarget": {
+                "surface": "approver-dm",
+                "target": {"to": "plugin:ops"},
+                "reason": "preferred",
+            },
+            "pendingPayload": {"text": "pending:Plugin asks"},
+            "phase": "pending",
+        },
+        {
+            "hook": "deliver",
+            "preparedTarget": {"to": "plugin:ops"},
+            "pendingPayload": {"text": "pending:Plugin asks"},
+            "phase": "pending",
+        },
+        {
+            "hook": "bind",
+            "entry": {"id": "entry:plugin:ops"},
+            "pendingPayload": {"text": "pending:Plugin asks"},
+        },
+        {
+            "hook": "observed",
+            "entry": {"id": "entry:plugin:ops"},
+            "approvalKind": "plugin",
+        },
+        {
+            "hook": "unbind",
+            "entry": {"id": "entry:plugin:ops"},
+            "binding": {"id": "binding:entry:plugin:ops"},
+            "approvalKind": "plugin",
+        },
+        {
+            "hook": "resolvedPayload",
+            "resolved": "plugin:req-capability",
+            "view": {
+                "approvalId": "plugin:req-capability",
+                "approvalKind": "plugin",
+                "phase": "resolved",
+                "decision": "allow-once",
+            },
+            "entry": {"id": "entry:plugin:ops"},
+        },
+        {
+            "hook": "update",
+            "entry": {"id": "entry:plugin:ops"},
+            "payload": {"resolved": "plugin:req-capability", "decision": "allow-once"},
+            "phase": "resolved",
+        },
+    ]
 
 
 @pytest.mark.asyncio

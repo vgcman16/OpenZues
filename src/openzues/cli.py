@@ -37698,10 +37698,299 @@ function createChannelApprovalHandler(adapter = {}) {
   });
 }
 
+function buildPendingApprovalView(request = {}) {
+  const requestId = normalizeOptionalString(request.id) || "";
+  const payload = request.request || {};
+  if (requestId.startsWith("plugin:")) {
+    return {
+      approvalId: requestId,
+      approvalKind: "plugin",
+      phase: "pending",
+      title: normalizeOptionalString(payload.title) || "Plugin approval",
+      description: normalizeOptionalString(payload.description),
+      metadata: [],
+      agentId: normalizeOptionalString(payload.agentId),
+      pluginId: normalizeOptionalString(payload.pluginId),
+      toolName: normalizeOptionalString(payload.toolName),
+      severity: normalizeOptionalString(payload.severity) || "warning",
+      actions: buildExecApprovalActionDescriptors({ approvalCommandId: requestId }),
+      expiresAtMs: request.expiresAtMs,
+    };
+  }
+  const display = resolveExecApprovalCommandDisplay(payload);
+  return {
+    approvalId: requestId,
+    approvalKind: "exec",
+    phase: "pending",
+    title: "Exec Approval Required",
+    description: "A command needs your approval.",
+    metadata: [],
+    ask: normalizeOptionalString(payload.ask),
+    agentId: normalizeOptionalString(payload.agentId),
+    warningText: normalizeOptionalString(payload.warningText),
+    commandText: display.commandText,
+    commandPreview: display.commandPreview,
+    cwd: normalizeOptionalString(payload.cwd),
+    envKeys: Array.isArray(payload.envKeys) ? payload.envKeys : undefined,
+    host: normalizeOptionalString(payload.host),
+    nodeId: normalizeOptionalString(payload.nodeId),
+    sessionKey: normalizeOptionalString(payload.sessionKey),
+    actions: buildExecApprovalActionDescriptors({
+      approvalCommandId: requestId,
+      ask: payload.ask,
+      allowedDecisions: payload.allowedDecisions,
+    }),
+    expiresAtMs: request.expiresAtMs,
+  };
+}
+
+function buildResolvedApprovalView(request = {}, resolved = {}) {
+  const pendingView = buildPendingApprovalView(request);
+  const view = {
+    ...pendingView,
+    phase: "resolved",
+    decision: resolved.decision,
+    resolvedBy: normalizeOptionalString(resolved.resolvedBy),
+  };
+  delete view.actions;
+  delete view.expiresAtMs;
+  return view;
+}
+
+function buildExpiredApprovalView(request = {}) {
+  const pendingView = buildPendingApprovalView(request);
+  const view = {
+    ...pendingView,
+    phase: "expired",
+  };
+  delete view.actions;
+  delete view.expiresAtMs;
+  return view;
+}
+
+async function applyChannelApprovalFinalAction(params = {}) {
+  const result = params.result || {};
+  if (result.kind === "update") {
+    await params.nativeRuntime.transport.updateEntry?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      payload: result.payload,
+      phase: params.phase,
+    });
+  } else if (result.kind === "delete") {
+    await params.nativeRuntime.transport.deleteEntry?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      phase: params.phase,
+    });
+  } else if (result.kind === "clear-actions") {
+    await params.nativeRuntime.interactions?.clearPendingActions?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      phase: params.phase,
+    });
+  }
+}
+
+async function createChannelApprovalHandlerFromCapability(params = {}) {
+  const nativeRuntime = params.capability && params.capability.nativeRuntime;
+  if (!nativeRuntime) {
+    return null;
+  }
+  const resolveApprovalKind =
+    nativeRuntime.resolveApprovalKind || defaultChannelApprovalKind;
+  const baseContext = {
+    cfg: params.cfg,
+    accountId: params.accountId,
+    gatewayUrl: params.gatewayUrl,
+    context: params.context,
+  };
+  return createChannelApprovalHandler({
+    runtime: {
+      label: params.label,
+      clientDisplayName: params.clientDisplayName,
+      cfg: params.cfg,
+      gatewayUrl: params.gatewayUrl,
+      eventKinds: nativeRuntime.eventKinds,
+      channel: params.channel,
+      channelLabel: params.channelLabel,
+      accountId: params.accountId,
+      nativeAdapter: params.capability.native,
+      resolveApprovalKind,
+      isConfigured: () => nativeRuntime.availability.isConfigured(baseContext),
+      shouldHandle: (request) =>
+        nativeRuntime.availability.shouldHandle({ ...baseContext, request }),
+      nowMs: params.nowMs,
+    },
+    content: {
+      buildPendingContent: async ({ request, approvalKind, nowMs }) => {
+        const view = buildPendingApprovalView(request);
+        return {
+          view,
+          payload: await nativeRuntime.presentation.buildPendingPayload({
+            ...baseContext,
+            request,
+            approvalKind,
+            nowMs,
+            view,
+          }),
+        };
+      },
+    },
+    transport: {
+      prepareTarget: async ({ plannedTarget, request, approvalKind, pendingContent }) =>
+        await nativeRuntime.transport.prepareTarget({
+          ...baseContext,
+          plannedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      deliverTarget: async ({
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) => {
+        const entry = await nativeRuntime.transport.deliverPending({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        });
+        if (!entry) {
+          return null;
+        }
+        const binding = await nativeRuntime.interactions?.bindPending?.({
+          ...baseContext,
+          entry,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        });
+        return {
+          entry,
+          ...(binding === undefined || binding === null ? {} : { binding }),
+        };
+      },
+    },
+    lifecycle: {
+      onDeliveryError: ({ error, plannedTarget, request, approvalKind, pendingContent }) =>
+        nativeRuntime.observe?.onDeliveryError?.({
+          ...baseContext,
+          error,
+          plannedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      onDuplicateSkipped: ({
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) =>
+        nativeRuntime.observe?.onDuplicateSkipped?.({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      onDelivered: ({
+        entry,
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) =>
+        nativeRuntime.observe?.onDelivered?.({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+          entry: entry.entry,
+        }),
+      finalizeResolved: async ({ request, resolved, entries }) => {
+        const approvalKind = resolveApprovalKind(request);
+        const view = buildResolvedApprovalView(request, resolved);
+        for (const wrapped of entries) {
+          if (wrapped.binding !== undefined) {
+            await nativeRuntime.interactions?.unbindPending?.({
+              ...baseContext,
+              entry: wrapped.entry,
+              binding: wrapped.binding,
+              request,
+              approvalKind,
+            });
+          }
+          const result = await nativeRuntime.presentation.buildResolvedResult({
+            ...baseContext,
+            request,
+            resolved,
+            view,
+            entry: wrapped.entry,
+          });
+          await applyChannelApprovalFinalAction({
+            nativeRuntime,
+            baseContext,
+            wrapped,
+            result,
+            phase: "resolved",
+          });
+        }
+      },
+      finalizeExpired: async ({ request, entries }) => {
+        const approvalKind = resolveApprovalKind(request);
+        const view = buildExpiredApprovalView(request);
+        for (const wrapped of entries) {
+          if (wrapped.binding !== undefined) {
+            await nativeRuntime.interactions?.unbindPending?.({
+              ...baseContext,
+              entry: wrapped.entry,
+              binding: wrapped.binding,
+              request,
+              approvalKind,
+            });
+          }
+          const result = await nativeRuntime.presentation.buildExpiredResult({
+            ...baseContext,
+            request,
+            view,
+            entry: wrapped.entry,
+          });
+          await applyChannelApprovalFinalAction({
+            nativeRuntime,
+            baseContext,
+            wrapped,
+            result,
+            phase: "expired",
+          });
+        }
+      },
+    },
+  });
+}
+
 const approvalHandlerRuntime = new Proxy(
   {
     CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
     createChannelApprovalHandler,
+    createChannelApprovalHandlerFromCapability,
     createChannelApprovalNativeRuntimeAdapter,
     createLazyChannelApprovalNativeRuntimeAdapter,
     resolveApprovalOverGateway,
