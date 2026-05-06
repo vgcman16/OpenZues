@@ -24444,6 +24444,115 @@ function collectNestedChannelTtsAssignments(params) {
   }
 }
 
+function normalizeTalkSecretInput(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  return coerceSecretRef(value) || undefined;
+}
+
+function normalizeTalkProviderConfig(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const provider = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === undefined) {
+      continue;
+    }
+    if (key === "apiKey") {
+      const normalized = normalizeTalkSecretInput(raw);
+      if (normalized !== undefined) {
+        provider.apiKey = normalized;
+      }
+      continue;
+    }
+    provider[key] = raw;
+  }
+  return Object.keys(provider).length > 0 ? provider : undefined;
+}
+
+function normalizeTalkProviders(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const providers = {};
+  for (const [rawProviderId, providerConfig] of Object.entries(value)) {
+    const providerId = normalizeOptionalString(rawProviderId);
+    if (!providerId) {
+      continue;
+    }
+    const normalizedProvider = normalizeTalkProviderConfig(providerConfig);
+    if (!normalizedProvider) {
+      continue;
+    }
+    providers[providerId] = {
+      ...(providers[providerId] || {}),
+      ...normalizedProvider,
+    };
+  }
+  return Object.keys(providers).length > 0 ? providers : undefined;
+}
+
+function normalizeTalkSection(value) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const normalized = {};
+  const speechLocale = normalizeOptionalString(value.speechLocale);
+  if (speechLocale) {
+    normalized.speechLocale = speechLocale;
+  }
+  if (typeof value.interruptOnSpeech === "boolean") {
+    normalized.interruptOnSpeech = value.interruptOnSpeech;
+  }
+  if (
+    typeof value.silenceTimeoutMs === "number" &&
+    Number.isInteger(value.silenceTimeoutMs) &&
+    value.silenceTimeoutMs > 0
+  ) {
+    normalized.silenceTimeoutMs = value.silenceTimeoutMs;
+  }
+  const providers = normalizeTalkProviders(value.providers);
+  const provider = normalizeOptionalString(value.provider);
+  if (providers) {
+    normalized.providers = providers;
+  }
+  if (provider) {
+    normalized.provider = provider;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function activeProviderFromTalk(talk) {
+  const provider = normalizeOptionalString(talk && talk.provider);
+  const providers = talk && talk.providers;
+  if (provider) {
+    if (providers && !(provider in providers)) {
+      return undefined;
+    }
+    return provider;
+  }
+  const providerIds = providers ? Object.keys(providers) : [];
+  return providerIds.length === 1 ? providerIds[0] : undefined;
+}
+
+function resolveActiveTalkProviderConfig(talk) {
+  const normalizedTalk = normalizeTalkSection(talk);
+  if (!normalizedTalk) {
+    return undefined;
+  }
+  const provider = activeProviderFromTalk(normalizedTalk);
+  if (!provider) {
+    return undefined;
+  }
+  return {
+    provider,
+    config: (normalizedTalk.providers && normalizedTalk.providers[provider]) || {},
+  };
+}
+
 const DEFAULT_ACCOUNT_ID = "default";
 const DEFAULT_AGENT_ID = "main";
 const DEFAULT_MAIN_KEY = "main";
@@ -34393,6 +34502,10 @@ const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
 
+const talkConfigRuntime = {
+  resolveActiveTalkProviderConfig,
+};
+
 const routingRuntime = {
   DEFAULT_ACCOUNT_ID,
   DEFAULT_MAIN_KEY,
@@ -35550,6 +35663,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-secret-tts-runtime"
   ) {
     return channelSecretTtsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/talk-config-runtime" ||
+    request === "@openclaw/plugin-sdk/talk-config-runtime"
+  ) {
+    return talkConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/routing" ||

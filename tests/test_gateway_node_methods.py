@@ -10243,6 +10243,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_talk_config_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-talk-config-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const talkConfig = require("openclaw/plugin-sdk/talk-config-runtime");
+const scopedTalkConfig = require("@openclaw/plugin-sdk/talk-config-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.talk_config",
+      description: "Use OpenClaw talk-config-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          exportKeys: Object.keys(talkConfig).sort(),
+          missing: talkConfig.resolveActiveTalkProviderConfig(undefined) ?? null,
+          singleProvider: talkConfig.resolveActiveTalkProviderConfig({
+            providers: {
+              elevenlabs: {
+                apiKey: "  sk-voice  ",
+                voiceId: "alice"
+              }
+            }
+          }),
+          explicitProvider: scopedTalkConfig.resolveActiveTalkProviderConfig({
+            provider: " openai ",
+            providers: {
+              openai: {
+                apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+                modelId: "gpt-4o-mini-tts"
+              },
+              elevenlabs: { apiKey: "" },
+              "  ": { apiKey: "ignored" }
+            },
+            silenceTimeoutMs: 1200,
+            interruptOnSpeech: true,
+            speechLocale: " en-US "
+          }),
+          invalidExplicit: talkConfig.resolveActiveTalkProviderConfig({
+            provider: "missing",
+            providers: { openai: { apiKey: "sk" } }
+          }) ?? null,
+          ambiguous: talkConfig.resolveActiveTalkProviderConfig({
+            providers: {
+              openai: { apiKey: "sk-openai" },
+              elevenlabs: { apiKey: "sk-eleven" }
+            }
+          }) ?? null,
+          scopedExportType: typeof scopedTalkConfig.resolveActiveTalkProviderConfig
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-talk-config-plugin",
+                    "name": "Runtime Talk Config Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-talk-config.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.talk_config"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.talk_config"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["resolveActiveTalkProviderConfig"],
+        "missing": None,
+        "singleProvider": {
+            "provider": "elevenlabs",
+            "config": {"apiKey": "sk-voice", "voiceId": "alice"},
+        },
+        "explicitProvider": {
+            "provider": "openai",
+            "config": {
+                "apiKey": {
+                    "source": "env",
+                    "provider": "default",
+                    "id": "OPENAI_API_KEY",
+                },
+                "modelId": "gpt-4o-mini-tts",
+            },
+        },
+        "invalidExplicit": None,
+        "ambiguous": None,
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_secret_tts_runtime_helper(
     tmp_path,
 ) -> None:
