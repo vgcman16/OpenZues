@@ -31937,6 +31937,116 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_type_only_sdk_barrels(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-type-only-sdk-barrels.cjs"
+    runtime_entry.write_text(
+        """
+const subpaths = [
+  "config-types",
+  "document-extractor",
+  "music-generation",
+  "provider-model-types",
+  "qa-channel-protocol",
+  "tts-runtime.types"
+];
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.type_only_sdk_barrels",
+      description: "Use OpenClaw type-only SDK barrel shims",
+      parameters: { type: "object", properties: {} },
+      execute() {
+        const results = {};
+        for (const subpath of subpaths) {
+          const unscoped = require(`openclaw/plugin-sdk/${subpath}`);
+          const scoped = require(`@openclaw/plugin-sdk/${subpath}`);
+          results[subpath] = {
+            keys: Object.keys(unscoped).sort(),
+            scopedKeys: Object.keys(scoped).sort(),
+            defaultType: typeof unscoped.default,
+            scopedDefaultType: typeof scoped.default
+          };
+        }
+        return results;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-type-only-sdk-barrels-plugin",
+                    "name": "Runtime Type-Only SDK Barrels Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-type-only-sdk-barrels.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.type_only_sdk_barrels"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.type_only_sdk_barrels", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    empty_runtime_shape = {
+        "keys": [],
+        "scopedKeys": [],
+        "defaultType": "undefined",
+        "scopedDefaultType": "undefined",
+    }
+    assert payload["result"] == {
+        "config-types": empty_runtime_shape,
+        "document-extractor": empty_runtime_shape,
+        "music-generation": empty_runtime_shape,
+        "provider-model-types": empty_runtime_shape,
+        "qa-channel-protocol": empty_runtime_shape,
+        "tts-runtime.types": empty_runtime_shape,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

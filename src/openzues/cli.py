@@ -34197,6 +34197,22 @@ const cliBackendRuntime = {
   CLI_RESUME_WATCHDOG_DEFAULTS,
 };
 
+const typeOnlyPluginSdkRuntime = Object.freeze({});
+const typeOnlyPluginSdkRequests = new Set([
+  "openclaw/plugin-sdk/config-types",
+  "@openclaw/plugin-sdk/config-types",
+  "openclaw/plugin-sdk/document-extractor",
+  "@openclaw/plugin-sdk/document-extractor",
+  "openclaw/plugin-sdk/music-generation",
+  "@openclaw/plugin-sdk/music-generation",
+  "openclaw/plugin-sdk/provider-model-types",
+  "@openclaw/plugin-sdk/provider-model-types",
+  "openclaw/plugin-sdk/qa-channel-protocol",
+  "@openclaw/plugin-sdk/qa-channel-protocol",
+  "openclaw/plugin-sdk/tts-runtime.types",
+  "@openclaw/plugin-sdk/tts-runtime.types",
+]);
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -45056,6 +45072,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/cli-backend"
   ) {
     return cliBackendRuntime;
+  }
+  if (typeOnlyPluginSdkRequests.has(request)) {
+    return typeOnlyPluginSdkRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
