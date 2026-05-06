@@ -40757,6 +40757,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return providerAuthLoginRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/provider-auth-login.runtime" ||
+    request === "@openclaw/plugin-sdk/provider-auth-login.runtime"
+  ) {
+    return providerAuthLoginRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-auth" ||
     request === "@openclaw/plugin-sdk/provider-auth"
   ) {

@@ -13764,6 +13764,8 @@ async def test_tools_invoke_imported_openclaw_provider_auth_login_helpers(
     runtime_entry.write_text(
         """
 const authLogin = require("openclaw/plugin-sdk/provider-auth-login");
+const authLoginRuntime = require("openclaw/plugin-sdk/provider-auth-login.runtime");
+const scopedAuthLoginRuntime = require("@openclaw/plugin-sdk/provider-auth-login.runtime");
 const genericSdk = require("openclaw/plugin-sdk");
 
 async function capture(name, fn) {
@@ -13787,12 +13789,18 @@ module.exports = {
             typeof authLogin.loginOpenAICodexOAuth,
             typeof authLogin.loginChutes,
             typeof authLogin.githubCopilotLoginCommand,
+            typeof authLoginRuntime.loginOpenAICodexOAuth,
+            typeof authLoginRuntime.loginChutes,
+            typeof authLoginRuntime.githubCopilotLoginCommand,
+            typeof scopedAuthLoginRuntime.githubCopilotLoginCommand,
             typeof genericSdk.loginOpenAICodexOAuth
           ],
+          runtimeKeys: Object.keys(authLoginRuntime).sort(),
           unavailable: [
             await capture("openai", authLogin.loginOpenAICodexOAuth),
             await capture("chutes", authLogin.loginChutes),
-            await capture("github", authLogin.githubCopilotLoginCommand)
+            await capture("github", authLogin.githubCopilotLoginCommand),
+            await capture("runtime-openai", authLoginRuntime.loginOpenAICodexOAuth)
           ]
         };
       }
@@ -13851,11 +13859,17 @@ module.exports = {
     )
     assert payload["ok"] is True
     assert payload["result"] == {
-        "exportTypes": ["function"] * 4,
+        "exportTypes": ["function"] * 8,
+        "runtimeKeys": [
+            "githubCopilotLoginCommand",
+            "loginChutes",
+            "loginOpenAICodexOAuth",
+        ],
         "unavailable": [
             {"name": "openai", "ok": False, "message": unavailable_message},
             {"name": "chutes", "ok": False, "message": unavailable_message},
             {"name": "github", "ok": False, "message": unavailable_message},
+            {"name": "runtime-openai", "ok": False, "message": unavailable_message},
         ],
     }
 
