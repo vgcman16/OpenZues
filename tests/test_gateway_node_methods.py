@@ -14695,6 +14695,281 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_conversation_binding_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-conversation-binding-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const bindingRuntime = require("openclaw/plugin-sdk/conversation-binding-runtime");
+const threadBindings = require("openclaw/plugin-sdk/thread-bindings-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+function createRoute() {
+  return {
+    agentId: "main",
+    channel: "demo",
+    accountId: "default",
+    sessionKey: "agent:main:main",
+    mainSessionKey: "agent:main:main",
+    lastRoutePolicy: "main",
+    matchedBy: "default"
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.conversation_binding_runtime",
+      description: "Use OpenClaw conversation binding runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const records = new Map();
+        const touches = [];
+        const keyFor = (ref) => `${ref.channel}:${ref.accountId}:${ref.conversationId}`;
+        threadBindings.registerSessionBindingAdapter({
+          channel: "demo",
+          accountId: "default",
+          capabilities: {
+            placements: ["current"],
+            bindSupported: true,
+            unbindSupported: true
+          },
+          bind: async (input) => {
+            const record = {
+              bindingId: "binding-" + input.conversation.conversationId,
+              targetSessionKey: input.targetSessionKey,
+              targetKind: input.targetKind,
+              conversation: input.conversation,
+              status: "active",
+              boundAt: 1,
+              metadata: input.metadata
+            };
+            records.set(keyFor(input.conversation), record);
+            return record;
+          },
+          listBySession: (targetSessionKey) =>
+            Array.from(records.values()).filter(
+              (record) => record.targetSessionKey === targetSessionKey
+            ),
+          resolveByConversation: (ref) => records.get(keyFor(ref)) || null,
+          touch: (bindingId, at) => touches.push([bindingId, at == null ? null : at]),
+          unbind: async (input) => {
+            const removed = [];
+            for (const [key, record] of Array.from(records.entries())) {
+              if (
+                (input.bindingId && record.bindingId === input.bindingId) ||
+                (input.targetSessionKey && record.targetSessionKey === input.targetSessionKey)
+              ) {
+                records.delete(key);
+                removed.push(record);
+              }
+            }
+            return removed;
+          }
+        });
+
+        const service = bindingRuntime.getSessionBindingService();
+        const bound = await service.bind({
+          targetSessionKey: "agent:review:acp:session-1",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          },
+          placement: "current",
+          metadata: { source: "runtime-test" }
+        });
+        await service.bind({
+          targetSessionKey: "plugin-binding:demo-plugin:abc",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-plugin"
+          },
+          placement: "current",
+          metadata: {
+            pluginBindingOwner: "plugin",
+            pluginId: "demo-plugin",
+            pluginRoot: "/tmp/demo-plugin"
+          }
+        });
+
+        const runtimeRoute = bindingRuntime.resolveRuntimeConversationBindingRoute({
+          route: createRoute(),
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }
+        });
+        const pluginRoute = bindingRuntime.resolveRuntimeConversationBindingRoute({
+          route: createRoute(),
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-plugin"
+          }
+        });
+        const configuredRoute = bindingRuntime.resolveConfiguredBindingRoute({
+          cfg: {
+            bindings: [
+              {
+                agentId: "qa",
+                sessionKey: "agent:qa:configured",
+                match: {
+                  channel: "demo",
+                  accountId: "default",
+                  conversationId: "room-2"
+                }
+              }
+            ]
+          },
+          route: createRoute(),
+          channel: "demo",
+          accountId: "default",
+          conversationId: "room-2"
+        });
+        const listBeforeUnbind = service.listBySession("agent:review:acp:session-1").length;
+        const removed = await service.unbind({
+          bindingId: bound.bindingId,
+          reason: "test"
+        });
+        const ready = await bindingRuntime.ensureConfiguredBindingRouteReady({
+          cfg: {},
+          bindingResolution: null
+        });
+
+        return {
+          exportTypes: [
+            typeof bindingRuntime.getSessionBindingService,
+            typeof bindingRuntime.resolveRuntimeConversationBindingRoute,
+            typeof bindingRuntime.resolveConfiguredBindingRoute,
+            typeof bindingRuntime.ensureConfiguredBindingRouteReady,
+            typeof bindingRuntime.isPluginOwnedSessionBindingRecord,
+            typeof genericSdk.buildPairingReply
+          ],
+          capabilities: service.getCapabilities({ channel: "demo", accountId: "default" }),
+          runtimeRoute: {
+            boundSessionKey: runtimeRoute.boundSessionKey,
+            boundAgentId: runtimeRoute.boundAgentId,
+            route: {
+              agentId: runtimeRoute.route.agentId,
+              sessionKey: runtimeRoute.route.sessionKey,
+              lastRoutePolicy: runtimeRoute.route.lastRoutePolicy,
+              matchedBy: runtimeRoute.route.matchedBy
+            }
+          },
+          pluginRoute: {
+            isPluginOwned: bindingRuntime.isPluginOwnedSessionBindingRecord(
+              pluginRoute.bindingRecord
+            ),
+            rewritten: pluginRoute.route.sessionKey !== "agent:main:main"
+          },
+          configuredRoute: {
+            boundSessionKey: configuredRoute.boundSessionKey,
+            boundAgentId: configuredRoute.boundAgentId,
+            matchedBy: configuredRoute.route.matchedBy
+          },
+          pairing: bindingRuntime.buildPairingReply({
+            channel: "demo",
+            idLine: "Demo ID: room-1",
+            code: "ABC123"
+          }).includes("openclaw pairing approve demo ABC123"),
+          listBeforeUnbind,
+          removed: removed.map((record) => record.bindingId),
+          ready,
+          touches
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "conversation-binding-runtime-plugin",
+                    "name": "Conversation Binding Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-conversation-binding-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.conversation_binding_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.conversation_binding_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "function", "function"],
+        "capabilities": {
+            "adapterAvailable": True,
+            "bindSupported": True,
+            "unbindSupported": True,
+            "placements": ["current"],
+        },
+        "runtimeRoute": {
+            "boundSessionKey": "agent:review:acp:session-1",
+            "boundAgentId": "review",
+            "route": {
+                "agentId": "review",
+                "sessionKey": "agent:review:acp:session-1",
+                "lastRoutePolicy": "session",
+                "matchedBy": "binding.channel",
+            },
+        },
+        "pluginRoute": {"isPluginOwned": True, "rewritten": False},
+        "configuredRoute": {
+            "boundSessionKey": "agent:qa:configured",
+            "boundAgentId": "qa",
+            "matchedBy": "binding.channel",
+        },
+        "pairing": True,
+        "listBeforeUnbind": 1,
+        "removed": ["binding-room-1"],
+        "ready": {"ok": True},
+        "touches": [["binding-room-1", None], ["binding-room-plugin", None]],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

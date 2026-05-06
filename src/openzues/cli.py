@@ -29276,6 +29276,7 @@ async function readChannelAllowFromStore(channel, env = process.env, accountId) 
 }
 
 function buildPairingReply(params) {
+  const approveCommand = `openclaw pairing approve ${params.channel} ${params.code}`;
   return [
     "OpenClaw: access not configured.",
     "",
@@ -29286,7 +29287,10 @@ function buildPairingReply(params) {
     "```",
     "",
     "Ask the bot owner to approve with:",
-    `openclaw pairing approve ${params.channel} ${params.code}`,
+    approveCommand,
+    "```",
+    approveCommand,
+    "```",
   ].join("\n");
 }
 
@@ -31404,6 +31408,407 @@ const conversationRuntime = {
   resolveConversationLabel,
 };
 
+function normalizeSessionBindingConversationRef(ref) {
+  const conversationId = normalizeOptionalString(ref && ref.conversationId) || "";
+  const parentConversationId = normalizeOptionalString(ref && ref.parentConversationId);
+  return {
+    channel: normalizeLowercaseStringOrEmpty(ref && ref.channel),
+    accountId: normalizeAccountId(ref && ref.accountId),
+    conversationId,
+    ...(parentConversationId && parentConversationId !== conversationId
+      ? { parentConversationId }
+      : {}),
+  };
+}
+
+function normalizeSessionBindingPlacement(raw) {
+  return raw === "current" || raw === "child" ? raw : undefined;
+}
+
+function inferSessionBindingPlacement(ref) {
+  return ref && ref.conversationId ? "current" : "child";
+}
+
+function getActiveSessionBindingAdapter(params) {
+  const entries = SESSION_BINDING_ADAPTERS.get(sessionBindingAdapterKey(params || {}));
+  return entries && entries.length > 0 ? entries[entries.length - 1] : null;
+}
+
+function getActiveSessionBindingAdapters() {
+  const adapters = [];
+  for (const entries of SESSION_BINDING_ADAPTERS.values()) {
+    if (entries && entries.length > 0) {
+      adapters.push(entries[entries.length - 1]);
+    }
+  }
+  return adapters;
+}
+
+function resolveSessionBindingAdapterPlacements(adapter) {
+  const configured = adapter && adapter.capabilities && adapter.capabilities.placements;
+  const placements = Array.isArray(configured)
+    ? configured.map(normalizeSessionBindingPlacement).filter(Boolean)
+    : [];
+  if (placements.length > 0) {
+    return Array.from(new Set(placements));
+  }
+  return ["current", "child"];
+}
+
+function resolveSessionBindingAdapterCapabilities(adapter) {
+  if (!adapter) {
+    return {
+      adapterAvailable: false,
+      bindSupported: false,
+      unbindSupported: false,
+      placements: [],
+    };
+  }
+  const bindSupported =
+    adapter.capabilities &&
+    Object.prototype.hasOwnProperty.call(adapter.capabilities, "bindSupported")
+      ? adapter.capabilities.bindSupported === true
+      : typeof adapter.bind === "function";
+  return {
+    adapterAvailable: true,
+    bindSupported,
+    unbindSupported:
+      adapter.capabilities &&
+      Object.prototype.hasOwnProperty.call(adapter.capabilities, "unbindSupported")
+        ? adapter.capabilities.unbindSupported === true
+        : typeof adapter.unbind === "function",
+    placements: bindSupported ? resolveSessionBindingAdapterPlacements(adapter) : [],
+  };
+}
+
+function createSessionBindingError(code, message, details) {
+  const error = new Error(message);
+  error.name = "SessionBindingError";
+  error.code = code;
+  error.details = details;
+  return error;
+}
+
+function dedupeSessionBindingRecords(records) {
+  const byId = new Map();
+  for (const record of records) {
+    if (record && record.bindingId) {
+      byId.set(record.bindingId, record);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+const DEFAULT_SESSION_BINDING_SERVICE = {
+  bind: async (input) => {
+    const conversation = normalizeSessionBindingConversationRef(input && input.conversation);
+    const adapter = getActiveSessionBindingAdapter(conversation);
+    if (!adapter) {
+      throw createSessionBindingError(
+        "BINDING_ADAPTER_UNAVAILABLE",
+        `Session binding adapter unavailable for ${conversation.channel}:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId },
+      );
+    }
+    if (typeof adapter.bind !== "function") {
+      throw createSessionBindingError(
+        "BINDING_CAPABILITY_UNSUPPORTED",
+        `Session binding adapter does not support binding for ${
+          conversation.channel
+        }:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId },
+      );
+    }
+    const placement =
+      normalizeSessionBindingPlacement(input && input.placement) ||
+      inferSessionBindingPlacement(conversation);
+    const supportedPlacements = resolveSessionBindingAdapterPlacements(adapter);
+    if (!supportedPlacements.includes(placement)) {
+      throw createSessionBindingError(
+        "BINDING_CAPABILITY_UNSUPPORTED",
+        `Session binding placement "${placement}" is not supported for ${
+          conversation.channel
+        }:${conversation.accountId}`,
+        { channel: conversation.channel, accountId: conversation.accountId, placement },
+      );
+    }
+    const bound = await adapter.bind({
+      ...input,
+      conversation,
+      placement,
+    });
+    if (!bound) {
+      throw createSessionBindingError(
+        "BINDING_CREATE_FAILED",
+        "Session binding adapter failed to bind target conversation",
+        { channel: conversation.channel, accountId: conversation.accountId, placement },
+      );
+    }
+    return bound;
+  },
+  getCapabilities: (params) =>
+    resolveSessionBindingAdapterCapabilities(getActiveSessionBindingAdapter(params || {})),
+  listBySession: (targetSessionKey) => {
+    const key = normalizeOptionalString(targetSessionKey);
+    if (!key) {
+      return [];
+    }
+    const records = [];
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.listBySession === "function") {
+        const entries = adapter.listBySession(key);
+        if (Array.isArray(entries)) {
+          records.push(...entries);
+        }
+      }
+    }
+    return dedupeSessionBindingRecords(records);
+  },
+  resolveByConversation: (ref) => {
+    const conversation = normalizeSessionBindingConversationRef(ref || {});
+    if (!conversation.channel || !conversation.conversationId) {
+      return null;
+    }
+    const adapter = getActiveSessionBindingAdapter(conversation);
+    return adapter && typeof adapter.resolveByConversation === "function"
+      ? adapter.resolveByConversation(conversation)
+      : null;
+  },
+  touch: (bindingId, at) => {
+    const normalizedBindingId = normalizeOptionalString(bindingId);
+    if (!normalizedBindingId) {
+      return;
+    }
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.touch === "function") {
+        adapter.touch(normalizedBindingId, at);
+      }
+    }
+  },
+  unbind: async (input) => {
+    const removed = [];
+    for (const adapter of getActiveSessionBindingAdapters()) {
+      if (typeof adapter.unbind !== "function") {
+        continue;
+      }
+      const entries = await adapter.unbind(input || {});
+      if (Array.isArray(entries)) {
+        removed.push(...entries);
+      }
+    }
+    return dedupeSessionBindingRecords(removed);
+  },
+};
+
+function getSessionBindingService() {
+  return DEFAULT_SESSION_BINDING_SERVICE;
+}
+
+function isPluginOwnedSessionBindingRecord(record) {
+  const metadata = record && record.metadata;
+  return Boolean(
+    metadata &&
+      typeof metadata === "object" &&
+      metadata.pluginBindingOwner === "plugin" &&
+      typeof metadata.pluginId === "string" &&
+      typeof metadata.pluginRoot === "string",
+  );
+}
+
+function resolveConversationBindingRouteRef(params) {
+  if (params && params.conversation) {
+    return normalizeSessionBindingConversationRef(params.conversation);
+  }
+  return normalizeSessionBindingConversationRef({
+    channel: params && params.channel,
+    accountId: params && params.accountId,
+    conversationId: params && params.conversationId,
+    parentConversationId: params && params.parentConversationId,
+  });
+}
+
+function configuredBindingMatchesConversation(binding, conversation) {
+  const match = (binding && binding.match) || binding || {};
+  const channel = normalizeLowercaseStringOrEmpty(match.channel || match.provider);
+  if (channel && channel !== conversation.channel) {
+    return false;
+  }
+  const accountId = normalizeOptionalString(match.accountId);
+  if (accountId && normalizeAccountId(accountId) !== conversation.accountId) {
+    return false;
+  }
+  const conversationId = normalizeOptionalString(
+    match.conversationId || match.peerId || match.to || binding.conversationId,
+  );
+  if (conversationId && conversationId !== conversation.conversationId) {
+    return false;
+  }
+  const parentConversationId = normalizeOptionalString(match.parentConversationId);
+  if (
+    parentConversationId &&
+    parentConversationId !== (conversation.parentConversationId || conversation.conversationId)
+  ) {
+    return false;
+  }
+  return Boolean(channel || conversationId);
+}
+
+function resolveConfiguredBinding(params) {
+  const cfg = (params && params.cfg) || {};
+  const conversation = resolveConversationBindingRouteRef(params || {});
+  const bindings = Array.isArray(cfg.bindings) ? cfg.bindings : [];
+  const binding = bindings.find((entry) =>
+    configuredBindingMatchesConversation(entry, conversation),
+  );
+  if (!binding) {
+    return null;
+  }
+  const route = (params && params.route) || {};
+  const agentId = normalizeAgentId(binding.agentId || route.agentId);
+  const sessionKey =
+    normalizeOptionalString(binding.sessionKey || binding.targetSessionKey) ||
+    `agent:${agentId}:binding:${conversation.channel}:${conversation.accountId}:${conversation.conversationId}`;
+  const statefulTarget = {
+    kind: "stateful",
+    driverId: normalizeOptionalString(binding.driverId) || "native",
+    sessionKey,
+    agentId,
+    ...(binding.label ? { label: String(binding.label) } : {}),
+  };
+  const record = {
+    bindingId: [
+      "configured",
+      conversation.channel,
+      conversation.accountId,
+      conversation.conversationId,
+    ].join(":"),
+    targetSessionKey: sessionKey,
+    targetKind: "session",
+    conversation,
+    status: "active",
+    boundAt: 0,
+    metadata: { configuredBinding: true },
+  };
+  return {
+    record,
+    statefulTarget,
+    conversation,
+    compiledBinding: {
+      channel: conversation.channel,
+      binding,
+      bindingConversationId: conversation.conversationId,
+      target: {
+        conversationId: conversation.conversationId,
+        ...(conversation.parentConversationId
+          ? { parentConversationId: conversation.parentConversationId }
+          : {}),
+      },
+      agentId,
+      targetFactory: {
+        driverId: statefulTarget.driverId,
+      },
+    },
+    match: (binding && binding.match) || {},
+  };
+}
+
+function routeForSessionBinding(params) {
+  return {
+    ...params.route,
+    sessionKey: params.boundSessionKey,
+    agentId: params.boundAgentId,
+    lastRoutePolicy: deriveLastRoutePolicy({
+      sessionKey: params.boundSessionKey,
+      mainSessionKey: params.route && params.route.mainSessionKey,
+    }),
+    matchedBy: "binding.channel",
+  };
+}
+
+function resolveConfiguredBindingRoute(params = {}) {
+  const bindingResolution = resolveConfiguredBinding(params);
+  if (!bindingResolution) {
+    return {
+      bindingResolution: null,
+      route: params.route,
+    };
+  }
+  const boundSessionKey = normalizeOptionalString(bindingResolution.statefulTarget.sessionKey);
+  if (!boundSessionKey) {
+    return {
+      bindingResolution,
+      route: params.route,
+    };
+  }
+  const boundAgentId =
+    resolveAgentIdFromSessionKey(boundSessionKey) || bindingResolution.statefulTarget.agentId;
+  return {
+    bindingResolution,
+    boundSessionKey,
+    boundAgentId,
+    route: routeForSessionBinding({
+      route: params.route,
+      boundSessionKey,
+      boundAgentId,
+    }),
+  };
+}
+
+function resolveRuntimeConversationBindingRoute(params = {}) {
+  const conversation = resolveConversationBindingRouteRef(params);
+  const bindingRecord = getSessionBindingService().resolveByConversation(conversation);
+  const boundSessionKey = normalizeOptionalString(bindingRecord && bindingRecord.targetSessionKey);
+  if (!bindingRecord || !boundSessionKey) {
+    return {
+      bindingRecord: null,
+      route: params.route,
+    };
+  }
+  getSessionBindingService().touch(bindingRecord.bindingId);
+  if (isPluginOwnedSessionBindingRecord(bindingRecord)) {
+    return {
+      bindingRecord,
+      route: params.route,
+    };
+  }
+  const boundAgentId =
+    resolveAgentIdFromSessionKey(boundSessionKey) || (params.route && params.route.agentId);
+  return {
+    bindingRecord,
+    boundSessionKey,
+    boundAgentId,
+    route: routeForSessionBinding({
+      route: params.route,
+      boundSessionKey,
+      boundAgentId,
+    }),
+  };
+}
+
+async function ensureConfiguredBindingRouteReady(params = {}) {
+  const resolution = params.bindingResolution;
+  if (!resolution) {
+    return { ok: true };
+  }
+  const target = resolution.statefulTarget || {};
+  if (typeof target.ensureReady === "function") {
+    return await target.ensureReady({ cfg: params.cfg, bindingResolution: resolution });
+  }
+  if (target.ready === false) {
+    return { ok: false, error: target.error || "Configured binding route target is not ready" };
+  }
+  return { ok: true };
+}
+
+const conversationBindingRuntime = {
+  buildPairingReply,
+  ensureConfiguredBindingRouteReady,
+  getSessionBindingService,
+  isPluginOwnedSessionBindingRecord,
+  resolveConfiguredBindingRoute,
+  resolveRuntimeConversationBindingRoute,
+};
+
 async function resolveForwardedRuntimeMethod(params) {
   const runtime =
     typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
@@ -32524,6 +32929,7 @@ const genericSdk = new Proxy(
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
+    ...conversationBindingRuntime,
     ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
@@ -33037,6 +33443,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/conversation-runtime"
   ) {
     return conversationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/conversation-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/conversation-binding-runtime"
+  ) {
+    return conversationBindingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||
