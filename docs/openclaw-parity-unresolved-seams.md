@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~87.4% overall, with a reasonable
-  band of ~78-87%.
+- Repo-wide OpenClaw parity is estimated at ~87.5% overall, with a reasonable
+  band of ~78-88%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -59,7 +59,7 @@ Current percentage rollup:
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
-  provider-selection-runtime, windows-spawn, command-status, command-auth
+  group-activation, provider-selection-runtime, windows-spawn, command-status, command-auth
   native, webhook, fetch/SSRF, provider model/catalog, provider
   entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
   provider-auth-login, provider-auth facade, provider web-search contract,
@@ -91,7 +91,7 @@ Current percentage rollup:
   config-paths helper, context-visibility-runtime helper, heartbeat-runtime
   helper, json-store helper, diagnostic-runtime helper, system-event-runtime
   helper, oauth-utils helper, runtime-config-snapshot helper,
-  runtime-fetch helper, approval-auth-helpers,
+  runtime-fetch helper, group-activation helper, approval-auth-helpers,
   approval-approvers helper,
   approval-reply-runtime helper,
   approval-renderers helper, approval-client-helpers,
@@ -8366,9 +8366,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with focused runtime-fetch pytest, adjacent SDK helper proof,
   adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
   checkpointed in `14cdafc6`.
+- Closed the imported OpenClaw plugin SDK group-activation seam from
+  `src/plugin-sdk/group-activation.ts` and
+  `src/auto-reply/group-activation.ts`: scoped and unscoped native runtime
+  entries expose activation mode normalization plus slash/colon activation
+  command parsing. Repo-wide parity is now estimated at ~87.5%. Verified with
+  focused group-activation pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `48d912d7`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/group-activation/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
@@ -8390,7 +8398,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   cron-store-runtime/file-access-runtime/logging-core/
   native-command-config-runtime/host-runtime/poll-runtime/lazy-runtime/config-paths/
   context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/
-  system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/
+  system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/group-activation/
   image-generation-core.auth.runtime/model-session-runtime/process-runtime/
   run-command/string-coerce-runtime/provider-auth-login.runtime/
   approval-auth-runtime/approval-auth-helpers/approval-approvers/telegram-command-config/
