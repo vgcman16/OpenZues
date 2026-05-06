@@ -29538,6 +29538,123 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_config_paths_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-config-paths.cjs"
+    runtime_entry.write_text(
+        """
+const configPaths = require("openclaw/plugin-sdk/config-paths");
+const scopedConfigPaths = require("@openclaw/plugin-sdk/config-paths");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.config_paths",
+      description: "Use OpenClaw config-paths SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            slack: {
+              enabled: true,
+              accounts: {
+                primary: { token: "xoxb-token" },
+                blank: {}
+              }
+            },
+            telegram: {}
+          }
+        };
+        return {
+          keys: Object.keys(configPaths).sort(),
+          scopedType: typeof scopedConfigPaths.resolveChannelAccountConfigBasePath,
+          accountPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "primary"
+          }),
+          blankAccountPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "blank"
+          }),
+          fallbackPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "slack",
+            accountId: "missing"
+          }),
+          channelOnlyPath: configPaths.resolveChannelAccountConfigBasePath({
+            cfg,
+            channelKey: "telegram",
+            accountId: "primary"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-paths-plugin",
+                    "name": "Runtime Config Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-config-paths-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.config_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.config_paths"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveChannelAccountConfigBasePath"],
+        "scopedType": "function",
+        "accountPath": "channels.slack.accounts.primary.",
+        "blankAccountPath": "channels.slack.accounts.blank.",
+        "fallbackPath": "channels.slack.",
+        "channelOnlyPath": "channels.telegram.",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

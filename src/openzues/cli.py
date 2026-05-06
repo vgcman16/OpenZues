@@ -18260,6 +18260,16 @@ function createLazyRuntimeMethodBinder(load) {
   return (select) => createLazyRuntimeMethod(load, select);
 }
 
+function resolveChannelAccountConfigBasePath(params) {
+  const channels = params && params.cfg && params.cfg.channels;
+  const channelSection = channels && channels[params.channelKey];
+  const accounts = channelSection && channelSection.accounts;
+  const useAccountPath = Boolean(accounts && accounts[params.accountId]);
+  return useAccountPath
+    ? `channels.${params.channelKey}.accounts.${params.accountId}.`
+    : `channels.${params.channelKey}.`;
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32531,6 +32541,10 @@ const lazyRuntime = {
   createLazyRuntimeSurface,
 };
 
+const configPathsRuntime = {
+  resolveChannelAccountConfigBasePath,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43289,6 +43303,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/lazy-runtime"
   ) {
     return lazyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-paths" ||
+    request === "@openclaw/plugin-sdk/config-paths"
+  ) {
+    return configPathsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
