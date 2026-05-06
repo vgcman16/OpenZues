@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~90.4% overall, with a reasonable band of ~79-91%.
+- Estimated repo-wide parity: ~90.5% overall, with a reasonable band of ~79-91%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -3403,10 +3403,10 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported plugin SDK `memory-host-search` now has scoped and unscoped native
-  runtime entries for active memory search manager lookup and manager cleanup;
-  the broader plugin SDK helper/runtime queue continues with the remaining
-  memory-host compatibility subpath, `memory-host-status`.
+- Imported plugin SDK `memory-host-status` now has scoped and unscoped native
+  runtime entries as the upstream compatibility alias for
+  `memory-core-host-status`; the broader plugin SDK helper/runtime queue
+  continues with `memory-core-host-runtime-cli`.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -15511,6 +15511,23 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `a76a8d50`.
+- Imported OpenClaw plugin runtime entries now have the exact
+  `memory-host-status` compatibility SDK subpath from
+  `src/plugin-sdk/memory-host-status.ts`, re-exporting the verified
+  memory-core-host-status helper surface under both scoped and unscoped import
+  specifiers. This closes `OZ-PLUGIN-001ZL`; repo-wide parity is now
+  estimated at ~90.5%. Remaining plugin SDK breadth stays on the broader
+  unresolved helper/runtime queue.
+- Verified the memory-host-status slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_memory_host_status_alias_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "memory_host_status or memory_core_host_status or memory_host_search or memory_host_markdown"`
+  (`4 passed, 1005 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`197 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `2317c1e7`.
 
 ## References
 

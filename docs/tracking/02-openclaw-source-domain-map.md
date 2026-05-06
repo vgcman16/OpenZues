@@ -98,8 +98,10 @@ checkpointed in `97885bb6`; `memory-host-markdown` from
 `src/plugin-sdk/memory-host-markdown.ts` is checkpointed in `4d8513b6`;
 `memory-host-search` from `src/plugin-sdk/memory-host-search.ts`,
 `src/plugin-sdk/memory-host-search.runtime.ts`, and
-`src/plugins/memory-runtime.ts` is checkpointed in `a76a8d50`. Count all with
-the plugin/extension system row above.
+`src/plugins/memory-runtime.ts` is checkpointed in `a76a8d50`;
+`memory-host-status` from `src/plugin-sdk/memory-host-status.ts` is
+checkpointed in `2317c1e7`. Count all with the plugin/extension system row
+above.
 
 ## How To Use This Map
 
