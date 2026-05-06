@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~89.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~90.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin memory-core-host-status slice is checkpointed in `bfcb12a2`.
+The imported plugin memory-core-engine-runtime slice is checkpointed in
+`ad4b05e5`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +62,199 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Memory core host status checkpointed in `bfcb12a2` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader unresolved helper/runtime queue; next likely memory-core-host-runtime-files |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Memory core engine runtime checkpointed in `ad4b05e5` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader unresolved helper/runtime queue; next `memory-core-host-engine-embeddings` |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001ZN` Imported memory-core-engine-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-engine-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-engine-runtime`, exposing the engine-facing memory search
+    manager, `MemoryIndexManager`, embedding-provider doctor metadata, audit,
+    and repair facade with explicit OpenZues-native unavailable
+    metadata/errors when the bundled memory-core engine backend is absent.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `ad4b05e5`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-engine-runtime proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1007 deselected`),
+    adjacent imported-plugin proof (`199 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZM` Imported memory-core-host-runtime-cli helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-runtime-cli.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/runtime-cli.ts`, adjacent
+    OpenClaw CLI/runtime/theme/progress/home-path helper behavior
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-runtime-cli`, exposing manager lifecycle wrappers,
+    progress wrappers, help formatting, docs links, verbosity state, default
+    runtime, theme/color helpers, home-path shortening, and no-target
+    command-secret resolution without regressing runtime-secret-resolution.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `762da43c`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-runtime-cli proof
+    (`1 passed`), runtime-secret-resolution regression proof (`1 passed`),
+    adjacent SDK helper proof (`4 passed, 1006 deselected`), adjacent
+    imported-plugin proof (`198 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZL` Imported memory-host-status alias shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-status.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-status`, re-exporting the verified memory-core-host-status
+    helper surface for vector, FTS, and cache status projections.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2317c1e7`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-status proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1005 deselected`),
+    adjacent imported-plugin proof (`197 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZK` Imported memory-host-search helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-search.ts`,
+    `openclaw-main/src/plugin-sdk/memory-host-search.runtime.ts`,
+    `openclaw-main/src/plugins/memory-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-search`, delegating active memory search manager lookup and
+    manager cleanup through the registered memory capability runtime while
+    preserving the unavailable-manager fallback.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `a76a8d50`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-search proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1004 deselected`),
+    adjacent imported-plugin proof (`196 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZJ` Imported memory-host-markdown helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-markdown.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-markdown`, exposing trailing-newline and managed Markdown
+    block replacement helpers with heading-aware replacement, append behavior,
+    whitespace handling, and regex-safe marker matching.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `4d8513b6`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-markdown proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1003 deselected`),
+    adjacent imported-plugin proof (`195 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZI` Imported memory-host-events alias shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-events.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-events`, re-exporting the verified memory-core-host-events
+    helper surface for event log paths, append/read JSONL behavior, invalid
+    line skipping, limits, and missing-log empty results.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `97885bb6`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-events proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1002 deselected`),
+    adjacent imported-plugin proof (`194 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZH` Imported memory-host-core alias shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-core.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-core`, re-exporting the verified
+    memory-core-host-runtime-core helper surface for runtime config, parameter
+    readers, byte-size parsing, cron-style time projection, memory state,
+    corpus supplements, public artifacts, and transcript paths.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `362efd71`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-core proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1001 deselected`),
+    adjacent imported-plugin proof (`193 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZG` Imported memory-core-host-runtime-core helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-runtime-core.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/runtime-core.ts`, adjacent
+    OpenClaw memory state, current-time, byte-size, routing, and transcript
+    helper behavior
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-runtime-core`, exposing OpenClaw-shaped runtime config,
+    parameter readers, JSON results, byte-size parsing, cron-style time
+    projection, default/session agent lookup, memory search config, transcript
+    directory resolution, memory capability state, corpus supplements, public
+    artifact sorting, and state cleanup.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `7b0703b7`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-runtime-core proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 1000 deselected`),
+    adjacent imported-plugin proof (`192 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZF` Imported memory-host-files alias shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-host-files.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-host-files`, re-exporting the verified runtime-files helper
+    surface for memory file listing, extra path normalization, safe agent
+    memory reads, and QMD backend config resolution.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `857111d8`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-host-files proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 999 deselected`),
+    adjacent imported-plugin proof (`191 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZE` Imported memory-core-host-runtime-files helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-runtime-files.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/runtime-files.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/internal.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/read-file.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/backend-config.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-runtime-files`, exposing memory file listing, extra path
+    normalization, safe agent memory reads, and QMD backend config resolution
+    with OpenClaw path, pagination, collection, update, limit, and session
+    projections.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `a8d7b586`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-runtime-files proof
+    (`1 passed`), adjacent SDK helper proof (`6 passed, 996 deselected`),
+    adjacent imported-plugin proof (`190 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001ZD` Imported memory-core-host-status helper shim
   - Source: `openclaw-main/src/plugin-sdk/memory-core-host-status.ts`,

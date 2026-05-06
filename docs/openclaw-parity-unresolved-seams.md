@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~89.7% overall, with a reasonable
-  band of ~79-90%.
+- Repo-wide OpenClaw parity is estimated at ~90.7% overall, with a reasonable
+  band of ~79-91%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -8606,6 +8606,100 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   estimated at ~89.7%. Verified with focused memory-core-host-status pytest,
   adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
   `mypy`, and `git diff --check`; source/test checkpointed in `bfcb12a2`.
+- Closed the imported OpenClaw plugin SDK memory core host runtime files seam
+  from `src/plugin-sdk/memory-core-host-runtime-files.ts`,
+  `packages/memory-host-sdk/src/runtime-files.ts`,
+  `packages/memory-host-sdk/src/host/internal.ts`,
+  `packages/memory-host-sdk/src/host/read-file.ts`, and
+  `packages/memory-host-sdk/src/host/backend-config.ts`: scoped and unscoped
+  native runtime entries expose `listMemoryFiles`,
+  `normalizeExtraMemoryPaths`, `readAgentMemoryFile`, and
+  `resolveMemoryBackendConfig`, including canonical root-memory selection,
+  repair/legacy path skipping, extra-path file reads, default line/char
+  limits, and QMD collection/update/limit/session config projection.
+  Repo-wide parity is now estimated at ~89.8%. Verified with focused
+  memory-core-host-runtime-files pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `a8d7b586`.
+- Closed the imported OpenClaw plugin SDK memory host files alias seam from
+  `src/plugin-sdk/memory-host-files.ts`: scoped and unscoped native runtime
+  entries re-export the memory runtime-files helper surface as OpenClaw's
+  compatibility subpath. Repo-wide parity is now estimated at ~89.9%.
+  Verified with focused memory-host-files pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `857111d8`.
+- Closed the imported OpenClaw plugin SDK memory core host runtime core seam
+  from `src/plugin-sdk/memory-core-host-runtime-core.ts`,
+  `packages/memory-host-sdk/src/runtime-core.ts`, and adjacent memory state,
+  time, byte-size, routing, and transcript helpers: scoped and unscoped native
+  runtime entries expose parameter readers, JSON result helpers, byte-size
+  parsing, cron-style time projection, runtime config/default agent lookup,
+  memory search config, session transcript paths, memory capability
+  registration, corpus supplements, public artifact listing, and plugin-state
+  cleanup. Repo-wide parity is now estimated at ~90.0%. Verified with focused
+  memory-core-host-runtime-core pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `7b0703b7`.
+- Closed the imported OpenClaw plugin SDK memory host core alias seam from
+  `src/plugin-sdk/memory-host-core.ts`: scoped and unscoped native runtime
+  entries re-export the memory-core-host-runtime-core helper surface as
+  OpenClaw's compatibility subpath. Repo-wide parity is now estimated at
+  ~90.1%. Verified with focused memory-host-core pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `362efd71`.
+- Closed the imported OpenClaw plugin SDK memory host events alias seam from
+  `src/plugin-sdk/memory-host-events.ts`: scoped and unscoped native runtime
+  entries re-export the memory-core-host-events helper surface as OpenClaw's
+  compatibility subpath. Repo-wide parity is now estimated at ~90.2%. Verified
+  with focused memory-host-events pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `97885bb6`.
+- Closed the imported OpenClaw plugin SDK memory host markdown seam from
+  `src/plugin-sdk/memory-host-markdown.ts`: scoped and unscoped native runtime
+  entries expose trailing-newline and managed Markdown block replacement
+  helpers, including heading-aware replacement, append behavior, whitespace
+  handling, and regex-safe marker matching. Repo-wide parity is now estimated
+  at ~90.3%. Verified with focused memory-host-markdown pytest, adjacent SDK
+  helper proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `4d8513b6`.
+- Closed the imported OpenClaw plugin SDK memory host search seam from
+  `src/plugin-sdk/memory-host-search.ts`,
+  `src/plugin-sdk/memory-host-search.runtime.ts`, and
+  `src/plugins/memory-runtime.ts`: scoped and unscoped native runtime entries
+  expose active memory search manager lookup, registered runtime delegation,
+  unavailable-manager fallback, and cleanup forwarding. Repo-wide parity is now
+  estimated at ~90.4%. Verified with focused memory-host-search pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `a76a8d50`.
+- Closed the imported OpenClaw plugin SDK memory host status alias seam from
+  `src/plugin-sdk/memory-host-status.ts`: scoped and unscoped native runtime
+  entries re-export the memory-core-host-status helper surface as OpenClaw's
+  compatibility subpath. Repo-wide parity is now estimated at ~90.5%.
+  Verified with focused memory-host-status pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `2317c1e7`.
+- Closed the imported OpenClaw plugin SDK memory core host runtime CLI seam
+  from `src/plugin-sdk/memory-core-host-runtime-cli.ts`,
+  `packages/memory-host-sdk/src/runtime-cli.ts`, and adjacent CLI/runtime
+  helpers: scoped and unscoped native runtime entries expose manager lifecycle
+  handling, progress wrappers, help example formatting, docs link fallback
+  formatting, verbosity state, default runtime shape, theme/color helpers,
+  home-path shortening, and no-target command-secret resolution. Repo-wide
+  parity is now estimated at ~90.6%. Verified with focused
+  memory-core-host-runtime-cli pytest, runtime-secret-resolution regression
+  proof, adjacent SDK helper proof, adjacent imported-plugin proof,
+  `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
+  `762da43c`.
+- Closed the imported OpenClaw plugin SDK memory core engine runtime seam from
+  `src/plugin-sdk/memory-core-engine-runtime.ts`: scoped and unscoped native
+  runtime entries expose the engine-facing memory search manager,
+  `MemoryIndexManager`, embedding-provider doctor metadata, audit, and repair
+  facade with explicit OpenZues-native unavailable metadata/errors where the
+  bundled memory-core engine backend is absent. Repo-wide parity is now
+  estimated at ~90.7%. Verified with focused memory-core-engine-runtime
+  pytest, adjacent SDK helper proof, adjacent imported-plugin proof,
+  `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
+  `ad4b05e5`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/runtime-secret-resolution/memory-core-host-query/memory-core-host-multimodal/memory-core-host-secret/memory-core-host-events/memory-core-host-status/provider-setup/self-hosted-provider-setup/lmstudio/lmstudio-runtime/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/acp-binding-runtime/cli-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8647,7 +8741,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
-  starting with the next source-backed SDK helper subpath.
+  starting with `memory-core-host-engine-embeddings`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

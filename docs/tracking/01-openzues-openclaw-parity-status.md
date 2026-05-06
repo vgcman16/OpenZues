@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~89.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~90.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1110,6 +1110,50 @@ may lag behind this tracker.
 - [x] Imported plugin SDK memory-core-host-status shim for vector, FTS, and
   cache status formatter projections.
   - Status: checkpointed in `bfcb12a2`
+
+- [x] Imported plugin SDK memory-core-host-runtime-files shim for memory file
+  listing, extra path normalization, safe agent memory reads, and QMD backend
+  config projection.
+  - Status: checkpointed in `a8d7b586`
+
+- [x] Imported plugin SDK memory-host-files alias shim for the runtime-files
+  helper surface.
+  - Status: checkpointed in `857111d8`
+
+- [x] Imported plugin SDK memory-core-host-runtime-core shim for runtime
+  config, parameter readers, byte-size parsing, cron-style time projection,
+  memory capability state, corpus supplements, public artifacts, and session
+  transcript path helpers.
+  - Status: checkpointed in `7b0703b7`
+
+- [x] Imported plugin SDK memory-host-core alias shim for the runtime-core
+  helper surface.
+  - Status: checkpointed in `362efd71`
+
+- [x] Imported plugin SDK memory-host-events alias shim for the events helper
+  surface.
+  - Status: checkpointed in `97885bb6`
+
+- [x] Imported plugin SDK memory-host-markdown shim for trailing-newline and
+  managed Markdown block replacement helpers.
+  - Status: checkpointed in `4d8513b6`
+
+- [x] Imported plugin SDK memory-host-search shim for active memory search
+  manager lookup and cleanup delegation through the registered runtime.
+  - Status: checkpointed in `a76a8d50`
+
+- [x] Imported plugin SDK memory-host-status alias shim for the status helper
+  surface.
+  - Status: checkpointed in `2317c1e7`
+
+- [x] Imported plugin SDK memory-core-host-runtime-cli shim for CLI helper
+  exports and no-target command-secret resolution.
+  - Status: checkpointed in `762da43c`
+
+- [x] Imported plugin SDK memory-core-engine-runtime facade shim for
+  engine-facing memory search, index-manager, embedding-provider doctor,
+  audit, and repair exports with explicit unavailable backend projection.
+  - Status: checkpointed in `ad4b05e5`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

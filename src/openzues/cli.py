@@ -34661,6 +34661,58 @@ function formatHelpExamples(examples, inline = false) {
     .join("\n");
 }
 
+async function withManager(params = {}) {
+  const lookup = await params.getManager();
+  const manager = lookup && lookup.manager;
+  if (!manager) {
+    if (typeof params.onMissing === "function") {
+      params.onMissing(lookup && lookup.error);
+    }
+    return;
+  }
+  try {
+    await params.run(manager);
+  } finally {
+    try {
+      await params.close(manager);
+    } catch (err) {
+      if (typeof params.onCloseError === "function") {
+        params.onCloseError(err);
+      }
+    }
+  }
+}
+
+const noopProgressReporter = Object.freeze({
+  setLabel: () => {},
+  setPercent: () => {},
+  tick: () => {},
+  done: () => {},
+});
+
+async function withProgress(_options, work) {
+  try {
+    return await work(noopProgressReporter);
+  } finally {
+    noopProgressReporter.done();
+  }
+}
+
+async function withProgressTotals(options, work) {
+  return await withProgress(options, async (progress) => {
+    const update = ({ completed, total, label }) => {
+      if (label) {
+        progress.setLabel(label);
+      }
+      if (!Number.isFinite(total) || total <= 0) {
+        return;
+      }
+      progress.setPercent((completed / total) * 100);
+    };
+    return await work(update, progress);
+  });
+}
+
 async function runCommandWithRuntime(runtime, action, onError) {
   try {
     await action();
@@ -37138,6 +37190,95 @@ const runtimeRuntime = {
   ...runtimeLoggerRuntime,
   createNonExitingRuntime,
   defaultRuntime,
+};
+
+function colorize(rich, color, value) {
+  return rich && typeof color === "function" ? color(String(value)) : String(value);
+}
+
+function isRich() {
+  return false;
+}
+
+function resolveRuntimeCliHomeDisplay() {
+  const explicitHome = normalizeOptionalString(process.env.OPENCLAW_HOME);
+  if (explicitHome) {
+    return { home: explicitHome, prefix: "$OPENCLAW_HOME" };
+  }
+  const home = normalizeOptionalString(os.homedir && os.homedir());
+  return home ? { home, prefix: "~" } : null;
+}
+
+function shortenHomePath(input) {
+  const value = String(input ?? "");
+  if (!value) {
+    return value;
+  }
+  const display = resolveRuntimeCliHomeDisplay();
+  if (!display) {
+    return value;
+  }
+  if (value === display.home) {
+    return display.prefix;
+  }
+  if (value.startsWith(`${display.home}/`) || value.startsWith(`${display.home}\\`)) {
+    return `${display.prefix}${value.slice(display.home.length)}`;
+  }
+  return value;
+}
+
+function shortenHomeInString(input) {
+  const value = String(input ?? "");
+  if (!value) {
+    return value;
+  }
+  const display = resolveRuntimeCliHomeDisplay();
+  return display ? value.split(display.home).join(display.prefix) : value;
+}
+
+async function resolveMemoryRuntimeCliCommandSecretRefsViaGateway(params = {}) {
+  const targetIds = params.targetIds;
+  const targetCount =
+    targetIds instanceof Set
+      ? targetIds.size
+      : Array.isArray(targetIds)
+        ? targetIds.length
+        : 0;
+  if (targetCount === 0) {
+    return {
+      resolvedConfig: params.config,
+      diagnostics: [],
+      targetStatesByPath: {},
+      hadUnresolvedTargets: false,
+    };
+  }
+  const commandName = normalizeOptionalString(params.commandName) || "command";
+  return {
+    resolvedConfig: params.config,
+    diagnostics: [
+      `${commandName}: gateway secrets.resolve unavailable in the native plugin runtime.`,
+    ],
+    targetStatesByPath: {},
+    hadUnresolvedTargets: true,
+  };
+}
+
+const memoryCoreHostRuntimeCliRuntime = {
+  colorize,
+  defaultRuntime,
+  formatDocsLink,
+  formatErrorMessage,
+  formatHelpExamples,
+  isRich,
+  isVerbose,
+  resolveCommandSecretRefsViaGateway: resolveMemoryRuntimeCliCommandSecretRefsViaGateway,
+  setVerbose,
+  shortenHomeInString,
+  shortenHomePath,
+  theme: cliTheme,
+  withManager,
+  withProgress,
+  withProgressTotals,
 };
 
 const RUNTIME_ENV_LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"];
@@ -46922,6 +47063,25 @@ function isMemoryMultimodalEnabled(settings) {
   );
 }
 
+function classifyMemoryMultimodalPath(filePath, settings) {
+  if (!isMemoryMultimodalEnabled(settings)) {
+    return null;
+  }
+  const lower = normalizeLowercaseStringOrEmpty(filePath);
+  const extensions = {
+    image: [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif"],
+    audio: [".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac"],
+  };
+  for (const modality of settings.modalities) {
+    for (const extension of extensions[modality] || []) {
+      if (lower.endsWith(extension)) {
+        return modality;
+      }
+    }
+  }
+  return null;
+}
+
 const memoryCoreHostMultimodalRuntime = {
   isMemoryMultimodalEnabled,
   normalizeMemoryMultimodalSettings,
@@ -47006,6 +47166,68 @@ const memoryCoreHostEventsRuntime = {
   resolveMemoryHostEventLogPath,
 };
 
+function escapeMemoryHostMarkdownRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isMemoryHostMarkdownLineWhitespace(value) {
+  return /^[\t \r\n]*$/.test(value);
+}
+
+function withTrailingNewline(content) {
+  const text = String(content ?? "");
+  return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function replaceManagedMarkdownBlock(params = {}) {
+  const original = String(params.original ?? "");
+  const body = String(params.body ?? "");
+  const startMarker = String(params.startMarker ?? "");
+  const endMarker = String(params.endMarker ?? "");
+  const heading = normalizeOptionalString(params.heading);
+  const headingPrefix = heading ? `${heading}\n` : "";
+  const managedBlock = `${headingPrefix}${startMarker}\n${body}\n${endMarker}`;
+  const headingPattern = heading
+    ? `${escapeMemoryHostMarkdownRegex(heading)}(?:[ \t]*(?:\r\n|\n|\r))+[ \t]*`
+    : "";
+  const existingPattern = new RegExp(
+    `${headingPattern}${escapeMemoryHostMarkdownRegex(startMarker)}[\\s\\S]*?${escapeMemoryHostMarkdownRegex(
+      endMarker,
+    )}`,
+    "g",
+  );
+  const matches = Array.from(original.matchAll(existingPattern));
+
+  if (matches.length > 0) {
+    let updated = "";
+    let lastEnd = 0;
+    matches.forEach((match, index) => {
+      const matchStart = match.index ?? 0;
+      const matchEnd = matchStart + match[0].length;
+      const betweenMatches = original.slice(lastEnd, matchStart);
+      if (index === 0) {
+        updated += original.slice(0, matchStart);
+        updated += managedBlock;
+      } else if (!isMemoryHostMarkdownLineWhitespace(betweenMatches)) {
+        updated += betweenMatches;
+      }
+      lastEnd = matchEnd;
+    });
+    return updated + original.slice(lastEnd);
+  }
+
+  const trimmed = original.trimEnd();
+  if (trimmed.length === 0) {
+    return `${managedBlock}\n`;
+  }
+  return `${trimmed}\n\n${managedBlock}\n`;
+}
+
+const memoryHostMarkdownRuntime = {
+  replaceManagedMarkdownBlock,
+  withTrailingNewline,
+};
+
 function resolveMemoryVectorState(vector) {
   if (!vector || !vector.enabled) {
     return { tone: "muted", state: "disabled" };
@@ -47040,6 +47262,1207 @@ const memoryCoreHostStatusRuntime = {
   resolveMemoryCacheSummary,
   resolveMemoryFtsState,
   resolveMemoryVectorState,
+};
+
+const CANONICAL_ROOT_MEMORY_FILENAME = "MEMORY.md";
+const LEGACY_ROOT_MEMORY_FILENAME = "memory.md";
+const ROOT_MEMORY_REPAIR_RELATIVE_DIR = ".openclaw-repair/root-memory";
+const DEFAULT_MEMORY_READ_LINES = 120;
+const DEFAULT_MEMORY_READ_MAX_CHARS = 12000;
+const DEFAULT_QMD_INTERVAL = "5m";
+const DEFAULT_QMD_DEBOUNCE_MS = 15000;
+const DEFAULT_QMD_TIMEOUT_MS = 4000;
+const DEFAULT_QMD_SEARCH_MODE = "search";
+const DEFAULT_QMD_STARTUP = "off";
+const DEFAULT_QMD_STARTUP_DELAY_MS = 120000;
+const DEFAULT_QMD_EMBED_INTERVAL = "60m";
+const DEFAULT_QMD_COMMAND_TIMEOUT_MS = 30000;
+const DEFAULT_QMD_UPDATE_TIMEOUT_MS = 120000;
+const DEFAULT_QMD_EMBED_TIMEOUT_MS = 120000;
+const DEFAULT_QMD_LIMITS = {
+  maxResults: 4,
+  maxSnippetChars: 450,
+  maxInjectedChars: 2200,
+  timeoutMs: DEFAULT_QMD_TIMEOUT_MS,
+};
+const DEFAULT_QMD_MCPORTER = {
+  enabled: false,
+  serverName: "qmd",
+  startDaemon: true,
+};
+const DEFAULT_QMD_SCOPE = {
+  default: "deny",
+  rules: [
+    {
+      action: "allow",
+      match: { chatType: "direct" },
+    },
+  ],
+};
+
+function normalizeMemoryRuntimeRelPath(value) {
+  const trimmed = String(value || "").trim().replace(/^[./]+/, "");
+  return trimmed.replace(/\\/g, "/");
+}
+
+function normalizeWorkspaceRelativePath(value) {
+  return String(value || "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+async function resolveCanonicalRootMemoryFile(workspaceDir) {
+  try {
+    const entries = await fs.promises.readdir(workspaceDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (
+        entry.name === CANONICAL_ROOT_MEMORY_FILENAME &&
+        entry.isFile() &&
+        !entry.isSymbolicLink()
+      ) {
+        return path.join(workspaceDir, entry.name);
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function shouldSkipRootMemoryAuxiliaryPath(params = {}) {
+  const workspaceDir = String(params.workspaceDir || "");
+  const absPath = String(params.absPath || "");
+  const relative = path.relative(workspaceDir, absPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return false;
+  }
+  const normalized = normalizeWorkspaceRelativePath(relative);
+  return (
+    normalized === LEGACY_ROOT_MEMORY_FILENAME ||
+    normalized === ROOT_MEMORY_REPAIR_RELATIVE_DIR ||
+    normalized.startsWith(`${ROOT_MEMORY_REPAIR_RELATIVE_DIR}/`)
+  );
+}
+
+function normalizeExtraMemoryPaths(workspaceDir, extraPaths) {
+  if (!Array.isArray(extraPaths) || extraPaths.length === 0) {
+    return [];
+  }
+  const resolved = extraPaths
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .map((value) =>
+      path.isAbsolute(value) ? path.resolve(value) : path.resolve(workspaceDir, value),
+    );
+  return Array.from(new Set(resolved));
+}
+
+function isMemoryPath(relPath) {
+  const normalized = normalizeMemoryRuntimeRelPath(relPath);
+  if (!normalized) {
+    return false;
+  }
+  if (
+    normalized === CANONICAL_ROOT_MEMORY_FILENAME ||
+    normalized.toLowerCase() === "dreams.md"
+  ) {
+    return true;
+  }
+  return normalized.startsWith("memory/");
+}
+
+function isAllowedMemoryRuntimeFilePath(filePath, multimodal) {
+  if (String(filePath || "").endsWith(".md")) {
+    return true;
+  }
+  return classifyMemoryMultimodalPath(
+    filePath,
+    multimodal || { enabled: false, modalities: [], maxFileBytes: 0 },
+  ) !== null;
+}
+
+async function walkMemoryRuntimeDir(dir, files, multimodal, shouldSkipPath) {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (shouldSkipPath && shouldSkipPath(full)) {
+      continue;
+    }
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
+    if (entry.isDirectory()) {
+      if (entry.name === ".openclaw-repair") {
+        continue;
+      }
+      await walkMemoryRuntimeDir(full, files, multimodal, shouldSkipPath);
+      continue;
+    }
+    if (!entry.isFile() || !isAllowedMemoryRuntimeFilePath(full, multimodal)) {
+      continue;
+    }
+    files.push(full);
+  }
+}
+
+async function listMemoryFiles(workspaceDir, extraPaths, multimodal) {
+  const result = [];
+  const memoryDir = path.join(workspaceDir, "memory");
+  const shouldSkipWorkspaceMemoryPath = (absPath) =>
+    shouldSkipRootMemoryAuxiliaryPath({ workspaceDir, absPath });
+
+  const addMarkdownFile = async (absPath) => {
+    try {
+      const stat = await fs.promises.lstat(absPath);
+      if (stat.isSymbolicLink() || !stat.isFile() || !absPath.endsWith(".md")) {
+        return;
+      }
+      result.push(absPath);
+    } catch {}
+  };
+
+  const memoryFile = await resolveCanonicalRootMemoryFile(workspaceDir);
+  if (memoryFile) {
+    await addMarkdownFile(memoryFile);
+  }
+  try {
+    const dirStat = await fs.promises.lstat(memoryDir);
+    if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
+      await walkMemoryRuntimeDir(
+        memoryDir,
+        result,
+        multimodal,
+        shouldSkipWorkspaceMemoryPath,
+      );
+    }
+  } catch {}
+
+  const normalizedExtraPaths = normalizeExtraMemoryPaths(workspaceDir, extraPaths);
+  for (const inputPath of normalizedExtraPaths) {
+    if (shouldSkipWorkspaceMemoryPath(inputPath)) {
+      continue;
+    }
+    try {
+      const stat = await fs.promises.lstat(inputPath);
+      if (stat.isSymbolicLink()) {
+        continue;
+      }
+      if (stat.isDirectory()) {
+        await walkMemoryRuntimeDir(
+          inputPath,
+          result,
+          multimodal,
+          shouldSkipWorkspaceMemoryPath,
+        );
+        continue;
+      }
+      if (stat.isFile() && isAllowedMemoryRuntimeFilePath(inputPath, multimodal)) {
+        result.push(inputPath);
+      }
+    } catch {}
+  }
+
+  if (result.length <= 1) {
+    return result;
+  }
+  const seen = new Set();
+  const deduped = [];
+  for (const entry of result) {
+    let key = entry;
+    try {
+      key = await fs.promises.realpath(entry);
+    } catch {}
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(entry);
+  }
+  return deduped;
+}
+
+function buildMemoryReadContinuationNotice(params = {}) {
+  const base =
+    typeof params.nextFrom === "number"
+      ? `[More content available. Use from=${params.nextFrom} to continue.]`
+      : "[More content available. Requested excerpt exceeded the default maxChars budget.]";
+  const fallback = params.suggestReadFallback
+    ? " If you need the full raw line, use read on the source file."
+    : "";
+  return `\n\n${base.slice(0, -1)}${fallback}]`;
+}
+
+function fitMemoryReadLinesToCharBudget(params = {}) {
+  const lines = Array.isArray(params.lines) ? params.lines : [];
+  const maxChars = params.maxChars;
+  if (lines.length === 0) {
+    return { text: "", includedLines: 0, hardTruncatedSingleLine: false };
+  }
+  let includedLines = lines.length;
+  let text = lines.join("\n");
+  while (includedLines > 1 && text.length > maxChars) {
+    includedLines -= 1;
+    text = lines.slice(0, includedLines).join("\n");
+  }
+  if (text.length <= maxChars) {
+    return { text, includedLines, hardTruncatedSingleLine: false };
+  }
+  return {
+    text: text.slice(0, maxChars),
+    includedLines: 1,
+    hardTruncatedSingleLine: true,
+  };
+}
+
+function buildMemoryReadResultFromSlice(params = {}) {
+  const start = Math.max(1, params.startLine || 1);
+  const fitted = fitMemoryReadLinesToCharBudget({
+    lines: params.selectedLines,
+    maxChars: Math.max(1, params.maxChars || DEFAULT_MEMORY_READ_MAX_CHARS),
+  });
+  const moreSourceLinesRemain = params.moreSourceLinesRemain || false;
+  const charCapTruncated =
+    fitted.hardTruncatedSingleLine || fitted.includedLines < params.selectedLines.length;
+  const nextFrom =
+    !fitted.hardTruncatedSingleLine &&
+    (moreSourceLinesRemain || fitted.includedLines < params.selectedLines.length)
+      ? start + fitted.includedLines
+      : undefined;
+  const truncated = charCapTruncated || moreSourceLinesRemain;
+  const text =
+    truncated && fitted.text
+      ? `${fitted.text}${buildMemoryReadContinuationNotice({
+          nextFrom,
+          suggestReadFallback: fitted.hardTruncatedSingleLine && params.suggestReadFallback,
+        })}`
+      : fitted.text;
+  return {
+    text,
+    path: params.relPath,
+    from: start,
+    lines: fitted.includedLines,
+    ...(truncated ? { truncated: true } : {}),
+    ...(typeof nextFrom === "number" ? { nextFrom } : {}),
+  };
+}
+
+function buildMemoryReadResult(params = {}) {
+  const fileLines = String(params.content || "").split("\n");
+  const start = Math.max(1, params.from || 1);
+  const requestedCount = Math.max(
+    1,
+    params.lines || params.defaultLines || DEFAULT_MEMORY_READ_LINES,
+  );
+  const selectedLines = fileLines.slice(start - 1, start - 1 + requestedCount);
+  const moreSourceLinesRemain = start - 1 + selectedLines.length < fileLines.length;
+  return buildMemoryReadResultFromSlice({
+    selectedLines,
+    relPath: params.relPath,
+    startLine: start,
+    moreSourceLinesRemain,
+    maxChars: params.maxChars,
+    suggestReadFallback: params.suggestReadFallback,
+  });
+}
+
+function memoryRuntimeListAgentEntries(cfg) {
+  return Array.isArray(cfg && cfg.agents && cfg.agents.list)
+    ? cfg.agents.list.filter((entry) => Boolean(entry))
+    : [];
+}
+
+function memoryRuntimeResolveDefaultAgentId(cfg) {
+  const agents = memoryRuntimeListAgentEntries(cfg);
+  if (agents.length === 0) {
+    return DEFAULT_AGENT_ID;
+  }
+  const chosen = (agents.find((agent) => agent && agent.default) || agents[0] || {}).id;
+  return normalizeAgentId(chosen || DEFAULT_AGENT_ID);
+}
+
+function memoryRuntimeResolveAgentConfig(cfg, agentId) {
+  const id = normalizeAgentId(agentId);
+  return memoryRuntimeListAgentEntries(cfg).find(
+    (entry) => normalizeAgentId(entry && entry.id) === id,
+  );
+}
+
+function memoryRuntimeResolveAgentWorkspaceDir(cfg, agentId) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (memoryRuntimeResolveAgentConfig(cfg, id) || {}).workspace,
+  );
+  if (configured) {
+    return resolveUserPath(configured);
+  }
+  const fallback = normalizeOptionalString(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.workspace,
+  );
+  if (id === memoryRuntimeResolveDefaultAgentId(cfg || {})) {
+    return fallback
+      ? resolveUserPath(fallback)
+      : path.join(resolveRequiredHomeDir(process.env), ".openclaw", "workspace");
+  }
+  if (fallback) {
+    return path.join(resolveUserPath(fallback), id);
+  }
+  return path.join(resolveStateDir(process.env), `workspace-${id}`);
+}
+
+function memoryRuntimeResolveAgentContextLimits(cfg, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.contextLimits;
+  if (!cfg || !agentId) {
+    return defaults;
+  }
+  return (memoryRuntimeResolveAgentConfig(cfg, agentId) || {}).contextLimits || defaults;
+}
+
+function memoryRuntimeResolveMemorySearchConfig(cfg, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.memorySearch;
+  const overrides = (memoryRuntimeResolveAgentConfig(cfg, agentId) || {}).memorySearch;
+  const enabled =
+    (overrides && overrides.enabled !== undefined ? overrides.enabled : undefined) ??
+    (defaults && defaults.enabled !== undefined ? defaults.enabled : undefined) ??
+    true;
+  if (!enabled) {
+    return null;
+  }
+  const rawPaths = [
+    ...((defaults && defaults.extraPaths) || []),
+    ...((overrides && overrides.extraPaths) || []),
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return { enabled, extraPaths: Array.from(new Set(rawPaths)) };
+}
+
+async function readMemoryFile(params = {}) {
+  const rawPath = String(params.relPath || "").trim();
+  if (!rawPath) {
+    throw new Error("path required");
+  }
+  const workspaceDir = params.workspaceDir;
+  const absPath = path.isAbsolute(rawPath)
+    ? path.resolve(rawPath)
+    : path.resolve(workspaceDir, rawPath);
+  const relPath = path.relative(workspaceDir, absPath).replace(/\\/g, "/");
+  const inWorkspace =
+    relPath.length > 0 && !relPath.startsWith("..") && !path.isAbsolute(relPath);
+  const allowedWorkspace = inWorkspace && isMemoryPath(relPath);
+  let allowedAdditional = false;
+  if (!allowedWorkspace && Array.isArray(params.extraPaths) && params.extraPaths.length > 0) {
+    const additionalPaths = normalizeExtraMemoryPaths(workspaceDir, params.extraPaths);
+    for (const additionalPath of additionalPaths) {
+      try {
+        const stat = await fs.promises.lstat(additionalPath);
+        if (stat.isSymbolicLink()) {
+          continue;
+        }
+        if (stat.isDirectory()) {
+          if (absPath === additionalPath || absPath.startsWith(`${additionalPath}${path.sep}`)) {
+            allowedAdditional = true;
+            break;
+          }
+          continue;
+        }
+        if (stat.isFile() && absPath === additionalPath && absPath.endsWith(".md")) {
+          allowedAdditional = true;
+          break;
+        }
+      } catch {}
+    }
+  }
+  if (!allowedWorkspace && !allowedAdditional) {
+    throw new Error("path required");
+  }
+  if (!absPath.endsWith(".md")) {
+    throw new Error("path required");
+  }
+  let stat;
+  try {
+    stat = await fs.promises.lstat(absPath);
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return { text: "", path: relPath };
+    }
+    throw err;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error("path required");
+  }
+  let content;
+  try {
+    content = await fs.promises.readFile(absPath, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return { text: "", path: relPath };
+    }
+    throw err;
+  }
+  return buildMemoryReadResult({
+    content,
+    relPath,
+    from: params.from,
+    lines: params.lines,
+    defaultLines: params.defaultLines || DEFAULT_MEMORY_READ_LINES,
+    maxChars: params.maxChars,
+    suggestReadFallback: allowedWorkspace,
+  });
+}
+
+async function readAgentMemoryFile(params = {}) {
+  const settings = memoryRuntimeResolveMemorySearchConfig(params.cfg || {}, params.agentId);
+  if (!settings) {
+    throw new Error("memory search disabled");
+  }
+  const contextLimits = memoryRuntimeResolveAgentContextLimits(params.cfg || {}, params.agentId);
+  return await readMemoryFile({
+    workspaceDir: memoryRuntimeResolveAgentWorkspaceDir(params.cfg || {}, params.agentId),
+    extraPaths: settings.extraPaths,
+    relPath: params.relPath,
+    from: params.from,
+    lines: params.lines,
+    defaultLines: contextLimits && contextLimits.memoryGetDefaultLines,
+    maxChars: contextLimits && contextLimits.memoryGetMaxChars,
+  });
+}
+
+function sanitizeMemoryRuntimeQmdName(input) {
+  const lower = normalizeLowercaseStringOrEmpty(input).replace(/[^a-z0-9-]+/g, "-");
+  const trimmed = lower.replace(/^-+|-+$/g, "");
+  return trimmed || "collection";
+}
+
+function scopeMemoryRuntimeCollectionBase(base, agentId) {
+  return `${base}-${sanitizeMemoryRuntimeQmdName(agentId)}`;
+}
+
+function canonicalizeMemoryRuntimePathForContainment(rawPath) {
+  const resolved = path.resolve(rawPath);
+  let current = resolved;
+  const suffix = [];
+  while (true) {
+    try {
+      const canonical = path.normalize(fs.realpathSync.native(current));
+      return path.normalize(path.join(canonical, ...suffix));
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return path.normalize(resolved);
+      }
+      suffix.unshift(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+function isMemoryRuntimePathInsideRoot(candidatePath, rootPath) {
+  const relative = path.relative(
+    canonicalizeMemoryRuntimePathForContainment(rootPath),
+    canonicalizeMemoryRuntimePathForContainment(candidatePath),
+  );
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function ensureUniqueMemoryRuntimeCollectionName(base, existing) {
+  let name = sanitizeMemoryRuntimeQmdName(base);
+  if (!existing.has(name)) {
+    existing.add(name);
+    return name;
+  }
+  let suffix = 2;
+  while (existing.has(`${name}-${suffix}`)) {
+    suffix += 1;
+  }
+  const unique = `${name}-${suffix}`;
+  existing.add(unique);
+  return unique;
+}
+
+function resolveMemoryRuntimeQmdPath(raw, workspaceDir) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    throw new Error("path required");
+  }
+  if (trimmed.startsWith("~") || path.isAbsolute(trimmed)) {
+    return path.normalize(resolveUserPath(trimmed));
+  }
+  return path.normalize(path.resolve(workspaceDir, trimmed));
+}
+
+function resolveMemoryRuntimeIntervalMs(raw) {
+  const value = normalizeOptionalString(raw);
+  if (!value) {
+    return parseDurationMs(DEFAULT_QMD_INTERVAL, { defaultUnit: "m" });
+  }
+  try {
+    return parseDurationMs(value, { defaultUnit: "m" });
+  } catch {
+    return parseDurationMs(DEFAULT_QMD_INTERVAL, { defaultUnit: "m" });
+  }
+}
+
+function resolveMemoryRuntimeEmbedIntervalMs(raw) {
+  const value = normalizeOptionalString(raw);
+  if (!value) {
+    return parseDurationMs(DEFAULT_QMD_EMBED_INTERVAL, { defaultUnit: "m" });
+  }
+  try {
+    return parseDurationMs(value, { defaultUnit: "m" });
+  } catch {
+    return parseDurationMs(DEFAULT_QMD_EMBED_INTERVAL, { defaultUnit: "m" });
+  }
+}
+
+function resolveMemoryRuntimeDebounceMs(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+    return Math.floor(raw);
+  }
+  return DEFAULT_QMD_DEBOUNCE_MS;
+}
+
+function resolveMemoryRuntimeTimeoutMs(raw, fallback) {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return fallback;
+}
+
+function resolveMemoryRuntimeStartupMode(raw) {
+  const value = raw && raw.startup;
+  if (value === "idle" || value === "immediate" || value === "off") {
+    return value;
+  }
+  return DEFAULT_QMD_STARTUP;
+}
+
+function resolveMemoryRuntimeStartupDelayMs(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+    return Math.floor(raw);
+  }
+  return DEFAULT_QMD_STARTUP_DELAY_MS;
+}
+
+function resolveMemoryRuntimeLimits(raw) {
+  const parsed = { ...DEFAULT_QMD_LIMITS };
+  if (raw && raw.maxResults && raw.maxResults > 0) {
+    parsed.maxResults = Math.floor(raw.maxResults);
+  }
+  if (raw && raw.maxSnippetChars && raw.maxSnippetChars > 0) {
+    parsed.maxSnippetChars = Math.floor(raw.maxSnippetChars);
+  }
+  if (raw && raw.maxInjectedChars && raw.maxInjectedChars > 0) {
+    parsed.maxInjectedChars = Math.floor(raw.maxInjectedChars);
+  }
+  if (raw && raw.timeoutMs && raw.timeoutMs > 0) {
+    parsed.timeoutMs = Math.floor(raw.timeoutMs);
+  }
+  return parsed;
+}
+
+function resolveMemoryRuntimeSearchMode(raw) {
+  if (raw === "search" || raw === "vsearch" || raw === "query") {
+    return raw;
+  }
+  return DEFAULT_QMD_SEARCH_MODE;
+}
+
+function resolveMemoryRuntimeSearchTool(raw) {
+  const value = normalizeOptionalString(raw);
+  return value || undefined;
+}
+
+function resolveMemoryRuntimeSessionConfig(cfg, workspaceDir) {
+  const enabled = Boolean(cfg && cfg.enabled);
+  const exportDirRaw = normalizeOptionalString(cfg && cfg.exportDir);
+  const exportDir = exportDirRaw
+    ? resolveMemoryRuntimeQmdPath(exportDirRaw, workspaceDir)
+    : undefined;
+  const retentionDays =
+    cfg && cfg.retentionDays && cfg.retentionDays > 0 ? Math.floor(cfg.retentionDays) : undefined;
+  return { enabled, exportDir, retentionDays };
+}
+
+function resolveMemoryRuntimeCustomPaths(rawPaths, workspaceDir, existing, agentId) {
+  if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
+    return [];
+  }
+  const collections = [];
+  const seenRoots = new Set();
+  rawPaths.forEach((entry, index) => {
+    const trimmedPath = normalizeOptionalString(entry && entry.path);
+    if (!trimmedPath) {
+      return;
+    }
+    let resolved;
+    try {
+      resolved = resolveMemoryRuntimeQmdPath(trimmedPath, workspaceDir);
+    } catch {
+      return;
+    }
+    const pattern = normalizeOptionalString(entry && entry.pattern) || "**/*.md";
+    const dedupeKey = `${resolved}\u0000${pattern}`;
+    if (seenRoots.has(dedupeKey)) {
+      return;
+    }
+    seenRoots.add(dedupeKey);
+    const explicitName = normalizeOptionalString(entry && entry.name);
+    const baseName =
+      explicitName && !isMemoryRuntimePathInsideRoot(resolved, workspaceDir)
+        ? explicitName
+        : scopeMemoryRuntimeCollectionBase(explicitName || `custom-${index + 1}`, agentId);
+    collections.push({
+      name: ensureUniqueMemoryRuntimeCollectionName(baseName, existing),
+      path: resolved,
+      pattern,
+      kind: "custom",
+    });
+  });
+  return collections;
+}
+
+function resolveMemoryRuntimeMcporterConfig(raw) {
+  const parsed = { ...DEFAULT_QMD_MCPORTER };
+  if (!raw) {
+    return parsed;
+  }
+  if (raw.enabled !== undefined) {
+    parsed.enabled = raw.enabled;
+  }
+  const serverName = normalizeOptionalString(raw.serverName);
+  if (serverName) {
+    parsed.serverName = serverName;
+  }
+  if (raw.startDaemon !== undefined) {
+    parsed.startDaemon = raw.startDaemon;
+  }
+  if (parsed.enabled && raw.startDaemon === undefined) {
+    parsed.startDaemon = true;
+  }
+  return parsed;
+}
+
+function resolveMemoryRuntimeDefaultCollections(include, workspaceDir, existing, agentId) {
+  if (!include) {
+    return [];
+  }
+  const entries = [
+    { path: workspaceDir, pattern: CANONICAL_ROOT_MEMORY_FILENAME, base: "memory-root" },
+    { path: path.join(workspaceDir, "memory"), pattern: "**/*.md", base: "memory-dir" },
+  ];
+  return entries.map((entry) => ({
+    name: ensureUniqueMemoryRuntimeCollectionName(
+      scopeMemoryRuntimeCollectionBase(entry.base, agentId),
+      existing,
+    ),
+    path: entry.path,
+    pattern: entry.pattern,
+    kind: "memory",
+  }));
+}
+
+function splitMemoryRuntimeShellArgs(raw) {
+  const tokens = [];
+  let buf = "";
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  const pushToken = () => {
+    if (buf.length > 0) {
+      tokens.push(buf);
+      buf = "";
+    }
+  };
+  const doubleQuoteEscapes = new Set(["\\", '"', "$", "`", "\n", "\r"]);
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (escaped) {
+      buf += ch;
+      escaped = false;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        buf += ch;
+      }
+      continue;
+    }
+    if (inDouble) {
+      const next = raw[i + 1];
+      if (ch === "\\" && next && doubleQuoteEscapes.has(next)) {
+        buf += next;
+        i += 1;
+      } else if (ch === '"') {
+        inDouble = false;
+      } else {
+        buf += ch;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === "#" && buf.length === 0) {
+      break;
+    } else if (/\s/.test(ch)) {
+      pushToken();
+    } else {
+      buf += ch;
+    }
+  }
+  if (escaped || inSingle || inDouble) {
+    return null;
+  }
+  pushToken();
+  return tokens;
+}
+
+function resolveMemoryBackendConfig(params = {}) {
+  const cfg = params.cfg || {};
+  const normalizedAgentId = normalizeAgentId(params.agentId);
+  const backend = (cfg.memory && cfg.memory.backend) || "builtin";
+  const citations = (cfg.memory && cfg.memory.citations) || "auto";
+  if (backend !== "qmd") {
+    return { backend: "builtin", citations };
+  }
+  const workspaceDir = memoryRuntimeResolveAgentWorkspaceDir(cfg, normalizedAgentId);
+  const qmdCfg = (cfg.memory && cfg.memory.qmd) || {};
+  const includeDefaultMemory = qmdCfg.includeDefaultMemory !== false;
+  const nameSet = new Set();
+  const agentEntry = memoryRuntimeResolveAgentConfig(cfg, normalizedAgentId);
+  const defaultMemorySearch =
+    cfg.agents && cfg.agents.defaults && cfg.agents.defaults.memorySearch;
+  const agentMemorySearch = agentEntry && agentEntry.memorySearch;
+  const mergedExtraPaths = [
+    ...((defaultMemorySearch && defaultMemorySearch.extraPaths) || []),
+    ...((agentMemorySearch && agentMemorySearch.extraPaths) || []),
+  ]
+    .filter((value) => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const dedupedExtraPaths = Array.from(new Set(mergedExtraPaths));
+  const searchExtraPaths = dedupedExtraPaths.map((pathValue) => ({ path: pathValue }));
+  const mergedExtraCollections = [
+    ...((defaultMemorySearch &&
+      defaultMemorySearch.qmd &&
+      defaultMemorySearch.qmd.extraCollections) ||
+      []),
+    ...((agentMemorySearch && agentMemorySearch.qmd && agentMemorySearch.qmd.extraCollections) ||
+      []),
+  ].filter((value) => value && typeof value === "object" && typeof value.path === "string");
+  const allQmdPaths = [
+    ...((qmdCfg && qmdCfg.paths) || []),
+    ...searchExtraPaths,
+    ...mergedExtraCollections,
+  ];
+  const collections = [
+    ...resolveMemoryRuntimeDefaultCollections(
+      includeDefaultMemory,
+      workspaceDir,
+      nameSet,
+      normalizedAgentId,
+    ),
+    ...resolveMemoryRuntimeCustomPaths(allQmdPaths, workspaceDir, nameSet, normalizedAgentId),
+  ];
+  const rawCommand = normalizeOptionalString(qmdCfg.command) || "qmd";
+  const parsedCommand = splitMemoryRuntimeShellArgs(rawCommand);
+  const command = (parsedCommand && parsedCommand[0]) || rawCommand.split(/\s+/)[0] || "qmd";
+  return {
+    backend: "qmd",
+    citations,
+    qmd: {
+      command,
+      mcporter: resolveMemoryRuntimeMcporterConfig(qmdCfg.mcporter),
+      searchMode: resolveMemoryRuntimeSearchMode(qmdCfg.searchMode),
+      searchTool: resolveMemoryRuntimeSearchTool(qmdCfg.searchTool),
+      collections,
+      sessions: resolveMemoryRuntimeSessionConfig(qmdCfg.sessions, workspaceDir),
+      update: {
+        intervalMs: resolveMemoryRuntimeIntervalMs(qmdCfg.update && qmdCfg.update.interval),
+        debounceMs: resolveMemoryRuntimeDebounceMs(qmdCfg.update && qmdCfg.update.debounceMs),
+        onBoot: !(qmdCfg.update && qmdCfg.update.onBoot === false),
+        startup: resolveMemoryRuntimeStartupMode(qmdCfg.update),
+        startupDelayMs: resolveMemoryRuntimeStartupDelayMs(
+          qmdCfg.update && qmdCfg.update.startupDelayMs,
+        ),
+        waitForBootSync: Boolean(qmdCfg.update && qmdCfg.update.waitForBootSync === true),
+        embedIntervalMs: resolveMemoryRuntimeEmbedIntervalMs(
+          qmdCfg.update && qmdCfg.update.embedInterval,
+        ),
+        commandTimeoutMs: resolveMemoryRuntimeTimeoutMs(
+          qmdCfg.update && qmdCfg.update.commandTimeoutMs,
+          DEFAULT_QMD_COMMAND_TIMEOUT_MS,
+        ),
+        updateTimeoutMs: resolveMemoryRuntimeTimeoutMs(
+          qmdCfg.update && qmdCfg.update.updateTimeoutMs,
+          DEFAULT_QMD_UPDATE_TIMEOUT_MS,
+        ),
+        embedTimeoutMs: resolveMemoryRuntimeTimeoutMs(
+          qmdCfg.update && qmdCfg.update.embedTimeoutMs,
+          DEFAULT_QMD_EMBED_TIMEOUT_MS,
+        ),
+      },
+      limits: resolveMemoryRuntimeLimits(qmdCfg.limits),
+      includeDefaultMemory,
+      scope: qmdCfg.scope || DEFAULT_QMD_SCOPE,
+    },
+  };
+}
+
+const memoryCoreHostRuntimeFilesRuntime = {
+  listMemoryFiles,
+  normalizeExtraMemoryPaths,
+  readAgentMemoryFile,
+  resolveMemoryBackendConfig,
+};
+
+const DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20000;
+const BYTE_SIZE_MULTIPLIERS = {
+  b: 1,
+  kb: 1024,
+  k: 1024,
+  mb: 1024 ** 2,
+  m: 1024 ** 2,
+  gb: 1024 ** 3,
+  g: 1024 ** 3,
+  tb: 1024 ** 4,
+  t: 1024 ** 4,
+};
+const MEMORY_RUNTIME_CORE_STATE_KEY = Symbol.for("openclaw.memoryRuntimeCore.state");
+
+function asToolParamsRecord(params) {
+  return params && typeof params === "object" && !Array.isArray(params) ? params : {};
+}
+
+function parseNonNegativeByteSize(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const intValue = Math.floor(value);
+    return intValue >= 0 ? intValue : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = normalizeLowercaseStringOrEmpty(normalizeOptionalString(value) || "");
+  if (!trimmed) {
+    return null;
+  }
+  const match = /^(\d+(?:\.\d+)?)([a-z]+)?$/.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  const numeric = Number(match[1]);
+  const unit = normalizeLowercaseStringOrEmpty(match[2] || "b");
+  const multiplier = BYTE_SIZE_MULTIPLIERS[unit];
+  if (!Number.isFinite(numeric) || numeric < 0 || !multiplier) {
+    return null;
+  }
+  const bytes = Math.round(numeric * multiplier);
+  return Number.isFinite(bytes) ? bytes : null;
+}
+
+function resolveUserTimezone(configured) {
+  const trimmed = normalizeOptionalString(configured);
+  if (trimmed) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: trimmed }).format(new Date());
+      return trimmed;
+    } catch {}
+  }
+  const host = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return normalizeOptionalString(host) || "UTC";
+}
+
+function resolveUserTimeFormat(preference) {
+  return preference === "12" || preference === "24" ? preference : "12";
+}
+
+function ordinalSuffix(day) {
+  if (day >= 11 && day <= 13) {
+    return "th";
+  }
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+function formatUserTime(date, timeZone, format) {
+  const use24Hour = format === "24";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: use24Hour ? "2-digit" : "numeric",
+      minute: "2-digit",
+      hourCycle: use24Hour ? "h23" : "h12",
+    }).formatToParts(date);
+    const mapped = {};
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        mapped[part.type] = part.value;
+      }
+    }
+    if (
+      !mapped.weekday ||
+      !mapped.year ||
+      !mapped.month ||
+      !mapped.day ||
+      !mapped.hour ||
+      !mapped.minute
+    ) {
+      return undefined;
+    }
+    const dayNum = Number.parseInt(mapped.day, 10);
+    const timePart = use24Hour
+      ? `${mapped.hour}:${mapped.minute}`
+      : `${mapped.hour}:${mapped.minute} ${mapped.dayPeriod || ""}`.trim();
+    return `${mapped.weekday}, ${mapped.month} ${dayNum}${ordinalSuffix(dayNum)}, ${
+      mapped.year
+    } - ${timePart}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCronStyleNow(cfg = {}, nowMs) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults;
+  const userTimezone = resolveUserTimezone(defaults && defaults.userTimezone);
+  const userTimeFormat = resolveUserTimeFormat(defaults && defaults.timeFormat);
+  const date = new Date(nowMs);
+  const formattedTime = formatUserTime(date, userTimezone, userTimeFormat) || date.toISOString();
+  const utcTime = `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  const timeLine = `Current time: ${formattedTime} (${userTimezone}) / ${utcTime}`;
+  return { userTimezone, formattedTime, timeLine };
+}
+
+function resolveDefaultAgentId(cfg = {}) {
+  return memoryRuntimeResolveDefaultAgentId(cfg);
+}
+
+function resolveSessionAgentId(params = {}) {
+  const defaultAgentId = resolveDefaultAgentId(params.config || {});
+  const rawSessionKey = normalizeOptionalString(params.sessionKey);
+  const parsed = rawSessionKey ? parseAgentSessionKey(rawSessionKey) : null;
+  return parsed && parsed.agentId ? normalizeAgentId(parsed.agentId) : defaultAgentId;
+}
+
+function resolveMemorySearchConfig(cfg = {}, agentId) {
+  return memoryRuntimeResolveMemorySearchConfig(cfg, agentId);
+}
+
+function resolveSessionTranscriptsDirForAgent(
+  agentId,
+  env = process.env,
+  homedir = () => resolveRequiredHomeDir(env, () => os.homedir()),
+) {
+  const root = resolveStateDir(env, homedir);
+  const id = normalizeAgentId(agentId || DEFAULT_AGENT_ID);
+  return path.join(root, "agents", id, "sessions");
+}
+
+function getMemoryRuntimeCoreState() {
+  return resolveGlobalSingleton(MEMORY_RUNTIME_CORE_STATE_KEY, () => ({
+    capability: undefined,
+    corpusSupplements: [],
+  }));
+}
+
+function cloneMemoryCapabilityRegistration(registration) {
+  return registration
+    ? {
+        pluginId: registration.pluginId,
+        capability: { ...registration.capability },
+      }
+    : undefined;
+}
+
+function registerMemoryCapability(pluginId, capability) {
+  getMemoryRuntimeCoreState().capability = {
+    pluginId,
+    capability: { ...(capability || {}) },
+  };
+}
+
+function getMemoryCapabilityRegistration() {
+  return cloneMemoryCapabilityRegistration(getMemoryRuntimeCoreState().capability);
+}
+
+function registerMemoryCorpusSupplement(pluginId, supplement) {
+  const state = getMemoryRuntimeCoreState();
+  state.corpusSupplements = state.corpusSupplements.filter(
+    (registration) => registration.pluginId !== pluginId,
+  );
+  state.corpusSupplements.push({ pluginId, supplement });
+}
+
+function listMemoryCorpusSupplements() {
+  return [...getMemoryRuntimeCoreState().corpusSupplements];
+}
+
+function normalizeMemoryPromptLines(value) {
+  return Array.isArray(value) ? value.filter((line) => typeof line === "string") : [];
+}
+
+function buildActiveMemoryPromptSection(params = {}) {
+  const registration = getMemoryRuntimeCoreState().capability;
+  const builder = registration && registration.capability && registration.capability.promptBuilder;
+  return normalizeMemoryPromptLines(typeof builder === "function" ? builder(params) : []);
+}
+
+function cloneMemoryPublicArtifact(artifact) {
+  return {
+    ...artifact,
+    agentIds: Array.isArray(artifact && artifact.agentIds) ? [...artifact.agentIds] : [],
+  };
+}
+
+async function listActiveMemoryPublicArtifacts(params = {}) {
+  const registration = getMemoryRuntimeCoreState().capability;
+  const provider =
+    registration &&
+    registration.capability &&
+    registration.capability.publicArtifacts &&
+    registration.capability.publicArtifacts.listArtifacts;
+  const artifacts = typeof provider === "function" ? await provider(params) : [];
+  return (Array.isArray(artifacts) ? artifacts : [])
+    .map(cloneMemoryPublicArtifact)
+    .sort((left, right) => {
+      const workspaceOrder = String(left.workspaceDir || "").localeCompare(
+        String(right.workspaceDir || ""),
+      );
+      if (workspaceOrder !== 0) {
+        return workspaceOrder;
+      }
+      const relativePathOrder = String(left.relativePath || "").localeCompare(
+        String(right.relativePath || ""),
+      );
+      if (relativePathOrder !== 0) {
+        return relativePathOrder;
+      }
+      const kindOrder = String(left.kind || "").localeCompare(String(right.kind || ""));
+      if (kindOrder !== 0) {
+        return kindOrder;
+      }
+      const contentTypeOrder = String(left.contentType || "").localeCompare(
+        String(right.contentType || ""),
+      );
+      if (contentTypeOrder !== 0) {
+        return contentTypeOrder;
+      }
+      const agentOrder = left.agentIds.join("\0").localeCompare(right.agentIds.join("\0"));
+      if (agentOrder !== 0) {
+        return agentOrder;
+      }
+      return String(left.absolutePath || "").localeCompare(String(right.absolutePath || ""));
+    });
+}
+
+function clearMemoryPluginState() {
+  const state = getMemoryRuntimeCoreState();
+  state.capability = undefined;
+  state.corpusSupplements = [];
+}
+
+const memoryCoreHostRuntimeCoreRuntime = {
+  DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR,
+  SILENT_REPLY_TOKEN,
+  asToolParamsRecord,
+  buildActiveMemoryPromptSection,
+  clearMemoryPluginState,
+  emptyPluginConfigSchema,
+  getMemoryCapabilityRegistration,
+  getRuntimeConfig,
+  jsonResult,
+  listActiveMemoryPublicArtifacts,
+  listMemoryCorpusSupplements,
+  loadConfig: getRuntimeConfig,
+  parseAgentSessionKey,
+  parseNonNegativeByteSize,
+  readNumberParam,
+  readStringParam,
+  registerMemoryCapability,
+  registerMemoryCorpusSupplement,
+  resolveCronStyleNow,
+  resolveDefaultAgentId,
+  resolveMemorySearchConfig,
+  resolveSessionAgentId,
+  resolveSessionTranscriptsDirForAgent,
+  resolveStateDir,
+};
+
+function getMemoryHostSearchRuntime() {
+  const registration = getMemoryRuntimeCoreState().capability;
+  return registration &&
+    registration.capability &&
+    registration.capability.runtime
+    ? registration.capability.runtime
+    : null;
+}
+
+async function getActiveMemorySearchManager(params = {}) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (!runtime || typeof runtime.getMemorySearchManager !== "function") {
+    return { manager: null, error: "memory plugin unavailable" };
+  }
+  return await runtime.getMemorySearchManager(params);
+}
+
+async function closeActiveMemorySearchManagers(_cfg) {
+  const runtime = getMemoryHostSearchRuntime();
+  if (runtime && typeof runtime.closeAllMemorySearchManagers === "function") {
+    await runtime.closeAllMemorySearchManagers();
+  }
+}
+
+const memoryHostSearchRuntime = {
+  closeActiveMemorySearchManagers,
+  getActiveMemorySearchManager,
+};
+
+function memoryCoreEngineRuntimeUnavailableError() {
+  return new Error("memory-core engine runtime unavailable in OpenZues plugin runtime.");
+}
+
+async function memoryCoreEngineRuntimeUnavailableAsync() {
+  throw memoryCoreEngineRuntimeUnavailableError();
+}
+
+async function getMemoryCoreEngineSearchManager(_params = {}) {
+  return { manager: null, error: "memory-core engine runtime unavailable" };
+}
+
+const memoryCoreEngineRuntimeIndexManager = {
+  async get(_params = {}) {
+    return null;
+  },
+};
+
+const memoryCoreEngineRuntime = {
+  MemoryIndexManager: memoryCoreEngineRuntimeIndexManager,
+  auditDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  auditShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  getBuiltinMemoryEmbeddingProviderDoctorMetadata(_providerId) {
+    return null;
+  },
+  getMemorySearchManager: getMemoryCoreEngineSearchManager,
+  listBuiltinAutoSelectMemoryEmbeddingProviderDoctorMetadata() {
+    return [];
+  },
+  repairDreamingArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
+  repairShortTermPromotionArtifacts: memoryCoreEngineRuntimeUnavailableAsync,
 };
 
 const MEMORY_QUERY_STOP_WORDS = new Set([
@@ -48266,15 +49689,63 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-events" ||
-    request === "@openclaw/plugin-sdk/memory-core-host-events"
+    request === "@openclaw/plugin-sdk/memory-core-host-events" ||
+    request === "openclaw/plugin-sdk/memory-host-events" ||
+    request === "@openclaw/plugin-sdk/memory-host-events"
   ) {
     return memoryCoreHostEventsRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/memory-host-markdown" ||
+    request === "@openclaw/plugin-sdk/memory-host-markdown"
+  ) {
+    return memoryHostMarkdownRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-search" ||
+    request === "@openclaw/plugin-sdk/memory-host-search"
+  ) {
+    return memoryHostSearchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-engine-runtime" ||
+    request === "@openclaw/plugin-sdk/memory-core-engine-runtime"
+  ) {
+    return memoryCoreEngineRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
-    request === "@openclaw/plugin-sdk/memory-core-host-status"
+    request === "@openclaw/plugin-sdk/memory-core-host-status" ||
+    request === "openclaw/plugin-sdk/memory-host-status" ||
+    request === "@openclaw/plugin-sdk/memory-host-status"
   ) {
     return memoryCoreHostStatusRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-runtime-files" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-runtime-files"
+  ) {
+    return memoryCoreHostRuntimeFilesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-files" ||
+    request === "@openclaw/plugin-sdk/memory-host-files"
+  ) {
+    return memoryCoreHostRuntimeFilesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-runtime-core" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-runtime-core" ||
+    request === "openclaw/plugin-sdk/memory-host-core" ||
+    request === "@openclaw/plugin-sdk/memory-host-core"
+  ) {
+    return memoryCoreHostRuntimeCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-runtime-cli" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-runtime-cli"
+  ) {
+    return memoryCoreHostRuntimeCliRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
