@@ -24323,6 +24323,127 @@ function normalizeResolvedSecretInputString(params) {
   return resolved.status === "available" ? resolved.value : undefined;
 }
 
+function pushSecretRuntimeWarning(context, warning) {
+  if (!context || typeof context !== "object") {
+    return;
+  }
+  if (!Array.isArray(context.warnings)) {
+    context.warnings = [];
+  }
+  const warningKey = `${warning.code}:${warning.path}:${warning.message}`;
+  const warningKeys = context.warningKeys;
+  if (warningKeys && typeof warningKeys.has === "function" && warningKeys.has(warningKey)) {
+    return;
+  }
+  if (warningKeys && typeof warningKeys.add === "function") {
+    warningKeys.add(warningKey);
+  }
+  context.warnings.push(warning);
+}
+
+function pushInactiveSurfaceWarning(params) {
+  const message =
+    params.details && String(params.details).trim().length > 0
+      ? `${params.path}: ${params.details}`
+      : (
+          `${params.path}: secret ref is configured on an inactive surface; ` +
+          "skipping resolution until it becomes active."
+        );
+  pushSecretRuntimeWarning(params.context, {
+    code: "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+    path: params.path,
+    message,
+  });
+}
+
+function collectSecretInputAssignment(params) {
+  const ref = coerceSecretRef(params.value, params.defaults);
+  if (!ref) {
+    return;
+  }
+  if (params.active === false) {
+    pushInactiveSurfaceWarning({
+      context: params.context,
+      path: params.path,
+      details: params.inactiveReason,
+    });
+    return;
+  }
+  if (!Array.isArray(params.context.assignments)) {
+    params.context.assignments = [];
+  }
+  params.context.assignments.push({
+    ref,
+    path: params.path,
+    expected: params.expected,
+    apply: params.apply,
+  });
+}
+
+function collectTtsApiKeyAssignments(params) {
+  const providers = params.tts && params.tts.providers;
+  if (!isRecord(providers)) {
+    return;
+  }
+  for (const [providerId, providerConfig] of Object.entries(providers)) {
+    if (!isRecord(providerConfig)) {
+      continue;
+    }
+    collectSecretInputAssignment({
+      value: providerConfig.apiKey,
+      path: `${params.pathPrefix}.providers.${providerId}.apiKey`,
+      expected: "string",
+      defaults: params.defaults,
+      context: params.context,
+      active: params.active,
+      inactiveReason: params.inactiveReason,
+      apply: (value) => {
+        providerConfig.apiKey = value;
+      },
+    });
+  }
+}
+
+function collectNestedChannelTtsAssignments(params) {
+  const topLevelNested = params.channel && params.channel[params.nestedKey];
+  if (isRecord(topLevelNested) && isRecord(topLevelNested.tts)) {
+    collectTtsApiKeyAssignments({
+      tts: topLevelNested.tts,
+      pathPrefix: `channels.${params.channelKey}.${params.nestedKey}.tts`,
+      defaults: params.defaults,
+      context: params.context,
+      active: params.topLevelActive,
+      inactiveReason: params.topInactiveReason,
+    });
+  }
+  if (!params.surface || !params.surface.hasExplicitAccounts) {
+    return;
+  }
+  const accounts = Array.isArray(params.surface.accounts) ? params.surface.accounts : [];
+  for (const entry of accounts) {
+    const nested = entry && entry.account && entry.account[params.nestedKey];
+    if (!isRecord(nested) || !isRecord(nested.tts)) {
+      continue;
+    }
+    const active =
+      typeof params.accountActive === "function" ? params.accountActive(entry) : false;
+    const inactiveReason =
+      typeof params.accountInactiveReason === "function"
+        ? params.accountInactiveReason(entry)
+        : params.accountInactiveReason;
+    collectTtsApiKeyAssignments({
+      tts: nested.tts,
+      pathPrefix:
+        `channels.${params.channelKey}.accounts.${entry.accountId}.` +
+        `${params.nestedKey}.tts`,
+      defaults: params.defaults,
+      context: params.context,
+      active,
+      inactiveReason,
+    });
+  }
+}
+
 const DEFAULT_ACCOUNT_ID = "default";
 const DEFAULT_AGENT_ID = "main";
 const DEFAULT_MAIN_KEY = "main";
@@ -34268,6 +34389,10 @@ const secretInputRuntime = {
   resolveSecretInputString,
 };
 
+const channelSecretTtsRuntime = {
+  collectNestedChannelTtsAssignments,
+};
+
 const routingRuntime = {
   DEFAULT_ACCOUNT_ID,
   DEFAULT_MAIN_KEY,
@@ -35419,6 +35544,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input"
   ) {
     return secretInputRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-secret-tts-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-secret-tts-runtime"
+  ) {
+    return channelSecretTtsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/routing" ||

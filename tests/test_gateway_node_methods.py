@@ -10243,6 +10243,236 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_secret_tts_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-secret-tts-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const ttsRuntime = require("openclaw/plugin-sdk/channel-secret-tts-runtime");
+const scopedTtsRuntime = require("@openclaw/plugin-sdk/channel-secret-tts-runtime");
+
+function createContext() {
+  return { assignments: [], warnings: [], warningKeys: new Set() };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_secret_tts",
+      description: "Use OpenClaw channel-secret-tts-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const channel = {
+          enabled: true,
+          voice: {
+            enabled: true,
+            tts: {
+              providers: {
+                elevenlabs: { apiKey: "${ELEVENLABS_API_KEY}" },
+                empty: {}
+              }
+            }
+          },
+          accounts: {
+            work: {
+              enabled: true,
+              voice: {
+                enabled: true,
+                tts: {
+                  providers: {
+                    openai: {
+                      apiKey: {
+                        source: "env",
+                        provider: "custom",
+                        id: "OPENAI_API_KEY"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            disabled: {
+              enabled: false,
+              voice: {
+                enabled: true,
+                tts: {
+                  providers: {
+                    edge: { apiKey: "${EDGE_API_KEY}" }
+                  }
+                }
+              }
+            },
+            noVoice: { enabled: true }
+          }
+        };
+        const surface = {
+          hasExplicitAccounts: true,
+          channelEnabled: true,
+          accounts: Object.entries(channel.accounts).map(([accountId, account]) => ({
+            accountId,
+            account,
+            enabled: channel.enabled !== false && account.enabled !== false
+          }))
+        };
+        const context = createContext();
+        ttsRuntime.collectNestedChannelTtsAssignments({
+          channelKey: "discord",
+          nestedKey: "voice",
+          channel,
+          surface,
+          defaults: { env: "default-env" },
+          context,
+          topLevelActive: true,
+          topInactiveReason: "top inactive",
+          accountActive: ({ account, enabled }) =>
+            enabled && account.voice && account.voice.enabled !== false,
+          accountInactiveReason: ({ accountId }) => `${accountId} inactive`
+        });
+        const assignments = context.assignments.map((assignment) => ({
+          path: assignment.path,
+          expected: assignment.expected,
+          ref: assignment.ref
+        }));
+        context.assignments[0].apply("top-secret");
+        context.assignments[1].apply("work-secret");
+
+        const inactiveContext = createContext();
+        scopedTtsRuntime.collectNestedChannelTtsAssignments({
+          channelKey: "discord",
+          nestedKey: "voice",
+          channel: {
+            voice: {
+              tts: { providers: { openai: { apiKey: "${TOP_INACTIVE_KEY}" } } }
+            }
+          },
+          surface: { hasExplicitAccounts: false, channelEnabled: false, accounts: [] },
+          defaults: { env: "default-env" },
+          context: inactiveContext,
+          topLevelActive: false,
+          topInactiveReason: "top voice disabled",
+          accountActive: () => false,
+          accountInactiveReason: "account inactive"
+        });
+
+        return {
+          exportKeys: Object.keys(ttsRuntime).sort(),
+          assignments,
+          warnings: context.warnings,
+          mutated: {
+            top: channel.voice.tts.providers.elevenlabs.apiKey,
+            work: channel.accounts.work.voice.tts.providers.openai.apiKey
+          },
+          inactiveWarnings: inactiveContext.warnings,
+          scopedExportType: typeof scopedTtsRuntime.collectNestedChannelTtsAssignments
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-secret-tts-plugin",
+                    "name": "Runtime Channel Secret TTS Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-secret-tts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_secret_tts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_secret_tts"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["collectNestedChannelTtsAssignments"],
+        "assignments": [
+            {
+                "path": "channels.discord.voice.tts.providers.elevenlabs.apiKey",
+                "expected": "string",
+                "ref": {
+                    "source": "env",
+                    "provider": "default-env",
+                    "id": "ELEVENLABS_API_KEY",
+                },
+            },
+            {
+                "path": (
+                    "channels.discord.accounts.work.voice.tts.providers.openai.apiKey"
+                ),
+                "expected": "string",
+                "ref": {
+                    "source": "env",
+                    "provider": "custom",
+                    "id": "OPENAI_API_KEY",
+                },
+            },
+        ],
+        "warnings": [
+            {
+                "code": "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "path": "channels.discord.accounts.disabled.voice.tts.providers.edge.apiKey",
+                "message": (
+                    "channels.discord.accounts.disabled.voice.tts.providers.edge.apiKey: "
+                    "disabled inactive"
+                ),
+            }
+        ],
+        "mutated": {
+            "top": "top-secret",
+            "work": "work-secret",
+        },
+        "inactiveWarnings": [
+            {
+                "code": "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "path": "channels.discord.voice.tts.providers.openai.apiKey",
+                "message": (
+                    "channels.discord.voice.tts.providers.openai.apiKey: "
+                    "top voice disabled"
+                ),
+            }
+        ],
+        "scopedExportType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_setup_adapter_runtime_helper(
     tmp_path,
 ) -> None:
