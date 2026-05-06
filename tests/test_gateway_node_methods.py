@@ -28669,6 +28669,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_sdk_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-sdk-facades.cjs"
+    runtime_entry.write_text(
+        """
+const query = require("@openclaw/memory-host-sdk/query");
+const multimodal = require("@openclaw/memory-host-sdk/multimodal");
+const secret = require("@openclaw/memory-host-sdk/secret");
+const status = require("@openclaw/memory-host-sdk/status");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_host_sdk_facades",
+      description: "Use OpenClaw memory-host-sdk facade shims",
+      parameters: { type: "object" },
+      execute() {
+        const previous = process.env.MEMORY_HOST_SDK_SECRET;
+        process.env.MEMORY_HOST_SDK_SECRET = "  package-secret  ";
+        const result = {
+          selectedTypes: {
+            extractKeywords: typeof query.extractKeywords,
+            normalizeMemoryMultimodalSettings:
+              typeof multimodal.normalizeMemoryMultimodalSettings,
+            resolveMemorySecretInputString: typeof secret.resolveMemorySecretInputString,
+            resolveMemoryVectorState: typeof status.resolveMemoryVectorState
+          },
+          query: {
+            keywords: query.extractKeywords("that OpenClaw API API bug 123"),
+            stopWords: [
+              query.isQueryStopWordToken("that"),
+              query.isQueryStopWordToken("api")
+            ]
+          },
+          multimodal: {
+              normalized: multimodal.normalizeMemoryMultimodalSettings({
+                enabled: true,
+                modalities: ["audio", "image", "bogus"],
+                maxFileBytes: 2048
+              }),
+            enabledStates: [
+              multimodal.isMemoryMultimodalEnabled({ enabled: false }),
+              multimodal.isMemoryMultimodalEnabled({
+                enabled: true,
+                modalities: ["image"]
+              })
+            ]
+          },
+          secret: {
+            configured: secret.hasConfiguredMemorySecretInput({
+              source: "env",
+              provider: "default",
+              id: "MEMORY_HOST_SDK_SECRET"
+            }),
+            resolved: secret.resolveMemorySecretInputString({
+              value: "${MEMORY_HOST_SDK_SECRET}",
+              path: "memory.remote.apiKey"
+            })
+          },
+          status: {
+            vector: status.resolveMemoryVectorState({ enabled: true, available: true }),
+            fts: status.resolveMemoryFtsState({ enabled: true, available: false }),
+            cache: status.resolveMemoryCacheSummary({ enabled: true, entries: 2 })
+          }
+        };
+        if (previous === undefined) {
+          delete process.env.MEMORY_HOST_SDK_SECRET;
+        } else {
+          process.env.MEMORY_HOST_SDK_SECRET = previous;
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-sdk-facades-plugin",
+                    "name": "Memory Host SDK Facades Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-sdk-facades.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_sdk_facades"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_host_sdk_facades"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "extractKeywords": "function",
+            "normalizeMemoryMultimodalSettings": "function",
+            "resolveMemorySecretInputString": "function",
+            "resolveMemoryVectorState": "function",
+        },
+        "query": {"keywords": ["openclaw", "api", "bug"], "stopWords": [True, False]},
+        "multimodal": {
+            "normalized": {
+                "enabled": True,
+                "modalities": ["audio", "image"],
+                "maxFileBytes": 2048,
+            },
+            "enabledStates": [False, True],
+        },
+        "secret": {"configured": True, "resolved": "package-secret"},
+        "status": {
+            "vector": {"tone": "ok", "state": "ready"},
+            "fts": {"tone": "warn", "state": "unavailable"},
+            "cache": {"tone": "ok", "text": "cache on (2)"},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_files_helpers(
     tmp_path,
 ) -> None:

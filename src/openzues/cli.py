@@ -51893,16 +51893,25 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostMultimodalRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/multimodal") {
+    return memoryCoreHostMultimodalRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-query" ||
     request === "@openclaw/plugin-sdk/memory-core-host-query"
   ) {
     return memoryCoreHostQueryRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/query") {
+    return memoryCoreHostQueryRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-secret" ||
     request === "@openclaw/plugin-sdk/memory-core-host-secret"
   ) {
+    return memoryCoreHostSecretRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/secret") {
     return memoryCoreHostSecretRuntime;
   }
   if (
@@ -51976,6 +51985,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "openclaw/plugin-sdk/memory-host-status" ||
     request === "@openclaw/plugin-sdk/memory-host-status"
   ) {
+    return memoryCoreHostStatusRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/status") {
     return memoryCoreHostStatusRuntime;
   }
   if (
