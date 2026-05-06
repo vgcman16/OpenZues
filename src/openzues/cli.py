@@ -48403,6 +48403,115 @@ const memoryCoreHostRuntimeCoreRuntime = {
   resolveStateDir,
 };
 
+const memoryCoreHostFoundationTranscriptListeners = new Set();
+
+function resolveMemoryCoreHostFoundationAgentDir(cfg = {}, agentId, env = process.env) {
+  const id = normalizeAgentId(agentId);
+  const configured = normalizeOptionalString(
+    (memoryRuntimeResolveAgentConfig(cfg, id) || {}).agentDir,
+  );
+  if (configured) {
+    return resolveUserPath(configured, env);
+  }
+  return path.join(resolveStateDir(env), "agents", id, "agent");
+}
+
+function resolveMemoryCoreHostFoundationSearchSyncConfig(cfg = {}, agentId) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.memorySearch;
+  const overrides = (memoryRuntimeResolveAgentConfig(cfg, agentId) || {}).memorySearch;
+  const enabled =
+    (overrides && overrides.enabled !== undefined ? overrides.enabled : undefined) ??
+    (defaults && defaults.enabled !== undefined ? defaults.enabled : undefined) ??
+    true;
+  if (!enabled) {
+    return null;
+  }
+  const defaultSync = (defaults && defaults.sync) || {};
+  const overrideSync = (overrides && overrides.sync) || {};
+  const defaultSessions = defaultSync.sessions || {};
+  const overrideSessions = overrideSync.sessions || {};
+  return {
+    onSessionStart:
+      overrideSync.onSessionStart ?? defaultSync.onSessionStart ?? true,
+    onSearch: overrideSync.onSearch ?? defaultSync.onSearch ?? true,
+    watch: overrideSync.watch ?? defaultSync.watch ?? true,
+    watchDebounceMs:
+      overrideSync.watchDebounceMs ?? defaultSync.watchDebounceMs ?? 1500,
+    intervalMinutes:
+      overrideSync.intervalMinutes ?? defaultSync.intervalMinutes ?? 0,
+    embeddingBatchTimeoutSeconds:
+      overrideSync.embeddingBatchTimeoutSeconds ??
+      defaultSync.embeddingBatchTimeoutSeconds,
+    sessions: {
+      deltaBytes:
+        overrideSessions.deltaBytes ?? defaultSessions.deltaBytes ?? 100000,
+      deltaMessages:
+        overrideSessions.deltaMessages ?? defaultSessions.deltaMessages ?? 50,
+      postCompactionForce:
+        overrideSessions.postCompactionForce ??
+        defaultSessions.postCompactionForce ??
+        true,
+    },
+  };
+}
+
+function onMemoryCoreHostFoundationSessionTranscriptUpdate(listener) {
+  if (typeof listener !== "function") {
+    return () => {};
+  }
+  memoryCoreHostFoundationTranscriptListeners.add(listener);
+  return () => {
+    memoryCoreHostFoundationTranscriptListeners.delete(listener);
+  };
+}
+
+function truncateUtf16Safe(input, maxLen) {
+  const value = String(input || "");
+  const limit = Math.max(0, Math.floor(maxLen));
+  if (value.length <= limit) {
+    return value;
+  }
+  let end = limit;
+  if (
+    end > 0 &&
+    end < value.length &&
+    value.charCodeAt(end - 1) >= 0xd800 &&
+    value.charCodeAt(end - 1) <= 0xdbff &&
+    value.charCodeAt(end) >= 0xdc00 &&
+    value.charCodeAt(end) <= 0xdfff
+  ) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+const memoryCoreHostEngineFoundationRuntime = {
+  createSubsystemLogger,
+  detectMime,
+  hasConfiguredSecretInput,
+  loadConfig: getRuntimeConfig,
+  normalizeResolvedSecretInputString,
+  onSessionTranscriptUpdate: onMemoryCoreHostFoundationSessionTranscriptUpdate,
+  parseDurationMs,
+  resolveAgentContextLimits: memoryRuntimeResolveAgentContextLimits,
+  resolveAgentDir: resolveMemoryCoreHostFoundationAgentDir,
+  resolveAgentWorkspaceDir: memoryRuntimeResolveAgentWorkspaceDir,
+  resolveDefaultAgentId,
+  resolveGlobalSingleton,
+  resolveMemorySearchConfig,
+  resolveMemorySearchSyncConfig: resolveMemoryCoreHostFoundationSearchSyncConfig,
+  resolveSessionAgentId,
+  resolveSessionTranscriptsDirForAgent,
+  resolveStateDir,
+  resolveUserPath,
+  runTasksWithConcurrency,
+  shortenHomeInString,
+  shortenHomePath,
+  splitShellArgs: splitMemoryRuntimeShellArgs,
+  truncateUtf16Safe,
+  writeFileWithinRoot,
+};
+
 function getMemoryHostSearchRuntime() {
   const registration = getMemoryRuntimeCoreState().capability;
   return registration &&
@@ -50447,6 +50556,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-host-engine-embeddings"
   ) {
     return memoryCoreHostEngineEmbeddingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-foundation" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-foundation"
+  ) {
+    return memoryCoreHostEngineFoundationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||

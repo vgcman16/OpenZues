@@ -36766,6 +36766,270 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_engine_foundation_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-engine-foundation.cjs"
+    runtime_entry.write_text(
+        """
+const foundation = require("openclaw/plugin-sdk/memory-core-host-engine-foundation");
+const scopedFoundation = require("@openclaw/plugin-sdk/memory-core-host-engine-foundation");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_engine_foundation",
+      description: "Use OpenClaw memory-core-host-engine-foundation SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const previousHome = process.env.OPENCLAW_HOME;
+        const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+        process.env.OPENCLAW_HOME = "C:/Users/skull";
+        process.env.OPENCLAW_STATE_DIR = "C:/Users/skull/.openclaw-state";
+        const cfg = {
+          agents: {
+            defaults: {
+              workspace: "C:/Users/skull/workspaces",
+              contextLimits: { memoryGetMaxChars: 500 },
+              memorySearch: {
+                enabled: true,
+                extraPaths: ["common", "common"],
+                sync: { onSearch: false, intervalMinutes: 9 }
+              }
+            },
+            list: [
+              {
+                id: "Research Agent",
+                default: true,
+                workspace: "C:/Users/skull/research",
+                agentDir: "C:/Users/skull/agents/research",
+                contextLimits: { memoryGetDefaultLines: 7 },
+                memorySearch: {
+                  enabled: true,
+                  extraPaths: ["agent"],
+                  sync: { onSearch: true, intervalMinutes: 3 }
+                }
+              }
+            ]
+          }
+        };
+        const slash = (value) => String(value).replaceAll("\\\\", "/");
+        const singletonKey = Symbol.for("openzues.foundation.test.singleton");
+        const singletonA = foundation.resolveGlobalSingleton(singletonKey, () => ({ hits: 0 }));
+        singletonA.hits += 1;
+        const singletonB = scopedFoundation.resolveGlobalSingleton(
+          singletonKey,
+          () => ({ hits: 99 })
+        );
+        const transcriptUnsubscribe = foundation.onSessionTranscriptUpdate(() => {});
+        const taskResult = await foundation.runTasksWithConcurrency({
+          tasks: [async () => "alpha", async () => "beta"],
+          limit: 1
+        });
+        const search = foundation.resolveMemorySearchConfig(cfg, "research-agent");
+        const sync = scopedFoundation.resolveMemorySearchSyncConfig(cfg, "research-agent");
+        let durationError = "";
+        try {
+          foundation.parseDurationMs("");
+        } catch (err) {
+          durationError = String(err && err.message ? err.message : err);
+        }
+        transcriptUnsubscribe();
+        const result = {
+          keys: Object.keys(foundation).sort(),
+          scopedType: typeof scopedFoundation.parseDurationMs,
+          durations: [
+            foundation.parseDurationMs("1h30m"),
+            foundation.parseDurationMs("2", { defaultUnit: "s" }),
+            foundation.parseDurationMs("2m500ms")
+          ],
+          durationError,
+          agents: {
+            defaultAgent: foundation.resolveDefaultAgentId(cfg),
+            sessionAgent: foundation.resolveSessionAgentId({ config: cfg }),
+            workspaceDir: slash(foundation.resolveAgentWorkspaceDir(cfg, "research-agent")),
+            agentDir: slash(scopedFoundation.resolveAgentDir(cfg, "research-agent")),
+            contextLimits: foundation.resolveAgentContextLimits(cfg, "research-agent")
+          },
+          memory: {
+            enabled: search && search.enabled,
+            extraPaths: search && search.extraPaths,
+            sync: sync && {
+              onSearch: sync.onSearch,
+              intervalMinutes: sync.intervalMinutes
+            }
+          },
+          paths: {
+            stateDir: slash(foundation.resolveStateDir()),
+            transcripts: slash(foundation.resolveSessionTranscriptsDirForAgent("Research Agent")),
+            userPath: slash(foundation.resolveUserPath("~/project")),
+            shortenedPath: foundation.shortenHomePath("C:/Users/skull/project"),
+            shortenedText: scopedFoundation.shortenHomeInString("root=C:/Users/skull/project")
+          },
+          secret: {
+            literal: foundation.hasConfiguredSecretInput(" literal "),
+            ref: foundation.hasConfiguredSecretInput({
+              source: "env",
+              provider: "default",
+              id: "OPENAI_API_KEY"
+            }),
+            normalized: foundation.normalizeResolvedSecretInputString({
+              value: " literal ",
+              path: "secret"
+            })
+          },
+          io: {
+            loggerWarn: typeof foundation.createSubsystemLogger("memory").warn,
+            mime: await foundation.detectMime({ headerMime: " Text/Plain; charset=utf-8" }),
+            singletonHits: singletonB.hits,
+            taskResult: { results: taskResult.results, hasError: taskResult.hasError },
+            shellArgs: foundation.splitShellArgs("alpha 'two words' \\"three four\\" # comment"),
+            truncated: foundation.truncateUtf16Safe("ab😀cd", 3),
+            unsubscribeType: typeof transcriptUnsubscribe,
+            loadConfigType: typeof foundation.loadConfig,
+            writeFileType: typeof foundation.writeFileWithinRoot
+          }
+        };
+        if (previousHome === undefined) {
+          delete process.env.OPENCLAW_HOME;
+        } else {
+          process.env.OPENCLAW_HOME = previousHome;
+        }
+        if (previousStateDir === undefined) {
+          delete process.env.OPENCLAW_STATE_DIR;
+        } else {
+          process.env.OPENCLAW_STATE_DIR = previousStateDir;
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-host-engine-foundation-plugin",
+                    "name": "Memory Core Host Engine Foundation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-memory-core-host-engine-foundation.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {
+                        "allow": ["runtime.memory_core_host_engine_foundation"]
+                    }
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_engine_foundation"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createSubsystemLogger",
+            "detectMime",
+            "hasConfiguredSecretInput",
+            "loadConfig",
+            "normalizeResolvedSecretInputString",
+            "onSessionTranscriptUpdate",
+            "parseDurationMs",
+            "resolveAgentContextLimits",
+            "resolveAgentDir",
+            "resolveAgentWorkspaceDir",
+            "resolveDefaultAgentId",
+            "resolveGlobalSingleton",
+            "resolveMemorySearchConfig",
+            "resolveMemorySearchSyncConfig",
+            "resolveSessionAgentId",
+            "resolveSessionTranscriptsDirForAgent",
+            "resolveStateDir",
+            "resolveUserPath",
+            "runTasksWithConcurrency",
+            "shortenHomeInString",
+            "shortenHomePath",
+            "splitShellArgs",
+            "truncateUtf16Safe",
+            "writeFileWithinRoot",
+        ],
+        "scopedType": "function",
+        "durations": [5400000, 2000, 120500],
+        "durationError": "invalid duration (empty)",
+        "agents": {
+            "defaultAgent": "research-agent",
+            "sessionAgent": "research-agent",
+            "workspaceDir": "C:/Users/skull/research",
+            "agentDir": "C:/Users/skull/agents/research",
+            "contextLimits": {"memoryGetDefaultLines": 7},
+        },
+        "memory": {
+            "enabled": True,
+            "extraPaths": ["common", "agent"],
+            "sync": {"onSearch": True, "intervalMinutes": 3},
+        },
+        "paths": {
+            "stateDir": "C:/Users/skull/.openclaw-state",
+            "transcripts": (
+                "C:/Users/skull/.openclaw-state/agents/research-agent/sessions"
+            ),
+            "userPath": "C:/Users/skull/project",
+            "shortenedPath": "$OPENCLAW_HOME/project",
+            "shortenedText": "root=$OPENCLAW_HOME/project",
+        },
+        "secret": {"literal": True, "ref": True, "normalized": "literal"},
+        "io": {
+            "loggerWarn": "function",
+            "mime": "text/plain",
+            "singletonHits": 1,
+            "taskResult": {"results": ["alpha", "beta"], "hasError": False},
+            "shellArgs": ["alpha", "two words", "three four"],
+            "truncated": "ab",
+            "unsubscribeType": "function",
+            "loadConfigType": "function",
+            "writeFileType": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:
