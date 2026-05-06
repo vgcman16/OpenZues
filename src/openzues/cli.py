@@ -34675,6 +34675,435 @@ const cliRuntime = {
   waitForever,
 };
 
+function hasLegacyAccountStreamingAliases(value, match) {
+  const accounts = asObjectRecord(value);
+  if (!accounts) {
+    return false;
+  }
+  return Object.values(accounts).some((account) => match(account));
+}
+
+function ensureLegacyNestedRecord(owner, key) {
+  const existing = asObjectRecord(owner[key]);
+  return existing ? { ...existing } : {};
+}
+
+function normalizeLegacyStreamingAliases(params = {}) {
+  const entry = asObjectRecord(params.entry) || {};
+  const beforeStreaming = entry.streaming;
+  const hadLegacyStreamMode = entry.streamMode !== undefined;
+  const hasLegacyFlatFields =
+    entry.chunkMode !== undefined ||
+    entry.blockStreaming !== undefined ||
+    entry.blockStreamingCoalesce !== undefined ||
+    (params.includePreviewChunk === true && entry.draftChunk !== undefined) ||
+    entry.nativeStreaming !== undefined;
+  const shouldNormalize =
+    hadLegacyStreamMode ||
+    typeof beforeStreaming === "boolean" ||
+    typeof beforeStreaming === "string" ||
+    hasLegacyFlatFields;
+  if (!shouldNormalize) {
+    return { entry, changed: false };
+  }
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = String(params.pathPrefix || "");
+  let updated = { ...entry };
+  let changed = false;
+  const streaming = ensureLegacyNestedRecord(updated, "streaming");
+  const block = ensureLegacyNestedRecord(streaming, "block");
+  const preview = ensureLegacyNestedRecord(streaming, "preview");
+  if (
+    (hadLegacyStreamMode ||
+      typeof beforeStreaming === "boolean" ||
+      typeof beforeStreaming === "string") &&
+    streaming.mode === undefined
+  ) {
+    streaming.mode = params.resolvedMode;
+    changes.push(`Moved ${pathPrefix}.streaming to ${pathPrefix}.streaming.mode.`);
+    changed = true;
+  }
+  if (hadLegacyStreamMode) {
+    delete updated.streamMode;
+    changed = true;
+  }
+  if (updated.chunkMode !== undefined && streaming.chunkMode === undefined) {
+    streaming.chunkMode = updated.chunkMode;
+    delete updated.chunkMode;
+    changes.push(`Moved ${pathPrefix}.chunkMode to ${pathPrefix}.streaming.chunkMode.`);
+    changed = true;
+  }
+  if (updated.blockStreaming !== undefined && block.enabled === undefined) {
+    block.enabled = updated.blockStreaming;
+    delete updated.blockStreaming;
+    changes.push(`Moved ${pathPrefix}.blockStreaming to streaming.block.enabled.`);
+    changed = true;
+  }
+  if (
+    params.includePreviewChunk === true &&
+    updated.draftChunk !== undefined &&
+    preview.chunk === undefined
+  ) {
+    preview.chunk = updated.draftChunk;
+    delete updated.draftChunk;
+    changes.push(`Moved ${pathPrefix}.draftChunk to streaming.preview.chunk.`);
+    changed = true;
+  }
+  if (updated.blockStreamingCoalesce !== undefined && block.coalesce === undefined) {
+    block.coalesce = updated.blockStreamingCoalesce;
+    delete updated.blockStreamingCoalesce;
+    changes.push(`Moved ${pathPrefix}.blockStreamingCoalesce to streaming.block.coalesce.`);
+    changed = true;
+  }
+  if (
+    updated.nativeStreaming !== undefined &&
+    streaming.nativeTransport === undefined &&
+    params.resolvedNativeTransport !== undefined
+  ) {
+    streaming.nativeTransport = params.resolvedNativeTransport;
+    delete updated.nativeStreaming;
+    changes.push(`Moved ${pathPrefix}.nativeStreaming to streaming.nativeTransport.`);
+    changed = true;
+  } else if (
+    typeof beforeStreaming === "boolean" &&
+    streaming.nativeTransport === undefined &&
+    params.resolvedNativeTransport !== undefined
+  ) {
+    streaming.nativeTransport = params.resolvedNativeTransport;
+    changes.push(`Moved ${pathPrefix}.streaming to streaming.nativeTransport.`);
+    changed = true;
+  }
+  if (Object.keys(preview).length > 0) {
+    streaming.preview = preview;
+  }
+  if (Object.keys(block).length > 0) {
+    streaming.block = block;
+  }
+  updated.streaming = streaming;
+  if (
+    hadLegacyStreamMode &&
+    params.resolvedMode === "off" &&
+    typeof params.offModeLegacyNotice === "function"
+  ) {
+    changes.push(params.offModeLegacyNotice(pathPrefix));
+  }
+  return { entry: updated, changed };
+}
+
+function normalizeLegacyChannelAliases(params = {}) {
+  let updated = asObjectRecord(params.entry) || {};
+  let changed = false;
+  const changes = Array.isArray(params.changes) ? params.changes : [];
+  const pathPrefix = String(params.pathPrefix || "");
+  if (params.normalizeDm === true) {
+    const dm = normalizeLegacyDmAliases({
+      entry: updated,
+      pathPrefix,
+      changes,
+      promoteAllowFrom: params.rootDmPromoteAllowFrom,
+    });
+    updated = dm.entry;
+    changed = Boolean(dm.changed);
+  }
+  const streaming = normalizeLegacyStreamingAliases({
+    entry: updated,
+    pathPrefix,
+    changes,
+    ...(typeof params.resolveStreamingOptions === "function"
+      ? params.resolveStreamingOptions(updated)
+      : {}),
+  });
+  updated = streaming.entry;
+  changed = changed || streaming.changed;
+  const rawAccounts = asObjectRecord(updated.accounts);
+  if (!rawAccounts) {
+    return { entry: updated, changed };
+  }
+  let accountsChanged = false;
+  const accounts = { ...rawAccounts };
+  for (const [accountId, rawAccount] of Object.entries(rawAccounts)) {
+    const account = asObjectRecord(rawAccount);
+    if (!account) {
+      continue;
+    }
+    let accountEntry = account;
+    let accountChanged = false;
+    const accountPathPrefix = `${pathPrefix}.accounts.${accountId}`;
+    if (params.normalizeAccountDm === true) {
+      const accountDm = normalizeLegacyDmAliases({
+        entry: accountEntry,
+        pathPrefix: accountPathPrefix,
+        changes,
+      });
+      accountEntry = accountDm.entry;
+      accountChanged = Boolean(accountDm.changed);
+    }
+    const accountStreaming = normalizeLegacyStreamingAliases({
+      entry: accountEntry,
+      pathPrefix: accountPathPrefix,
+      changes,
+      ...(typeof params.resolveStreamingOptions === "function"
+        ? params.resolveStreamingOptions(accountEntry)
+        : {}),
+    });
+    accountEntry = accountStreaming.entry;
+    accountChanged = accountChanged || accountStreaming.changed;
+    if (typeof params.normalizeAccountExtra === "function") {
+      const extra = params.normalizeAccountExtra({
+        account: accountEntry,
+        accountId,
+        pathPrefix: accountPathPrefix,
+        changes,
+      });
+      if (extra) {
+        accountEntry = extra.entry;
+        accountChanged = accountChanged || Boolean(extra.changed);
+      }
+    }
+    if (accountChanged) {
+      accounts[accountId] = accountEntry;
+      accountsChanged = true;
+    }
+  }
+  if (accountsChanged) {
+    updated = { ...updated, accounts };
+    changed = true;
+  }
+  return { entry: updated, changed };
+}
+
+function hasLegacyStreamingAliases(value, options = {}) {
+  const entry = asObjectRecord(value);
+  if (!entry) {
+    return false;
+  }
+  return (
+    entry.streamMode !== undefined ||
+    typeof entry.streaming === "boolean" ||
+    typeof entry.streaming === "string" ||
+    entry.chunkMode !== undefined ||
+    entry.blockStreaming !== undefined ||
+    entry.blockStreamingCoalesce !== undefined ||
+    (options.includePreviewChunk === true && entry.draftChunk !== undefined) ||
+    (options.includeNativeTransport === true && entry.nativeStreaming !== undefined)
+  );
+}
+
+function resolvePluginInstallCandidatePaths(install) {
+  if (!install || install.source !== "path") {
+    return [];
+  }
+  return [install.sourcePath, install.installPath]
+    .map((value) => normalizeOptionalString(value) || "")
+    .filter(Boolean);
+}
+
+async function detectPluginInstallPathIssue(params = {}) {
+  const candidatePaths = resolvePluginInstallCandidatePaths(params.install);
+  if (candidatePaths.length === 0) {
+    return null;
+  }
+  for (const candidatePath of candidatePaths) {
+    try {
+      await fs.promises.access(path.resolve(candidatePath));
+      return {
+        kind: "custom-path",
+        pluginId: String(params.pluginId || ""),
+        path: candidatePath,
+      };
+    } catch {
+      // Continue checking remaining path candidates.
+    }
+  }
+  return {
+    kind: "missing-path",
+    pluginId: String(params.pluginId || ""),
+    path: candidatePaths[0] || "(unknown)",
+  };
+}
+
+function formatPluginInstallPathIssue(params = {}) {
+  const issue = params.issue || {};
+  const pluginLabel = String(params.pluginLabel || "Plugin");
+  const defaultInstallCommand = String(params.defaultInstallCommand || "");
+  const repoInstallCommand = normalizeOptionalString(params.repoInstallCommand);
+  const formatCommand =
+    typeof params.formatCommand === "function" ? params.formatCommand : (command) => command;
+  if (issue.kind === "custom-path") {
+    return [
+      `${pluginLabel} is installed from a custom path: ${issue.path}`,
+      "Main updates will not automatically replace that plugin with the repo's default " +
+        `${pluginLabel} package.`,
+      `Reinstall with "${formatCommand(defaultInstallCommand)}" ` +
+        `when you want to return to the standard ${pluginLabel} plugin.`,
+      ...(repoInstallCommand
+        ? [
+            "If you are intentionally running from a repo checkout, reinstall that checkout " +
+              `explicitly with "${formatCommand(repoInstallCommand)}" after updates.`,
+          ]
+        : []),
+    ];
+  }
+  return [
+    `${pluginLabel} is installed from a custom path that no longer exists: ${issue.path}`,
+    `Reinstall with "${formatCommand(defaultInstallCommand)}".`,
+    ...(repoInstallCommand
+      ? [
+          "If you are running from a repo checkout, you can also use " +
+            `"${formatCommand(repoInstallCommand)}".`,
+        ]
+      : []),
+  ];
+}
+
+function defaultRuntimeDoctorSlotIdForKey(slotKey) {
+  return slotKey === "contextEngine" ? "legacy" : "memory-core";
+}
+
+function createEmptyRuntimeDoctorUninstallActions(overrides = {}) {
+  return {
+    entry: false,
+    install: false,
+    allowlist: false,
+    denylist: false,
+    loadPath: false,
+    memorySlot: false,
+    contextEngineSlot: false,
+    channelConfig: false,
+    ...overrides,
+  };
+}
+
+function cleanUndefinedObjectFields(value) {
+  const cleaned = { ...value };
+  for (const key of Object.keys(cleaned)) {
+    if (cleaned[key] === undefined) {
+      delete cleaned[key];
+    }
+  }
+  return cleaned;
+}
+
+function loadPathMatchesInstallSourcePath(loadPath, sourcePath) {
+  if (loadPath === sourcePath) {
+    return true;
+  }
+  try {
+    return path.resolve(loadPath) === path.resolve(sourcePath);
+  } catch {
+    return false;
+  }
+}
+
+function removePluginFromConfig(cfg = {}, pluginId, opts = {}) {
+  const pluginKey = String(pluginId || "");
+  const actions = createEmptyRuntimeDoctorUninstallActions();
+  const pluginsConfig = cfg.plugins || {};
+  let entries = pluginsConfig.entries;
+  if (entries && Object.prototype.hasOwnProperty.call(entries, pluginKey)) {
+    const { [pluginKey]: _removedEntry, ...restEntries } = entries;
+    entries = Object.keys(restEntries).length > 0 ? restEntries : undefined;
+    actions.entry = true;
+  }
+  let installs = pluginsConfig.installs;
+  const installRecord = installs && installs[pluginKey];
+  if (installs && Object.prototype.hasOwnProperty.call(installs, pluginKey)) {
+    const { [pluginKey]: _removedInstall, ...restInstalls } = installs;
+    installs = Object.keys(restInstalls).length > 0 ? restInstalls : undefined;
+    actions.install = true;
+  }
+  let allow = pluginsConfig.allow;
+  if (Array.isArray(allow) && allow.includes(pluginKey)) {
+    allow = allow.filter((id) => id !== pluginKey);
+    allow = allow.length > 0 ? allow : undefined;
+    actions.allowlist = true;
+  }
+  let deny = pluginsConfig.deny;
+  if (Array.isArray(deny) && deny.includes(pluginKey)) {
+    deny = deny.filter((id) => id !== pluginKey);
+    deny = deny.length > 0 ? deny : undefined;
+    actions.denylist = true;
+  }
+  let load = pluginsConfig.load;
+  if (installRecord && installRecord.source === "path" && installRecord.sourcePath) {
+    const loadPaths = load && load.paths;
+    if (
+      Array.isArray(loadPaths) &&
+      loadPaths.some((entry) => loadPathMatchesInstallSourcePath(entry, installRecord.sourcePath))
+    ) {
+      const nextLoadPaths = loadPaths.filter(
+        (entry) => !loadPathMatchesInstallSourcePath(entry, installRecord.sourcePath),
+      );
+      load = nextLoadPaths.length > 0 ? { ...load, paths: nextLoadPaths } : undefined;
+      actions.loadPath = true;
+    }
+  }
+  let slots = pluginsConfig.slots;
+  if (slots && slots.memory === pluginKey) {
+    slots = { ...slots, memory: defaultRuntimeDoctorSlotIdForKey("memory") };
+    actions.memorySlot = true;
+  }
+  if (slots && slots.contextEngine === pluginKey) {
+    slots = { ...slots, contextEngine: defaultRuntimeDoctorSlotIdForKey("contextEngine") };
+    actions.contextEngineSlot = true;
+  }
+  const newPlugins = cleanUndefinedObjectFields({
+    ...pluginsConfig,
+    entries,
+    installs,
+    allow,
+    deny,
+    load,
+    slots,
+  });
+  const hasInstallRecord =
+    cfg.plugins &&
+    cfg.plugins.installs &&
+    Object.prototype.hasOwnProperty.call(cfg.plugins.installs, pluginKey);
+  let channels = cfg.channels;
+  if (hasInstallRecord && channels) {
+    const sharedChannelKeys = new Set(["defaults", "modelByChannel"]);
+    const rawChannelIds = opts.channelIds === undefined ? [pluginKey] : opts.channelIds;
+    const seen = new Set();
+    for (const key of rawChannelIds || []) {
+      if (sharedChannelKeys.has(key) || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      if (!Object.prototype.hasOwnProperty.call(channels, key)) {
+        continue;
+      }
+      const { [key]: _removedChannel, ...restChannels } = channels;
+      channels = Object.keys(restChannels).length > 0 ? restChannels : undefined;
+      actions.channelConfig = true;
+      if (!channels) {
+        break;
+      }
+    }
+  }
+  return {
+    config: {
+      ...cfg,
+      plugins: Object.keys(newPlugins).length > 0 ? newPlugins : undefined,
+      channels,
+    },
+    actions,
+  };
+}
+
+const runtimeDoctorRuntime = {
+  asObjectRecord,
+  collectProviderDangerousNameMatchingScopes,
+  detectPluginInstallPathIssue,
+  formatPluginInstallPathIssue,
+  hasLegacyAccountStreamingAliases,
+  hasLegacyStreamingAliases,
+  normalizeLegacyChannelAliases,
+  normalizeLegacyDmAliases,
+  normalizeLegacyStreamingAliases,
+  removePluginFromConfig,
+};
+
 const configSchemaRuntime = {
   OpenClawSchema,
   validateJsonSchemaValue,
@@ -46291,6 +46720,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-fetch"
   ) {
     return runtimeFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-doctor" ||
+    request === "@openclaw/plugin-sdk/runtime-doctor"
+  ) {
+    return runtimeDoctorRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/fetch-runtime" ||

@@ -33594,6 +33594,275 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_doctor_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    existing_path = tmp_path / "existing-plugin"
+    existing_path.mkdir()
+    missing_path = tmp_path / "missing-plugin"
+    runtime_entry = tmp_path / "runtime-plugin-runtime-doctor.cjs"
+    runtime_entry.write_text(
+        """
+const doctor = require("openclaw/plugin-sdk/runtime-doctor");
+const scopedDoctor = require("@openclaw/plugin-sdk/runtime-doctor");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_doctor",
+      description: "Use OpenClaw runtime doctor SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const cfg = {
+          channels: {
+            slack: {
+              dangerouslyAllowNameMatching: true,
+              accounts: {
+                work: { dangerouslyAllowNameMatching: false },
+                default: {}
+              }
+            }
+          },
+          plugins: {
+            entries: { alpha: { enabled: true }, beta: { enabled: true } },
+            installs: {
+              alpha: {
+                source: "path",
+                sourcePath: args.existingPath,
+                installPath: args.existingPath
+              },
+              beta: { source: "npm", installPath: "node_modules/beta" }
+            },
+            allow: ["alpha", "beta"],
+            deny: ["alpha"],
+            load: { paths: [args.existingPath, "other"] },
+            slots: { memory: "alpha", contextEngine: "beta" }
+          }
+        };
+        const streamingChanges = [];
+        const streaming = doctor.normalizeLegacyStreamingAliases({
+          entry: {
+            streamMode: "off",
+            chunkMode: "sentence",
+            blockStreaming: true,
+            blockStreamingCoalesce: "all",
+            draftChunk: "line",
+            nativeStreaming: true
+          },
+          pathPrefix: "channels.slack",
+          changes: streamingChanges,
+          resolvedMode: "off",
+          includePreviewChunk: true,
+          resolvedNativeTransport: "native",
+          offModeLegacyNotice: (pathPrefix) => `${pathPrefix}.off-notice`
+        });
+        const channelChanges = [];
+        const channel = doctor.normalizeLegacyChannelAliases({
+          entry: {
+            streaming: true,
+            accounts: {
+              work: { streamMode: "on" },
+              idle: {}
+            }
+          },
+          pathPrefix: "channels.slack",
+          changes: channelChanges,
+          resolveStreamingOptions() {
+            return { resolvedMode: "on" };
+          }
+        });
+        const existingIssue = await doctor.detectPluginInstallPathIssue({
+          pluginId: "alpha",
+          install: {
+            source: "path",
+            sourcePath: args.existingPath,
+            installPath: args.missingPath
+          }
+        });
+        const missingIssue = await doctor.detectPluginInstallPathIssue({
+          pluginId: "stale",
+          install: {
+            source: "path",
+            sourcePath: args.missingPath,
+            installPath: args.missingPath
+          }
+        });
+        const removed = doctor.removePluginFromConfig(cfg, "alpha", {
+          channelIds: ["slack"]
+        });
+        return {
+          keys: Object.keys(doctor).sort(),
+          scopedType: typeof scopedDoctor.removePluginFromConfig,
+          scopes: doctor.collectProviderDangerousNameMatchingScopes(
+            cfg,
+            "slack"
+          ).map((scope) => ({
+            prefix: scope.prefix,
+            enabled: scope.dangerousNameMatchingEnabled,
+            path: scope.dangerousFlagPath
+          })),
+          streaming,
+          streamingChanges,
+          channel,
+          channelChanges,
+          legacyChecks: [
+            doctor.hasLegacyStreamingAliases({ streamMode: "on" }),
+            doctor.hasLegacyStreamingAliases(
+              { draftChunk: "line" },
+              { includePreviewChunk: true }
+            ),
+            doctor.hasLegacyStreamingAliases({ draftChunk: "line" }),
+            doctor.hasLegacyAccountStreamingAliases(
+              { work: { streamMode: "on" }, idle: {} },
+              doctor.hasLegacyStreamingAliases
+            )
+          ],
+          issues: [existingIssue, missingIssue],
+          formatted: doctor.formatPluginInstallPathIssue({
+            issue: existingIssue,
+            pluginLabel: "Alpha",
+            defaultInstallCommand: "openclaw plugins install alpha",
+            repoInstallCommand: "openclaw plugins install ./alpha",
+            formatCommand: (command) => `$ ${command}`
+          }),
+          removed,
+          genericLeak: typeof doctor.parseDurationMs
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-doctor-plugin",
+                    "name": "Runtime Doctor Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-runtime-doctor.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_doctor"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.runtime_doctor",
+            "args": {
+                "existingPath": str(existing_path),
+                "missingPath": str(missing_path),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["scopedType"] == "function"
+    assert result["scopes"] == [
+        {
+            "prefix": "channels.slack",
+            "enabled": True,
+            "path": "channels.slack.dangerouslyAllowNameMatching",
+        },
+        {
+            "prefix": "channels.slack.accounts.work",
+            "enabled": False,
+            "path": "channels.slack.accounts.work.dangerouslyAllowNameMatching",
+        },
+        {
+            "prefix": "channels.slack.accounts.default",
+            "enabled": True,
+            "path": "channels.slack.dangerouslyAllowNameMatching",
+        },
+    ]
+    assert result["streaming"]["changed"] is True
+    assert result["streaming"]["entry"]["streaming"] == {
+        "mode": "off",
+        "chunkMode": "sentence",
+        "nativeTransport": "native",
+        "preview": {"chunk": "line"},
+        "block": {"enabled": True, "coalesce": "all"},
+    }
+    assert "streamMode" not in result["streaming"]["entry"]
+    assert result["streamingChanges"][-1] == "channels.slack.off-notice"
+    assert result["channel"]["changed"] is True
+    assert result["channel"]["entry"]["streaming"]["mode"] == "on"
+    assert result["channel"]["entry"]["accounts"]["work"]["streaming"]["mode"] == "on"
+    assert result["legacyChecks"] == [True, True, False, True]
+    assert result["issues"][0] == {
+        "kind": "custom-path",
+        "pluginId": "alpha",
+        "path": str(existing_path),
+    }
+    assert result["issues"][1] == {
+        "kind": "missing-path",
+        "pluginId": "stale",
+        "path": str(missing_path),
+    }
+    assert result["formatted"][0] == f"Alpha is installed from a custom path: {existing_path}"
+    assert "$ openclaw plugins install alpha" in result["formatted"][2]
+    assert result["removed"]["actions"] == {
+        "entry": True,
+        "install": True,
+        "allowlist": True,
+        "denylist": True,
+        "loadPath": True,
+        "memorySlot": True,
+        "contextEngineSlot": False,
+        "channelConfig": True,
+    }
+    assert "alpha" not in result["removed"]["config"]["plugins"]["entries"]
+    assert result["removed"]["config"]["plugins"]["allow"] == ["beta"]
+    assert "deny" not in result["removed"]["config"]["plugins"]
+    assert result["removed"]["config"]["plugins"]["load"]["paths"] == ["other"]
+    assert result["removed"]["config"]["plugins"]["slots"]["memory"] == "memory-core"
+    assert "channels" not in result["removed"]["config"]
+    assert result["genericLeak"] == "undefined"
+    assert set(result["keys"]) >= {
+        "collectProviderDangerousNameMatchingScopes",
+        "detectPluginInstallPathIssue",
+        "formatPluginInstallPathIssue",
+        "normalizeLegacyStreamingAliases",
+        "removePluginFromConfig",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
