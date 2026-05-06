@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~85.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~85.3% overall, with a reasonable
   band of ~78-86%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -89,8 +89,9 @@ Current percentage rollup:
   helper, session-visibility helper, simple-completion-runtime
   extractAssistantText helper, approval-reply-runtime helper,
   approval-client-helpers, approval-delivery-helpers,
-  approval-native-helpers, approval-native-runtime delivery-helper, and
-  approval-handler-adapter-runtime helper slices.
+  approval-native-helpers, approval-native-runtime delivery-helper,
+  approval-handler-adapter-runtime helper, and approval-handler-runtime
+  adapter-factory slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8159,6 +8160,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
   `21aa746b`. The broader approval handler runtime/gateway lifecycle remains
   open.
+- Closed the imported OpenClaw plugin SDK approval-handler-runtime
+  adapter-factory seam from `src/plugin-sdk/approval-handler-runtime.ts` and
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can require
+  scoped/unscoped approval handler runtime helpers, preserve the
+  `approval.native` context capability, wrap native runtime specs into
+  canonical availability, presentation, transport, interaction, and observe
+  adapters, preserve `eventKinds` and custom approval-kind resolution, and keep
+  fallback-safe access for broader handler functions that remain open.
+  Repo-wide parity is now estimated at ~85.3%. Verified with focused
+  approval-handler-runtime pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `3434972a`. The broader handler lifecycle/gateway integration remains open.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8188,7 +8201,7 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   param-readers/provider-zai-endpoint/provider-env-vars/session-visibility/
   simple-completion-runtime/approval-reply-runtime/approval-client-helpers/
   approval-delivery-helpers/approval-native-helpers/approval-native-runtime/
-  approval-handler-adapter-runtime/channel-entry-contract/
+  approval-handler-adapter-runtime/approval-handler-runtime/channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.
