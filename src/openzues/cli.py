@@ -33663,6 +33663,11 @@ const channelInboundRootsRuntime = {
   mergeInboundPathRoots,
 };
 
+const channelLocationRuntime = {
+  formatLocationText,
+  toLocationContext,
+};
+
 const channelRouteRuntime = {
   channelRouteCompactKey,
   channelRouteDedupeKey,
@@ -34896,6 +34901,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-inbound-roots"
   ) {
     return channelInboundRootsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-location" ||
+    request === "@openclaw/plugin-sdk/channel-location"
+  ) {
+    return channelLocationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-route" ||

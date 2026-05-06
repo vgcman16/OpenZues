@@ -7339,6 +7339,119 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_location_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-location.cjs"
+    runtime_entry.write_text(
+        """
+const location = require("openclaw/plugin-sdk/channel-location");
+const scopedLocation = require("@openclaw/plugin-sdk/channel-location");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_location",
+      description: "Use OpenClaw channel-location SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const rawLocation = {
+          latitude: 12.3456789,
+          longitude: -98.7654321,
+          accuracy: 4.6,
+          name: "HQ",
+          source: "place",
+          live: false,
+          caption: "front door"
+        };
+        const scopedContext = scopedLocation.toLocationContext(rawLocation);
+        return {
+          exportKeys: Object.keys(location).sort(),
+          textChecks: [
+            location.formatLocationText(rawLocation).startsWith("\\u{1F4CD}"),
+            location.formatLocationText(rawLocation).includes("12.345679, -98.765432"),
+            location.formatLocationText(rawLocation).includes("\\u00b15m")
+          ],
+          context: location.toLocationContext(rawLocation),
+          scopedCaption: scopedContext.LocationCaption,
+          genericTypes: [
+            typeof genericSdk.formatLocationText,
+            typeof genericSdk.toLocationContext
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-location-plugin",
+                    "name": "Runtime Channel Location Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-location.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_location"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_location"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["formatLocationText", "toLocationContext"],
+        "textChecks": [True, True, True],
+        "context": {
+            "LocationLat": 12.3456789,
+            "LocationLon": -98.7654321,
+            "LocationAccuracy": 4.6,
+            "LocationName": "HQ",
+            "LocationSource": "place",
+            "LocationIsLive": False,
+            "LocationCaption": "front door",
+        },
+        "scopedCaption": "front door",
+        "genericTypes": ["function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_route_helpers(
     tmp_path,
 ) -> None:
