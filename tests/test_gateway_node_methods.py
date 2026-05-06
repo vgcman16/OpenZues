@@ -7452,6 +7452,123 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_state_paths_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-state-paths.cjs"
+    runtime_entry.write_text(
+        """
+const statePaths = require("openclaw/plugin-sdk/state-paths");
+const scopedStatePaths = require("@openclaw/plugin-sdk/state-paths");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.state_paths",
+      description: "Use OpenClaw state-paths SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const homeEnv = { OPENCLAW_HOME: args.homeDir };
+        const stateEnv = { OPENCLAW_STATE_DIR: "~/custom-state", OPENCLAW_HOME: args.homeDir };
+        const oauthEnv = { OPENCLAW_OAUTH_DIR: "~/oauth-dir", OPENCLAW_HOME: args.homeDir };
+        return {
+          exportKeys: Object.keys(statePaths).sort(),
+          requiredHome: statePaths.resolveRequiredHomeDir(homeEnv).replace(/\\\\/g, "/"),
+          stateDir: statePaths.resolveStateDir(stateEnv).replace(/\\\\/g, "/"),
+          oauthOverride: scopedStatePaths.resolveOAuthDir(oauthEnv).replace(/\\\\/g, "/"),
+          oauthDefault: statePaths.resolveOAuthDir({}, args.stateDir).replace(/\\\\/g, "/"),
+          stateType: typeof statePaths.STATE_DIR,
+          genericTypes: [
+            typeof genericSdk.resolveStateDir,
+            typeof genericSdk.resolveOAuthDir,
+            typeof genericSdk.resolveRequiredHomeDir
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    home_dir = tmp_path / "home"
+    home_dir.mkdir()
+    state_dir = tmp_path / "state-root"
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-state-paths-plugin",
+                    "name": "Runtime State Paths Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-state-paths.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.state_paths"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.state_paths",
+            "args": {"homeDir": str(home_dir), "stateDir": str(state_dir)},
+        },
+    )
+
+    expected_home = str(home_dir).replace("\\", "/")
+    expected_state = f"{expected_home}/custom-state"
+    expected_oauth_override = f"{expected_home}/oauth-dir"
+    expected_oauth_default = f"{str(state_dir).replace('\\', '/')}/credentials"
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": [
+            "STATE_DIR",
+            "resolveOAuthDir",
+            "resolveRequiredHomeDir",
+            "resolveStateDir",
+        ],
+        "requiredHome": expected_home,
+        "stateDir": expected_state,
+        "oauthOverride": expected_oauth_override,
+        "oauthDefault": expected_oauth_default,
+        "stateType": "string",
+        "genericTypes": ["function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_route_helpers(
     tmp_path,
 ) -> None:

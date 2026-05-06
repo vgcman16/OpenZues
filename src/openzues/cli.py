@@ -24956,6 +24956,38 @@ function resolveUserPath(input, env = process.env, homedir = () => os.homedir())
   return resolveHomeRelativePath(input, { env, homedir });
 }
 
+function resolveStateDir(env = process.env, homedir = () => os.homedir()) {
+  const sourceEnv = env || process.env;
+  const override =
+    typeof sourceEnv.OPENCLAW_STATE_DIR === "string"
+      ? sourceEnv.OPENCLAW_STATE_DIR.trim()
+      : "";
+  if (override) {
+    return resolveUserPath(override, sourceEnv, homedir);
+  }
+  return path.join(resolveRequiredHomeDir(sourceEnv, homedir), ".openclaw");
+}
+
+function resolveOAuthDir(env = process.env, stateDir) {
+  const sourceEnv = env || process.env;
+  const override =
+    typeof sourceEnv.OPENCLAW_OAUTH_DIR === "string"
+      ? sourceEnv.OPENCLAW_OAUTH_DIR.trim()
+      : "";
+  if (override) {
+    return resolveUserPath(
+      override,
+      sourceEnv,
+      () => resolveRequiredHomeDir(sourceEnv, os.homedir),
+    );
+  }
+  const resolvedStateDir =
+    typeof stateDir === "string" && stateDir.trim() ? stateDir : resolveStateDir(sourceEnv);
+  return path.join(resolvedStateDir, "credentials");
+}
+
+const STATE_DIR = resolveStateDir();
+
 function resolveAccountWithDefaultFallback(params) {
   const rawAccountId = params && params.accountId;
   const hasExplicitAccountId = Boolean(
@@ -33963,6 +33995,13 @@ const tempPathRuntime = {
   withTempDownloadPath,
 };
 
+const statePathsRuntime = {
+  STATE_DIR,
+  resolveOAuthDir,
+  resolveRequiredHomeDir,
+  resolveStateDir,
+};
+
 const secretInputRuntime = {
   coerceSecretRef,
   hasConfiguredSecretInput,
@@ -34478,16 +34517,19 @@ const genericSdk = new Proxy(
     resolveGatewayMessageChannel,
     resolveInboundLastRouteSessionKey,
     resolveOutboundMediaUrls,
+    resolveOAuthDir,
     resolvePayloadMediaUrls,
     resolvePreferredOpenClawTmpDir,
     resolvePollMaxSelections,
     resolveReactionMessageId,
     resolveBatchedReplyThreadingPolicy,
+    resolveRequiredHomeDir,
     resolveChannelSourceReplyDeliveryMode,
     resolveChannelRouteTargetWithParser,
     resolveToolEmoji,
     resolveSendableOutboundReplyParts,
     resolveSecretInputString,
+    resolveStateDir,
     resolveTextChunkLimit,
     resolveTextChunksWithFallback,
     resolveThreadSessionKeys,
@@ -35105,6 +35147,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/temp-path"
   ) {
     return tempPathRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/state-paths" ||
+    request === "@openclaw/plugin-sdk/state-paths"
+  ) {
+    return statePathsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-input" ||
