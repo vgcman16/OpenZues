@@ -47006,6 +47006,42 @@ const memoryCoreHostEventsRuntime = {
   resolveMemoryHostEventLogPath,
 };
 
+function resolveMemoryVectorState(vector) {
+  if (!vector || !vector.enabled) {
+    return { tone: "muted", state: "disabled" };
+  }
+  if (vector.available === true) {
+    return { tone: "ok", state: "ready" };
+  }
+  if (vector.available === false) {
+    return { tone: "warn", state: "unavailable" };
+  }
+  return { tone: "muted", state: "unknown" };
+}
+
+function resolveMemoryFtsState(fts) {
+  if (!fts || !fts.enabled) {
+    return { tone: "muted", state: "disabled" };
+  }
+  return fts.available
+    ? { tone: "ok", state: "ready" }
+    : { tone: "warn", state: "unavailable" };
+}
+
+function resolveMemoryCacheSummary(cache) {
+  if (!cache || !cache.enabled) {
+    return { tone: "muted", text: "cache off" };
+  }
+  const suffix = typeof cache.entries === "number" ? ` (${cache.entries})` : "";
+  return { tone: "ok", text: `cache on${suffix}` };
+}
+
+const memoryCoreHostStatusRuntime = {
+  resolveMemoryCacheSummary,
+  resolveMemoryFtsState,
+  resolveMemoryVectorState,
+};
+
 const MEMORY_QUERY_STOP_WORDS = new Set([
   "a",
   "an",
@@ -48233,6 +48269,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-host-events"
   ) {
     return memoryCoreHostEventsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-status" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-status"
+  ) {
+    return memoryCoreHostStatusRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
