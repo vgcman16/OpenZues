@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~80.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~80.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -662,6 +662,11 @@ may lag behind this tracker.
   `DEFAULT_COPILOT_API_BASE_URL`, `deriveCopilotApiBaseUrlFromToken`, and
   `resolveCopilotApiToken` aliases.
   - Status: checkpointed in `8ccd0928`
+
+- [x] Imported plugin SDK channel plugin common/core helper shim for channel
+  prelude exports, empty config schemas, channel metadata, account config
+  mutation helpers, pairing approval text, and `createChannelPluginBase`.
+  - Status: checkpointed in `b669ff0b`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
