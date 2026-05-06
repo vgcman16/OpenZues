@@ -34,8 +34,9 @@ Plugin/extension row addendum: `memory-core-host-engine-qmd` helper coverage is
 verified in `147b0978` and `memory-core-host-engine-storage` helper coverage is
 verified in `884c9afb`; `@openclaw/memory-host-sdk/engine` aggregate coverage
 is verified in `fa5ad046`; `@openclaw/memory-host-sdk/runtime` aggregate
-coverage is verified in `ebd215d5`. All are counted with the SDK helper/runtime
-set above.
+coverage is verified in `ebd215d5`; memory-host package facade coverage for
+`query`, `multimodal`, `secret`, and `status` is verified in `c95e0129`. All
+are counted with the SDK helper/runtime set above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -134,7 +135,11 @@ multimodal helper behavior is checkpointed in `884c9afb`;
 `fa5ad046`; `@openclaw/memory-host-sdk/runtime` from
 `packages/memory-host-sdk/src/runtime.ts`,
 `src/memory-host-sdk/runtime.ts`, and package export behavior is checkpointed
-in `ebd215d5`.
+in `ebd215d5`; `@openclaw/memory-host-sdk/query`, `multimodal`, `secret`, and
+`status` package facades from `packages/memory-host-sdk/src/query.ts`,
+`packages/memory-host-sdk/src/multimodal.ts`,
+`packages/memory-host-sdk/src/secret.ts`, and
+`packages/memory-host-sdk/src/status.ts` are checkpointed in `c95e0129`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
