@@ -50865,6 +50865,13 @@ const memoryCoreHostEngineStorageRuntime = {
   statRegularFile,
 };
 
+const memoryHostSdkEngineRuntime = {
+  ...memoryCoreHostEngineFoundationRuntime,
+  ...memoryCoreHostEngineStorageRuntime,
+  ...memoryCoreHostEngineEmbeddingsRuntime,
+  ...memoryCoreHostEngineQmdRuntime,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -51924,10 +51931,16 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostEngineEmbeddingsRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/engine-embeddings") {
+    return memoryCoreHostEngineEmbeddingsRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-engine-foundation" ||
     request === "@openclaw/plugin-sdk/memory-core-host-engine-foundation"
   ) {
+    return memoryCoreHostEngineFoundationRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-foundation") {
     return memoryCoreHostEngineFoundationRuntime;
   }
   if (
@@ -51936,11 +51949,20 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   ) {
     return memoryCoreHostEngineQmdRuntime;
   }
+  if (request === "@openclaw/memory-host-sdk/engine-qmd") {
+    return memoryCoreHostEngineQmdRuntime;
+  }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-engine-storage" ||
     request === "@openclaw/plugin-sdk/memory-core-host-engine-storage"
   ) {
     return memoryCoreHostEngineStorageRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine-storage") {
+    return memoryCoreHostEngineStorageRuntime;
+  }
+  if (request === "@openclaw/memory-host-sdk/engine") {
+    return memoryHostSdkEngineRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||

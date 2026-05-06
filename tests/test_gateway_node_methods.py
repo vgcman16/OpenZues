@@ -37842,6 +37842,185 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_sdk_engine_aggregate_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_root = json.dumps(str(tmp_path / "engine-aggregate-workspace"))
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-sdk-engine.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const engine = require("@openclaw/memory-host-sdk/engine");
+const storageSubpath = require("@openclaw/memory-host-sdk/engine-storage");
+const qmdSubpath = require("@openclaw/memory-host-sdk/engine-qmd");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_host_sdk_engine",
+      description: "Use OpenClaw memory-host-sdk engine aggregate shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const workspaceDir = {workspace_root};
+        const memoryDir = path.join(workspaceDir, "memory");
+        engine.ensureDir(memoryDir);
+        const notePath = path.join(memoryDir, "note.md");
+        fs.writeFileSync(notePath, "alpha\\nbeta", "utf-8");
+        engine.clearMemoryEmbeddingProviders();
+        engine.registerMemoryEmbeddingProvider({{
+          id: "aggregate-demo",
+          defaultModel: "demo-model",
+          transport: "remote",
+          create: async () => ({{ provider: null }})
+        }}, {{ ownerPluginId: "aggregate-plugin" }});
+        const noteEntry = await engine.buildFileEntry(notePath, workspaceDir);
+        const qmdRows = engine.parseQmdQueryJson(JSON.stringify([{{
+          docid: "doc-1",
+          score: 1,
+          collection: "memory",
+          file: "memory/note.md",
+          snippet: "alpha",
+          body: "alpha beta",
+          start_line: 1,
+          endLine: 2
+        }}]), "");
+        return {{
+          selectedTypes: Object.fromEntries([
+            "parseDurationMs",
+            "buildFileEntry",
+            "registerMemoryEmbeddingProvider",
+            "parseQmdQueryJson",
+            "ensureMemoryIndexSchema",
+            "deriveQmdScopeChannel",
+            "resolveAgentWorkspaceDir",
+            "sanitizeAndNormalizeEmbedding"
+          ].map((name) => [name, typeof engine[name]])),
+          subpaths: {{
+            storage: typeof storageSubpath.buildFileEntry,
+            qmd: typeof qmdSubpath.parseQmdQueryJson
+          }},
+          foundation: {{
+            duration: engine.parseDurationMs("10s"),
+            workspace: engine.resolveAgentWorkspaceDir({{
+              agents: {{ list: [{{ id: "Research Agent", workspace: workspaceDir }}] }}
+            }}, "research-agent").replaceAll("\\\\", "/")
+          }},
+          storage: {{
+            path: noteEntry && noteEntry.path,
+            hashMatches: noteEntry && noteEntry.hash === engine.hashText("alpha\\nbeta")
+          }},
+          embeddings: {{
+            normalized: engine.sanitizeAndNormalizeEmbedding([3, 4]),
+            providers: engine.listRegisteredMemoryEmbeddingProviders().map((entry) => ({{
+              id: entry.adapter.id,
+              ownerPluginId: entry.ownerPluginId
+            }}))
+          }},
+          qmd: {{
+            rows: qmdRows,
+            channel: engine.deriveQmdScopeChannel("agent:research-agent:telegram:direct:user-1")
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-sdk-engine-plugin",
+                    "name": "Memory Host SDK Engine Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-sdk-engine.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_sdk_engine"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_host_sdk_engine"}
+    )
+
+    assert payload["ok"] is True
+    workspace_prefix = str(tmp_path / "engine-aggregate-workspace").replace("\\", "/")
+    assert payload["result"] == {
+        "selectedTypes": {
+            "parseDurationMs": "function",
+            "buildFileEntry": "function",
+            "registerMemoryEmbeddingProvider": "function",
+            "parseQmdQueryJson": "function",
+            "ensureMemoryIndexSchema": "function",
+            "deriveQmdScopeChannel": "function",
+            "resolveAgentWorkspaceDir": "function",
+            "sanitizeAndNormalizeEmbedding": "function",
+        },
+        "subpaths": {"storage": "function", "qmd": "function"},
+        "foundation": {
+            "duration": 10000,
+            "workspace": workspace_prefix,
+        },
+        "storage": {"path": "memory/note.md", "hashMatches": True},
+        "embeddings": {
+            "normalized": [0.6, 0.8],
+            "providers": [
+                {"id": "aggregate-demo", "ownerPluginId": "aggregate-plugin"}
+            ],
+        },
+        "qmd": {
+            "rows": [
+                {
+                    "docid": "doc-1",
+                    "score": 1,
+                    "collection": "memory",
+                    "file": "memory/note.md",
+                    "snippet": "alpha",
+                    "body": "alpha beta",
+                    "startLine": 1,
+                    "endLine": 2,
+                }
+            ],
+            "channel": "telegram",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:
