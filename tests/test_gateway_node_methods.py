@@ -19914,6 +19914,168 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_config_writes_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-config-writes.cjs"
+    runtime_entry.write_text(
+        """
+const writes = require("openclaw/plugin-sdk/channel-config-writes");
+const scopedWrites = require("@openclaw/plugin-sdk/channel-config-writes");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_config_writes",
+      description: "Use OpenClaw channel config writes SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const cfg = {
+          channels: {
+            telegram: {
+              configWrites: true,
+              accounts: {
+                default: { configWrites: true },
+                work: { configWrites: false }
+              }
+            },
+            signal: { configWrites: false }
+          }
+        };
+        return {
+          keys: Object.keys(writes).sort(),
+          scopedType: typeof scopedWrites.authorizeConfigWrite,
+          rootAllowed: writes.resolveChannelConfigWrites({
+            cfg,
+            channelId: "telegram"
+          }),
+          accountDenied: writes.resolveChannelConfigWrites({
+            cfg,
+            channelId: "telegram",
+            accountId: "work"
+          }),
+          allowed: writes.authorizeConfigWrite({
+            cfg,
+            allowBypass: true,
+            target: { kind: "ambiguous", scopes: [{ channelId: "signal" }] }
+          }),
+          originDenied: writes.authorizeConfigWrite({
+            cfg,
+            origin: { channelId: "telegram", accountId: "work" },
+            target: { kind: "channel", scope: { channelId: "telegram" } }
+          }),
+          targetDenied: writes.authorizeConfigWrite({
+            cfg,
+            origin: { channelId: "telegram", accountId: "default" },
+            target: { kind: "channel", scope: { channelId: "signal" } }
+          }),
+          bypass: writes.canBypassConfigWritePolicy({
+            channel: "webchat",
+            gatewayClientScopes: ["operator.admin"]
+          }),
+          noBypass: writes.canBypassConfigWritePolicy({
+            channel: "webchat",
+            gatewayClientScopes: []
+          }),
+          deniedMessage: writes.formatConfigWriteDeniedMessage({
+            result: {
+              allowed: false,
+              reason: "target-disabled",
+              blockedScope: {
+                kind: "target",
+                scope: { channelId: "signal" }
+              }
+            }
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-config-writes-plugin",
+                    "name": "Runtime Channel Config Writes Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-config-writes.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_config_writes"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_config_writes"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "authorizeConfigWrite",
+            "canBypassConfigWritePolicy",
+            "formatConfigWriteDeniedMessage",
+            "resolveChannelConfigWrites",
+        ],
+        "scopedType": "function",
+        "rootAllowed": True,
+        "accountDenied": False,
+        "allowed": {"allowed": True},
+        "originDenied": {
+            "allowed": False,
+            "reason": "origin-disabled",
+            "blockedScope": {
+                "kind": "origin",
+                "scope": {"channelId": "telegram", "accountId": "work"},
+            },
+        },
+        "targetDenied": {
+            "allowed": False,
+            "reason": "target-disabled",
+            "blockedScope": {"kind": "target", "scope": {"channelId": "signal"}},
+        },
+        "bypass": True,
+        "noBypass": False,
+        "deniedMessage": (
+            "Config writes are disabled for signal. "
+            "Set channels.signal.configWrites=true to enable."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

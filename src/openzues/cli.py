@@ -35568,6 +35568,13 @@ const channelConfigHelpersRuntime = {
   setCanonicalDmAllowFrom,
 };
 
+const channelConfigWritesRuntime = {
+  authorizeConfigWrite,
+  canBypassConfigWritePolicy,
+  formatConfigWriteDeniedMessage,
+  resolveChannelConfigWrites,
+};
+
 const OPENZUES_CHAT_CHANNEL_META = Object.freeze({
   discord: {
     id: "discord",
@@ -37653,6 +37660,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-config-helpers"
   ) {
     return channelConfigHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-config-writes" ||
+    request === "@openclaw/plugin-sdk/channel-config-writes"
+  ) {
+    return channelConfigWritesRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
