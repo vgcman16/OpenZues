@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~85.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~85.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -899,6 +899,12 @@ may lag behind this tracker.
   already verified approval auth, reply, client, delivery, native helper, and
   filter helpers through the upstream aggregate barrel.
   - Status: checkpointed in `63554e0a`; broader approval gateway/native
+    handler lifecycle remains open
+
+- [x] Imported plugin SDK approval-gateway-runtime resolver shim for
+  exec/plugin approval gateway method selection, default display-name
+  projection, and not-found-only plugin fallback.
+  - Status: checkpointed in `29c62d3f`; broader native approval runtime/
     handler lifecycle remains open
 
 - [x] ESM bundled plugin runtime entry import without a fake activation

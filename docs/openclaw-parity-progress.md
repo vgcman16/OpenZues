@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~85.4% overall, with a reasonable band of ~78-86%.
+- Estimated repo-wide parity: ~85.5% overall, with a reasonable band of ~78-86%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -14619,6 +14619,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`149 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `63554e0a`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-gateway-runtime` shim from
+  `src/plugin-sdk/approval-gateway-runtime.ts` and
+  `src/infra/approval-gateway-resolver.ts`: native runtime entries can require
+  scoped/unscoped approval gateway helpers, route plugin approvals through
+  `plugin.approval.resolve`, route exec approvals through
+  `exec.approval.resolve`, preserve gateway URL/config/display-name options,
+  and fall back to plugin approval resolution only for not-found exec approval
+  errors when explicitly enabled. This closes `OZ-PLUGIN-001XN`; repo-wide
+  parity is now estimated at ~85.5%. The broader native approval runtime and
+  handler lifecycle remains open.
+- Verified the approval-gateway-runtime resolver slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_gateway_runtime_resolver -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`10 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`150 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `29c62d3f`.
 
 ## References
 
