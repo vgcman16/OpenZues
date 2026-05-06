@@ -15748,6 +15748,7 @@ module.exports = {
             "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
             "createChannelApprovalNativeRuntimeAdapter",
             "createLazyChannelApprovalNativeRuntimeAdapter",
+            "resolveApprovalOverGateway",
         ],
         "scopedType": "function",
         "capability": "approval.native",
@@ -16006,6 +16007,196 @@ module.exports = {
         },
         "origin": {"to": "room:!room", "threadId": "t1"},
         "filters": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_gateway_runtime_resolver(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-gateway-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/approval-gateway-runtime");
+const scopedGateway = require("@openclaw/plugin-sdk/approval-gateway-runtime");
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const makeFactory = (label, behavior) => async (options, run) => {
+  observed.push({ label, options });
+  await run({
+    request: async (method, payload) => {
+      observed.push({ label, method, payload });
+      if (behavior) {
+        await behavior(method, payload);
+      }
+    }
+  });
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_gateway",
+      description: "Use OpenClaw approval gateway resolver SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        await gateway.resolveApprovalOverGateway({
+          cfg: { gateway: { auth: { token: "cfg-token" } } },
+          approvalId: "approval-1",
+          decision: "allow-once",
+          gatewayUrl: "ws://gateway.example.test",
+          clientDisplayName: "QuietChat approval (default)",
+          withOperatorApprovalsGatewayClient: makeFactory("exec")
+        });
+        await scopedGateway.resolveApprovalOverGateway({
+          cfg: {},
+          approvalId: "plugin:approval-1",
+          decision: "deny",
+          senderId: " plugin-owner ",
+          withOperatorApprovalsGatewayClient: makeFactory("plugin")
+        });
+        let fallbackFirst = true;
+        await gateway.resolveApprovalOverGateway({
+          cfg: {},
+          approvalId: "approval-fallback",
+          decision: "allow-always",
+          allowPluginFallback: true,
+          withOperatorApprovalsGatewayClient: makeFactory("fallback", async () => {
+            if (fallbackFirst) {
+              fallbackFirst = false;
+              const error = new Error("unknown or expired approval id");
+              error.gatewayCode = "APPROVAL_NOT_FOUND";
+              throw error;
+            }
+          })
+        });
+        let denied = "";
+        try {
+          await handler.resolveApprovalOverGateway({
+            cfg: {},
+            approvalId: "approval-denied",
+            decision: "deny",
+            allowPluginFallback: true,
+            senderId: " denied-user ",
+            withOperatorApprovalsGatewayClient: makeFactory("denied", async () => {
+              throw new Error("permission denied");
+            })
+          });
+        } catch (error) {
+          denied = error.message;
+        }
+        return {
+          scopedType: typeof scopedGateway.resolveApprovalOverGateway,
+          handlerType: typeof handler.resolveApprovalOverGateway,
+          observed,
+          denied
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-gateway-plugin",
+                    "name": "Runtime Approval Gateway Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-gateway.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_gateway"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_gateway"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "scopedType": "function",
+        "handlerType": "function",
+        "observed": [
+            {
+                "label": "exec",
+                "options": {
+                    "config": {"gateway": {"auth": {"token": "cfg-token"}}},
+                    "gatewayUrl": "ws://gateway.example.test",
+                    "clientDisplayName": "QuietChat approval (default)",
+                },
+            },
+            {
+                "label": "exec",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-1", "decision": "allow-once"},
+            },
+            {
+                "label": "plugin",
+                "options": {"config": {}, "clientDisplayName": "Approval (plugin-owner)"},
+            },
+            {
+                "label": "plugin",
+                "method": "plugin.approval.resolve",
+                "payload": {"id": "plugin:approval-1", "decision": "deny"},
+            },
+            {
+                "label": "fallback",
+                "options": {"config": {}, "clientDisplayName": "Approval (unknown)"},
+            },
+            {
+                "label": "fallback",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-fallback", "decision": "allow-always"},
+            },
+            {
+                "label": "fallback",
+                "method": "plugin.approval.resolve",
+                "payload": {"id": "approval-fallback", "decision": "allow-always"},
+            },
+            {
+                "label": "denied",
+                "options": {"config": {}, "clientDisplayName": "Approval (denied-user)"},
+            },
+            {
+                "label": "denied",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-denied", "decision": "deny"},
+            },
+        ],
+        "denied": "permission denied",
     }
 
 

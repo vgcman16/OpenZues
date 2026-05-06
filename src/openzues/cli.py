@@ -37284,6 +37284,73 @@ const approvalNativeRuntime = {
 
 const CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY = "approval.native";
 
+function isApprovalGatewayNotFoundError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const code =
+    normalizeOptionalString(error.gatewayCode) ||
+    normalizeOptionalString(error.code) ||
+    normalizeOptionalString(error.details && error.details.gatewayCode) ||
+    normalizeOptionalString(error.details && error.details.code) ||
+    normalizeOptionalString(error.data && error.data.gatewayCode) ||
+    normalizeOptionalString(error.data && error.data.code);
+  if (code === "APPROVAL_NOT_FOUND") {
+    return true;
+  }
+  return String(error.message || "").includes("unknown or expired approval id");
+}
+
+async function resolveApprovalOverGateway(params = {}) {
+  const withClient =
+    typeof params.withOperatorApprovalsGatewayClient === "function"
+      ? params.withOperatorApprovalsGatewayClient
+      : params.gatewayClient && typeof params.gatewayClient.request === "function"
+        ? async (_options, run) => await run(params.gatewayClient)
+        : typeof params.request === "function"
+          ? async (_options, run) => await run({ request: params.request })
+          : null;
+  if (!withClient) {
+    throw new Error("operator approvals gateway client unavailable");
+  }
+  const approvalId = normalizeOptionalString(params.approvalId) || "";
+  const decision = normalizeOptionalString(params.decision) || "";
+  const clientDisplayName =
+    normalizeOptionalString(params.clientDisplayName) ||
+    `Approval (${normalizeOptionalString(params.senderId) || "unknown"})`;
+  await withClient(
+    {
+      config: params.cfg,
+      gatewayUrl: params.gatewayUrl,
+      clientDisplayName,
+    },
+    async (gatewayClient) => {
+      const requestResolve = async (method) => {
+        await gatewayClient.request(method, {
+          id: approvalId,
+          decision,
+        });
+      };
+      if (approvalId.startsWith("plugin:")) {
+        await requestResolve("plugin.approval.resolve");
+        return;
+      }
+      try {
+        await requestResolve("exec.approval.resolve");
+      } catch (error) {
+        if (params.allowPluginFallback !== true || !isApprovalGatewayNotFoundError(error)) {
+          throw error;
+        }
+        await requestResolve("plugin.approval.resolve");
+      }
+    },
+  );
+}
+
+const approvalGatewayRuntime = {
+  resolveApprovalOverGateway,
+};
+
 function createLazyRuntimeModuleLoader(load) {
   let runtimePromise = null;
   return () => {
@@ -37449,6 +37516,7 @@ const approvalHandlerRuntime = new Proxy(
     CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
     createChannelApprovalNativeRuntimeAdapter,
     createLazyChannelApprovalNativeRuntimeAdapter,
+    resolveApprovalOverGateway,
   },
   {
     get(target, prop) {
@@ -42786,6 +42854,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-native-runtime"
   ) {
     return approvalNativeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-gateway-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-gateway-runtime"
+  ) {
+    return approvalGatewayRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/approval-handler-adapter-runtime" ||
