@@ -30606,6 +30606,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_oauth_utils_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-oauth-utils.cjs"
+    runtime_entry.write_text(
+        """
+const crypto = require("crypto");
+const oauth = require("openclaw/plugin-sdk/oauth-utils");
+const scopedOauth = require("@openclaw/plugin-sdk/oauth-utils");
+
+function challengeFor(verifier) {
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.oauth_utils",
+      description: "Use OpenClaw oauth-utils SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(oauth).sort();
+        if (keys.length !== 3 || !keys.includes("toFormUrlEncoded")) {
+          return {
+            keys,
+            scopedType: typeof scopedOauth.generatePkceVerifierChallenge
+          };
+        }
+        const pkce = oauth.generatePkceVerifierChallenge();
+        const hexPkce = scopedOauth.generateHexPkceVerifierChallenge();
+        return {
+          keys,
+          scopedType: typeof scopedOauth.generatePkceVerifierChallenge,
+          form: oauth.toFormUrlEncoded({
+            redirect_uri: "https://example.test/callback?x=1",
+            scope: "chat read",
+            state: "a+b"
+          }),
+          pkce: {
+            verifierLength: pkce.verifier.length,
+            verifierPattern: /^[A-Za-z0-9_-]+$/.test(pkce.verifier),
+            challengeLength: pkce.challenge.length,
+            challengeMatches: pkce.challenge === challengeFor(pkce.verifier)
+          },
+          hexPkce: {
+            verifierLength: hexPkce.verifier.length,
+            verifierPattern: /^[0-9a-f]{64}$/.test(hexPkce.verifier),
+            challengeLength: hexPkce.challenge.length,
+            challengeMatches: hexPkce.challenge === challengeFor(hexPkce.verifier)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-oauth-utils-plugin",
+                    "name": "Runtime OAuth Utils Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-oauth-utils-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.oauth_utils"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.oauth_utils"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "generateHexPkceVerifierChallenge",
+            "generatePkceVerifierChallenge",
+            "toFormUrlEncoded",
+        ],
+        "scopedType": "function",
+        "form": (
+            "redirect_uri=https%3A%2F%2Fexample.test%2Fcallback%3Fx%3D1"
+            "&scope=chat%20read&state=a%2Bb"
+        ),
+        "pkce": {
+            "verifierLength": 43,
+            "verifierPattern": True,
+            "challengeLength": 43,
+            "challengeMatches": True,
+        },
+        "hexPkce": {
+            "verifierLength": 64,
+            "verifierPattern": True,
+            "challengeLength": 43,
+            "challengeMatches": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

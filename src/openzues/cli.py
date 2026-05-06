@@ -19038,6 +19038,26 @@ function resetSystemEventsForTest() {
   getSystemEventQueues().clear();
 }
 
+function toFormUrlEncoded(data) {
+  return Object.entries(data || {})
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+}
+
+function createPkceChallenge(verifier) {
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+function generatePkceVerifierChallenge() {
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  return { verifier, challenge: createPkceChallenge(verifier) };
+}
+
+function generateHexPkceVerifierChallenge() {
+  const verifier = crypto.randomBytes(32).toString("hex");
+  return { verifier, challenge: createPkceChallenge(verifier) };
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -33360,6 +33380,12 @@ const systemEventRuntime = {
   resetSystemEventsForTest,
 };
 
+const oauthUtilsRuntime = {
+  generateHexPkceVerifierChallenge,
+  generatePkceVerifierChallenge,
+  toFormUrlEncoded,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -44154,6 +44180,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/system-event-runtime"
   ) {
     return systemEventRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/oauth-utils" ||
+    request === "@openclaw/plugin-sdk/oauth-utils"
+  ) {
+    return oauthUtilsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
