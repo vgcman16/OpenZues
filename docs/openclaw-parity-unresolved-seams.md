@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~80.9% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~81.0% overall, with a reasonable
   band of ~78-83%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -72,8 +72,8 @@ Current percentage rollup:
   Anthropic Vertex auth-presence, Anthropic Vertex facade, XAI model-id,
   channel pairing path, channel inbound roots, channel location, state path,
   setup adapter runtime, channel secret TTS runtime, talk config runtime,
-  GitHub Copilot token, channel plugin common/core, and channel entry contract
-  helper slices.
+  GitHub Copilot token, channel plugin common/core, channel entry contract,
+  channel config primitives/schema, and runtime-env helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -1775,6 +1775,12 @@ schemas, nested DM config, multi-account builders, `requireOpenAllowFrom`,
 tool policy, and bundled provider schema handles. Remaining plugin SDK queue
 heads should continue with source-backed runtime/helper subpaths that still
 fall through the broad generic SDK proxy.
+Imported plugin SDK `runtime-env` is now also no longer an unresolved queue
+head: the exact subpath resolves to native OpenZues runtime IO, verbose/global
+flag, sleep/timeout/retry, truthy env parsing, duration/backoff, abort waiter,
+handler registration, subsystem logging, undici bootstrap, and WSL posture
+helpers. Remaining plugin SDK queue heads should continue with exact public
+barrels that still require fallback/passthrough behavior to execute.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
