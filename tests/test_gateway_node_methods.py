@@ -23061,6 +23061,136 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_cron_store_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-cron-store.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const cronStore = require("openclaw/plugin-sdk/cron-store-runtime");
+const scopedCronStore = require("@openclaw/plugin-sdk/cron-store-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.cron_store",
+      description: "Use OpenClaw cron-store runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const storePath = path.join(__dirname, "cron", "jobs.json");
+        const statePath = storePath.replace(/\\.json$/, "-state.json");
+        const missing = await cronStore.loadCronStore(storePath);
+        const store = {
+          version: 1,
+          jobs: [{
+            id: "job-a",
+            name: "Daily",
+            schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+            createdAtMs: 10,
+            updatedAtMs: 20,
+            state: { cursor: "abc", nextRunAtMs: 30 }
+          }]
+        };
+        await cronStore.saveCronStore(storePath, store, { skipBackup: true });
+        const configOnDisk = JSON.parse(fs.readFileSync(storePath, "utf8"));
+        const stateOnDisk = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        const loaded = await cronStore.loadCronStore(storePath);
+        return {
+          keys: Object.keys(cronStore).sort(),
+          scopedType: typeof scopedCronStore.saveCronStore,
+          missing,
+          resolvedBasename: path.basename(cronStore.resolveCronStorePath(storePath)),
+          config: {
+            state: configOnDisk.jobs[0].state,
+            hasUpdatedAt: Object.prototype.hasOwnProperty.call(
+              configOnDisk.jobs[0],
+              "updatedAtMs"
+            )
+          },
+          state: stateOnDisk.jobs["job-a"],
+          loaded: {
+            updatedAtMs: loaded.jobs[0].updatedAtMs,
+            state: loaded.jobs[0].state
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-cron-store-plugin",
+                    "name": "Runtime Cron Store Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-cron-store.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.cron_store"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.cron_store"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["loadCronStore", "resolveCronStorePath", "saveCronStore"],
+        "scopedType": "function",
+        "missing": {"version": 1, "jobs": []},
+        "resolvedBasename": "jobs.json",
+        "config": {"state": {}, "hasUpdatedAt": False},
+        "state": {
+            "updatedAtMs": 20,
+            "scheduleIdentity": (
+                '{"version":1,"enabled":true,'
+                '"schedule":{"kind":"cron","expr":"0 9 * * *","tz":"UTC"}}'
+            ),
+            "state": {"cursor": "abc", "nextRunAtMs": 30},
+        },
+        "loaded": {
+            "updatedAtMs": 20,
+            "state": {"cursor": "abc", "nextRunAtMs": 30},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

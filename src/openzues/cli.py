@@ -24289,6 +24289,261 @@ function buildSecretInputArraySchema() {
   };
 }
 
+const serializedCronStoreCache = new Map();
+
+function resolveCronStorePath(storePath) {
+  if (typeof storePath === "string" && storePath.trim()) {
+    const raw = storePath.trim();
+    if (raw === "~" || raw.startsWith("~/") || raw.startsWith("~\\")) {
+      return path.resolve(path.join(os.homedir(), raw.slice(1)));
+    }
+    return path.resolve(raw);
+  }
+  return path.join(os.homedir(), ".openclaw", "cron", "jobs.json");
+}
+
+function resolveCronStatePath(storePath) {
+  return storePath.endsWith(".json")
+    ? storePath.replace(/\.json$/, "-state.json")
+    : `${storePath}-state.json`;
+}
+
+function readCronString(record, key) {
+  const value = record && record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readCronNumber(record, key) {
+  const value = record && record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function cronSchedulePayloadFromRecord(schedule) {
+  const rawKind = (readCronString(schedule, "kind") || "").toLowerCase();
+  const expr = readCronString(schedule, "expr") || readCronString(schedule, "cron");
+  const at = readCronString(schedule, "at");
+  const atMs = readCronNumber(schedule, "atMs");
+  const everyMs = readCronNumber(schedule, "everyMs");
+  const anchorMs = readCronNumber(schedule, "anchorMs");
+  const tz = readCronString(schedule, "tz");
+  const staggerMs = readCronNumber(schedule, "staggerMs");
+  const kind =
+    rawKind === "at" || rawKind === "every" || rawKind === "cron"
+      ? rawKind
+      : at || atMs !== undefined
+        ? "at"
+        : everyMs !== undefined
+          ? "every"
+          : expr
+            ? "cron"
+            : undefined;
+  if (kind === "at") {
+    if (at) {
+      return { kind: "at", at };
+    }
+    return atMs !== undefined ? { kind: "at", at: String(atMs) } : undefined;
+  }
+  if (kind === "every" && everyMs !== undefined) {
+    return { kind: "every", everyMs, ...(anchorMs !== undefined ? { anchorMs } : {}) };
+  }
+  if (kind === "cron" && expr) {
+    return {
+      kind: "cron",
+      expr,
+      ...(tz ? { tz } : {}),
+      ...(staggerMs !== undefined ? { staggerMs } : {}),
+    };
+  }
+  return undefined;
+}
+
+function tryCronScheduleIdentity(job) {
+  const schedule =
+    job && job.schedule && typeof job.schedule === "object" && !Array.isArray(job.schedule)
+      ? cronSchedulePayloadFromRecord(job.schedule)
+      : cronSchedulePayloadFromRecord(job || {});
+  if (!schedule) {
+    return undefined;
+  }
+  return JSON.stringify({
+    version: 1,
+    enabled: typeof job.enabled === "boolean" ? job.enabled : true,
+    schedule,
+  });
+}
+
+function stripRuntimeOnlyCronFields(store) {
+  return {
+    version: store.version,
+    jobs: (Array.isArray(store.jobs) ? store.jobs : []).map((job) => {
+      const { state: _state, updatedAtMs: _updatedAtMs, ...rest } = job || {};
+      return { ...rest, state: {} };
+    }),
+  };
+}
+
+function extractCronStateFile(store) {
+  const jobs = {};
+  for (const job of Array.isArray(store.jobs) ? store.jobs : []) {
+    if (!job || typeof job.id !== "string") {
+      continue;
+    }
+    jobs[job.id] = {
+      updatedAtMs: job.updatedAtMs,
+      scheduleIdentity: tryCronScheduleIdentity(job),
+      state: job.state && typeof job.state === "object" ? job.state : {},
+    };
+  }
+  return { version: 1, jobs };
+}
+
+async function loadCronStateFile(statePath) {
+  try {
+    const raw = await fs.promises.readFile(statePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      parsed.version !== 1 ||
+      !parsed.jobs ||
+      typeof parsed.jobs !== "object" ||
+      Array.isArray(parsed.jobs)
+    ) {
+      return null;
+    }
+    return { version: 1, jobs: parsed.jobs };
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return null;
+    }
+    return null;
+  }
+}
+
+function cronHasInlineState(jobs) {
+  return jobs.some(
+    (job) =>
+      job &&
+      job.state &&
+      typeof job.state === "object" &&
+      !Array.isArray(job.state) &&
+      Object.keys(job.state).length > 0,
+  );
+}
+
+function backfillCronRuntimeFields(job) {
+  if (!job.state || typeof job.state !== "object") {
+    job.state = {};
+  }
+  if (typeof job.updatedAtMs !== "number") {
+    job.updatedAtMs = typeof job.createdAtMs === "number" ? job.createdAtMs : Date.now();
+  }
+}
+
+function mergeCronStateEntry(job, entry) {
+  job.updatedAtMs =
+    typeof entry.updatedAtMs === "number"
+      ? entry.updatedAtMs
+      : typeof job.updatedAtMs === "number"
+        ? job.updatedAtMs
+        : typeof job.createdAtMs === "number"
+          ? job.createdAtMs
+          : Date.now();
+  job.state = entry.state && typeof entry.state === "object" ? entry.state : {};
+  if (
+    typeof entry.scheduleIdentity === "string" &&
+    entry.scheduleIdentity !== tryCronScheduleIdentity(job)
+  ) {
+    job.state.nextRunAtMs = undefined;
+  }
+}
+
+async function loadCronStore(storePath) {
+  try {
+    const raw = await fs.promises.readFile(storePath, "utf8");
+    const parsed = JSON.parse(raw);
+    const parsedRecord =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    const rawJobs = Array.isArray(parsedRecord.jobs) ? parsedRecord.jobs : [];
+    const store = {
+      version: 1,
+      jobs: rawJobs.filter(Boolean).map((job) => ({ ...job })),
+    };
+    const stateFile = await loadCronStateFile(resolveCronStatePath(storePath));
+    const hasLegacyInlineState = !stateFile && cronHasInlineState(rawJobs);
+    if (stateFile) {
+      for (const job of store.jobs) {
+        const entry = stateFile.jobs[job.id];
+        if (entry) {
+          mergeCronStateEntry(job, entry);
+        } else {
+          backfillCronRuntimeFields(job);
+        }
+      }
+    } else if (!hasLegacyInlineState) {
+      for (const job of store.jobs) {
+        backfillCronRuntimeFields(job);
+      }
+    }
+    for (const job of store.jobs) {
+      if (!job.state || typeof job.state !== "object") {
+        job.state = {};
+      }
+    }
+    serializedCronStoreCache.set(storePath, {
+      configJson: JSON.stringify(stripRuntimeOnlyCronFields(store), null, 2),
+      stateJson: JSON.stringify(extractCronStateFile(store), null, 2),
+      needsSplitMigration: hasLegacyInlineState,
+    });
+    return store;
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      serializedCronStoreCache.delete(storePath);
+      return { version: 1, jobs: [] };
+    }
+    throw err;
+  }
+}
+
+async function writeCronJsonFile(filePath, content) {
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.promises.chmod(dir, 0o700).catch(() => undefined);
+  const tmp = `${filePath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+  await fs.promises.writeFile(tmp, content, { encoding: "utf8", mode: 0o600 });
+  await fs.promises.rename(tmp, filePath).catch(async (err) => {
+    if (err && (err.code === "EPERM" || err.code === "EEXIST")) {
+      await fs.promises.copyFile(tmp, filePath);
+      await fs.promises.unlink(tmp).catch(() => undefined);
+      return;
+    }
+    throw err;
+  });
+  await fs.promises.chmod(filePath, 0o600).catch(() => undefined);
+}
+
+async function saveCronStore(storePath, store, opts) {
+  const normalizedStore = store || { version: 1, jobs: [] };
+  const configJson = JSON.stringify(stripRuntimeOnlyCronFields(normalizedStore), null, 2);
+  const stateJson = JSON.stringify(extractCronStateFile(normalizedStore), null, 2);
+  const statePath = resolveCronStatePath(storePath);
+  const cache = serializedCronStoreCache.get(storePath);
+  if (cache && cache.configJson === configJson && cache.stateJson === stateJson) {
+    return;
+  }
+  await writeCronJsonFile(statePath, stateJson);
+  if (!opts || opts.skipBackup !== true) {
+    await fs.promises.copyFile(storePath, `${storePath}.bak`).catch(() => undefined);
+  }
+  await writeCronJsonFile(storePath, configJson);
+  serializedCronStoreCache.set(storePath, {
+    configJson,
+    stateJson,
+    needsSplitMigration: false,
+  });
+}
+
 function isSecretRef(value) {
   if (!isRecord(value) || Object.keys(value).length !== 3) {
     return false;
@@ -38653,6 +38908,12 @@ const secretInputSchemaRuntime = {
   buildSecretInputSchema,
 };
 
+const cronStoreRuntime = {
+  loadCronStore,
+  resolveCronStorePath,
+  saveCronStore,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -39893,6 +40154,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/secret-input-schema"
   ) {
     return secretInputSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/cron-store-runtime" ||
+    request === "@openclaw/plugin-sdk/cron-store-runtime"
+  ) {
+    return cronStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
