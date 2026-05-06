@@ -30406,6 +30406,206 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_system_event_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-system-event-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const systemEvents = require("openclaw/plugin-sdk/system-event-runtime");
+const scopedSystemEvents = require("@openclaw/plugin-sdk/system-event-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.system_event",
+      description: "Use OpenClaw system-event-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const keys = Object.keys(systemEvents).sort();
+        if (!keys.includes("enqueueSystemEvent")) {
+          return {
+            keys,
+            scopedType: typeof scopedSystemEvents.peekSystemEventEntries
+          };
+        }
+        systemEvents.resetSystemEventsForTest();
+        let missingSessionError = null;
+        try {
+          systemEvents.enqueueSystemEvent("missing", {});
+        } catch (error) {
+          missingSessionError = error.message;
+        }
+        const originalNow = Date.now;
+        Date.now = () => 13579;
+        let first;
+        let blank;
+        let duplicate;
+        let second;
+        try {
+          blank = systemEvents.enqueueSystemEvent("   ", { sessionKey: "session-a" });
+          first = systemEvents.enqueueSystemEvent("  Alpha  ", {
+            sessionKey: "session-a",
+            contextKey: " ThreadA ",
+            deliveryContext: {
+              channel: "Telegram",
+              to: " 123 ",
+              accountId: "acct",
+              threadId: 456
+            }
+          });
+          duplicate = systemEvents.enqueueSystemEvent("Alpha", {
+            sessionKey: "session-a",
+            contextKey: "thread-b"
+          });
+          second = systemEvents.enqueueSystemEvent("Beta", {
+            sessionKey: "session-a",
+            contextKey: null,
+            trusted: false
+          });
+        } finally {
+          Date.now = originalNow;
+        }
+        const firstPeek = systemEvents.peekSystemEventEntries("session-a");
+        firstPeek[0].text = "mutated";
+        if (firstPeek[0].deliveryContext) {
+          firstPeek[0].deliveryContext.to = "mutated";
+        }
+        const secondPeek = scopedSystemEvents.peekSystemEventEntries("session-a");
+        systemEvents.resetSystemEventsForTest();
+        const resetPeek = systemEvents.peekSystemEventEntries("session-a");
+        for (let i = 0; i < 21; i += 1) {
+          systemEvents.enqueueSystemEvent(`event-${i}`, { sessionKey: "session-b" });
+        }
+        const capped = systemEvents.peekSystemEventEntries("session-b");
+        return {
+          keys,
+          scopedType: typeof scopedSystemEvents.peekSystemEventEntries,
+          missingSessionError,
+          results: { blank, first, duplicate, second },
+          firstPeek,
+          secondPeek,
+          resetPeek,
+          cappedLength: capped.length,
+          cappedFirst: capped[0] && capped[0].text,
+          cappedLast: capped[capped.length - 1] && capped[capped.length - 1].text
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-system-event-plugin",
+                    "name": "Runtime System Event Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-system-event-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.system_event"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.system_event"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "enqueueSystemEvent",
+            "peekSystemEventEntries",
+            "resetSystemEventsForTest",
+        ],
+        "scopedType": "function",
+        "missingSessionError": "system events require a sessionKey",
+        "results": {
+            "blank": False,
+            "first": True,
+            "duplicate": False,
+            "second": True,
+        },
+        "firstPeek": [
+            {
+                "text": "mutated",
+                "ts": 13579,
+                "contextKey": "threada",
+                "deliveryContext": {
+                    "channel": "telegram",
+                    "to": "mutated",
+                    "accountId": "acct",
+                    "threadId": "456",
+                },
+                "trusted": True,
+            },
+            {
+                "text": "Beta",
+                "ts": 13579,
+                "contextKey": None,
+                "trusted": False,
+            },
+        ],
+        "secondPeek": [
+            {
+                "text": "Alpha",
+                "ts": 13579,
+                "contextKey": "threada",
+                "deliveryContext": {
+                    "channel": "telegram",
+                    "to": "123",
+                    "accountId": "acct",
+                    "threadId": "456",
+                },
+                "trusted": True,
+            },
+            {
+                "text": "Beta",
+                "ts": 13579,
+                "contextKey": None,
+                "trusted": False,
+            },
+        ],
+        "resetPeek": [],
+        "cappedLength": 20,
+        "cappedFirst": "event-1",
+        "cappedLast": "event-20",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

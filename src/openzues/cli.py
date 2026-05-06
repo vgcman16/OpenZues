@@ -18956,6 +18956,88 @@ function createChildDiagnosticTraceContext(parent, input = {}) {
   });
 }
 
+const SYSTEM_EVENT_QUEUES_KEY = Symbol.for("openclaw.systemEvents.queues");
+const MAX_SYSTEM_EVENTS = 20;
+
+function requireSystemEventSessionKey(key) {
+  const trimmed = normalizeOptionalString(key) || "";
+  if (!trimmed) {
+    throw new Error("system events require a sessionKey");
+  }
+  return trimmed;
+}
+
+function normalizeSystemEventContextKey(key) {
+  return normalizeOptionalLowercaseString(key) || null;
+}
+
+function getSystemEventQueues() {
+  return resolveGlobalMap(SYSTEM_EVENT_QUEUES_KEY);
+}
+
+function getSystemEventQueue(sessionKey) {
+  return getSystemEventQueues().get(requireSystemEventSessionKey(sessionKey));
+}
+
+function getOrCreateSystemEventQueue(sessionKey) {
+  const key = requireSystemEventSessionKey(sessionKey);
+  const queues = getSystemEventQueues();
+  const existing = queues.get(key);
+  if (existing) {
+    return existing;
+  }
+  const created = {
+    queue: [],
+    lastText: null,
+    lastContextKey: null,
+  };
+  queues.set(key, created);
+  return created;
+}
+
+function cloneSystemEvent(event) {
+  return {
+    ...event,
+    ...(event.deliveryContext ? { deliveryContext: { ...event.deliveryContext } } : {}),
+  };
+}
+
+function enqueueSystemEvent(text, options = {}) {
+  const key = requireSystemEventSessionKey(options && options.sessionKey);
+  const entry = getOrCreateSystemEventQueue(key);
+  const cleaned = String(text || "").trim();
+  if (!cleaned) {
+    return false;
+  }
+  const contextKey = normalizeSystemEventContextKey(options && options.contextKey);
+  const deliveryContext = normalizeDeliveryContext(options && options.deliveryContext);
+  entry.lastContextKey = contextKey;
+  if (entry.lastText === cleaned) {
+    return false;
+  }
+  entry.lastText = cleaned;
+  entry.queue.push({
+    text: cleaned,
+    ts: Date.now(),
+    contextKey,
+    ...(deliveryContext ? { deliveryContext } : {}),
+    trusted: !options || options.trusted !== false,
+  });
+  if (entry.queue.length > MAX_SYSTEM_EVENTS) {
+    entry.queue.shift();
+  }
+  return true;
+}
+
+function peekSystemEventEntries(sessionKey) {
+  const entry = getSystemEventQueue(sessionKey);
+  return entry ? entry.queue.map(cloneSystemEvent) : [];
+}
+
+function resetSystemEventsForTest() {
+  getSystemEventQueues().clear();
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -33272,6 +33354,12 @@ const diagnosticRuntime = {
   resetDiagnosticEventsForTest,
 };
 
+const systemEventRuntime = {
+  enqueueSystemEvent,
+  peekSystemEventEntries,
+  resetSystemEventsForTest,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -44060,6 +44148,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/diagnostic-runtime"
   ) {
     return diagnosticRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/system-event-runtime" ||
+    request === "@openclaw/plugin-sdk/system-event-runtime"
+  ) {
+    return systemEventRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
