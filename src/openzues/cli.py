@@ -36957,6 +36957,133 @@ const approvalDeliveryHelpersRuntime = {
   splitChannelApprovalCapability,
 };
 
+function nativeApprovalTargetsMatch(params = {}) {
+  const left = params.left || {};
+  const right = params.right || {};
+  return channelRouteTargetsMatchExact({
+    left: {
+      channel: params.channel,
+      to: left.to,
+      accountId: left.accountId,
+      threadId: left.threadId,
+    },
+    right: {
+      channel: params.channel,
+      to: right.to,
+      accountId: right.accountId,
+      threadId: right.threadId,
+    },
+  });
+}
+
+function isNativeApprovalTarget(value) {
+  return Boolean(value && typeof value === "object" && typeof value.to === "string");
+}
+
+function nativeApprovalTargetMatcher(channel) {
+  return (left, right) =>
+    isNativeApprovalTarget(left) &&
+    isNativeApprovalTarget(right) &&
+    nativeApprovalTargetsMatch({ channel, left, right });
+}
+
+function approvalRequestMatchesNativeChannelAccount(input = {}, channel) {
+  const request = (input.request && input.request.request) || {};
+  const expectedChannel = normalizeMessageChannel(channel);
+  const turnSourceChannel = normalizeMessageChannel(request.turnSourceChannel);
+  if (expectedChannel && turnSourceChannel && turnSourceChannel !== expectedChannel) {
+    return false;
+  }
+  const accountId =
+    input.accountId != null ? normalizeOptionalAccountId(input.accountId) : undefined;
+  const turnSourceAccountId =
+    request.turnSourceAccountId != null
+      ? normalizeOptionalAccountId(request.turnSourceAccountId)
+      : undefined;
+  if (accountId && turnSourceAccountId && accountId !== turnSourceAccountId) {
+    return false;
+  }
+  return true;
+}
+
+function createChannelNativeOriginTargetResolver(params = {}) {
+  const targetsMatch =
+    typeof params.targetsMatch === "function"
+      ? params.targetsMatch
+      : nativeApprovalTargetMatcher(params.channel);
+  return (input = {}) => {
+    if (params.shouldHandleRequest && !params.shouldHandleRequest(input)) {
+      return null;
+    }
+    if (!approvalRequestMatchesNativeChannelAccount(input, params.channel)) {
+      return null;
+    }
+    const request = input.request || {};
+    const normalizeTarget = (target) => {
+      if (!target) {
+        return null;
+      }
+      return params.normalizeTarget
+        ? (params.normalizeTarget(target, request) ?? null)
+        : target;
+    };
+    const normalizeTargetForMatch = (target) =>
+      params.normalizeTargetForMatch?.(target, request) ?? target;
+    const turnSourceTarget =
+      typeof params.resolveTurnSourceTarget === "function"
+        ? normalizeTarget(params.resolveTurnSourceTarget(request))
+        : null;
+    const embeddedSessionTarget =
+      input.sessionTarget || (request.request && request.request.sessionTarget);
+    const sessionTarget =
+      embeddedSessionTarget && typeof params.resolveSessionTarget === "function"
+        ? normalizeTarget(params.resolveSessionTarget(embeddedSessionTarget, request))
+        : null;
+    if (turnSourceTarget && sessionTarget) {
+      const normalizedLeft = normalizeTargetForMatch(turnSourceTarget);
+      const normalizedRight = normalizeTargetForMatch(sessionTarget);
+      if (!normalizedLeft || !normalizedRight || !targetsMatch(normalizedLeft, normalizedRight)) {
+        return null;
+      }
+    }
+    if (turnSourceTarget) {
+      return turnSourceTarget;
+    }
+    if (sessionTarget) {
+      return sessionTarget;
+    }
+    return typeof params.resolveFallbackTarget === "function"
+      ? normalizeTarget(params.resolveFallbackTarget(request))
+      : null;
+  };
+}
+
+function createChannelApproverDmTargetResolver(params = {}) {
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+  const mapApprover = typeof params.mapApprover === "function" ? params.mapApprover : () => null;
+  return (input = {}) => {
+    if (params.shouldHandleRequest && !params.shouldHandleRequest(input)) {
+      return [];
+    }
+    const targets = [];
+    const approvers = resolveApprovers({ cfg: input.cfg, accountId: input.accountId });
+    for (const approver of Array.isArray(approvers) ? approvers : []) {
+      const target = mapApprover(approver, input);
+      if (target) {
+        targets.push(target);
+      }
+    }
+    return targets;
+  };
+}
+
+const approvalNativeHelpersRuntime = {
+  createChannelApproverDmTargetResolver,
+  createChannelNativeOriginTargetResolver,
+  nativeApprovalTargetsMatch,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -42231,6 +42358,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-delivery-runtime"
   ) {
     return approvalDeliveryHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-native-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-native-helpers"
+  ) {
+    return approvalNativeHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||

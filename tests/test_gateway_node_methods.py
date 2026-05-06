@@ -14815,6 +14815,237 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-helpers");
+const scopedNative = require("@openclaw/plugin-sdk/approval-native-helpers");
+
+const matrixRequest = {
+  id: "plugin:req-1",
+  request: {
+    title: "Plugin approval",
+    description: "Allow access",
+    turnSourceChannel: "matrix",
+    turnSourceTo: "room:!room:example.org",
+    turnSourceThreadId: "t1",
+    turnSourceAccountId: "ops"
+  },
+  createdAtMs: 0,
+  expiresAtMs: 1000
+};
+
+const resolveMatrixOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "matrix",
+  shouldHandleRequest: ({ accountId }) => accountId === "ops",
+  resolveTurnSourceTarget: (request) => ({
+    to: String(request.request.turnSourceTo),
+    threadId: request.request.turnSourceThreadId || undefined
+  }),
+  resolveSessionTarget: (sessionTarget) => ({
+    to: sessionTarget.to,
+    threadId: sessionTarget.threadId
+  })
+});
+
+const resolveSlackOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "slack",
+  resolveTurnSourceTarget: () => ({
+    to: "channel:C1",
+    threadId: "171234.567890"
+  }),
+  resolveSessionTarget: () => ({
+    to: "channel:c1",
+    threadId: "171234.567890"
+  }),
+  normalizeTargetForMatch: (target) => ({
+    ...target,
+    to: target.to.toLowerCase()
+  })
+});
+
+const resolveCustomOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "custom",
+  resolveTurnSourceTarget: () => ({ id: "ROOM-1", shard: "a" }),
+  resolveSessionTarget: () => ({ id: "room-1", shard: "b" }),
+  normalizeTarget: (target) => ({ ...target, id: target.id.toLowerCase() }),
+  targetsMatch: (left, right) => left.id === right.id
+});
+
+const resolveApproverDmTargets = native.createChannelApproverDmTargetResolver({
+  shouldHandleRequest: ({ approvalKind }) => approvalKind === "exec",
+  resolveApprovers: () => ["owner-1", "owner-2", "skip-me"],
+  mapApprover: (approver, params) =>
+    approver === "skip-me"
+      ? null
+      : {
+          to: `user:${approver}`,
+          accountId: params.accountId
+        }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native",
+      description: "Use OpenClaw approval native helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const commandRequest = {
+          id: "req-1",
+          request: {
+            command: "echo hi",
+            turnSourceChannel: "slack",
+            turnSourceTo: "channel:C1",
+            turnSourceThreadId: "171234.567890"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        const customRequest = {
+          id: "req-2",
+          request: {
+            command: "echo hi",
+            sessionKey: "agent:main:custom:room-1",
+            turnSourceChannel: "custom",
+            turnSourceTo: "ROOM-1"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        return {
+          keys: Object.keys(native).sort(),
+          scopedType: typeof scopedNative.createChannelApproverDmTargetResolver,
+          matches: [
+            native.nativeApprovalTargetsMatch({
+              channel: "telegram",
+              left: { to: "-100123", threadId: 42.9 },
+              right: { to: "-100123", threadId: "42" }
+            }),
+            native.nativeApprovalTargetsMatch({
+              channel: "telegram",
+              left: { to: "-100123", accountId: "work" },
+              right: { to: "-100123" }
+            })
+          ],
+          origins: [
+            resolveMatrixOrigin({
+              cfg: {},
+              accountId: "ops",
+              request: matrixRequest
+            }),
+            resolveMatrixOrigin({
+              cfg: {},
+              accountId: "other",
+              request: matrixRequest
+            }),
+            resolveSlackOrigin({
+              cfg: {},
+              accountId: "default",
+              request: commandRequest
+            }),
+            resolveCustomOrigin({
+              cfg: {},
+              request: customRequest
+            })
+          ],
+          dms: [
+            resolveApproverDmTargets({
+              cfg: {},
+              accountId: "default",
+              approvalKind: "exec",
+              request: commandRequest
+            }),
+            resolveApproverDmTargets({
+              cfg: {},
+              accountId: "default",
+              approvalKind: "plugin",
+              request: matrixRequest
+            })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-plugin",
+                    "name": "Runtime Approval Native Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_native"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createChannelApproverDmTargetResolver",
+            "createChannelNativeOriginTargetResolver",
+            "nativeApprovalTargetsMatch",
+        ],
+        "scopedType": "function",
+        "matches": [True, False],
+        "origins": [
+            {"to": "room:!room:example.org", "threadId": "t1"},
+            None,
+            {"to": "channel:C1", "threadId": "171234.567890"},
+            {"id": "room-1", "shard": "a"},
+        ],
+        "dms": [
+            [
+                {"to": "user:owner-1", "accountId": "default"},
+                {"to": "user:owner-2", "accountId": "default"},
+            ],
+            [],
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:
