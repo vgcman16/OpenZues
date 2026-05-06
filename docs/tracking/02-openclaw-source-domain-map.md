@@ -86,8 +86,13 @@ are checkpointed in `6f11c3fa`; `runtime-secret-resolution` from
 `packages/memory-host-sdk/src/host/read-file.ts`, and
 `packages/memory-host-sdk/src/host/backend-config.ts` is checkpointed in
 `a8d7b586`; `memory-host-files` from
-`src/plugin-sdk/memory-host-files.ts` is checkpointed in `857111d8`. Count all with
-the plugin/extension system row above.
+`src/plugin-sdk/memory-host-files.ts` is checkpointed in `857111d8`;
+`memory-core-host-runtime-core` from
+`src/plugin-sdk/memory-core-host-runtime-core.ts`,
+`packages/memory-host-sdk/src/runtime-core.ts`, and adjacent memory state,
+current-time, byte-size, routing, and transcript helper behavior is
+checkpointed in `7b0703b7`. Count all with the plugin/extension system row
+above.
 
 ## How To Use This Map
 
