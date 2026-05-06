@@ -27450,6 +27450,176 @@ function stripPlainTextToolCallBlocks(text) {
   return result;
 }
 
+function coerceChatContentText(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return "";
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value) || "";
+    } catch (_error) {
+      return "";
+    }
+  }
+  return "";
+}
+
+function extractTextFromChatContent(content, opts = {}) {
+  const normalizeText =
+    opts.normalizeText || ((text) => text.replace(/\s+/g, " ").trim());
+  const joinWith = opts.joinWith || " ";
+  const sanitize = (text) => {
+    const raw = coerceChatContentText(text);
+    const sanitized = opts.sanitizeText ? opts.sanitizeText(raw) : raw;
+    return coerceChatContentText(sanitized);
+  };
+  const normalize = (text) =>
+    coerceChatContentText(normalizeText(coerceChatContentText(text)));
+
+  if (typeof content === "string") {
+    const value = sanitize(content);
+    const normalized = normalize(value);
+    return normalized ? normalized : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const chunks = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type !== "text") {
+      continue;
+    }
+    const value = sanitize(block.text);
+    if (value.trim()) {
+      chunks.push(value);
+    }
+  }
+
+  const joined = normalize(chunks.join(joinWith));
+  return joined ? joined : null;
+}
+
+function stripAssistantReasoningTags(text) {
+  if (!text || !/<\s*\/?\s*(?:antml:)?(?:think(?:ing)?|thought)\b/i.test(text)) {
+    return text;
+  }
+  return text.replace(
+    /<\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>[\s\S]*?<\s*\/\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>/gi,
+    "",
+  );
+}
+
+function stripMinimaxToolCallXml(text) {
+  if (!text || !/minimax:tool_call/i.test(text)) {
+    return text;
+  }
+  return text.replace(
+    /<invoke\b[^>]*>[\s\S]*?<\/invoke>|<\/?minimax:tool_call>/gi,
+    "",
+  );
+}
+
+function stripAssistantToolCallXmlTags(text) {
+  if (
+    !text ||
+    !/<\s*\/?\s*(?:tool_call|tool_result|function_calls?|function|tool_calls)\b/i.test(text)
+  ) {
+    return text;
+  }
+  return text
+    .replace(
+      /<\s*(tool_call|tool_result|function_call|function_calls|function|tool_calls)\b[^>]*>[\s\S]*?<\s*\/\s*(?:\1|tool_call)\s*>/gi,
+      "",
+    )
+    .replace(
+      /<\s*(tool_call|tool_result|function_call|function_calls|tool_calls)\b[^>]*>[\s\S]*$/gi,
+      "",
+    );
+}
+
+function stripAssistantRelevantMemoriesTags(text) {
+  if (!text || !/<\s*\/?\s*relevant[-_]memories\b/i.test(text)) {
+    return text;
+  }
+  return text
+    .replace(
+      /<\s*relevant[-_]memories\b[^<>]*>[\s\S]*?<\s*\/\s*relevant[-_]memories\s*>/gi,
+      "",
+    )
+    .replace(/<\s*\/?\s*relevant[-_]memories\b[^<>]*>/gi, "");
+}
+
+function sanitizeAssistantVisibleText(text) {
+  let cleaned = coerceChatContentText(text);
+  cleaned = stripMinimaxToolCallXml(cleaned);
+  cleaned = stripAssistantRelevantMemoriesTags(cleaned);
+  cleaned = stripAssistantToolCallXmlTags(cleaned);
+  cleaned = stripPlainTextToolCallBlocks(cleaned);
+  cleaned = stripAssistantReasoningTags(cleaned);
+  return cleaned.trim();
+}
+
+function formatAssistantHttpErrorText(raw) {
+  const match = String(raw || "").match(/^(?:HTTP\s*)?(\d{3})[:\s-]+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  const code = Number(match[1]);
+  if (!Number.isFinite(code) || code < 400) {
+    return null;
+  }
+  return `HTTP ${code}: ${match[2].trim()}`;
+}
+
+function sanitizeUserFacingAssistantText(text, opts = {}) {
+  const raw = coerceChatContentText(text);
+  if (!raw) {
+    return raw;
+  }
+  let cleaned = raw.replace(/<\s*\/?\s*final\s*>/gi, "");
+  cleaned = stripAssistantToolCallXmlTags(stripMinimaxToolCallXml(cleaned));
+  cleaned = stripPlainTextToolCallBlocks(cleaned);
+  const trimmed = cleaned.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (opts.errorContext) {
+    const httpError = formatAssistantHttpErrorText(trimmed);
+    if (httpError) {
+      return httpError;
+    }
+  }
+  return cleaned.replace(/^(?:[ \t]*\r?\n)+/, "");
+}
+
+function extractAssistantText(msg = {}) {
+  const extracted =
+    extractTextFromChatContent(msg && msg.content, {
+      sanitizeText: (text) => sanitizeAssistantVisibleText(text),
+      joinWith: "\n",
+      normalizeText: (text) => text.trim(),
+    }) || "";
+  return sanitizeUserFacingAssistantText(extracted, {
+    errorContext: Boolean(msg && msg.stopReason === "error"),
+  });
+}
+
 function normalizeMessageChannel(raw) {
   const normalized = normalizeOptionalLowercaseString(raw);
   if (!normalized) {
@@ -40287,6 +40457,10 @@ const runCommandRuntime = {
   runPluginCommandWithTimeout,
 };
 
+const simpleCompletionRuntime = {
+  extractAssistantText,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -41311,6 +41485,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/run-command"
   ) {
     return runCommandRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/simple-completion-runtime" ||
+    request === "@openclaw/plugin-sdk/simple-completion-runtime"
+  ) {
+    return simpleCompletionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/approval-auth-runtime" ||

@@ -14596,6 +14596,133 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_simple_completion_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-simple-completion.cjs"
+    runtime_entry.write_text(
+        """
+const completion = require("openclaw/plugin-sdk/simple-completion-runtime");
+const scopedCompletion = require("@openclaw/plugin-sdk/simple-completion-runtime");
+
+function message(content, extra = {}) {
+  return {
+    role: "assistant",
+    content,
+    stopReason: "stop",
+    ...extra
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.simple_completion_runtime",
+      description: "Use OpenClaw simple completion runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(completion).sort(),
+          scopedType: typeof scopedCompletion.extractAssistantText,
+          stringText: completion.extractAssistantText(
+            message("  Hello\\nworld  ")
+          ),
+          blockText: completion.extractAssistantText(message([
+            { type: "text", text: " First " },
+            { type: "thinking", thinking: "hidden" },
+            { type: "text", text: "Second" }
+          ])),
+          toolXml: completion.extractAssistantText(message([
+            {
+              type: "text",
+              text: "Let me check.\\n\\n<tool_call> " +
+                "{\\"name\\":\\"read\\",\\"arguments\\":{}} </tool_call> Done."
+            }
+          ])),
+          minimaxOnly: completion.extractAssistantText(message([
+            {
+              type: "text",
+              text: "<invoke name=\\"Bash\\">\\n" +
+                "<parameter name=\\"command\\">test</parameter>\\n" +
+                "</invoke>\\n</minimax:tool_call>"
+            }
+          ])),
+          errorText: completion.extractAssistantText(message([
+            { type: "text", text: "500 Internal Server Error" }
+          ], { stopReason: "error" })),
+          nonText: completion.extractAssistantText(message([
+            { type: "image", source: { type: "url", url: "https://example.test/a.png" } }
+          ]))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-simple-completion-plugin",
+                    "name": "Runtime Simple Completion Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-simple-completion.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.simple_completion_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.simple_completion_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["extractAssistantText"],
+        "scopedType": "function",
+        "stringText": "Hello\nworld",
+        "blockText": "First\nSecond",
+        "toolXml": "Let me check.\n\n Done.",
+        "minimaxOnly": "",
+        "errorText": "HTTP 500: Internal Server Error",
+        "nonText": "",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:
