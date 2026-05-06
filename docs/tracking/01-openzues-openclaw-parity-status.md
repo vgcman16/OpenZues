@@ -2,7 +2,7 @@
 
 Agent report source: Gauss
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 Primary ledgers:
 
@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~79.6% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~79.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -618,6 +618,10 @@ may lag behind this tracker.
   metadata-server opt-in, Unicode-preserving explicit ADC credential paths, and
   direct ADC file-read probing.
   - Status: checkpointed in `f7c9e174`
+
+- [x] Imported plugin SDK Anthropic Vertex facade helper shim for endpoint
+  region precedence, env region validation, and env/ADC project ID resolution.
+  - Status: checkpointed in `0ea37843`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
