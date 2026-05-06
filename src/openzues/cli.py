@@ -37281,6 +37281,7 @@ function defaultChannelApprovalKind(request = {}) {
 
 function createChannelNativeApprovalRuntime(adapter = {}) {
   const activeEntries = new Map();
+  const activeTimers = new Map();
   const nowMs = typeof adapter.nowMs === "function" ? adapter.nowMs : Date.now;
   const resolveApprovalKind =
     typeof adapter.resolveApprovalKind === "function"
@@ -37308,6 +37309,10 @@ function createChannelNativeApprovalRuntime(adapter = {}) {
       }
     },
     async stop() {
+      for (const timer of activeTimers.values()) {
+        clearTimeout(timer);
+      }
+      activeTimers.clear();
       activeEntries.clear();
       if (typeof adapter.onStopped === "function") {
         await adapter.onStopped();
@@ -37390,6 +37395,30 @@ function createChannelNativeApprovalRuntime(adapter = {}) {
         request,
         entries: deliveryResult.entries,
       });
+      const expiresAtMs = Number(request && request.expiresAtMs);
+      if (Number.isFinite(expiresAtMs) && typeof adapter.finalizeExpired === "function") {
+        const requestId = normalizeOptionalString(request.id);
+        if (requestId) {
+          const delayMs = Math.max(0, expiresAtMs - Number(nowMs()));
+          if (activeTimers.has(requestId)) {
+            clearTimeout(activeTimers.get(requestId));
+          }
+          const timer = setTimeout(async () => {
+            const active = activeEntries.get(requestId);
+            if (!active) {
+              activeTimers.delete(requestId);
+              return;
+            }
+            activeEntries.delete(requestId);
+            activeTimers.delete(requestId);
+            await adapter.finalizeExpired({
+              request: active.request,
+              entries: active.entries,
+            });
+          }, delayMs);
+          activeTimers.set(requestId, timer);
+        }
+      }
       return deliveryResult.entries;
     },
     async handleResolved(resolved) {
@@ -37399,6 +37428,10 @@ function createChannelNativeApprovalRuntime(adapter = {}) {
         return undefined;
       }
       activeEntries.delete(requestId);
+      if (activeTimers.has(requestId)) {
+        clearTimeout(activeTimers.get(requestId));
+        activeTimers.delete(requestId);
+      }
       if (typeof adapter.finalizeResolved === "function") {
         return await adapter.finalizeResolved({
           request: active.request,
@@ -37418,6 +37451,10 @@ function createChannelNativeApprovalRuntime(adapter = {}) {
         return undefined;
       }
       activeEntries.delete(requestId);
+      if (activeTimers.has(requestId)) {
+        clearTimeout(activeTimers.get(requestId));
+        activeTimers.delete(requestId);
+      }
       if (typeof adapter.finalizeExpired === "function") {
         return await adapter.finalizeExpired({
           request: active.request,

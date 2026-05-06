@@ -15604,6 +15604,128 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_expiration(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-expiration.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-runtime");
+
+const observed = [];
+const runtime = native.createChannelNativeApprovalRuntime({
+  label: "test/native-expiration",
+  clientDisplayName: "Test",
+  cfg: {},
+  accountId: "ops",
+  nowMs: () => 1000,
+  nativeAdapter: {
+    describeDeliveryCapabilities: () => ({
+      enabled: true,
+      preferredSurface: "approver-dm",
+      supportsOriginSurface: false,
+      supportsApproverDmSurface: true
+    }),
+    resolveApproverDmTargets: () => [{ to: "owner" }]
+  },
+  isConfigured: () => true,
+  shouldHandle: () => true,
+  buildPendingContent: async ({ approvalKind }) => `pending:${approvalKind}`,
+  prepareTarget: async ({ plannedTarget }) => ({
+    dedupeKey: plannedTarget.target.to,
+    target: { to: plannedTarget.target.to }
+  }),
+  deliverTarget: async ({ preparedTarget }) => ({ id: `entry:${preparedTarget.to}` }),
+  finalizeExpired: async ({ request, entries }) => {
+    observed.push({ hook: "expired", requestId: request.id, entries });
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_expiration",
+      description: "Use OpenClaw approval native runtime expiration SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = await runtime.handleRequested({
+          id: "req-expire",
+          request: { command: "echo hi" },
+          createdAtMs: 0,
+          expiresAtMs: 1005
+        });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { entries, observed };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-expiration-plugin",
+                    "name": "Runtime Approval Native Expiration Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-expiration.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_expiration"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_expiration"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "entries": [{"id": "entry:owner"}],
+        "observed": [
+            {
+                "hook": "expired",
+                "requestId": "req-expire",
+                "entries": [{"id": "entry:owner"}],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_approval_handler_adapter_runtime_helpers(
     tmp_path,
 ) -> None:
