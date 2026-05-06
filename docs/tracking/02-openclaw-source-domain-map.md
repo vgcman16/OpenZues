@@ -95,8 +95,11 @@ checkpointed in `7b0703b7`; `memory-host-core` from
 `src/plugin-sdk/memory-host-core.ts` is checkpointed in `362efd71`;
 `memory-host-events` from `src/plugin-sdk/memory-host-events.ts` is
 checkpointed in `97885bb6`; `memory-host-markdown` from
-`src/plugin-sdk/memory-host-markdown.ts` is checkpointed in `4d8513b6`. Count
-all with the plugin/extension system row above.
+`src/plugin-sdk/memory-host-markdown.ts` is checkpointed in `4d8513b6`;
+`memory-host-search` from `src/plugin-sdk/memory-host-search.ts`,
+`src/plugin-sdk/memory-host-search.runtime.ts`, and
+`src/plugins/memory-runtime.ts` is checkpointed in `a76a8d50`. Count all with
+the plugin/extension system row above.
 
 ## How To Use This Map
 
