@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~85.0% overall, with a reasonable
-  band of ~78-85%.
+- Repo-wide OpenClaw parity is estimated at ~85.1% overall, with a reasonable
+  band of ~78-86%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -88,8 +88,8 @@ Current percentage rollup:
   param-readers helper, provider-zai-endpoint helper, provider-env-vars
   helper, session-visibility helper, simple-completion-runtime
   extractAssistantText helper, approval-reply-runtime helper,
-  approval-client-helpers, approval-delivery-helpers, and
-  approval-native-helpers slices.
+  approval-client-helpers, approval-delivery-helpers,
+  approval-native-helpers, and approval-native-runtime delivery-helper slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8133,6 +8133,19 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
   `51d8ecdc`. Broader approval native runtime, gateway, and handler flows
   remain open.
+- Closed the imported OpenClaw plugin SDK approval-native-runtime
+  delivery-helper seam from `src/plugin-sdk/approval-native-runtime.ts`,
+  `src/infra/approval-native-runtime.ts`,
+  `src/infra/approval-native-delivery.ts`, and
+  `src/infra/approval-native-target-key.ts`: native runtime entries can build
+  stable native target keys, resolve origin/approver-DM delivery plans, dedupe
+  converged native targets, request DM-only origin notices, deliver planned
+  native targets with prepared-target dedupe, and continue after per-target
+  delivery failures. Repo-wide parity is now estimated at ~85.1%. Verified
+  with focused approval-native-runtime pytest, adjacent approval proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `424e376a`. The broader
+  `createChannelNativeApprovalRuntime` gateway/event lifecycle remains open.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8161,7 +8174,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   approval-auth-runtime/telegram-command-config/approval-gateway-runtime/
   param-readers/provider-zai-endpoint/provider-env-vars/session-visibility/
   simple-completion-runtime/approval-reply-runtime/approval-client-helpers/
-  approval-delivery-helpers/approval-native-helpers/channel-entry-contract/
+  approval-delivery-helpers/approval-native-helpers/approval-native-runtime/
+  channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.
