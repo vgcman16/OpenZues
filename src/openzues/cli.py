@@ -38933,6 +38933,43 @@ const nativeCommandRegistryRuntime = {
   listNativeCommandSpecsForConfig,
 };
 
+function resolveNativeCommandSetting(params = {}) {
+  const setting = params.providerSetting === undefined
+    ? params.globalSetting
+    : params.providerSetting;
+  if (setting === true) {
+    return true;
+  }
+  if (setting === false) {
+    return false;
+  }
+  return params.autoDefault === true;
+}
+
+function resolveNativeCommandsEnabled(params = {}) {
+  return resolveNativeCommandSetting(params);
+}
+
+function resolveNativeSkillsEnabled(params = {}) {
+  return resolveNativeCommandSetting(params);
+}
+
+function isNativeCommandsExplicitlyDisabled(params = {}) {
+  if (params.providerSetting === false) {
+    return true;
+  }
+  if (params.providerSetting === undefined) {
+    return params.globalSetting === false;
+  }
+  return false;
+}
+
+const nativeCommandConfigRuntime = {
+  isNativeCommandsExplicitlyDisabled,
+  resolveNativeCommandsEnabled,
+  resolveNativeSkillsEnabled,
+};
+
 const commandAuthRuntime = {
   ...accessGroupsRuntime,
   createPreCryptoDirectDmAuthorizer,
@@ -40230,6 +40267,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/native-command-registry"
   ) {
     return nativeCommandRegistryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/native-command-config-runtime" ||
+    request === "@openclaw/plugin-sdk/native-command-config-runtime"
+  ) {
+    return nativeCommandConfigRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-status" ||

@@ -23447,6 +23447,140 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-native-command-config.cjs"
+    runtime_entry.write_text(
+        """
+const nativeCommandConfig = require("openclaw/plugin-sdk/native-command-config-runtime");
+const scopedNativeCommandConfig = require("@openclaw/plugin-sdk/native-command-config-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.native_command_config",
+      description: "Use OpenClaw native-command-config runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(nativeCommandConfig).sort(),
+          scopedType: typeof scopedNativeCommandConfig.resolveNativeCommandsEnabled,
+          commands: [
+            nativeCommandConfig.resolveNativeCommandsEnabled({
+              providerId: "telegram",
+              providerSetting: true,
+              globalSetting: false
+            }),
+            nativeCommandConfig.resolveNativeCommandsEnabled({
+              providerId: "telegram",
+              providerSetting: undefined,
+              globalSetting: false,
+              autoDefault: true
+            }),
+            nativeCommandConfig.resolveNativeCommandsEnabled({
+              providerId: "telegram",
+              providerSetting: undefined,
+              globalSetting: undefined,
+              autoDefault: true
+            })
+          ],
+          skills: [
+            nativeCommandConfig.resolveNativeSkillsEnabled({
+              providerId: "telegram",
+              providerSetting: false,
+              globalSetting: true
+            }),
+            nativeCommandConfig.resolveNativeSkillsEnabled({
+              providerId: "telegram",
+              providerSetting: undefined,
+              globalSetting: undefined,
+              autoDefault: true
+            })
+          ],
+          disabled: [
+            nativeCommandConfig.isNativeCommandsExplicitlyDisabled({
+              providerSetting: false,
+              globalSetting: true
+            }),
+            nativeCommandConfig.isNativeCommandsExplicitlyDisabled({
+              providerSetting: undefined,
+              globalSetting: false
+            }),
+            nativeCommandConfig.isNativeCommandsExplicitlyDisabled({
+              providerSetting: true,
+              globalSetting: false
+            })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-native-command-config-plugin",
+                    "name": "Runtime Native Command Config Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-native-command-config.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.native_command_config"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.native_command_config"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isNativeCommandsExplicitlyDisabled",
+            "resolveNativeCommandsEnabled",
+            "resolveNativeSkillsEnabled",
+        ],
+        "scopedType": "function",
+        "commands": [True, False, True],
+        "skills": [False, True],
+        "disabled": [True, True, False],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
