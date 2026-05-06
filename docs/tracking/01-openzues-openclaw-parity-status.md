@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~79.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~79.6% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -613,6 +613,11 @@ may lag behind this tracker.
   `CLAUDE_CLI_BACKEND_ID` and trimmed/case-insensitive Claude CLI provider
   detection through scoped and unscoped SDK aliases.
   - Status: checkpointed in `8289eaff`
+
+- [x] Imported plugin SDK Anthropic Vertex auth-presence helper shim for
+  metadata-server opt-in, Unicode-preserving explicit ADC credential paths, and
+  direct ADC file-read probing.
+  - Status: checkpointed in `f7c9e174`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
