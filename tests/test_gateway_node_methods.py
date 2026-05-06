@@ -31566,6 +31566,272 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_fetch_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-fetch-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fetchRuntime = require("openclaw/plugin-sdk/fetch-runtime");
+const scopedFetchRuntime = require("@openclaw/plugin-sdk/fetch-runtime");
+
+function lookupAsync(lookup, host, options) {
+  return new Promise((resolve, reject) => {
+    const callback = (err, address, family) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(Array.isArray(address) ? address : { address, family });
+    };
+    if (options === undefined) {
+      lookup(host, callback);
+      return;
+    }
+    lookup(host, options, callback);
+  });
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.fetch_runtime",
+      description: "Use OpenClaw fetch-runtime SDK shim",
+      parameters: { type: "object", properties: {} },
+      async execute() {
+        const env = {
+          HTTP_PROXY: "http://upper-http.example:8080",
+          http_proxy: "http://lower-http.example:8080",
+          HTTPS_PROXY: "https://upper-https.example:8443",
+          NO_PROXY: "api.internal.test *.local.test [::1]:443"
+        };
+        const envLowerBlank = {
+          HTTP_PROXY: "http://upper-http.example:8080",
+          http_proxy: "   "
+        };
+        const calls = [];
+        const foreignSignal = {
+          aborted: false,
+          listenerAttached: false,
+          listenerRemoved: false,
+          addEventListener(event, listener, options) {
+            this.listenerAttached = event === "abort" && options && options.once === true;
+            this.listener = listener;
+          },
+          removeEventListener(event, listener) {
+            this.listenerRemoved = event === "abort" && listener === this.listener;
+          }
+        };
+        const fakeFetch = (input, init) => {
+          calls.push({
+            input: String(input),
+            duplex: init && init.duplex,
+            signalIsAbortSignal: init && init.signal instanceof AbortSignal,
+            signalReplaced: init && init.signal !== foreignSignal
+          });
+          return Promise.resolve({ ok: true });
+        };
+        const wrappedFetch = fetchRuntime.wrapFetchWithAbortSignal(fakeFetch);
+        const wrappedAgain = fetchRuntime.wrapFetchWithAbortSignal(wrappedFetch);
+        await wrappedFetch("https://example.com/upload", {
+          body: "payload",
+          signal: foreignSignal
+        });
+        const resolvedFetch = fetchRuntime.resolveFetch(fakeFetch);
+        const proxyFetch = fetchRuntime.makeProxyFetch("http://proxy.local:8080");
+        const pinnedLookup = fetchRuntime.createPinnedLookup({
+          hostname: "Example.COM.",
+          addresses: ["203.0.113.10", "2001:db8::1"],
+          fallback: (host, options, callback) => {
+            const cb = typeof options === "function" ? options : callback;
+            cb(null, "198.51.100.20", 4);
+          }
+        });
+        let emptyPinnedError = null;
+        try {
+          fetchRuntime.createPinnedLookup({ hostname: "empty.example", addresses: [] });
+        } catch (error) {
+          emptyPinnedError = error.message;
+        }
+        return {
+          keys: Object.keys(fetchRuntime).sort(),
+          scopedType: typeof scopedFetchRuntime.resolveFetch,
+          mode: fetchRuntime.withTrustedEnvProxyGuardedFetchMode({
+            url: "https://example.com/resource",
+            timeoutMs: 5000
+          }),
+          proxyEnv: {
+            httpUrl: fetchRuntime.resolveEnvHttpProxyUrl("http", env),
+            httpsUrl: fetchRuntime.resolveEnvHttpProxyUrl("https", env),
+            lowerBlankSuppressesUpper:
+              fetchRuntime.resolveEnvHttpProxyUrl("http", envLowerBlank) === undefined,
+            hasHttp: fetchRuntime.hasEnvHttpProxyConfigured("http", env),
+            hasAgentFromAll: fetchRuntime.hasEnvHttpProxyAgentConfigured({
+              ALL_PROXY: "http://all-proxy.example:8080"
+            }),
+            agentOptions: fetchRuntime.resolveEnvHttpProxyAgentOptions({
+              ALL_PROXY: "http://all-proxy.example:8080",
+              HTTPS_PROXY: "https://secure-proxy.example:8443"
+            }),
+            shouldUsePublic: fetchRuntime.shouldUseEnvHttpProxyForUrl(
+              "https://public.example/path",
+              env
+            ),
+            shouldBypassExact: fetchRuntime.shouldUseEnvHttpProxyForUrl(
+              "https://api.internal.test/path",
+              env
+            ),
+            shouldBypassWildcard: fetchRuntime.shouldUseEnvHttpProxyForUrl(
+              "https://deep.local.test/path",
+              env
+            ),
+            invalidProtocol: fetchRuntime.shouldUseEnvHttpProxyForUrl(
+              "file:///tmp/example",
+              env
+            )
+          },
+          fetchWrap: {
+            sameWrapped: wrappedFetch === wrappedAgain,
+            resolvedType: typeof resolvedFetch,
+            resolvedWrapped: resolvedFetch !== fakeFetch,
+            call: calls[0],
+            listenerAttached: foreignSignal.listenerAttached,
+            listenerRemoved: foreignSignal.listenerRemoved
+          },
+          proxyFetch: {
+            proxyUrl: fetchRuntime.getProxyUrlFromFetch(proxyFetch),
+            missingUrl: fetchRuntime.getProxyUrlFromFetch(() => {})
+          },
+          pinned: {
+            family4: await lookupAsync(pinnedLookup, "example.com", { family: 4 }),
+            all: await lookupAsync(pinnedLookup, "example.com", { all: true }),
+            fallback: await lookupAsync(pinnedLookup, "other.example")
+          },
+          emptyPinnedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-fetch-runtime-plugin",
+                    "name": "Runtime Fetch Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-fetch-runtime-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.fetch_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.fetch_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createPinnedLookup",
+            "getProxyUrlFromFetch",
+            "hasEnvHttpProxyAgentConfigured",
+            "hasEnvHttpProxyConfigured",
+            "makeProxyFetch",
+            "resolveEnvHttpProxyAgentOptions",
+            "resolveEnvHttpProxyUrl",
+            "resolveFetch",
+            "shouldUseEnvHttpProxyForUrl",
+            "withTrustedEnvProxyGuardedFetchMode",
+            "wrapFetchWithAbortSignal",
+        ],
+        "scopedType": "function",
+        "mode": {
+            "url": "https://example.com/resource",
+            "timeoutMs": 5000,
+            "mode": "trusted_env_proxy",
+        },
+        "proxyEnv": {
+            "httpUrl": "http://lower-http.example:8080",
+            "httpsUrl": "https://upper-https.example:8443",
+            "lowerBlankSuppressesUpper": True,
+            "hasHttp": True,
+            "hasAgentFromAll": True,
+            "agentOptions": {
+                "httpProxy": "http://all-proxy.example:8080",
+                "httpsProxy": "https://secure-proxy.example:8443",
+            },
+            "shouldUsePublic": True,
+            "shouldBypassExact": False,
+            "shouldBypassWildcard": False,
+            "invalidProtocol": False,
+        },
+        "fetchWrap": {
+            "sameWrapped": True,
+            "resolvedType": "function",
+            "resolvedWrapped": True,
+            "call": {
+                "input": "https://example.com/upload",
+                "duplex": "half",
+                "signalIsAbortSignal": True,
+                "signalReplaced": True,
+            },
+            "listenerAttached": True,
+            "listenerRemoved": True,
+        },
+        "proxyFetch": {
+            "proxyUrl": "http://proxy.local:8080",
+        },
+        "pinned": {
+            "family4": {"address": "203.0.113.10", "family": 4},
+            "all": [
+                {"address": "203.0.113.10", "family": 4},
+                {"address": "2001:db8::1", "family": 6},
+            ],
+            "fallback": {"address": "198.51.100.20", "family": 4},
+        },
+        "emptyPinnedError": "Pinned lookup requires at least one address for empty.example",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

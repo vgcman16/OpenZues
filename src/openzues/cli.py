@@ -19184,6 +19184,104 @@ async function fetchWithRuntimeDispatcherOrMockedGlobal(input, init) {
   return await fetchWithRuntimeDispatcher(input, init);
 }
 
+const wrapFetchWithAbortSignalMarker = Symbol.for("openclaw.fetch.abort-signal-wrapped");
+
+function withFetchDuplex(init, input) {
+  const hasInitBody = init && init.body != null;
+  const hasRequestBody =
+    !hasInitBody &&
+    typeof Request !== "undefined" &&
+    input instanceof Request &&
+    input.body != null;
+  if (!hasInitBody && !hasRequestBody) {
+    return init;
+  }
+  if (init && Object.prototype.hasOwnProperty.call(init, "duplex")) {
+    return init;
+  }
+  return init ? { ...init, duplex: "half" } : { duplex: "half" };
+}
+
+function bindAbortRelay(controller) {
+  return () => {
+    try {
+      controller.abort();
+    } catch (_error) {
+      // Foreign AbortController implementations can throw. Preserve fetch behavior.
+    }
+  };
+}
+
+function wrapFetchWithAbortSignal(fetchImpl) {
+  if (fetchImpl && fetchImpl[wrapFetchWithAbortSignalMarker]) {
+    return fetchImpl;
+  }
+  const wrapped = (input, init) => {
+    const patchedInit = withFetchDuplex(init, input);
+    const signal = patchedInit && patchedInit.signal;
+    if (!signal) {
+      return fetchImpl(input, patchedInit);
+    }
+    if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) {
+      return fetchImpl(input, patchedInit);
+    }
+    if (typeof AbortController === "undefined" || typeof signal.addEventListener !== "function") {
+      return fetchImpl(input, patchedInit);
+    }
+    const controller = new AbortController();
+    const onAbort = bindAbortRelay(controller);
+    let listenerAttached = false;
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+      listenerAttached = true;
+    }
+    const cleanup = () => {
+      if (!listenerAttached || typeof signal.removeEventListener !== "function") {
+        return;
+      }
+      listenerAttached = false;
+      try {
+        signal.removeEventListener("abort", onAbort);
+      } catch (_error) {
+        // Never let cleanup mask the original fetch result or error.
+      }
+    };
+    try {
+      const response = fetchImpl(input, { ...patchedInit, signal: controller.signal });
+      if (response && typeof response.finally === "function") {
+        return response.finally(cleanup);
+      }
+      cleanup();
+      return response;
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  };
+  Object.assign(wrapped, fetchImpl);
+  wrapped.preconnect =
+    fetchImpl && typeof fetchImpl.preconnect === "function"
+      ? fetchImpl.preconnect.bind(fetchImpl)
+      : () => {};
+  Object.defineProperty(wrapped, wrapFetchWithAbortSignalMarker, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return wrapped;
+}
+
+function resolveFetch(fetchImpl) {
+  const resolved = fetchImpl || globalThis.fetch;
+  if (!resolved) {
+    return undefined;
+  }
+  return wrapFetchWithAbortSignal(resolved);
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -20563,6 +20661,173 @@ function hasProxyEnvConfigured(env = process.env) {
   return false;
 }
 
+function normalizeProxyEnvValue(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveEnvHttpProxyUrl(protocol = "https", env = process.env) {
+  const lowerHttpProxy = normalizeProxyEnvValue(env && env.http_proxy);
+  const lowerHttpsProxy = normalizeProxyEnvValue(env && env.https_proxy);
+  const httpProxy =
+    lowerHttpProxy !== undefined ? lowerHttpProxy : normalizeProxyEnvValue(env && env.HTTP_PROXY);
+  const httpsProxy =
+    lowerHttpsProxy !== undefined
+      ? lowerHttpsProxy
+      : normalizeProxyEnvValue(env && env.HTTPS_PROXY);
+  if (protocol === "https") {
+    return httpsProxy || httpProxy || undefined;
+  }
+  return httpProxy || undefined;
+}
+
+function hasEnvHttpProxyConfigured(protocol = "https", env = process.env) {
+  return resolveEnvHttpProxyUrl(protocol, env) !== undefined;
+}
+
+function resolveEnvAllProxyUrl(env = process.env) {
+  const lowerAllProxy = normalizeProxyEnvValue(env && env.all_proxy);
+  return lowerAllProxy !== undefined ? lowerAllProxy : normalizeProxyEnvValue(env && env.ALL_PROXY);
+}
+
+function resolveEnvHttpProxyAgentOptions(env = process.env) {
+  const allProxy = resolveEnvAllProxyUrl(env);
+  const httpProxy = resolveEnvHttpProxyUrl("http", env) || allProxy;
+  const httpsProxy = resolveEnvHttpProxyUrl("https", env) || httpProxy;
+  const options = {
+    ...(httpProxy ? { httpProxy } : {}),
+    ...(httpsProxy ? { httpsProxy } : {}),
+  };
+  return options.httpProxy || options.httpsProxy ? options : undefined;
+}
+
+function hasEnvHttpProxyAgentConfigured(env = process.env) {
+  return resolveEnvHttpProxyAgentOptions(env) !== undefined;
+}
+
+function matchesNoProxy(targetUrl, env = process.env) {
+  const raw =
+    normalizeProxyEnvValue(env && env.no_proxy) ||
+    normalizeProxyEnvValue(env && env.NO_PROXY);
+  if (!raw) {
+    return false;
+  }
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch (_error) {
+    return false;
+  }
+  const targetHost = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!targetHost) {
+    return false;
+  }
+  const targetPort =
+    parsed.port ||
+    (parsed.protocol === "https:" ? "443" : parsed.protocol === "http:" ? "80" : "");
+  for (const rawEntry of raw.split(/[,\s]/)) {
+    const entry = rawEntry.trim().toLowerCase();
+    if (!entry) {
+      continue;
+    }
+    if (entry === "*") {
+      return true;
+    }
+    let entryHost;
+    let entryPort;
+    if (entry.startsWith("[")) {
+      const match = entry.match(/^\[([^\]]+)\](?::(\d+))?$/);
+      if (!match) {
+        continue;
+      }
+      entryHost = match[1];
+      entryPort = match[2];
+    } else {
+      const colonIdx = entry.lastIndexOf(":");
+      if (colonIdx > 0 && /^\d+$/.test(entry.slice(colonIdx + 1))) {
+        entryHost = entry.slice(0, colonIdx);
+        entryPort = entry.slice(colonIdx + 1);
+      } else {
+        entryHost = entry;
+      }
+    }
+    if (entryPort && entryPort !== targetPort) {
+      continue;
+    }
+    const normalizedEntry = entryHost.replace(/^\*?\./, "");
+    if (!normalizedEntry) {
+      continue;
+    }
+    if (targetHost === normalizedEntry || targetHost.endsWith(`.${normalizedEntry}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shouldUseEnvHttpProxyForUrl(targetUrl, env = process.env) {
+  let protocol;
+  try {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol === "http:") {
+      protocol = "http";
+    } else if (parsed.protocol === "https:") {
+      protocol = "https";
+    } else {
+      return false;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return hasEnvHttpProxyConfigured(protocol, env) && !matchesNoProxy(targetUrl, env);
+}
+
+const PROXY_FETCH_PROXY_URL = Symbol.for("openclaw.proxyFetch.proxyUrl");
+
+function makeProxyFetch(proxyUrl) {
+  let agent = null;
+  const proxyFetch = async (input, init) => {
+    try {
+      const undici = require("undici");
+      if (!agent && typeof undici.ProxyAgent === "function") {
+        agent = new undici.ProxyAgent(proxyUrl);
+      }
+      if (typeof undici.fetch === "function" && agent) {
+        return await undici.fetch(input, { ...(init || {}), dispatcher: agent });
+      }
+    } catch (_error) {
+      // Fall back to the ambient fetch when undici proxy support is unavailable.
+    }
+    if (typeof globalThis.fetch !== "function") {
+      throw new Error("runtime fetch is not available in this Node.js runtime");
+    }
+    return await globalThis.fetch(input, init);
+  };
+  Object.defineProperty(proxyFetch, PROXY_FETCH_PROXY_URL, {
+    value: proxyUrl,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return proxyFetch;
+}
+
+function getProxyUrlFromFetch(fetchImpl) {
+  const proxyUrl = fetchImpl && fetchImpl[PROXY_FETCH_PROXY_URL];
+  if (typeof proxyUrl !== "string") {
+    return undefined;
+  }
+  const trimmed = proxyUrl.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function withTrustedEnvProxyGuardedFetchMode(params) {
+  return { ...(params || {}), mode: "trusted_env_proxy" };
+}
+
 function padSecretBytes(bytes, length) {
   if (bytes.length === length) {
     return bytes;
@@ -20852,6 +21117,55 @@ function normalizeLookupResults(results) {
     return [];
   }
   return Array.isArray(results) ? results : [results];
+}
+
+function createPinnedLookup(params) {
+  const normalizedHost = normalizeHostname(params && params.hostname);
+  const addresses = Array.isArray(params && params.addresses) ? params.addresses : [];
+  if (addresses.length === 0) {
+    throw new Error(`Pinned lookup requires at least one address for ${params && params.hostname}`);
+  }
+  const fallback =
+    (params && params.fallback) ||
+    ((host, options, callback) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (typeof cb === "function") {
+        cb(null, host, String(host || "").includes(":") ? 6 : 4);
+      }
+    });
+  const records = addresses.map((address) => ({
+    address,
+    family: String(address || "").includes(":") ? 6 : 4,
+  }));
+  let index = 0;
+  return (host, options, callback) => {
+    const cb = typeof options === "function" ? options : callback;
+    if (typeof cb !== "function") {
+      return;
+    }
+    const normalized = normalizeHostname(host);
+    if (!normalized || normalized !== normalizedHost) {
+      if (typeof options === "function" || options === undefined) {
+        return fallback(host, cb);
+      }
+      return fallback(host, options, cb);
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const requestedFamily =
+      typeof options === "number" ? options : typeof opts.family === "number" ? opts.family : 0;
+    const candidates =
+      requestedFamily === 4 || requestedFamily === 6
+        ? records.filter((entry) => entry.family === requestedFamily)
+        : records;
+    const usable = candidates.length > 0 ? candidates : records;
+    if (opts.all) {
+      cb(null, usable);
+      return;
+    }
+    const chosen = usable[index % usable.length];
+    index += 1;
+    cb(null, chosen.address, chosen.family);
+  };
 }
 
 async function resolvePinnedHostnameWithPolicy(hostname, params = {}) {
@@ -33852,6 +34166,20 @@ const runtimeFetchRuntime = {
   isMockedFetch,
 };
 
+const fetchRuntime = {
+  createPinnedLookup,
+  getProxyUrlFromFetch,
+  hasEnvHttpProxyAgentConfigured,
+  hasEnvHttpProxyConfigured,
+  makeProxyFetch,
+  resolveEnvHttpProxyAgentOptions,
+  resolveEnvHttpProxyUrl,
+  resolveFetch,
+  shouldUseEnvHttpProxyForUrl,
+  withTrustedEnvProxyGuardedFetchMode,
+  wrapFetchWithAbortSignal,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -44699,6 +45027,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-fetch"
   ) {
     return runtimeFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/fetch-runtime" ||
+    request === "@openclaw/plugin-sdk/fetch-runtime"
+  ) {
+    return fetchRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
