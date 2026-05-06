@@ -36022,6 +36022,217 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_cli_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-runtime-cli.cjs"
+    runtime_entry.write_text(
+        """
+const cli = require("openclaw/plugin-sdk/memory-core-host-runtime-cli");
+const scopedCli = require("@openclaw/plugin-sdk/memory-core-host-runtime-cli");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_runtime_cli",
+      description: "Use OpenClaw memory-core-host-runtime-cli SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const previousHome = process.env.OPENCLAW_HOME;
+        process.env.OPENCLAW_HOME = "C:/Users/skull";
+        const lifecycle = [];
+        await cli.withManager({
+          getManager: async () => ({ manager: { id: "alpha" } }),
+          onMissing: (error) => lifecycle.push(`missing:${error}`),
+          run: async (manager) => lifecycle.push(`run:${manager.id}`),
+          close: async (manager) => lifecycle.push(`close:${manager.id}`)
+        });
+        await scopedCli.withManager({
+          getManager: async () => ({ manager: null, error: "no index" }),
+          onMissing: (error) => lifecycle.push(`missing:${error}`),
+          run: async () => lifecycle.push("unexpected-run"),
+          close: async () => lifecycle.push("unexpected-close")
+        });
+        cli.setVerbose(true);
+        const verboseAfterSet = scopedCli.isVerbose();
+        scopedCli.setVerbose(false);
+        const progressResult = await cli.withProgress(
+          { label: "Indexing", enabled: false },
+          async (progress) => {
+            progress.setLabel("Indexing memories");
+            progress.setPercent(25);
+            progress.tick();
+            return "progress-ok";
+          }
+        );
+        const totalsResult = await scopedCli.withProgressTotals(
+          { label: "Totals", enabled: false },
+          async (update) => {
+            update({ completed: 1, total: 4, label: "Quarter" });
+            return "totals-ok";
+          }
+        );
+        const secretResult = await cli.resolveCommandSecretRefsViaGateway({
+          config: { agents: { list: [{ id: "main" }] } },
+          commandName: "memory",
+          targetIds: new Set()
+        });
+        const result = {
+          keys: Object.keys(cli).sort(),
+          scopedType: typeof scopedCli.withProgressTotals,
+          formatError: cli.formatErrorMessage(
+            new Error("outer", { cause: new Error("inner") })
+          ),
+          lifecycle,
+          verboseAfterSet,
+          verboseAfterClear: cli.isVerbose(),
+          helpBlock: cli.formatHelpExamples([["openzues memory", "show memory"]]),
+          helpInline: scopedCli.formatHelpExamples(
+            [["openzues memory", "show memory"]],
+            true
+          ),
+          progressResult,
+          totalsResult,
+          secretResult,
+          docsFallback: cli.formatDocsLink("/memory", "Memory", {
+            fallback: "Memory docs",
+            force: false
+          }),
+          theme: {
+            command: cli.theme.command("cmd"),
+            muted: cli.theme.muted("muted"),
+            colorized: cli.colorize(false, cli.theme.warn, "warn"),
+            rich: cli.isRich()
+          },
+          shortened: {
+            path: cli.shortenHomePath("C:/Users/skull/project"),
+            text: scopedCli.shortenHomeInString("root=C:/Users/skull/project")
+          },
+          defaultRuntimeTypes: {
+            log: typeof cli.defaultRuntime.log,
+            error: typeof cli.defaultRuntime.error,
+            exit: typeof cli.defaultRuntime.exit,
+            writeJson: typeof cli.defaultRuntime.writeJson
+          }
+        };
+        if (previousHome === undefined) {
+          delete process.env.OPENCLAW_HOME;
+        } else {
+          process.env.OPENCLAW_HOME = previousHome;
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-runtime-cli-plugin",
+                    "name": "Memory Runtime CLI Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-runtime-cli.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.memory_core_host_runtime_cli"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_runtime_cli"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "colorize",
+            "defaultRuntime",
+            "formatDocsLink",
+            "formatErrorMessage",
+            "formatHelpExamples",
+            "isRich",
+            "isVerbose",
+            "resolveCommandSecretRefsViaGateway",
+            "setVerbose",
+            "shortenHomeInString",
+            "shortenHomePath",
+            "theme",
+            "withManager",
+            "withProgress",
+            "withProgressTotals",
+        ],
+        "scopedType": "function",
+        "formatError": "outer | inner",
+        "lifecycle": ["run:alpha", "close:alpha", "missing:no index"],
+        "verboseAfterSet": True,
+        "verboseAfterClear": False,
+        "helpBlock": "  openzues memory\n    show memory",
+        "helpInline": "  openzues memory # show memory",
+        "progressResult": "progress-ok",
+        "totalsResult": "totals-ok",
+        "secretResult": {
+            "resolvedConfig": {"agents": {"list": [{"id": "main"}]}},
+            "diagnostics": [],
+            "targetStatesByPath": {},
+            "hadUnresolvedTargets": False,
+        },
+        "docsFallback": "Memory docs",
+        "theme": {
+            "command": "cmd",
+            "muted": "muted",
+            "colorized": "warn",
+            "rich": False,
+        },
+        "shortened": {
+            "path": "$OPENCLAW_HOME/project",
+            "text": "root=$OPENCLAW_HOME/project",
+        },
+        "defaultRuntimeTypes": {
+            "log": "function",
+            "error": "function",
+            "exit": "function",
+            "writeJson": "function",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:

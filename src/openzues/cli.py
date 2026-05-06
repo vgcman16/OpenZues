@@ -34661,6 +34661,58 @@ function formatHelpExamples(examples, inline = false) {
     .join("\n");
 }
 
+async function withManager(params = {}) {
+  const lookup = await params.getManager();
+  const manager = lookup && lookup.manager;
+  if (!manager) {
+    if (typeof params.onMissing === "function") {
+      params.onMissing(lookup && lookup.error);
+    }
+    return;
+  }
+  try {
+    await params.run(manager);
+  } finally {
+    try {
+      await params.close(manager);
+    } catch (err) {
+      if (typeof params.onCloseError === "function") {
+        params.onCloseError(err);
+      }
+    }
+  }
+}
+
+const noopProgressReporter = Object.freeze({
+  setLabel: () => {},
+  setPercent: () => {},
+  tick: () => {},
+  done: () => {},
+});
+
+async function withProgress(_options, work) {
+  try {
+    return await work(noopProgressReporter);
+  } finally {
+    noopProgressReporter.done();
+  }
+}
+
+async function withProgressTotals(options, work) {
+  return await withProgress(options, async (progress) => {
+    const update = ({ completed, total, label }) => {
+      if (label) {
+        progress.setLabel(label);
+      }
+      if (!Number.isFinite(total) || total <= 0) {
+        return;
+      }
+      progress.setPercent((completed / total) * 100);
+    };
+    return await work(update, progress);
+  });
+}
+
 async function runCommandWithRuntime(runtime, action, onError) {
   try {
     await action();
@@ -37138,6 +37190,95 @@ const runtimeRuntime = {
   ...runtimeLoggerRuntime,
   createNonExitingRuntime,
   defaultRuntime,
+};
+
+function colorize(rich, color, value) {
+  return rich && typeof color === "function" ? color(String(value)) : String(value);
+}
+
+function isRich() {
+  return false;
+}
+
+function resolveRuntimeCliHomeDisplay() {
+  const explicitHome = normalizeOptionalString(process.env.OPENCLAW_HOME);
+  if (explicitHome) {
+    return { home: explicitHome, prefix: "$OPENCLAW_HOME" };
+  }
+  const home = normalizeOptionalString(os.homedir && os.homedir());
+  return home ? { home, prefix: "~" } : null;
+}
+
+function shortenHomePath(input) {
+  const value = String(input ?? "");
+  if (!value) {
+    return value;
+  }
+  const display = resolveRuntimeCliHomeDisplay();
+  if (!display) {
+    return value;
+  }
+  if (value === display.home) {
+    return display.prefix;
+  }
+  if (value.startsWith(`${display.home}/`) || value.startsWith(`${display.home}\\`)) {
+    return `${display.prefix}${value.slice(display.home.length)}`;
+  }
+  return value;
+}
+
+function shortenHomeInString(input) {
+  const value = String(input ?? "");
+  if (!value) {
+    return value;
+  }
+  const display = resolveRuntimeCliHomeDisplay();
+  return display ? value.split(display.home).join(display.prefix) : value;
+}
+
+async function resolveMemoryRuntimeCliCommandSecretRefsViaGateway(params = {}) {
+  const targetIds = params.targetIds;
+  const targetCount =
+    targetIds instanceof Set
+      ? targetIds.size
+      : Array.isArray(targetIds)
+        ? targetIds.length
+        : 0;
+  if (targetCount === 0) {
+    return {
+      resolvedConfig: params.config,
+      diagnostics: [],
+      targetStatesByPath: {},
+      hadUnresolvedTargets: false,
+    };
+  }
+  const commandName = normalizeOptionalString(params.commandName) || "command";
+  return {
+    resolvedConfig: params.config,
+    diagnostics: [
+      `${commandName}: gateway secrets.resolve unavailable in the native plugin runtime.`,
+    ],
+    targetStatesByPath: {},
+    hadUnresolvedTargets: true,
+  };
+}
+
+const memoryCoreHostRuntimeCliRuntime = {
+  colorize,
+  defaultRuntime,
+  formatDocsLink,
+  formatErrorMessage,
+  formatHelpExamples,
+  isRich,
+  isVerbose,
+  resolveCommandSecretRefsViaGateway: resolveMemoryRuntimeCliCommandSecretRefsViaGateway,
+  setVerbose,
+  shortenHomeInString,
+  shortenHomePath,
+  theme: cliTheme,
+  withManager,
+  withProgress,
+  withProgressTotals,
 };
 
 const RUNTIME_ENV_LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"];
@@ -49560,6 +49701,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-core"
   ) {
     return memoryCoreHostRuntimeCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-runtime-cli" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-runtime-cli"
+  ) {
+    return memoryCoreHostRuntimeCliRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
