@@ -32177,6 +32177,60 @@ function isClaudeCliProvider(providerId) {
   return normalizeOptionalLowercaseString(providerId) === CLAUDE_CLI_BACKEND_ID;
 }
 
+function normalizeOptionalSecretInputValue(value) {
+  const normalized = normalizeSecretInput(value);
+  return normalized ? normalized : undefined;
+}
+
+function hasAnthropicVertexMetadataServerAdc(env = process.env) {
+  const explicitMetadataOptIn = normalizeOptionalSecretInputValue(
+    env && env.ANTHROPIC_VERTEX_USE_GCP_METADATA,
+  );
+  return (
+    explicitMetadataOptIn === "1" ||
+    normalizeLowercaseStringOrEmpty(explicitMetadataOptIn) === "true"
+  );
+}
+
+function resolveAnthropicVertexDefaultAdcPath(env = process.env) {
+  if (process.platform === "win32") {
+    return path.join(
+      (env && env.APPDATA) || path.join(os.homedir(), "AppData", "Roaming"),
+      "gcloud",
+      "application_default_credentials.json",
+    );
+  }
+  return path.join(os.homedir(), ".config", "gcloud", "application_default_credentials.json");
+}
+
+function resolveAnthropicVertexAdcCredentialsPathCandidate(env = process.env) {
+  const explicit = normalizeOptionalString(env && env.GOOGLE_APPLICATION_CREDENTIALS);
+  if (explicit) {
+    return explicit;
+  }
+  if (env !== process.env) {
+    return undefined;
+  }
+  return resolveAnthropicVertexDefaultAdcPath(env);
+}
+
+function canReadAnthropicVertexAdc(env = process.env) {
+  const credentialsPath = resolveAnthropicVertexAdcCredentialsPathCandidate(env);
+  if (!credentialsPath) {
+    return false;
+  }
+  try {
+    fs.readFileSync(credentialsPath, "utf8");
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function hasAnthropicVertexAvailableAuth(env = process.env) {
+  return hasAnthropicVertexMetadataServerAdc(env) || canReadAnthropicVertexAdc(env);
+}
+
 function routeForSessionBinding(params) {
   return {
     ...params.route,
@@ -34025,6 +34079,10 @@ const anthropicCliRuntime = {
   isClaudeCliProvider,
 };
 
+const anthropicVertexAuthPresenceRuntime = {
+  hasAnthropicVertexAvailableAuth,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -34036,6 +34094,7 @@ const genericSdk = new Proxy(
     PAIRING_APPROVED_MESSAGE,
     ReplyRuntimeConfigSchemaShape,
     resolveConfiguredAcpBindingRecord,
+    hasAnthropicVertexAvailableAuth,
     isClaudeCliProvider,
     SILENT_REPLY_TOKEN,
     ToolPolicySchema,
@@ -35029,6 +35088,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/anthropic-cli"
   ) {
     return anthropicCliRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/anthropic-vertex-auth-presence" ||
+    request === "@openclaw/plugin-sdk/anthropic-vertex-auth-presence"
+  ) {
+    return anthropicVertexAuthPresenceRuntime;
   }
   if (
     request === "openclaw/plugin-sdk" ||

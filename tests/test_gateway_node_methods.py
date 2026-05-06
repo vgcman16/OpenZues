@@ -19253,6 +19253,119 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_anthropic_vertex_auth_presence_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-anthropic-vertex-auth-presence.cjs"
+    runtime_entry.write_text(
+        """
+const vertexAuth = require("openclaw/plugin-sdk/anthropic-vertex-auth-presence");
+const scopedVertexAuth = require("@openclaw/plugin-sdk/anthropic-vertex-auth-presence");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.anthropic_vertex_auth_presence",
+      description: "Use OpenClaw anthropic-vertex-auth-presence SDK shims",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        return {
+          exportKeys: Object.keys(vertexAuth).sort(),
+          metadataTrue: vertexAuth.hasAnthropicVertexAvailableAuth({
+            ANTHROPIC_VERTEX_USE_GCP_METADATA: " true "
+          }),
+          metadataOne: vertexAuth.hasAnthropicVertexAvailableAuth({
+            ANTHROPIC_VERTEX_USE_GCP_METADATA: "1"
+          }),
+          explicitPath: vertexAuth.hasAnthropicVertexAvailableAuth({
+            GOOGLE_APPLICATION_CREDENTIALS: `  ${args.credentialsPath}  `
+          }),
+          missingExplicitPath: scopedVertexAuth.hasAnthropicVertexAvailableAuth({
+            GOOGLE_APPLICATION_CREDENTIALS: args.missingCredentialsPath
+          }),
+          genericType: typeof genericSdk.hasAnthropicVertexAvailableAuth
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    unicode_dir = tmp_path / "\u8a8d\u8a3c\u60c5\u5831"
+    unicode_dir.mkdir()
+    credentials_path = unicode_dir / "application_default_credentials.json"
+    credentials_path.write_text("{}\n", encoding="utf-8")
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-anthropic-vertex-auth-presence-plugin",
+                    "name": "Runtime Anthropic Vertex Auth Presence Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-anthropic-vertex-auth-presence.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.anthropic_vertex_auth_presence"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.anthropic_vertex_auth_presence",
+            "args": {
+                "credentialsPath": str(credentials_path),
+                "missingCredentialsPath": str(tmp_path / "missing.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportKeys": ["hasAnthropicVertexAvailableAuth"],
+        "metadataTrue": True,
+        "metadataOne": True,
+        "explicitPath": True,
+        "missingExplicitPath": False,
+        "genericType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_account_helpers(
     tmp_path,
 ) -> None:
