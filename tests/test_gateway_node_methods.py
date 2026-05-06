@@ -15281,6 +15281,7 @@ module.exports = {
         "keys": [
             "buildChannelApprovalNativeTargetKey",
             "createChannelApproverDmTargetResolver",
+            "createChannelNativeApprovalRuntime",
             "createChannelNativeOriginTargetResolver",
             "deliverApprovalRequestViaChannelNativePlan",
             "resolveChannelNativeApprovalDeliveryPlan",
@@ -15352,6 +15353,253 @@ module.exports = {
             "duplicateTargets": [],
             "delivered": ["approver-2", "approver-3"],
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_factory(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-factory.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-runtime");
+const approval = require("openclaw/plugin-sdk/approval-runtime");
+
+const observed = [];
+const runtime = native.createChannelNativeApprovalRuntime({
+  label: "test/native-runtime",
+  clientDisplayName: "Test",
+  channel: "telegram",
+  channelLabel: "Telegram",
+  cfg: {},
+  accountId: "secondary",
+  eventKinds: ["exec", "plugin"],
+  nowMs: () => 1234,
+  nativeAdapter: {
+    describeDeliveryCapabilities: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "capabilities", approvalKind, accountId, requestId: request.id });
+      return {
+        enabled: true,
+        preferredSurface: "approver-dm",
+        supportsOriginSurface: false,
+        supportsApproverDmSurface: true
+      };
+    },
+    resolveApproverDmTargets: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "targets", approvalKind, accountId, requestId: request.id });
+      return [{ to: `${approvalKind}:${accountId}` }];
+    }
+  },
+  isConfigured: () => true,
+  shouldHandle: (request) => {
+    observed.push({ hook: "shouldHandle", requestId: request.id });
+    return true;
+  },
+  buildPendingContent: async ({ request, approvalKind, nowMs }) => {
+    observed.push({ hook: "pending", requestId: request.id, approvalKind, nowMs });
+    return `pending:${approvalKind}:${nowMs}`;
+  },
+  prepareTarget: ({ plannedTarget, request, approvalKind, pendingContent }) => {
+    observed.push({
+      hook: "prepare",
+      plannedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent
+    });
+    return {
+      dedupeKey: `dm:${plannedTarget.target.to}`,
+      target: { chatId: plannedTarget.target.to }
+    };
+  },
+  deliverTarget: ({ plannedTarget, preparedTarget, request, approvalKind, pendingContent }) => {
+    observed.push({
+      hook: "deliver",
+      plannedTarget,
+      preparedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent
+    });
+    return { chatId: preparedTarget.chatId, messageId: "m1" };
+  },
+  onDelivered: ({ plannedTarget, preparedTarget, request, approvalKind, pendingContent, entry }) =>
+    observed.push({
+      hook: "delivered",
+      plannedTarget,
+      preparedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent,
+      entry
+    }),
+  finalizeResolved: async ({ request, resolved, entries }) => {
+    observed.push({
+      hook: "resolved",
+      requestId: request.id,
+      decision: resolved.decision,
+      entries
+    });
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_factory",
+      description: "Use OpenClaw approval native runtime factory SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = await runtime.handleRequested({
+          id: "plugin:req-1",
+          request: {
+            title: "Plugin approval",
+            description: "Allow access"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 60000
+        });
+        await runtime.handleResolved({
+          id: "plugin:req-1",
+          decision: "allow-once",
+          ts: 1
+        });
+        return {
+          factoryType: typeof native.createChannelNativeApprovalRuntime,
+          aggregateType: typeof approval.createChannelNativeApprovalRuntime,
+          eventKinds: runtime.eventKinds,
+          entries,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-factory-plugin",
+                    "name": "Runtime Approval Native Factory Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-factory.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_factory"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_factory"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "factoryType": "function",
+        "aggregateType": "function",
+        "eventKinds": ["exec", "plugin"],
+        "entries": [{"chatId": "plugin:secondary", "messageId": "m1"}],
+        "observed": [
+            {"hook": "shouldHandle", "requestId": "plugin:req-1"},
+            {
+                "hook": "pending",
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "nowMs": 1234,
+            },
+            {
+                "hook": "capabilities",
+                "approvalKind": "plugin",
+                "accountId": "secondary",
+                "requestId": "plugin:req-1",
+            },
+            {
+                "hook": "targets",
+                "approvalKind": "plugin",
+                "accountId": "secondary",
+                "requestId": "plugin:req-1",
+            },
+            {
+                "hook": "prepare",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+            },
+            {
+                "hook": "deliver",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "preparedTarget": {"chatId": "plugin:secondary"},
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+            },
+            {
+                "hook": "delivered",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "preparedTarget": {
+                    "dedupeKey": "dm:plugin:secondary",
+                    "target": {"chatId": "plugin:secondary"},
+                },
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+                "entry": {"chatId": "plugin:secondary", "messageId": "m1"},
+            },
+            {
+                "hook": "resolved",
+                "requestId": "plugin:req-1",
+                "decision": "allow-once",
+                "entries": [{"chatId": "plugin:secondary", "messageId": "m1"}],
+            },
+        ],
     }
 
 

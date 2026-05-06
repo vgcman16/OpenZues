@@ -37274,8 +37274,164 @@ async function deliverApprovalRequestViaChannelNativePlan(params = {}) {
   };
 }
 
+function defaultChannelApprovalKind(request = {}) {
+  const requestId = normalizeOptionalString(request.id) || "";
+  return requestId.startsWith("plugin:") ? "plugin" : "exec";
+}
+
+function createChannelNativeApprovalRuntime(adapter = {}) {
+  const activeEntries = new Map();
+  const nowMs = typeof adapter.nowMs === "function" ? adapter.nowMs : Date.now;
+  const resolveApprovalKind =
+    typeof adapter.resolveApprovalKind === "function"
+      ? adapter.resolveApprovalKind
+      : defaultChannelApprovalKind;
+  const label = normalizeOptionalString(adapter.label) || "native approval runtime";
+
+  return {
+    ...(adapter.eventKinds ? { eventKinds: adapter.eventKinds } : {}),
+    label,
+    clientDisplayName: adapter.clientDisplayName,
+    isConfigured: () =>
+      typeof adapter.isConfigured === "function" ? Boolean(adapter.isConfigured()) : true,
+    shouldHandle: (request) =>
+      typeof adapter.shouldHandle === "function" ? Boolean(adapter.shouldHandle(request)) : true,
+    async request(method, params) {
+      if (typeof adapter.request === "function") {
+        return await adapter.request(method, params);
+      }
+      throw new Error(`${label}: gateway client not connected`);
+    },
+    async start() {
+      if (typeof adapter.beforeGatewayClientStart === "function") {
+        await adapter.beforeGatewayClientStart();
+      }
+    },
+    async stop() {
+      activeEntries.clear();
+      if (typeof adapter.onStopped === "function") {
+        await adapter.onStopped();
+      }
+    },
+    async handleRequested(request) {
+      if (typeof adapter.shouldHandle === "function" && !adapter.shouldHandle(request)) {
+        return [];
+      }
+      const approvalKind = resolveApprovalKind(request);
+      const pendingContent =
+        typeof adapter.buildPendingContent === "function"
+          ? await adapter.buildPendingContent({
+              request,
+              approvalKind,
+              nowMs: nowMs(),
+            })
+          : undefined;
+      const deliveryResult = await deliverApprovalRequestViaChannelNativePlan({
+        cfg: adapter.cfg,
+        accountId: adapter.accountId,
+        approvalKind,
+        request,
+        adapter: adapter.nativeAdapter,
+        prepareTarget: async ({ plannedTarget, request }) =>
+          typeof adapter.prepareTarget === "function"
+            ? await adapter.prepareTarget({
+                plannedTarget,
+                request,
+                approvalKind,
+                pendingContent,
+              })
+            : null,
+        deliverTarget: async ({ plannedTarget, preparedTarget, request }) =>
+          typeof adapter.deliverTarget === "function"
+            ? await adapter.deliverTarget({
+                plannedTarget,
+                preparedTarget,
+                request,
+                approvalKind,
+                pendingContent,
+              })
+            : null,
+        onDeliveryError:
+          typeof adapter.onDeliveryError === "function"
+            ? ({ error, plannedTarget, request }) =>
+                adapter.onDeliveryError({
+                  error,
+                  plannedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                })
+            : undefined,
+        onDuplicateSkipped:
+          typeof adapter.onDuplicateSkipped === "function"
+            ? ({ plannedTarget, preparedTarget, request }) =>
+                adapter.onDuplicateSkipped({
+                  plannedTarget,
+                  preparedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                })
+            : undefined,
+        onDelivered:
+          typeof adapter.onDelivered === "function"
+            ? ({ plannedTarget, preparedTarget, request, entry }) =>
+                adapter.onDelivered({
+                  plannedTarget,
+                  preparedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                  entry,
+                })
+            : undefined,
+      });
+      activeEntries.set(request.id, {
+        request,
+        entries: deliveryResult.entries,
+      });
+      return deliveryResult.entries;
+    },
+    async handleResolved(resolved) {
+      const requestId = normalizeOptionalString(resolved && resolved.id);
+      const active = requestId ? activeEntries.get(requestId) : null;
+      if (!active) {
+        return undefined;
+      }
+      activeEntries.delete(requestId);
+      if (typeof adapter.finalizeResolved === "function") {
+        return await adapter.finalizeResolved({
+          request: active.request,
+          resolved,
+          entries: active.entries,
+        });
+      }
+      return undefined;
+    },
+    async handleExpired(requestOrId) {
+      const requestId =
+        typeof requestOrId === "string"
+          ? normalizeOptionalString(requestOrId)
+          : normalizeOptionalString(requestOrId && requestOrId.id);
+      const active = requestId ? activeEntries.get(requestId) : null;
+      if (!active) {
+        return undefined;
+      }
+      activeEntries.delete(requestId);
+      if (typeof adapter.finalizeExpired === "function") {
+        return await adapter.finalizeExpired({
+          request: active.request,
+          entries: active.entries,
+        });
+      }
+      return undefined;
+    },
+  };
+}
+
 const approvalNativeRuntime = {
   buildChannelApprovalNativeTargetKey,
+  createChannelNativeApprovalRuntime,
   createChannelApproverDmTargetResolver,
   createChannelNativeOriginTargetResolver,
   deliverApprovalRequestViaChannelNativePlan,
@@ -37541,6 +37697,7 @@ const approvalRuntimeAggregate = new Proxy(
     createChannelApprovalCapability,
     createChannelApproverDmTargetResolver,
     createChannelExecApprovalProfile,
+    createChannelNativeApprovalRuntime,
     createChannelNativeOriginTargetResolver,
     createResolvedApproverActionAuthAdapter,
     getExecApprovalApproverDmNoticeText,
