@@ -19501,6 +19501,250 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-env.cjs"
+    runtime_entry.write_text(
+        """
+const runtimeEnv = require("openclaw/plugin-sdk/runtime-env");
+const scopedRuntimeEnv = require("@openclaw/plugin-sdk/runtime-env");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.runtime_env",
+      description: "Use OpenClaw runtime-env SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        runtimeEnv.setVerbose(false);
+        const verboseBefore = runtimeEnv.isVerbose();
+        runtimeEnv.setVerbose(true);
+        const verboseAfter = runtimeEnv.isVerbose();
+        runtimeEnv.setYes(true);
+        const yesAfter = runtimeEnv.isYes();
+        runtimeEnv.setVerbose(false);
+        runtimeEnv.setYes(false);
+
+        await runtimeEnv.sleep(0);
+        const timeoutValue = await runtimeEnv.withTimeout(Promise.resolve("ok"), 20);
+        let timeoutMessage = null;
+        try {
+          await runtimeEnv.withTimeout(new Promise(() => {}), 1);
+        } catch (error) {
+          timeoutMessage = error && error.message;
+        }
+
+        let retryCalls = 0;
+        const retryValue = await runtimeEnv.retryAsync(async () => {
+          retryCalls += 1;
+          if (retryCalls < 2) {
+            throw new Error("retry me");
+          }
+          return "retried";
+        }, { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 });
+
+        const alreadyAborted = new AbortController();
+        alreadyAborted.abort("done");
+        let sleepWithAbortMessage = null;
+        try {
+          await runtimeEnv.sleepWithAbort(10, alreadyAborted.signal);
+        } catch (error) {
+          sleepWithAbortMessage = error && error.message;
+        }
+
+        const abortController = new AbortController();
+        const abortWait = runtimeEnv.waitForAbortSignal(abortController.signal).then(
+          () => "aborted"
+        );
+        abortController.abort();
+
+        const rejectionCleanup = runtimeEnv.registerUnhandledRejectionHandler(
+          (reason) => Boolean(reason && reason.message === "handled")
+        );
+        const exceptionCleanup = runtimeEnv.registerUncaughtExceptionHandler(
+          (error) => Boolean(error && error.message === "caught")
+        );
+        const cleanupTypes = [typeof rejectionCleanup, typeof exceptionCleanup];
+        rejectionCleanup();
+        exceptionCleanup();
+
+        const logger = runtimeEnv.createSubsystemLogger("plugins/runtime-env");
+        const childLogger = logger.child("child");
+        const runtime = runtimeEnv.createNonExitingRuntime();
+        let runtimeExitMessage = null;
+        try {
+          runtime.exit(7);
+        } catch (error) {
+          runtimeExitMessage = error && error.message;
+        }
+
+        runtimeEnv.ensureGlobalUndiciEnvProxyDispatcher();
+
+        return {
+          exportTypes: [
+            typeof runtimeEnv.createNonExitingRuntime,
+            typeof runtimeEnv.defaultRuntime.log,
+            typeof runtimeEnv.sleep,
+            typeof runtimeEnv.withTimeout,
+            typeof runtimeEnv.retryAsync,
+            typeof runtimeEnv.isTruthyEnvValue,
+            typeof runtimeEnv.createSubsystemLogger,
+            typeof runtimeEnv.computeBackoff,
+            typeof runtimeEnv.sleepWithAbort,
+            typeof runtimeEnv.waitForAbortSignal,
+            typeof runtimeEnv.registerUnhandledRejectionHandler,
+            typeof runtimeEnv.registerUncaughtExceptionHandler,
+            typeof runtimeEnv.ensureGlobalUndiciEnvProxyDispatcher,
+            typeof runtimeEnv.isWSL2Sync,
+            typeof scopedRuntimeEnv.formatDurationPrecise
+          ],
+          flags: { verboseBefore, verboseAfter, yesAfter },
+          truthy: ["1", "on", "true", "yes", "YES"].map(runtimeEnv.isTruthyEnvValue),
+          falsey: [undefined, "", "0", "false", "no", "off"].map(runtimeEnv.isTruthyEnvValue),
+          durations: {
+            preciseShort: runtimeEnv.formatDurationPrecise(500),
+            preciseLong: runtimeEnv.formatDurationPrecise(1234),
+            seconds: runtimeEnv.formatDurationSeconds(1500, { decimals: 0, unit: "seconds" })
+          },
+          timeoutValue,
+          timeoutMessage,
+          retryCalls,
+          retryValue,
+          backoff: runtimeEnv.computeBackoff(
+            { initialMs: 100, maxMs: 1000, factor: 2, jitter: 0 },
+            3
+          ),
+          sleepWithAbortMessage,
+          abortWait: await abortWait,
+          cleanupTypes,
+          logger: {
+            subsystem: logger.subsystem,
+            childSubsystem: childLogger.subsystem,
+            levels: [
+              typeof logger.trace,
+              typeof logger.debug,
+              typeof logger.info,
+              typeof logger.warn,
+              typeof logger.error,
+              typeof logger.fatal,
+              typeof logger.raw
+            ],
+            enabled: logger.isEnabled("info")
+          },
+          runtimeExitMessage,
+          colors: {
+            success: runtimeEnv.success("ok"),
+            warn: runtimeEnv.warn("careful"),
+            info: runtimeEnv.info("note"),
+            danger: runtimeEnv.danger("bad")
+          },
+          loggingConstants: {
+            allowed: runtimeEnv.ALLOWED_LOG_LEVELS,
+            infoLevel: runtimeEnv.levelToMinLevel("info"),
+            normalized: runtimeEnv.normalizeLogLevel("warn"),
+            defaultDirType: typeof runtimeEnv.DEFAULT_LOG_DIR,
+            defaultFileType: typeof runtimeEnv.DEFAULT_LOG_FILE
+          },
+          wslType: typeof runtimeEnv.isWSL2Sync()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-runtime-env-plugin",
+                    "name": "Runtime Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-env-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.runtime_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.runtime_env"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function"] * 15,
+        "flags": {"verboseBefore": False, "verboseAfter": True, "yesAfter": True},
+        "truthy": [True, True, True, True, True],
+        "falsey": [False, False, False, False, False, False],
+        "durations": {
+            "preciseShort": "500ms",
+            "preciseLong": "1.23s",
+            "seconds": "2 seconds",
+        },
+        "timeoutValue": "ok",
+        "timeoutMessage": "timeout",
+        "retryCalls": 2,
+        "retryValue": "retried",
+        "backoff": 400,
+        "sleepWithAbortMessage": "aborted",
+        "abortWait": "aborted",
+        "cleanupTypes": ["function", "function"],
+        "logger": {
+            "subsystem": "plugins/runtime-env",
+            "childSubsystem": "plugins/runtime-env/child",
+            "levels": ["function"] * 7,
+            "enabled": True,
+        },
+        "runtimeExitMessage": "exit 7",
+        "colors": {
+            "success": "ok",
+            "warn": "careful",
+            "info": "note",
+            "danger": "bad",
+        },
+        "loggingConstants": {
+            "allowed": ["trace", "debug", "info", "warn", "error", "fatal", "silent"],
+            "infoLevel": 30,
+            "normalized": "warn",
+            "defaultDirType": "string",
+            "defaultFileType": "string",
+        },
+        "wslType": "boolean",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_keyed_async_queue_helpers(
     tmp_path,
 ) -> None:

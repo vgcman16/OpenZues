@@ -31539,6 +31539,328 @@ const runtimeRuntime = {
   defaultRuntime,
 };
 
+const RUNTIME_ENV_LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal", "silent"];
+const RUNTIME_ENV_LOG_LEVEL_WEIGHTS = {
+  trace: 10,
+  debug: 20,
+  info: 30,
+  warn: 40,
+  error: 50,
+  fatal: 60,
+  silent: Number.POSITIVE_INFINITY,
+};
+let runtimeEnvVerbose = false;
+let runtimeEnvYes = false;
+const runtimeUnhandledRejectionHandlers = new Set();
+const runtimeUncaughtExceptionHandlers = new Set();
+
+function isVerbose() {
+  return runtimeEnvVerbose;
+}
+
+function setVerbose(value) {
+  runtimeEnvVerbose = Boolean(value);
+}
+
+function isYes() {
+  return runtimeEnvYes;
+}
+
+function setYes(value) {
+  runtimeEnvYes = Boolean(value);
+}
+
+function shouldLogVerbose() {
+  return runtimeEnvVerbose;
+}
+
+function logVerbose(message) {
+  if (shouldLogVerbose()) {
+    console.log(String(message));
+  }
+}
+
+function logVerboseConsole(message) {
+  if (isVerbose()) {
+    console.log(String(message));
+  }
+}
+
+function identityTheme(value) {
+  return String(value);
+}
+
+function withTimeout(promise, timeoutMs) {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return promise;
+  }
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function isTruthyEnvValue(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return ["1", "on", "true", "yes"].includes(normalizeLowercaseStringOrEmpty(value));
+}
+
+function waitForAbortSignal(signal) {
+  if (!signal || signal.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function computeBackoff(policy, attempt) {
+  const base = policy.initialMs * policy.factor ** Math.max(attempt - 1, 0);
+  const jitter = base * policy.jitter * Math.random();
+  return Math.min(policy.maxMs, Math.round(base + jitter));
+}
+
+function formatDurationSeconds(ms, options = {}) {
+  if (!Number.isFinite(ms)) {
+    return "unknown";
+  }
+  const decimals = options.decimals ?? 1;
+  const unit = options.unit ?? "s";
+  const seconds = Math.max(0, ms) / 1000;
+  const fixed = seconds.toFixed(Math.max(0, decimals));
+  const trimmed = fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  return unit === "seconds" ? `${trimmed} seconds` : `${trimmed}s`;
+}
+
+function formatDurationPrecise(ms, options = {}) {
+  if (!Number.isFinite(ms)) {
+    return "unknown";
+  }
+  if (ms < 1000) {
+    return `${Math.max(0, Math.round(ms))}ms`;
+  }
+  return formatDurationSeconds(ms, {
+    decimals: options.decimals ?? 2,
+    unit: options.unit ?? "s",
+  });
+}
+
+function registerUnhandledRejectionHandler(handler) {
+  runtimeUnhandledRejectionHandlers.add(handler);
+  return () => runtimeUnhandledRejectionHandlers.delete(handler);
+}
+
+function registerUncaughtExceptionHandler(handler) {
+  runtimeUncaughtExceptionHandlers.add(handler);
+  return () => runtimeUncaughtExceptionHandlers.delete(handler);
+}
+
+function normalizeLogLevel(value, fallback = "info") {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return RUNTIME_ENV_LOG_LEVELS.includes(normalized) ? normalized : fallback;
+}
+
+function levelToMinLevel(value) {
+  return RUNTIME_ENV_LOG_LEVEL_WEIGHTS[normalizeLogLevel(value)] ?? 30;
+}
+
+function createNoopPinoLikeLogger(subsystem = "unknown") {
+  const logger = {
+    trace() {},
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+    fatal() {},
+    child(meta) {
+      const suffix =
+        meta && typeof meta === "object" && typeof meta.subsystem === "string"
+          ? meta.subsystem
+          : "";
+      return createNoopPinoLikeLogger(suffix ? `${subsystem}/${suffix}` : subsystem);
+    },
+  };
+  return logger;
+}
+
+function toPinoLikeLogger(logger = console) {
+  return {
+    trace: typeof logger.trace === "function" ? logger.trace.bind(logger) : () => {},
+    debug: typeof logger.debug === "function" ? logger.debug.bind(logger) : () => {},
+    info: typeof logger.info === "function" ? logger.info.bind(logger) : () => {},
+    warn: typeof logger.warn === "function" ? logger.warn.bind(logger) : () => {},
+    error: typeof logger.error === "function" ? logger.error.bind(logger) : () => {},
+    fatal: typeof logger.fatal === "function" ? logger.fatal.bind(logger) : () => {},
+    child: typeof logger.child === "function" ? logger.child.bind(logger) : () => logger,
+  };
+}
+
+function createSubsystemLogger(subsystem = "unknown") {
+  const normalizedSubsystem = String(subsystem || "unknown").trim() || "unknown";
+  const logger = {
+    subsystem: normalizedSubsystem,
+    isEnabled(level, _target) {
+      return normalizeLogLevel(level, "info") !== "silent";
+    },
+    trace(_message, _meta) {},
+    debug(_message, _meta) {},
+    info(_message, _meta) {},
+    warn(_message, _meta) {},
+    error(_message, _meta) {},
+    fatal(_message, _meta) {},
+    raw(_message) {},
+    child(name) {
+      const childName = String(name || "").trim();
+      return createSubsystemLogger(
+        childName ? `${normalizedSubsystem}/${childName}` : normalizedSubsystem,
+      );
+    },
+  };
+  return logger;
+}
+
+function runtimeForLogger(logger) {
+  const resolved = logger || createSubsystemLogger("runtime");
+  return createLoggerBackedRuntime({
+    logger: {
+      info: (message) => {
+        if (typeof resolved.info === "function") {
+          resolved.info(String(message));
+        }
+      },
+      error: (message) => {
+        if (typeof resolved.error === "function") {
+          resolved.error(String(message));
+        }
+      },
+    },
+  });
+}
+
+function createSubsystemRuntime(subsystem) {
+  return runtimeForLogger(createSubsystemLogger(subsystem));
+}
+
+function getConsoleSettings() {
+  return { level: "info", style: "pretty" };
+}
+
+function getResolvedConsoleSettings() {
+  return getConsoleSettings();
+}
+
+function shouldLogSubsystemToConsole(_subsystem, level = "info") {
+  return normalizeLogLevel(level) !== "silent";
+}
+
+function getLogger() {
+  return createNoopPinoLikeLogger("root");
+}
+
+function getChildLogger(subsystem) {
+  return createNoopPinoLikeLogger(subsystem || "child");
+}
+
+function getResolvedLoggerSettings() {
+  return { level: "info" };
+}
+
+function isFileLogLevelEnabled(level) {
+  return levelToMinLevel(level) >= levelToMinLevel("debug");
+}
+
+function resetLogger() {}
+
+function setLoggerOverride() {}
+
+function enableConsoleCapture() {}
+
+function routeLogsToStderr() {}
+
+function setConsoleSubsystemFilter() {}
+
+function setConsoleConfigLoaderForTests() {}
+
+function setConsoleTimestampPrefix() {}
+
+function stripRedundantSubsystemPrefixForConsole(message, displaySubsystem) {
+  const text = String(message || "");
+  const prefix = String(displaySubsystem || "");
+  if (prefix && normalizeLowercaseStringOrEmpty(text).startsWith(prefix.toLowerCase())) {
+    return text.slice(prefix.length).replace(/^[:\s]+/u, "");
+  }
+  return text;
+}
+
+function ensureGlobalUndiciEnvProxyDispatcher() {}
+
+function isWSL2Sync() {
+  return false;
+}
+
+const runtimeEnvRuntime = {
+  ...runtimeRuntime,
+  ALLOWED_LOG_LEVELS: RUNTIME_ENV_LOG_LEVELS,
+  DEFAULT_LOG_DIR: "logs",
+  DEFAULT_LOG_FILE: "openclaw.log",
+  computeBackoff,
+  createSubsystemLogger,
+  createSubsystemRuntime,
+  danger: identityTheme,
+  enableConsoleCapture,
+  ensureGlobalUndiciEnvProxyDispatcher,
+  formatDurationPrecise,
+  formatDurationSeconds,
+  getChildLogger,
+  getConsoleSettings,
+  getLogger,
+  getResolvedConsoleSettings,
+  getResolvedLoggerSettings,
+  info: identityTheme,
+  isFileLogLevelEnabled,
+  isTruthyEnvValue,
+  isVerbose,
+  isWSL2Sync,
+  isYes,
+  levelToMinLevel,
+  logVerbose,
+  logVerboseConsole,
+  normalizeLogLevel,
+  registerUncaughtExceptionHandler,
+  registerUnhandledRejectionHandler,
+  resetLogger,
+  retryAsync,
+  routeLogsToStderr,
+  runtimeForLogger,
+  setConsoleConfigLoaderForTests,
+  setConsoleSubsystemFilter,
+  setConsoleTimestampPrefix,
+  setLoggerOverride,
+  setVerbose,
+  setYes,
+  shouldLogSubsystemToConsole,
+  shouldLogVerbose,
+  sleep: sleepMs,
+  sleepWithAbort,
+  stripRedundantSubsystemPrefixForConsole,
+  success: identityTheme,
+  toPinoLikeLogger,
+  waitForAbortSignal,
+  warn: identityTheme,
+  withTimeout,
+};
+
 async function nullChannelDirectorySelf(_ctx) {
   return null;
 }
@@ -35626,6 +35948,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
+    ...runtimeEnvRuntime,
     ...runtimeRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
@@ -36130,6 +36453,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-logger"
   ) {
     return runtimeLoggerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-env" ||
+    request === "@openclaw/plugin-sdk/runtime-env"
+  ) {
+    return runtimeEnvRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
