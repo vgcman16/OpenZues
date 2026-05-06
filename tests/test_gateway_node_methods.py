@@ -23632,6 +23632,204 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_model_session_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-model-session.cjs"
+    runtime_entry.write_text(
+        """
+const modelSession = require("openclaw/plugin-sdk/model-session-runtime");
+const scopedModelSession = require("@openclaw/plugin-sdk/model-session-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.model_session",
+      description: "Use OpenClaw model-session runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const before = Date.now() - 5000;
+        const entry = {
+          sessionId: "sess-1",
+          updatedAt: before,
+          modelProvider: "anthropic",
+          model: "claude-sonnet-4-6",
+          providerOverride: "anthropic",
+          modelOverride: "claude-sonnet-4-6",
+          contextTokens: 160000,
+          fallbackNoticeSelectedModel: "anthropic/claude-sonnet-4-6",
+          fallbackNoticeActiveModel: "anthropic/claude-sonnet-4-6",
+          fallbackNoticeReason: "provider temporary failure"
+        };
+        const applied = modelSession.applyModelOverrideToSessionEntry({
+          entry,
+          selection: { provider: "openai", model: "gpt-5.4" },
+          markLiveSwitchPending: true
+        });
+        const defaultEntry = {
+          sessionId: "sess-2",
+          updatedAt: before,
+          providerOverride: "local",
+          modelOverride: "llama-3",
+          modelOverrideSource: "user",
+          contextTokens: 4096
+        };
+        const defaultApplied = modelSession.applyModelOverrideToSessionEntry({
+          entry: defaultEntry,
+          selection: { provider: "local", model: "llama3.1:8b", isDefault: true }
+        });
+        return {
+          keys: Object.keys(modelSession).sort(),
+          scopedType: typeof scopedModelSession.resolveAgentMaxConcurrent,
+          concurrency: [
+            modelSession.resolveAgentMaxConcurrent({}),
+            modelSession.resolveAgentMaxConcurrent({
+              agents: { defaults: { maxConcurrent: 3.8 } }
+            }),
+            modelSession.resolveAgentMaxConcurrent({ agents: { defaults: { maxConcurrent: 0 } } }),
+            modelSession.resolveAgentMaxConcurrent({
+              agents: { defaults: { maxConcurrent: "bad" } }
+            })
+          ],
+          channelMatches: [
+            modelSession.resolveChannelModelOverride({
+              cfg: { channels: { modelByChannel: { telegram: { "-100123": "demo/parent" } } } },
+              channel: "Telegram",
+              groupId: "-100123:topic:99"
+            }),
+            modelSession.resolveChannelModelOverride({
+              cfg: { channels: { modelByChannel: { telegram: { "*": "demo/fallback" } } } },
+              channel: "telegram",
+              groupId: "-999"
+            }),
+            modelSession.resolveChannelModelOverride({
+              cfg: { channels: { modelByChannel: { telegram: { "-100123": "demo/parent" } } } },
+              channel: "discord",
+              groupId: "-100123"
+            })
+          ],
+          applied: {
+            result: applied,
+            providerOverride: entry.providerOverride,
+            modelOverride: entry.modelOverride,
+            modelOverrideSource: entry.modelOverrideSource,
+            runtimeCleared: entry.model === undefined && entry.modelProvider === undefined,
+            contextCleared: entry.contextTokens === undefined,
+            fallbackCleared: entry.fallbackNoticeSelectedModel === undefined &&
+              entry.fallbackNoticeActiveModel === undefined &&
+              entry.fallbackNoticeReason === undefined,
+            liveModelSwitchPending: entry.liveModelSwitchPending === true,
+            updated: entry.updatedAt > before
+          },
+          defaultApplied: {
+            result: defaultApplied,
+            providerCleared: defaultEntry.providerOverride === undefined,
+            modelCleared: defaultEntry.modelOverride === undefined,
+            sourceCleared: defaultEntry.modelOverrideSource === undefined,
+            contextCleared: defaultEntry.contextTokens === undefined,
+            updated: defaultEntry.updatedAt > before
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-model-session-plugin",
+                    "name": "Runtime Model Session Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-model-session.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.model_session"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.model_session"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyModelOverrideToSessionEntry",
+            "resolveAgentMaxConcurrent",
+            "resolveChannelModelOverride",
+        ],
+        "scopedType": "function",
+        "concurrency": [4, 3, 1, 4],
+        "channelMatches": [
+            {
+                "channel": "telegram",
+                "model": "demo/parent",
+                "matchKey": "-100123",
+                "matchSource": "direct",
+            },
+            {
+                "channel": "telegram",
+                "model": "demo/fallback",
+                "matchKey": "*",
+                "matchSource": "wildcard",
+            },
+            None,
+        ],
+        "applied": {
+            "result": {"updated": True},
+            "providerOverride": "openai",
+            "modelOverride": "gpt-5.4",
+            "modelOverrideSource": "user",
+            "runtimeCleared": True,
+            "contextCleared": True,
+            "fallbackCleared": True,
+            "liveModelSwitchPending": True,
+            "updated": True,
+        },
+        "defaultApplied": {
+            "result": {"updated": True},
+            "providerCleared": True,
+            "modelCleared": True,
+            "sourceCleared": True,
+            "contextCleared": True,
+            "updated": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_native_command_config_runtime_helpers(
     tmp_path,
 ) -> None:

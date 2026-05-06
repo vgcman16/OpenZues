@@ -39070,6 +39070,230 @@ const hostRuntime = {
   normalizeScpRemoteHost,
 };
 
+function resolveAgentMaxConcurrent(cfg = {}) {
+  const raw = cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.maxConcurrent;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(1, Math.floor(raw));
+  }
+  return 4;
+}
+
+function buildGenericParentOverrideCandidates(sessionKey) {
+  const raw = normalizeOptionalString(sessionKey);
+  if (!raw) {
+    return [];
+  }
+  for (const marker of [":channel:", ":group:", ":direct:"]) {
+    const index = normalizeLowercaseStringOrEmpty(raw).indexOf(marker);
+    if (index === -1) {
+      continue;
+    }
+    const conversation = raw.slice(index + marker.length);
+    const parsed = parseThreadSessionSuffix(conversation);
+    return buildChannelKeyCandidates(parsed.threadId ? parsed.baseSessionKey : conversation);
+  }
+  return [];
+}
+
+function buildModelSessionGroupCandidates(groupId) {
+  const raw = normalizeOptionalString(groupId);
+  if (!raw) {
+    return [];
+  }
+  const parentCandidates = [];
+  const topicIndex = normalizeLowercaseStringOrEmpty(raw).indexOf(":topic:");
+  if (topicIndex > 0) {
+    parentCandidates.push(raw.slice(0, topicIndex));
+  }
+  return buildChannelKeyCandidates(raw, ...parentCandidates);
+}
+
+function resolveModelSessionProviderEntries(modelByChannel, channel) {
+  const normalized =
+    normalizeMessageChannel(channel) || normalizeOptionalLowercaseString(channel) || "";
+  if (!modelByChannel || !normalized || typeof modelByChannel !== "object") {
+    return undefined;
+  }
+  if (modelByChannel[normalized] && typeof modelByChannel[normalized] === "object") {
+    return modelByChannel[normalized];
+  }
+  for (const [key, value] of Object.entries(modelByChannel)) {
+    const normalizedKey =
+      normalizeMessageChannel(key) || normalizeOptionalLowercaseString(key) || "";
+    if (normalizedKey === normalized && value && typeof value === "object") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function resolveChannelModelOverride(params = {}) {
+  const channel = normalizeOptionalString(params.channel);
+  if (!channel) {
+    return null;
+  }
+  const cfg = params.cfg || {};
+  const providerEntries = resolveModelSessionProviderEntries(
+    cfg.channels && cfg.channels.modelByChannel,
+    channel,
+  );
+  if (!providerEntries) {
+    return null;
+  }
+  const normalizedChannel =
+    normalizeMessageChannel(channel) || normalizeOptionalLowercaseString(channel) || "";
+  const directKeys = buildChannelKeyCandidates(
+    ...buildModelSessionGroupCandidates(params.groupId),
+    ...buildGenericParentOverrideCandidates(params.parentSessionKey),
+  );
+  const parentKeys = buildChannelKeyCandidates(
+    params.groupChannel,
+    typeof params.groupChannel === "string" ? params.groupChannel.replace(/^#/, "") : undefined,
+    typeof params.groupChannel === "string"
+      ? normalizeChannelSlug(params.groupChannel.replace(/^#/, ""))
+      : undefined,
+    params.groupSubject,
+    typeof params.groupSubject === "string" ? params.groupSubject.replace(/^#/, "") : undefined,
+    typeof params.groupSubject === "string"
+      ? normalizeChannelSlug(params.groupSubject.replace(/^#/, ""))
+      : undefined,
+  );
+  const match = resolveChannelEntryMatchWithFallback({
+    entries: providerEntries,
+    keys: directKeys,
+    parentKeys,
+    wildcardKey: "*",
+    normalizeKey: (value) => normalizeOptionalLowercaseString(value) || "",
+  });
+  const raw = match.entry || match.wildcardEntry;
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const model = normalizeOptionalString(raw);
+  if (!model) {
+    return null;
+  }
+  return {
+    channel: normalizedChannel,
+    model,
+    matchKey: match.matchKey,
+    matchSource: match.matchSource,
+  };
+}
+
+function applyModelOverrideToSessionEntry(params = {}) {
+  const entry = params.entry || {};
+  const selection = params.selection || {};
+  const profileOverride = params.profileOverride;
+  const profileOverrideSource = params.profileOverrideSource || "user";
+  const selectionSource = params.selectionSource || "user";
+  let updated = false;
+  let selectionUpdated = false;
+
+  if (selection.isDefault) {
+    if (entry.providerOverride) {
+      delete entry.providerOverride;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverride) {
+      delete entry.modelOverride;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverrideSource) {
+      delete entry.modelOverrideSource;
+      updated = true;
+    }
+  } else {
+    if (entry.providerOverride !== selection.provider) {
+      entry.providerOverride = selection.provider;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverride !== selection.model) {
+      entry.modelOverride = selection.model;
+      updated = true;
+      selectionUpdated = true;
+    }
+    if (entry.modelOverrideSource !== selectionSource) {
+      entry.modelOverrideSource = selectionSource;
+      updated = true;
+    }
+  }
+
+  const runtimeModel = normalizeOptionalString(entry.model) || "";
+  const runtimeProvider = normalizeOptionalString(entry.modelProvider) || "";
+  const runtimePresent = runtimeModel.length > 0 || runtimeProvider.length > 0;
+  const runtimeAligned =
+    runtimeModel === selection.model &&
+    (runtimeProvider.length === 0 || runtimeProvider === selection.provider);
+  if (runtimePresent && (selectionUpdated || !runtimeAligned)) {
+    if (entry.model !== undefined) {
+      delete entry.model;
+      updated = true;
+    }
+    if (entry.modelProvider !== undefined) {
+      delete entry.modelProvider;
+      updated = true;
+    }
+  }
+
+  if (
+    entry.contextTokens !== undefined &&
+    (selectionUpdated || (runtimePresent && !runtimeAligned))
+  ) {
+    delete entry.contextTokens;
+    updated = true;
+  }
+
+  if (profileOverride) {
+    if (entry.authProfileOverride !== profileOverride) {
+      entry.authProfileOverride = profileOverride;
+      updated = true;
+    }
+    if (entry.authProfileOverrideSource !== profileOverrideSource) {
+      entry.authProfileOverrideSource = profileOverrideSource;
+      updated = true;
+    }
+    if (entry.authProfileOverrideCompactionCount !== undefined) {
+      delete entry.authProfileOverrideCompactionCount;
+      updated = true;
+    }
+  } else {
+    if (entry.authProfileOverride) {
+      delete entry.authProfileOverride;
+      updated = true;
+    }
+    if (entry.authProfileOverrideSource) {
+      delete entry.authProfileOverrideSource;
+      updated = true;
+    }
+    if (entry.authProfileOverrideCompactionCount !== undefined) {
+      delete entry.authProfileOverrideCompactionCount;
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    if (selectionUpdated && params.markLiveSwitchPending) {
+      entry.liveModelSwitchPending = true;
+    }
+    delete entry.fallbackNoticeSelectedModel;
+    delete entry.fallbackNoticeActiveModel;
+    delete entry.fallbackNoticeReason;
+    entry.updatedAt = Date.now();
+  }
+
+  return { updated };
+}
+
+const modelSessionRuntime = {
+  applyModelOverrideToSessionEntry,
+  resolveAgentMaxConcurrent,
+  resolveChannelModelOverride,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -40063,6 +40287,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/host-runtime"
   ) {
     return hostRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/model-session-runtime" ||
+    request === "@openclaw/plugin-sdk/model-session-runtime"
+  ) {
+    return modelSessionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
