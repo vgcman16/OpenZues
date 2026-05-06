@@ -14492,6 +14492,8 @@ async def test_tools_invoke_imported_openclaw_approval_client_helpers(
         """
 const client = require("openclaw/plugin-sdk/approval-client-helpers");
 const scopedClient = require("@openclaw/plugin-sdk/approval-client-helpers");
+const runtimeClient = require("openclaw/plugin-sdk/approval-client-runtime");
+const scopedRuntimeClient = require("@openclaw/plugin-sdk/approval-client-runtime");
 
 const cfg = {
   approvals: {
@@ -14552,6 +14554,8 @@ module.exports = {
         return {
           keys: Object.keys(client).sort(),
           scopedType: typeof scopedClient.createChannelExecApprovalProfile,
+          runtimeKeys: Object.keys(runtimeClient).sort(),
+          runtimeScopedType: typeof scopedRuntimeClient.createChannelExecApprovalProfile,
           enabled: [
             client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 1 }),
             client.isChannelExecApprovalClientEnabledFromConfig({
@@ -14608,6 +14612,20 @@ module.exports = {
               agentFilter: ["main"]
             })
           ],
+          runtime: {
+            enabled:
+              runtimeClient.isChannelExecApprovalClientEnabledFromConfig({
+                enabled: "auto",
+                approverCount: 1
+              }) === true,
+            filters:
+              runtimeClient.matchesApprovalRequestFilters({
+                request: request.request,
+                agentFilter: ["ops"],
+                sessionFilter: ["tail$"]
+              }) === true,
+            metadata: runtimeClient.getExecApprovalReplyMetadata(approvalPayload) || null
+          },
           profile: {
             clientEnabled: profile.isClientEnabled({ cfg: {} }),
             approver: profile.isApprover({ cfg: {}, senderId: "owner" }),
@@ -14695,9 +14713,26 @@ module.exports = {
             "matchesApprovalRequestFilters",
         ],
         "scopedType": "function",
+        "runtimeKeys": [
+            "createChannelExecApprovalProfile",
+            "getExecApprovalReplyMetadata",
+            "isChannelExecApprovalClientEnabledFromConfig",
+            "isChannelExecApprovalTargetRecipient",
+            "matchesApprovalRequestFilters",
+        ],
+        "runtimeScopedType": "function",
         "enabled": [False, True, True, False, False],
         "targets": [True, False, False],
         "filters": [True, True, False],
+        "runtime": {
+            "enabled": True,
+            "filters": True,
+            "metadata": {
+                "approvalId": "req-1",
+                "approvalSlug": "req-1",
+                "approvalKind": "exec",
+            },
+        },
         "profile": {
             "clientEnabled": True,
             "approver": True,

@@ -43402,7 +43402,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
   }
   if (
     request === "openclaw/plugin-sdk/approval-client-helpers" ||
-    request === "@openclaw/plugin-sdk/approval-client-helpers"
+    request === "@openclaw/plugin-sdk/approval-client-helpers" ||
+    request === "openclaw/plugin-sdk/approval-client-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-client-runtime"
   ) {
     return approvalClientHelpersRuntime;
   }
