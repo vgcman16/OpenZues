@@ -41,8 +41,10 @@ checkpointed in `be724e3f` with the same evidence class; type-only SDK barrels
 `provider-model-types`, `qa-channel-protocol`, and `tts-runtime.types` are
 checkpointed in `fceeecc8`; `config-schema` from
 `src/plugin-sdk/config-schema.ts`, `src/config/zod-schema.ts`, and
-`src/plugins/schema-validator.ts` is checkpointed in `ae5489b2`. Count all with
-the plugin/extension system row above.
+`src/plugins/schema-validator.ts` is checkpointed in `ae5489b2`; `entrypoints`
+from `src/plugin-sdk/entrypoints.ts` and
+`scripts/lib/plugin-sdk-entrypoints.json` is checkpointed in `bd810f14`. Count
+all with the plugin/extension system row above.
 
 ## How To Use This Map
 

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~88.1% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~88.2% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1030,6 +1030,11 @@ may lag behind this tracker.
   JSON Schema value validation with required/additional-property, enum
   allowed-values, and default-application behavior.
   - Status: checkpointed in `ae5489b2`
+
+- [x] Imported plugin SDK entrypoints shim for canonical SDK entrypoint/subpath
+  arrays, bundled-facade/public-owned entrypoint lists, source/specifier/export
+  map builders, and expected dist artifact listing.
+  - Status: checkpointed in `bd810f14`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
