@@ -29655,6 +29655,175 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_context_visibility_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-context-visibility.cjs"
+    runtime_entry.write_text(
+        """
+const contextVisibility = require("openclaw/plugin-sdk/context-visibility-runtime");
+const scopedContextVisibility = require("@openclaw/plugin-sdk/context-visibility-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.context_visibility",
+      description: "Use OpenClaw context-visibility-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          channels: {
+            defaults: { contextVisibility: "allowlist_quote" },
+            slack: {
+              contextVisibility: "allowlist",
+              accounts: {
+                WORK: { contextVisibility: "all" }
+              }
+            }
+          }
+        };
+        const filtered = contextVisibility.filterSupplementalContextItems({
+          items: [
+            { id: "allowed", senderAllowed: true },
+            { id: "blocked", senderAllowed: false }
+          ],
+          mode: "allowlist",
+          kind: "thread",
+          isSenderAllowed: (item) => item.senderAllowed
+        });
+        return {
+          keys: Object.keys(contextVisibility).sort(),
+          scopedType: typeof scopedContextVisibility.evaluateSupplementalContextVisibility,
+          defaultMode: contextVisibility.resolveDefaultContextVisibility(cfg),
+          accountMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            accountId: "work"
+          }),
+          channelMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            accountId: "missing"
+          }),
+          fallbackMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "telegram"
+          }),
+          explicitMode: contextVisibility.resolveChannelContextVisibilityMode({
+            cfg,
+            channel: "slack",
+            configuredContextVisibility: "allowlist_quote"
+          }),
+          allDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "all",
+            kind: "history",
+            senderAllowed: false
+          }),
+          senderAllowedDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist",
+            kind: "thread",
+            senderAllowed: true
+          }),
+          quoteDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist_quote",
+            kind: "quote",
+            senderAllowed: false
+          }),
+          blockedDecision: contextVisibility.evaluateSupplementalContextVisibility({
+            mode: "allowlist_quote",
+            kind: "history",
+            senderAllowed: false
+          }),
+          shouldBlockHistory: contextVisibility.shouldIncludeSupplementalContext({
+            mode: "allowlist_quote",
+            kind: "history",
+            senderAllowed: false
+          }),
+          filtered
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-context-visibility-plugin",
+                    "name": "Runtime Context Visibility Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-imported-context-visibility-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.context_visibility"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.context_visibility"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "evaluateSupplementalContextVisibility",
+            "filterSupplementalContextItems",
+            "resolveChannelContextVisibilityMode",
+            "resolveDefaultContextVisibility",
+            "shouldIncludeSupplementalContext",
+        ],
+        "scopedType": "function",
+        "defaultMode": "allowlist_quote",
+        "accountMode": "all",
+        "channelMode": "allowlist",
+        "fallbackMode": "allowlist_quote",
+        "explicitMode": "allowlist_quote",
+        "allDecision": {"include": True, "reason": "mode_all"},
+        "senderAllowedDecision": {"include": True, "reason": "sender_allowed"},
+        "quoteDecision": {"include": True, "reason": "quote_override"},
+        "blockedDecision": {"include": False, "reason": "blocked"},
+        "shouldBlockHistory": False,
+        "filtered": {
+            "items": [{"id": "allowed", "senderAllowed": True}],
+            "omitted": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:

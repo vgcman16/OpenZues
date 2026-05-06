@@ -18270,6 +18270,67 @@ function resolveChannelAccountConfigBasePath(params) {
     : `channels.${params.channelKey}.`;
 }
 
+function resolveDefaultContextVisibility(cfg) {
+  return cfg && cfg.channels && cfg.channels.defaults
+    ? cfg.channels.defaults.contextVisibility
+    : undefined;
+}
+
+function resolveChannelContextVisibilityMode(params) {
+  if (params && params.configuredContextVisibility) {
+    return params.configuredContextVisibility;
+  }
+  const cfg = (params && params.cfg) || {};
+  const channels = cfg.channels || {};
+  const channelConfig = channels[params && params.channel];
+  const accountId = normalizeAccountId(params && params.accountId);
+  const accountEntry = resolveAccountEntry(
+    channelConfig && channelConfig.accounts,
+    accountId,
+  );
+  return (
+    (accountEntry && accountEntry.contextVisibility) ||
+    (channelConfig && channelConfig.contextVisibility) ||
+    resolveDefaultContextVisibility(cfg) ||
+    "all"
+  );
+}
+
+function evaluateSupplementalContextVisibility(params) {
+  if (params && params.mode === "all") {
+    return { include: true, reason: "mode_all" };
+  }
+  if (params && params.senderAllowed) {
+    return { include: true, reason: "sender_allowed" };
+  }
+  if (params && params.mode === "allowlist_quote" && params.kind === "quote") {
+    return { include: true, reason: "quote_override" };
+  }
+  return { include: false, reason: "blocked" };
+}
+
+function shouldIncludeSupplementalContext(params) {
+  return evaluateSupplementalContextVisibility(params).include;
+}
+
+function filterSupplementalContextItems(params) {
+  const items = Array.isArray(params && params.items) ? params.items : [];
+  const filtered = items.filter((item) =>
+    shouldIncludeSupplementalContext({
+      mode: params && params.mode,
+      kind: params && params.kind,
+      senderAllowed:
+        params && typeof params.isSenderAllowed === "function"
+          ? params.isSenderAllowed(item)
+          : false,
+    }),
+  );
+  return {
+    items: filtered,
+    omitted: items.length - filtered.length,
+  };
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -32545,6 +32606,14 @@ const configPathsRuntime = {
   resolveChannelAccountConfigBasePath,
 };
 
+const contextVisibilityRuntime = {
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  resolveChannelContextVisibilityMode,
+  resolveDefaultContextVisibility,
+  shouldIncludeSupplementalContext,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -43309,6 +43378,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/config-paths"
   ) {
     return configPathsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/context-visibility-runtime" ||
+    request === "@openclaw/plugin-sdk/context-visibility-runtime"
+  ) {
+    return contextVisibilityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
