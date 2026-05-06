@@ -14023,6 +14023,257 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_reply_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-reply.cjs"
+    runtime_entry.write_text(
+        """
+const reply = require("openclaw/plugin-sdk/approval-reply-runtime");
+const scopedReply = require("@openclaw/plugin-sdk/approval-reply-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_reply",
+      description: "Use OpenClaw approval reply runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const actions = reply.buildExecApprovalActionDescriptors({
+          approvalCommandId: "abc-1",
+          ask: "off"
+        });
+        const alwaysActions = reply.buildExecApprovalActionDescriptors({
+          approvalCommandId: "abc-1",
+          ask: "always"
+        });
+        const pending = reply.buildExecApprovalPendingReplyPayload({
+          warningText: "Careful",
+          approvalId: "approval-full-id",
+          approvalSlug: "abc-1",
+          ask: "always",
+          command: "npm test",
+          host: "gateway",
+          nodeId: "node-1",
+          agentId: "main",
+          sessionKey: "agent:main:main",
+          expiresAtMs: 65000,
+          nowMs: 5000
+        });
+        const pluginPending = reply.buildPluginApprovalPendingReplyPayload({
+          request: {
+            id: "plugin-approval-id",
+            request: {
+              pluginId: "demo-plugin",
+              title: "Use tool",
+              description: "Need permission",
+              severity: "warning"
+            },
+            createdAtMs: 0,
+            expiresAtMs: 120000
+          },
+          nowMs: 0,
+          text: "Plugin asks"
+        });
+        return {
+          keys: Object.keys(reply).sort(),
+          scopedType: typeof scopedReply.parseExecApprovalCommandText,
+          actions,
+          alwaysActions,
+          interactive: reply.buildApprovalInteractiveReplyFromActionDescriptors(
+            actions.slice(0, 2)
+          ),
+          parsed: [
+            reply.parseExecApprovalCommandText("/approve abc-1 allow-once"),
+            reply.parseExecApprovalCommandText("approve@OpenZues plugin:abc always"),
+            reply.parseExecApprovalCommandText("/reject abc")
+          ],
+          decisions: [
+            reply.resolveExecApprovalAllowedDecisions({ ask: "always" }),
+            reply.resolveExecApprovalAllowedDecisions({ ask: "on-miss" }),
+            reply.resolveExecApprovalRequestAllowedDecisions({
+              ask: "always",
+              allowedDecisions: ["deny", "bad", "allow-always"]
+            })
+          ],
+          display: reply.resolveExecApprovalCommandDisplay({
+            command: "echo hello",
+            commandPreview: "echo hi"
+          }),
+          metadata: reply.getExecApprovalReplyMetadata(pending),
+          pending: {
+            hasWarning: pending.text.includes("Careful"),
+            hasPrimaryCommand: pending.text.includes("/approve abc-1 allow-once"),
+            hidesAllowAlways: pending.text.includes("Allow Always is unavailable"),
+            hasExpires: pending.text.includes("Expires in: 1m"),
+            buttons: pending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          pluginMetadata: reply.getExecApprovalReplyMetadata(pluginPending),
+          approverDm: reply.getExecApprovalApproverDmNoticeText()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-reply-plugin",
+                    "name": "Runtime Approval Reply Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-reply.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_reply"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_reply"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildApprovalInteractiveReplyFromActionDescriptors",
+            "buildExecApprovalActionDescriptors",
+            "buildExecApprovalPendingReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "getExecApprovalApproverDmNoticeText",
+            "getExecApprovalReplyMetadata",
+            "parseExecApprovalCommandText",
+            "resolveExecApprovalAllowedDecisions",
+            "resolveExecApprovalCommandDisplay",
+            "resolveExecApprovalRequestAllowedDecisions",
+        ],
+        "scopedType": "function",
+        "actions": [
+            {
+                "decision": "allow-once",
+                "label": "Allow Once",
+                "style": "success",
+                "command": "/approve abc-1 allow-once",
+            },
+            {
+                "decision": "allow-always",
+                "label": "Allow Always",
+                "style": "primary",
+                "command": "/approve abc-1 allow-always",
+            },
+            {
+                "decision": "deny",
+                "label": "Deny",
+                "style": "danger",
+                "command": "/approve abc-1 deny",
+            },
+        ],
+        "alwaysActions": [
+            {
+                "decision": "allow-once",
+                "label": "Allow Once",
+                "style": "success",
+                "command": "/approve abc-1 allow-once",
+            },
+            {
+                "decision": "deny",
+                "label": "Deny",
+                "style": "danger",
+                "command": "/approve abc-1 deny",
+            },
+        ],
+        "interactive": {
+            "blocks": [
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {
+                            "label": "Allow Once",
+                            "value": "/approve abc-1 allow-once",
+                            "style": "success",
+                        },
+                        {
+                            "label": "Allow Always",
+                            "value": "/approve abc-1 allow-always",
+                            "style": "primary",
+                        },
+                    ],
+                }
+            ]
+        },
+        "parsed": [
+            {"approvalId": "abc-1", "decision": "allow-once"},
+            {"approvalId": "plugin:abc", "decision": "allow-always"},
+            None,
+        ],
+        "decisions": [
+            ["allow-once", "deny"],
+            ["allow-once", "allow-always", "deny"],
+            ["deny", "allow-always"],
+        ],
+        "display": {"commandText": "echo hello", "commandPreview": "echo hi"},
+        "metadata": {
+            "approvalId": "approval-full-id",
+            "approvalSlug": "abc-1",
+            "approvalKind": "exec",
+            "agentId": "main",
+            "allowedDecisions": ["allow-once", "deny"],
+            "sessionKey": "agent:main:main",
+        },
+        "pending": {
+            "hasWarning": True,
+            "hasPrimaryCommand": True,
+            "hidesAllowAlways": True,
+            "hasExpires": True,
+            "buttons": [
+                "/approve approval-full-id allow-once",
+                "/approve approval-full-id deny",
+            ],
+        },
+        "pluginMetadata": {
+            "approvalId": "plugin-approval-id",
+            "approvalSlug": "plugin-a",
+            "approvalKind": "plugin",
+            "allowedDecisions": ["allow-once", "allow-always", "deny"],
+        },
+        "approverDm": (
+            "Approval required. I sent approval DMs to the approvers for this account."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:

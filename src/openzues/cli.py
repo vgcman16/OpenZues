@@ -36243,6 +36243,353 @@ const approvalAuthRuntime = {
   resolveApprovalApprovers,
 };
 
+const DEFAULT_EXEC_APPROVAL_DECISIONS = ["allow-once", "allow-always", "deny"];
+
+function normalizeExecAsk(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "off" || normalized === "on-miss" || normalized === "always"
+    ? normalized
+    : null;
+}
+
+function resolveExecApprovalAllowedDecisions(params = {}) {
+  return normalizeExecAsk(params.ask) === "always"
+    ? ["allow-once", "deny"]
+    : [...DEFAULT_EXEC_APPROVAL_DECISIONS];
+}
+
+function resolveExecApprovalRequestAllowedDecisions(params = {}) {
+  const explicit = Array.isArray(params.allowedDecisions)
+    ? params.allowedDecisions.filter((decision) =>
+        DEFAULT_EXEC_APPROVAL_DECISIONS.includes(decision),
+      )
+    : [];
+  return explicit.length > 0
+    ? explicit
+    : resolveExecApprovalAllowedDecisions({ ask: params.ask });
+}
+
+function buildExecApprovalCommandText(params = {}) {
+  return `/approve ${params.approvalCommandId} ${params.decision}`;
+}
+
+function resolveApprovalReplyAllowedDecisions(params = {}) {
+  return Array.isArray(params.allowedDecisions)
+    ? resolveExecApprovalRequestAllowedDecisions({
+        allowedDecisions: params.allowedDecisions,
+      })
+    : resolveExecApprovalAllowedDecisions({ ask: params.ask });
+}
+
+function buildExecApprovalActionDescriptors(params = {}) {
+  const approvalCommandId = normalizeOptionalString(params.approvalCommandId) || "";
+  if (!approvalCommandId) {
+    return [];
+  }
+  const allowedDecisions = resolveApprovalReplyAllowedDecisions(params);
+  const descriptors = [];
+  if (allowedDecisions.includes("allow-once")) {
+    descriptors.push({
+      decision: "allow-once",
+      label: "Allow Once",
+      style: "success",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "allow-once",
+      }),
+    });
+  }
+  if (allowedDecisions.includes("allow-always")) {
+    descriptors.push({
+      decision: "allow-always",
+      label: "Allow Always",
+      style: "primary",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "allow-always",
+      }),
+    });
+  }
+  if (allowedDecisions.includes("deny")) {
+    descriptors.push({
+      decision: "deny",
+      label: "Deny",
+      style: "danger",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "deny",
+      }),
+    });
+  }
+  return descriptors;
+}
+
+function buildApprovalInteractiveReplyFromActionDescriptors(actions = []) {
+  const buttons = (Array.isArray(actions) ? actions : []).map((descriptor) => ({
+    label: descriptor.label,
+    value: descriptor.command,
+    style: descriptor.style,
+  }));
+  return buttons.length > 0 ? { blocks: [{ type: "buttons", buttons }] } : undefined;
+}
+
+function buildApprovalInteractiveReply(params = {}) {
+  return buildApprovalInteractiveReplyFromActionDescriptors(
+    buildExecApprovalActionDescriptors({
+      approvalCommandId: params.approvalId,
+      ask: params.ask,
+      allowedDecisions: params.allowedDecisions,
+    }),
+  );
+}
+
+function buildApprovalCommandFence(descriptors = []) {
+  return descriptors.length > 0
+    ? buildFence(descriptors.map((descriptor) => descriptor.command).join("\n"), "txt")
+    : null;
+}
+
+function buildFence(text, language) {
+  const value = String(text || "");
+  let fence = "```";
+  while (value.includes(fence)) {
+    fence += "`";
+  }
+  return `${fence}${language || ""}\n${value}\n${fence}`;
+}
+
+function formatExecApprovalExpiresIn(expiresAtMs, nowMs) {
+  const totalSeconds = Math.max(0, Math.round((expiresAtMs - nowMs) / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (hours === 0 && minutes < 5 && seconds > 0) {
+    parts.push(`${seconds}s`);
+  }
+  return parts.join(" ");
+}
+
+function buildExecApprovalPendingReplyPayload(params = {}) {
+  const approvalCommandId =
+    normalizeOptionalString(params.approvalCommandId) ||
+    normalizeOptionalString(params.approvalSlug) ||
+    "";
+  const approvalId = normalizeOptionalString(params.approvalId) || approvalCommandId;
+  const allowedDecisions = resolveApprovalReplyAllowedDecisions(params);
+  const descriptors = buildExecApprovalActionDescriptors({
+    approvalCommandId,
+    allowedDecisions,
+  });
+  const primaryAction = descriptors[0] || null;
+  const secondaryFence = buildApprovalCommandFence(descriptors.slice(1));
+  const lines = [];
+  const warningText = normalizeOptionalString(params.warningText);
+  if (warningText) {
+    lines.push(warningText);
+  }
+  lines.push("Approval required.");
+  if (primaryAction) {
+    lines.push("Run:");
+    lines.push(buildFence(primaryAction.command, "txt"));
+  }
+  lines.push("Pending command:");
+  lines.push(buildFence(params.command, "sh"));
+  if (secondaryFence) {
+    lines.push("Other options:");
+    lines.push(secondaryFence);
+  }
+  if (!allowedDecisions.includes("allow-always")) {
+    lines.push(
+      "The effective approval policy requires approval every time, so " +
+        "Allow Always is unavailable.",
+    );
+  }
+  const info = [];
+  info.push(`Host: ${normalizeOptionalString(params.host) || ""}`);
+  if (params.nodeId) {
+    info.push(`Node: ${params.nodeId}`);
+  }
+  if (params.cwd) {
+    info.push(`CWD: ${params.cwd}`);
+  }
+  if (typeof params.expiresAtMs === "number" && Number.isFinite(params.expiresAtMs)) {
+    info.push(
+      `Expires in: ${formatExecApprovalExpiresIn(params.expiresAtMs, params.nowMs || Date.now())}`,
+    );
+  }
+  info.push(`Full id: \`${approvalId}\``);
+  lines.push(info.join("\n"));
+  return {
+    text: lines.join("\n\n"),
+    interactive: buildApprovalInteractiveReply({ approvalId, allowedDecisions }),
+    channelData: {
+      execApproval: {
+        approvalId,
+        approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalCommandId,
+        approvalKind: "exec",
+        agentId: normalizeOptionalString(params.agentId),
+        allowedDecisions,
+        sessionKey: normalizeOptionalString(params.sessionKey),
+      },
+    },
+  };
+}
+
+function buildApprovalPendingReplyPayload(params = {}) {
+  const allowedDecisions = Array.isArray(params.allowedDecisions)
+    ? resolveExecApprovalRequestAllowedDecisions({
+        allowedDecisions: params.allowedDecisions,
+      })
+    : [...DEFAULT_EXEC_APPROVAL_DECISIONS];
+  return {
+    text: params.text,
+    interactive: buildApprovalInteractiveReply({
+      approvalId: params.approvalId,
+      allowedDecisions,
+    }),
+    channelData: {
+      execApproval: {
+        approvalId: params.approvalId,
+        approvalSlug: params.approvalSlug,
+        approvalKind: params.approvalKind || "exec",
+        agentId: normalizeOptionalString(params.agentId),
+        allowedDecisions,
+        sessionKey: normalizeOptionalString(params.sessionKey),
+        state: "pending",
+      },
+      ...(params.channelData || {}),
+    },
+  };
+}
+
+function buildPluginApprovalRequestMessage(request, nowMs) {
+  const payload = (request && request.request) || {};
+  const lines = [];
+  lines.push("Plugin approval required");
+  lines.push(`Title: ${payload.title || ""}`);
+  lines.push(`Description: ${payload.description || ""}`);
+  if (payload.toolName) {
+    lines.push(`Tool: ${payload.toolName}`);
+  }
+  if (payload.pluginId) {
+    lines.push(`Plugin: ${payload.pluginId}`);
+  }
+  if (payload.agentId) {
+    lines.push(`Agent: ${payload.agentId}`);
+  }
+  lines.push(`ID: ${(request && request.id) || ""}`);
+  const expiresAtMs = Number((request && request.expiresAtMs) || 0);
+  const expiresIn = Math.max(0, Math.round((expiresAtMs - nowMs) / 1000));
+  lines.push(`Expires in: ${expiresIn}s`);
+  lines.push("Reply with: /approve <id> allow-once|allow-always|deny");
+  return lines.join("\n");
+}
+
+function buildPluginApprovalPendingReplyPayload(params = {}) {
+  const request = params.request || {};
+  const approvalId = normalizeOptionalString(request.id) || "";
+  return buildApprovalPendingReplyPayload({
+    approvalKind: "plugin",
+    approvalId,
+    approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalId.slice(0, 8),
+    text:
+      params.text ||
+      buildPluginApprovalRequestMessage(request, Number(params.nowMs || Date.now())),
+    allowedDecisions: params.allowedDecisions,
+    channelData: params.channelData,
+  });
+}
+
+function getExecApprovalApproverDmNoticeText() {
+  return "Approval required. I sent approval DMs to the approvers for this account.";
+}
+
+function getExecApprovalReplyMetadata(payload = {}) {
+  const channelData = payload.channelData;
+  if (!channelData || typeof channelData !== "object" || Array.isArray(channelData)) {
+    return null;
+  }
+  const execApproval = channelData.execApproval;
+  if (!execApproval || typeof execApproval !== "object" || Array.isArray(execApproval)) {
+    return null;
+  }
+  const approvalId = normalizeOptionalString(execApproval.approvalId) || "";
+  const approvalSlug = normalizeOptionalString(execApproval.approvalSlug) || "";
+  if (!approvalId || !approvalSlug) {
+    return null;
+  }
+  const allowedDecisions = Array.isArray(execApproval.allowedDecisions)
+    ? execApproval.allowedDecisions.filter((decision) =>
+        DEFAULT_EXEC_APPROVAL_DECISIONS.includes(decision),
+      )
+    : undefined;
+  return {
+    approvalId,
+    approvalSlug,
+    approvalKind: execApproval.approvalKind === "plugin" ? "plugin" : "exec",
+    agentId: normalizeOptionalString(execApproval.agentId),
+    allowedDecisions,
+    sessionKey: normalizeOptionalString(execApproval.sessionKey),
+  };
+}
+
+function parseExecApprovalCommandText(raw) {
+  const trimmed = String(raw || "").trim();
+  const match = trimmed.match(
+    /^\/?approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+(allow-once|allow-always|always|deny)\b/i,
+  );
+  if (!match) {
+    return null;
+  }
+  const rawDecision = normalizeOptionalLowercaseString(match[2]) || "";
+  return {
+    approvalId: match[1],
+    decision: rawDecision === "always" ? "allow-always" : rawDecision,
+  };
+}
+
+function resolveExecApprovalCommandDisplay(request = {}) {
+  const commandTextSource =
+    request.command ||
+    (request.host === "node" && request.systemRunPlan
+      ? request.systemRunPlan.commandText
+      : "");
+  const commandText = String(commandTextSource || "").trim();
+  const previewSource =
+    request.commandPreview ??
+    (request.host === "node" && request.systemRunPlan
+      ? request.systemRunPlan.commandPreview
+      : null);
+  const preview = normalizeOptionalString(previewSource);
+  return {
+    commandText,
+    commandPreview: preview && preview !== commandText ? preview : null,
+  };
+}
+
+const approvalReplyRuntime = {
+  buildApprovalInteractiveReplyFromActionDescriptors,
+  buildExecApprovalActionDescriptors,
+  buildExecApprovalPendingReplyPayload,
+  buildPluginApprovalPendingReplyPayload,
+  getExecApprovalApproverDmNoticeText,
+  getExecApprovalReplyMetadata,
+  parseExecApprovalCommandText,
+  resolveExecApprovalAllowedDecisions,
+  resolveExecApprovalCommandDisplay,
+  resolveExecApprovalRequestAllowedDecisions,
+};
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -41497,6 +41844,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/approval-auth-runtime"
   ) {
     return approvalAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-reply-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-reply-runtime"
+  ) {
+    return approvalReplyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||
