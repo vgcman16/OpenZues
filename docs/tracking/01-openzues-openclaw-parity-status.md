@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~84.5% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~85.9% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -845,6 +845,88 @@ may lag behind this tracker.
   defaults, sandbox clamps, A2A policy checks, and policy error messages.
   - Status: checkpointed in `4e95bfcb`; gateway-backed spawned listing depth
     remains open
+
+- [x] Imported plugin SDK simple-completion-runtime helper shim for
+  deterministic `extractAssistantText` behavior.
+  - Status: checkpointed in `13a0fa6d`; broader completion model/auth
+    transport helpers remain open
+
+- [x] Imported plugin SDK approval-reply-runtime helper shim for approval
+  action descriptors, command parsing, pending reply payloads, and metadata
+  extraction.
+  - Status: checkpointed in `2215e898`; broader approval gateway/client/
+    delivery/native/handler runtimes remain open
+
+- [x] Imported plugin SDK approval-client-helpers shim for channel approval
+  enablement, target matching, request filtering, profile composition, and
+  local-prompt suppression.
+  - Status: checkpointed in `8a40507d`; broader approval gateway/delivery/
+    native/handler runtimes remain open
+
+- [x] Imported plugin SDK approval-delivery-helpers shim for channel approval
+  capability creation/splitting, native DM/channel delivery availability,
+  deprecated `approvals` surface aliasing, and forwarding fallback
+  suppression.
+  - Status: checkpointed in `d77756fa`; broader approval gateway/native/
+    handler runtimes remain open
+
+- [x] Imported plugin SDK approval-native-helpers shim for native approval
+  target comparison, channel origin target resolution, target normalization,
+  and approver-DM target mapping.
+  - Status: checkpointed in `51d8ecdc`; broader approval native runtime/
+    gateway/handler flows remain open
+
+- [x] Imported plugin SDK approval-native-runtime delivery-helper shim for
+  stable native target keys, origin/approver-DM delivery planning, target
+  dedupe, DM-only origin notices, prepared-target delivery dedupe, and
+  per-target error continuation.
+  - Status: checkpointed in `424e376a`; broader
+    `createChannelNativeApprovalRuntime` gateway/event lifecycle remains open
+
+- [x] Imported plugin SDK approval-handler-adapter-runtime shim for lazy native
+  runtime loading, eager availability checks, delegated presentation/
+  transport/interaction hooks, and loaded-runtime-only observe hooks.
+  - Status: checkpointed in `21aa746b`; broader approval handler runtime/
+    gateway lifecycle remains open
+
+- [x] Imported plugin SDK approval-handler-runtime adapter-factory shim for
+  canonical native runtime adapter construction while keeping broader handler
+  lifecycle functions fallback-safe and open.
+  - Status: checkpointed in `3434972a`; broader handler lifecycle/gateway
+    integration remains open
+
+- [x] Imported plugin SDK approval-runtime aggregate shim for composing the
+  already verified approval auth, reply, client, delivery, native helper, and
+  filter helpers through the upstream aggregate barrel.
+  - Status: checkpointed in `63554e0a`; broader approval gateway/native
+    handler lifecycle remains open
+
+- [x] Imported plugin SDK approval-gateway-runtime resolver shim for
+  exec/plugin approval gateway method selection, default display-name
+  projection, and not-found-only plugin fallback.
+  - Status: checkpointed in `29c62d3f`; broader native approval runtime/
+    handler lifecycle remains open
+
+- [x] Imported plugin SDK approval-native-runtime factory shim for creating
+  native approval runtimes with pending content delivery, active entry
+  tracking, and resolved finalization.
+  - Status: checkpointed in `67a72452`; expiration scheduling and capability
+    handler wrapper remain open
+
+- [x] Imported plugin SDK approval-handler-runtime wrapper shim for mapping
+  the upstream handler adapter shape onto the native approval runtime factory.
+  - Status: checkpointed in `e23b4e9e`; capability handler wrapper remains
+    open
+
+- [x] Imported plugin SDK approval-handler capability bridge shim for turning
+  channel approval capabilities into native approval handlers with pending/
+  resolved views, binding, observe hooks, and final update actions.
+  - Status: checkpointed in `6ea77847`; native expiration scheduling remains
+    open
+
+- [x] Imported plugin SDK approval-native-runtime expiration scheduling for
+  timer-based expiry finalization and timer cleanup on resolution/stop.
+  - Status: checkpointed in `fa7cacbd`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

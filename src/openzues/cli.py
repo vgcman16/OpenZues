@@ -27450,6 +27450,176 @@ function stripPlainTextToolCallBlocks(text) {
   return result;
 }
 
+function coerceChatContentText(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value == null) {
+    return "";
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint" ||
+    typeof value === "symbol"
+  ) {
+    return String(value);
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value) || "";
+    } catch (_error) {
+      return "";
+    }
+  }
+  return "";
+}
+
+function extractTextFromChatContent(content, opts = {}) {
+  const normalizeText =
+    opts.normalizeText || ((text) => text.replace(/\s+/g, " ").trim());
+  const joinWith = opts.joinWith || " ";
+  const sanitize = (text) => {
+    const raw = coerceChatContentText(text);
+    const sanitized = opts.sanitizeText ? opts.sanitizeText(raw) : raw;
+    return coerceChatContentText(sanitized);
+  };
+  const normalize = (text) =>
+    coerceChatContentText(normalizeText(coerceChatContentText(text)));
+
+  if (typeof content === "string") {
+    const value = sanitize(content);
+    const normalized = normalize(value);
+    return normalized ? normalized : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const chunks = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type !== "text") {
+      continue;
+    }
+    const value = sanitize(block.text);
+    if (value.trim()) {
+      chunks.push(value);
+    }
+  }
+
+  const joined = normalize(chunks.join(joinWith));
+  return joined ? joined : null;
+}
+
+function stripAssistantReasoningTags(text) {
+  if (!text || !/<\s*\/?\s*(?:antml:)?(?:think(?:ing)?|thought)\b/i.test(text)) {
+    return text;
+  }
+  return text.replace(
+    /<\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>[\s\S]*?<\s*\/\s*(?:antml:)?(?:think(?:ing)?|thought)\s*>/gi,
+    "",
+  );
+}
+
+function stripMinimaxToolCallXml(text) {
+  if (!text || !/minimax:tool_call/i.test(text)) {
+    return text;
+  }
+  return text.replace(
+    /<invoke\b[^>]*>[\s\S]*?<\/invoke>|<\/?minimax:tool_call>/gi,
+    "",
+  );
+}
+
+function stripAssistantToolCallXmlTags(text) {
+  if (
+    !text ||
+    !/<\s*\/?\s*(?:tool_call|tool_result|function_calls?|function|tool_calls)\b/i.test(text)
+  ) {
+    return text;
+  }
+  return text
+    .replace(
+      /<\s*(tool_call|tool_result|function_call|function_calls|function|tool_calls)\b[^>]*>[\s\S]*?<\s*\/\s*(?:\1|tool_call)\s*>/gi,
+      "",
+    )
+    .replace(
+      /<\s*(tool_call|tool_result|function_call|function_calls|tool_calls)\b[^>]*>[\s\S]*$/gi,
+      "",
+    );
+}
+
+function stripAssistantRelevantMemoriesTags(text) {
+  if (!text || !/<\s*\/?\s*relevant[-_]memories\b/i.test(text)) {
+    return text;
+  }
+  return text
+    .replace(
+      /<\s*relevant[-_]memories\b[^<>]*>[\s\S]*?<\s*\/\s*relevant[-_]memories\s*>/gi,
+      "",
+    )
+    .replace(/<\s*\/?\s*relevant[-_]memories\b[^<>]*>/gi, "");
+}
+
+function sanitizeAssistantVisibleText(text) {
+  let cleaned = coerceChatContentText(text);
+  cleaned = stripMinimaxToolCallXml(cleaned);
+  cleaned = stripAssistantRelevantMemoriesTags(cleaned);
+  cleaned = stripAssistantToolCallXmlTags(cleaned);
+  cleaned = stripPlainTextToolCallBlocks(cleaned);
+  cleaned = stripAssistantReasoningTags(cleaned);
+  return cleaned.trim();
+}
+
+function formatAssistantHttpErrorText(raw) {
+  const match = String(raw || "").match(/^(?:HTTP\s*)?(\d{3})[:\s-]+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  const code = Number(match[1]);
+  if (!Number.isFinite(code) || code < 400) {
+    return null;
+  }
+  return `HTTP ${code}: ${match[2].trim()}`;
+}
+
+function sanitizeUserFacingAssistantText(text, opts = {}) {
+  const raw = coerceChatContentText(text);
+  if (!raw) {
+    return raw;
+  }
+  let cleaned = raw.replace(/<\s*\/?\s*final\s*>/gi, "");
+  cleaned = stripAssistantToolCallXmlTags(stripMinimaxToolCallXml(cleaned));
+  cleaned = stripPlainTextToolCallBlocks(cleaned);
+  const trimmed = cleaned.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (opts.errorContext) {
+    const httpError = formatAssistantHttpErrorText(trimmed);
+    if (httpError) {
+      return httpError;
+    }
+  }
+  return cleaned.replace(/^(?:[ \t]*\r?\n)+/, "");
+}
+
+function extractAssistantText(msg = {}) {
+  const extracted =
+    extractTextFromChatContent(msg && msg.content, {
+      sanitizeText: (text) => sanitizeAssistantVisibleText(text),
+      joinWith: "\n",
+      normalizeText: (text) => text.trim(),
+    }) || "";
+  return sanitizeUserFacingAssistantText(extracted, {
+    errorContext: Boolean(msg && msg.stopReason === "error"),
+  });
+}
+
 function normalizeMessageChannel(raw) {
   const normalized = normalizeOptionalLowercaseString(raw);
   if (!normalized) {
@@ -36073,6 +36243,1846 @@ const approvalAuthRuntime = {
   resolveApprovalApprovers,
 };
 
+const DEFAULT_EXEC_APPROVAL_DECISIONS = ["allow-once", "allow-always", "deny"];
+
+function normalizeExecAsk(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "off" || normalized === "on-miss" || normalized === "always"
+    ? normalized
+    : null;
+}
+
+function resolveExecApprovalAllowedDecisions(params = {}) {
+  return normalizeExecAsk(params.ask) === "always"
+    ? ["allow-once", "deny"]
+    : [...DEFAULT_EXEC_APPROVAL_DECISIONS];
+}
+
+function resolveExecApprovalRequestAllowedDecisions(params = {}) {
+  const explicit = Array.isArray(params.allowedDecisions)
+    ? params.allowedDecisions.filter((decision) =>
+        DEFAULT_EXEC_APPROVAL_DECISIONS.includes(decision),
+      )
+    : [];
+  return explicit.length > 0
+    ? explicit
+    : resolveExecApprovalAllowedDecisions({ ask: params.ask });
+}
+
+function buildExecApprovalCommandText(params = {}) {
+  return `/approve ${params.approvalCommandId} ${params.decision}`;
+}
+
+function resolveApprovalReplyAllowedDecisions(params = {}) {
+  return Array.isArray(params.allowedDecisions)
+    ? resolveExecApprovalRequestAllowedDecisions({
+        allowedDecisions: params.allowedDecisions,
+      })
+    : resolveExecApprovalAllowedDecisions({ ask: params.ask });
+}
+
+function buildExecApprovalActionDescriptors(params = {}) {
+  const approvalCommandId = normalizeOptionalString(params.approvalCommandId) || "";
+  if (!approvalCommandId) {
+    return [];
+  }
+  const allowedDecisions = resolveApprovalReplyAllowedDecisions(params);
+  const descriptors = [];
+  if (allowedDecisions.includes("allow-once")) {
+    descriptors.push({
+      decision: "allow-once",
+      label: "Allow Once",
+      style: "success",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "allow-once",
+      }),
+    });
+  }
+  if (allowedDecisions.includes("allow-always")) {
+    descriptors.push({
+      decision: "allow-always",
+      label: "Allow Always",
+      style: "primary",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "allow-always",
+      }),
+    });
+  }
+  if (allowedDecisions.includes("deny")) {
+    descriptors.push({
+      decision: "deny",
+      label: "Deny",
+      style: "danger",
+      command: buildExecApprovalCommandText({
+        approvalCommandId,
+        decision: "deny",
+      }),
+    });
+  }
+  return descriptors;
+}
+
+function buildApprovalInteractiveReplyFromActionDescriptors(actions = []) {
+  const buttons = (Array.isArray(actions) ? actions : []).map((descriptor) => ({
+    label: descriptor.label,
+    value: descriptor.command,
+    style: descriptor.style,
+  }));
+  return buttons.length > 0 ? { blocks: [{ type: "buttons", buttons }] } : undefined;
+}
+
+function buildApprovalInteractiveReply(params = {}) {
+  return buildApprovalInteractiveReplyFromActionDescriptors(
+    buildExecApprovalActionDescriptors({
+      approvalCommandId: params.approvalId,
+      ask: params.ask,
+      allowedDecisions: params.allowedDecisions,
+    }),
+  );
+}
+
+function buildApprovalCommandFence(descriptors = []) {
+  return descriptors.length > 0
+    ? buildFence(descriptors.map((descriptor) => descriptor.command).join("\n"), "txt")
+    : null;
+}
+
+function buildFence(text, language) {
+  const value = String(text || "");
+  let fence = "```";
+  while (value.includes(fence)) {
+    fence += "`";
+  }
+  return `${fence}${language || ""}\n${value}\n${fence}`;
+}
+
+function formatExecApprovalExpiresIn(expiresAtMs, nowMs) {
+  const totalSeconds = Math.max(0, Math.round((expiresAtMs - nowMs) / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes}m`);
+  }
+  if (hours === 0 && minutes < 5 && seconds > 0) {
+    parts.push(`${seconds}s`);
+  }
+  return parts.join(" ");
+}
+
+function buildExecApprovalPendingReplyPayload(params = {}) {
+  const approvalCommandId =
+    normalizeOptionalString(params.approvalCommandId) ||
+    normalizeOptionalString(params.approvalSlug) ||
+    "";
+  const approvalId = normalizeOptionalString(params.approvalId) || approvalCommandId;
+  const allowedDecisions = resolveApprovalReplyAllowedDecisions(params);
+  const descriptors = buildExecApprovalActionDescriptors({
+    approvalCommandId,
+    allowedDecisions,
+  });
+  const primaryAction = descriptors[0] || null;
+  const secondaryFence = buildApprovalCommandFence(descriptors.slice(1));
+  const lines = [];
+  const warningText = normalizeOptionalString(params.warningText);
+  if (warningText) {
+    lines.push(warningText);
+  }
+  lines.push("Approval required.");
+  if (primaryAction) {
+    lines.push("Run:");
+    lines.push(buildFence(primaryAction.command, "txt"));
+  }
+  lines.push("Pending command:");
+  lines.push(buildFence(params.command, "sh"));
+  if (secondaryFence) {
+    lines.push("Other options:");
+    lines.push(secondaryFence);
+  }
+  if (!allowedDecisions.includes("allow-always")) {
+    lines.push(
+      "The effective approval policy requires approval every time, so " +
+        "Allow Always is unavailable.",
+    );
+  }
+  const info = [];
+  info.push(`Host: ${normalizeOptionalString(params.host) || ""}`);
+  if (params.nodeId) {
+    info.push(`Node: ${params.nodeId}`);
+  }
+  if (params.cwd) {
+    info.push(`CWD: ${params.cwd}`);
+  }
+  if (typeof params.expiresAtMs === "number" && Number.isFinite(params.expiresAtMs)) {
+    info.push(
+      `Expires in: ${formatExecApprovalExpiresIn(params.expiresAtMs, params.nowMs || Date.now())}`,
+    );
+  }
+  info.push(`Full id: \`${approvalId}\``);
+  lines.push(info.join("\n"));
+  return {
+    text: lines.join("\n\n"),
+    interactive: buildApprovalInteractiveReply({ approvalId, allowedDecisions }),
+    channelData: {
+      execApproval: {
+        approvalId,
+        approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalCommandId,
+        approvalKind: "exec",
+        agentId: normalizeOptionalString(params.agentId),
+        allowedDecisions,
+        sessionKey: normalizeOptionalString(params.sessionKey),
+      },
+    },
+  };
+}
+
+function buildApprovalPendingReplyPayload(params = {}) {
+  const allowedDecisions = Array.isArray(params.allowedDecisions)
+    ? resolveExecApprovalRequestAllowedDecisions({
+        allowedDecisions: params.allowedDecisions,
+      })
+    : [...DEFAULT_EXEC_APPROVAL_DECISIONS];
+  return {
+    text: params.text,
+    interactive: buildApprovalInteractiveReply({
+      approvalId: params.approvalId,
+      allowedDecisions,
+    }),
+    channelData: {
+      execApproval: {
+        approvalId: params.approvalId,
+        approvalSlug: params.approvalSlug,
+        approvalKind: params.approvalKind || "exec",
+        agentId: normalizeOptionalString(params.agentId),
+        allowedDecisions,
+        sessionKey: normalizeOptionalString(params.sessionKey),
+        state: "pending",
+      },
+      ...(params.channelData || {}),
+    },
+  };
+}
+
+function buildPluginApprovalRequestMessage(request, nowMs) {
+  const payload = (request && request.request) || {};
+  const lines = [];
+  lines.push("Plugin approval required");
+  lines.push(`Title: ${payload.title || ""}`);
+  lines.push(`Description: ${payload.description || ""}`);
+  if (payload.toolName) {
+    lines.push(`Tool: ${payload.toolName}`);
+  }
+  if (payload.pluginId) {
+    lines.push(`Plugin: ${payload.pluginId}`);
+  }
+  if (payload.agentId) {
+    lines.push(`Agent: ${payload.agentId}`);
+  }
+  lines.push(`ID: ${(request && request.id) || ""}`);
+  const expiresAtMs = Number((request && request.expiresAtMs) || 0);
+  const expiresIn = Math.max(0, Math.round((expiresAtMs - nowMs) / 1000));
+  lines.push(`Expires in: ${expiresIn}s`);
+  lines.push("Reply with: /approve <id> allow-once|allow-always|deny");
+  return lines.join("\n");
+}
+
+function buildPluginApprovalPendingReplyPayload(params = {}) {
+  const request = params.request || {};
+  const approvalId = normalizeOptionalString(request.id) || "";
+  return buildApprovalPendingReplyPayload({
+    approvalKind: "plugin",
+    approvalId,
+    approvalSlug: normalizeOptionalString(params.approvalSlug) || approvalId.slice(0, 8),
+    text:
+      params.text ||
+      buildPluginApprovalRequestMessage(request, Number(params.nowMs || Date.now())),
+    allowedDecisions: params.allowedDecisions,
+    channelData: params.channelData,
+  });
+}
+
+function getExecApprovalApproverDmNoticeText() {
+  return "Approval required. I sent approval DMs to the approvers for this account.";
+}
+
+function getExecApprovalReplyMetadata(payload = {}) {
+  const channelData = payload.channelData;
+  if (!channelData || typeof channelData !== "object" || Array.isArray(channelData)) {
+    return null;
+  }
+  const execApproval = channelData.execApproval;
+  if (!execApproval || typeof execApproval !== "object" || Array.isArray(execApproval)) {
+    return null;
+  }
+  const approvalId = normalizeOptionalString(execApproval.approvalId) || "";
+  const approvalSlug = normalizeOptionalString(execApproval.approvalSlug) || "";
+  if (!approvalId || !approvalSlug) {
+    return null;
+  }
+  const allowedDecisions = Array.isArray(execApproval.allowedDecisions)
+    ? execApproval.allowedDecisions.filter((decision) =>
+        DEFAULT_EXEC_APPROVAL_DECISIONS.includes(decision),
+      )
+    : undefined;
+  return {
+    approvalId,
+    approvalSlug,
+    approvalKind: execApproval.approvalKind === "plugin" ? "plugin" : "exec",
+    agentId: normalizeOptionalString(execApproval.agentId),
+    allowedDecisions,
+    sessionKey: normalizeOptionalString(execApproval.sessionKey),
+  };
+}
+
+function parseExecApprovalCommandText(raw) {
+  const trimmed = String(raw || "").trim();
+  const match = trimmed.match(
+    /^\/?approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+(allow-once|allow-always|always|deny)\b/i,
+  );
+  if (!match) {
+    return null;
+  }
+  const rawDecision = normalizeOptionalLowercaseString(match[2]) || "";
+  return {
+    approvalId: match[1],
+    decision: rawDecision === "always" ? "allow-always" : rawDecision,
+  };
+}
+
+function resolveExecApprovalCommandDisplay(request = {}) {
+  const commandTextSource =
+    request.command ||
+    (request.host === "node" && request.systemRunPlan
+      ? request.systemRunPlan.commandText
+      : "");
+  const commandText = String(commandTextSource || "").trim();
+  const previewSource =
+    request.commandPreview ??
+    (request.host === "node" && request.systemRunPlan
+      ? request.systemRunPlan.commandPreview
+      : null);
+  const preview = normalizeOptionalString(previewSource);
+  return {
+    commandText,
+    commandPreview: preview && preview !== commandText ? preview : null,
+  };
+}
+
+const approvalReplyRuntime = {
+  buildApprovalInteractiveReplyFromActionDescriptors,
+  buildExecApprovalActionDescriptors,
+  buildExecApprovalPendingReplyPayload,
+  buildPluginApprovalPendingReplyPayload,
+  getExecApprovalApproverDmNoticeText,
+  getExecApprovalReplyMetadata,
+  parseExecApprovalCommandText,
+  resolveExecApprovalAllowedDecisions,
+  resolveExecApprovalCommandDisplay,
+  resolveExecApprovalRequestAllowedDecisions,
+};
+
+function matchesApprovalRequestSessionFilter(sessionKey, patterns = []) {
+  const key = normalizeOptionalString(sessionKey);
+  if (!key) {
+    return false;
+  }
+  return patterns.some((pattern) => {
+    const value = normalizeOptionalString(pattern);
+    if (!value) {
+      return false;
+    }
+    if (key.includes(value)) {
+      return true;
+    }
+    try {
+      return new RegExp(value).test(key.slice(0, 8192));
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+function matchesApprovalRequestFilters(params = {}) {
+  const request = params.request || {};
+  if (Array.isArray(params.agentFilter) && params.agentFilter.length > 0) {
+    const explicitAgentId = normalizeOptionalString(request.agentId);
+    const sessionAgentId =
+      params.fallbackAgentIdFromSessionKey === true
+        ? parseAgentSessionKey(request.sessionKey)?.agentId
+        : undefined;
+    const agentId = explicitAgentId || sessionAgentId;
+    if (!agentId || !params.agentFilter.includes(agentId)) {
+      return false;
+    }
+  }
+  if (Array.isArray(params.sessionFilter) && params.sessionFilter.length > 0) {
+    const sessionKey = normalizeOptionalString(request.sessionKey);
+    if (!sessionKey || !matchesApprovalRequestSessionFilter(sessionKey, params.sessionFilter)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isApprovalTargetsMode(cfg = {}) {
+  const execApprovals = cfg.approvals && cfg.approvals.exec;
+  if (!execApprovals || execApprovals.enabled !== true) {
+    return false;
+  }
+  return execApprovals.mode === "targets" || execApprovals.mode === "both";
+}
+
+function isChannelExecApprovalClientEnabledFromConfig(params = {}) {
+  if (Number(params.approverCount || 0) <= 0) {
+    return false;
+  }
+  return params.enabled === true || params.enabled === "auto";
+}
+
+function isChannelExecApprovalTargetRecipient(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const normalizedSenderId =
+    params.senderId != null ? normalizeSenderId(params.senderId) : undefined;
+  const normalizedChannel = normalizeOptionalLowercaseString(params.channel);
+  if (!normalizedSenderId || !normalizedChannel || !isApprovalTargetsMode(params.cfg || {})) {
+    return false;
+  }
+  const targets = params.cfg?.approvals?.exec?.targets;
+  if (!Array.isArray(targets)) {
+    return false;
+  }
+  const normalizedAccountId =
+    params.accountId != null ? normalizeOptionalAccountId(params.accountId) : undefined;
+  return targets.some((target) => {
+    if (normalizeOptionalLowercaseString(target.channel) !== normalizedChannel) {
+      return false;
+    }
+    if (
+      normalizedAccountId &&
+      target.accountId &&
+      normalizeOptionalAccountId(target.accountId) !== normalizedAccountId
+    ) {
+      return false;
+    }
+    return params.matchTarget({
+      target,
+      normalizedSenderId,
+      normalizedAccountId,
+    });
+  });
+}
+
+function createChannelExecApprovalProfile(params = {}) {
+  const normalizeSenderId =
+    typeof params.normalizeSenderId === "function"
+      ? params.normalizeSenderId
+      : normalizeOptionalString;
+  const resolveConfig =
+    typeof params.resolveConfig === "function" ? params.resolveConfig : () => undefined;
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+
+  const isClientEnabled = (input = {}) => {
+    const config = resolveConfig(input);
+    return isChannelExecApprovalClientEnabledFromConfig({
+      enabled: config && config.enabled,
+      approverCount: resolveApprovers(input).length,
+    });
+  };
+  const isApprover = (input = {}) => {
+    const normalizedSenderId =
+      input.senderId != null ? normalizeSenderId(input.senderId) : undefined;
+    if (!normalizedSenderId) {
+      return false;
+    }
+    return resolveApprovers(input).includes(normalizedSenderId);
+  };
+  const isAuthorizedSender = (input = {}) =>
+    isApprover(input) || Boolean(params.isTargetRecipient && params.isTargetRecipient(input));
+  const resolveTarget = (input = {}) => {
+    const config = resolveConfig(input);
+    return (config && config.target) || "dm";
+  };
+  const shouldHandleRequest = (input = {}) => {
+    if (params.matchesRequestAccount && !params.matchesRequestAccount(input)) {
+      return false;
+    }
+    const config = resolveConfig(input);
+    const approverCount = resolveApprovers(input).length;
+    if (
+      !isChannelExecApprovalClientEnabledFromConfig({
+        enabled: config && config.enabled,
+        approverCount,
+      })
+    ) {
+      return false;
+    }
+    return matchesApprovalRequestFilters({
+      request: input.request && input.request.request,
+      agentFilter: config && config.agentFilter,
+      sessionFilter: config && config.sessionFilter,
+      fallbackAgentIdFromSessionKey: params.fallbackAgentIdFromSessionKey === true,
+    });
+  };
+  const shouldSuppressLocalPrompt = (input = {}) => {
+    if (params.requireClientEnabledForLocalPromptSuppression !== false && !isClientEnabled(input)) {
+      return false;
+    }
+    return getExecApprovalReplyMetadata(input.payload) !== null;
+  };
+
+  return {
+    isClientEnabled,
+    isApprover,
+    isAuthorizedSender,
+    resolveTarget,
+    shouldHandleRequest,
+    shouldSuppressLocalPrompt,
+  };
+}
+
+const approvalClientHelpersRuntime = {
+  createChannelExecApprovalProfile,
+  getExecApprovalReplyMetadata,
+  isChannelExecApprovalClientEnabledFromConfig,
+  isChannelExecApprovalTargetRecipient,
+  matchesApprovalRequestFilters,
+};
+
+function createChannelApprovalCapability(params = {}) {
+  const approvals = params.approvals || {};
+  return {
+    authorizeActorAction: params.authorizeActorAction,
+    getActionAvailabilityState: params.getActionAvailabilityState,
+    getExecInitiatingSurfaceState: params.getExecInitiatingSurfaceState,
+    resolveApproveCommandBehavior: params.resolveApproveCommandBehavior,
+    describeExecApprovalSetup: params.describeExecApprovalSetup,
+    delivery: params.delivery ?? approvals.delivery,
+    nativeRuntime: params.nativeRuntime ?? approvals.nativeRuntime,
+    render: params.render ?? approvals.render,
+    native: params.native ?? approvals.native,
+  };
+}
+
+function splitChannelApprovalCapability(capability = {}) {
+  return {
+    auth: {
+      authorizeActorAction: capability.authorizeActorAction,
+      getActionAvailabilityState: capability.getActionAvailabilityState,
+      getExecInitiatingSurfaceState: capability.getExecInitiatingSurfaceState,
+      resolveApproveCommandBehavior: capability.resolveApproveCommandBehavior,
+    },
+    delivery: capability.delivery,
+    nativeRuntime: capability.nativeRuntime,
+    render: capability.render,
+    native: capability.native,
+    describeExecApprovalSetup: capability.describeExecApprovalSetup,
+  };
+}
+
+function buildApprovalAvailabilityState(enabled) {
+  return enabled ? { kind: "enabled" } : { kind: "disabled" };
+}
+
+function normalizeApprovalDeliveryMode(value) {
+  const normalized = normalizeOptionalLowercaseString(value);
+  return normalized === "channel" || normalized === "both" ? normalized : "dm";
+}
+
+function normalizeApprovalPreferredSurface(mode) {
+  const normalized = normalizeApprovalDeliveryMode(mode);
+  return normalized === "channel"
+    ? "origin"
+    : normalized === "dm"
+      ? "approver-dm"
+      : "both";
+}
+
+function buildApproverRestrictedNativeApprovalCapability(params = {}) {
+  const channel = normalizeMessageChannel(params.channel) || params.channel;
+  const channelLabel = normalizeOptionalString(params.channelLabel) || channel || "this channel";
+  const listAccountIds =
+    typeof params.listAccountIds === "function" ? params.listAccountIds : () => [];
+  const hasApprovers =
+    typeof params.hasApprovers === "function" ? params.hasApprovers : () => false;
+  const isExecAuthorizedSender =
+    typeof params.isExecAuthorizedSender === "function"
+      ? params.isExecAuthorizedSender
+      : () => false;
+  const isPluginAuthorizedSender =
+    typeof params.isPluginAuthorizedSender === "function"
+      ? params.isPluginAuthorizedSender
+      : isExecAuthorizedSender;
+  const isNativeDeliveryEnabled =
+    typeof params.isNativeDeliveryEnabled === "function"
+      ? params.isNativeDeliveryEnabled
+      : () => false;
+  const resolveNativeDeliveryMode =
+    typeof params.resolveNativeDeliveryMode === "function"
+      ? params.resolveNativeDeliveryMode
+      : () => "dm";
+
+  const hasConfiguredApprovers = (input = {}) =>
+    Boolean(hasApprovers({ cfg: input.cfg, accountId: input.accountId }));
+  const isExecInitiatingSurfaceEnabled = (input = {}) =>
+    hasConfiguredApprovers(input) &&
+    Boolean(isNativeDeliveryEnabled({ cfg: input.cfg, accountId: input.accountId }));
+  const getExecInitiatingSurfaceState = (input = {}) =>
+    buildApprovalAvailabilityState(isExecInitiatingSurfaceEnabled(input));
+
+  return createChannelApprovalCapability({
+    authorizeActorAction(actionParams = {}) {
+      const approvalKind =
+        normalizeOptionalString(actionParams.approvalKind) === "plugin" ? "plugin" : "exec";
+      const authorized =
+        approvalKind === "plugin"
+          ? isPluginAuthorizedSender({
+              cfg: actionParams.cfg,
+              accountId: actionParams.accountId,
+              senderId: actionParams.senderId,
+            })
+          : isExecAuthorizedSender({
+              cfg: actionParams.cfg,
+              accountId: actionParams.accountId,
+              senderId: actionParams.senderId,
+            });
+      return authorized
+        ? { authorized: true }
+        : {
+            authorized: false,
+            reason:
+              `âŒ You are not authorized to approve ${approvalKind} ` +
+              `requests on ${channelLabel}.`,
+          };
+    },
+    getActionAvailabilityState(input = {}) {
+      return buildApprovalAvailabilityState(hasConfiguredApprovers(input));
+    },
+    getExecInitiatingSurfaceState,
+    describeExecApprovalSetup: params.describeExecApprovalSetup,
+    delivery: {
+      hasConfiguredDmRoute(input = {}) {
+        return listAccountIds(input.cfg).some((accountId) => {
+          if (!hasConfiguredApprovers({ cfg: input.cfg, accountId })) {
+            return false;
+          }
+          if (!isNativeDeliveryEnabled({ cfg: input.cfg, accountId })) {
+            return false;
+          }
+          const mode = normalizeApprovalDeliveryMode(
+            resolveNativeDeliveryMode({ cfg: input.cfg, accountId }),
+          );
+          return mode === "dm" || mode === "both";
+        });
+      },
+      shouldSuppressForwardingFallback(input = {}) {
+        const targetChannel =
+          normalizeMessageChannel(input.target && input.target.channel) ||
+          (input.target && input.target.channel);
+        if (targetChannel !== channel) {
+          return false;
+        }
+        if (params.requireMatchingTurnSourceChannel) {
+          const turnSourceChannel = normalizeMessageChannel(
+            input.request && input.request.request
+              ? input.request.request.turnSourceChannel
+              : undefined,
+          );
+          if (turnSourceChannel !== channel) {
+            return false;
+          }
+        }
+        const resolvedAccountId =
+          typeof params.resolveSuppressionAccountId === "function"
+            ? params.resolveSuppressionAccountId(input)
+            : undefined;
+        const rawAccountId =
+          resolvedAccountId === undefined
+            ? input.target && input.target.accountId
+            : resolvedAccountId;
+        const accountId = normalizeOptionalString(rawAccountId);
+        return Boolean(isNativeDeliveryEnabled({ cfg: input.cfg, accountId }));
+      },
+    },
+    native:
+      typeof params.resolveOriginTarget === "function" ||
+      typeof params.resolveApproverDmTargets === "function"
+        ? {
+            describeDeliveryCapabilities(input = {}) {
+              return {
+                enabled: isExecInitiatingSurfaceEnabled(input),
+                preferredSurface: normalizeApprovalPreferredSurface(
+                  resolveNativeDeliveryMode({ cfg: input.cfg, accountId: input.accountId }),
+                ),
+                supportsOriginSurface: typeof params.resolveOriginTarget === "function",
+                supportsApproverDmSurface:
+                  typeof params.resolveApproverDmTargets === "function",
+                notifyOriginWhenDmOnly: params.notifyOriginWhenDmOnly ?? false,
+              };
+            },
+            resolveOriginTarget: params.resolveOriginTarget,
+            resolveApproverDmTargets: params.resolveApproverDmTargets,
+          }
+        : undefined,
+    nativeRuntime: params.nativeRuntime,
+  });
+}
+
+function createApproverRestrictedNativeApprovalAdapter(params = {}) {
+  return splitChannelApprovalCapability(
+    buildApproverRestrictedNativeApprovalCapability(params),
+  );
+}
+
+function createApproverRestrictedNativeApprovalCapability(params = {}) {
+  return buildApproverRestrictedNativeApprovalCapability(params);
+}
+
+const approvalDeliveryHelpersRuntime = {
+  createApproverRestrictedNativeApprovalAdapter,
+  createApproverRestrictedNativeApprovalCapability,
+  createChannelApprovalCapability,
+  splitChannelApprovalCapability,
+};
+
+function nativeApprovalTargetsMatch(params = {}) {
+  const left = params.left || {};
+  const right = params.right || {};
+  return channelRouteTargetsMatchExact({
+    left: {
+      channel: params.channel,
+      to: left.to,
+      accountId: left.accountId,
+      threadId: left.threadId,
+    },
+    right: {
+      channel: params.channel,
+      to: right.to,
+      accountId: right.accountId,
+      threadId: right.threadId,
+    },
+  });
+}
+
+function isNativeApprovalTarget(value) {
+  return Boolean(value && typeof value === "object" && typeof value.to === "string");
+}
+
+function nativeApprovalTargetMatcher(channel) {
+  return (left, right) =>
+    isNativeApprovalTarget(left) &&
+    isNativeApprovalTarget(right) &&
+    nativeApprovalTargetsMatch({ channel, left, right });
+}
+
+function approvalRequestMatchesNativeChannelAccount(input = {}, channel) {
+  const request = (input.request && input.request.request) || {};
+  const expectedChannel = normalizeMessageChannel(channel);
+  const turnSourceChannel = normalizeMessageChannel(request.turnSourceChannel);
+  if (expectedChannel && turnSourceChannel && turnSourceChannel !== expectedChannel) {
+    return false;
+  }
+  const accountId =
+    input.accountId != null ? normalizeOptionalAccountId(input.accountId) : undefined;
+  const turnSourceAccountId =
+    request.turnSourceAccountId != null
+      ? normalizeOptionalAccountId(request.turnSourceAccountId)
+      : undefined;
+  if (accountId && turnSourceAccountId && accountId !== turnSourceAccountId) {
+    return false;
+  }
+  return true;
+}
+
+function createChannelNativeOriginTargetResolver(params = {}) {
+  const targetsMatch =
+    typeof params.targetsMatch === "function"
+      ? params.targetsMatch
+      : nativeApprovalTargetMatcher(params.channel);
+  return (input = {}) => {
+    if (params.shouldHandleRequest && !params.shouldHandleRequest(input)) {
+      return null;
+    }
+    if (!approvalRequestMatchesNativeChannelAccount(input, params.channel)) {
+      return null;
+    }
+    const request = input.request || {};
+    const normalizeTarget = (target) => {
+      if (!target) {
+        return null;
+      }
+      return params.normalizeTarget
+        ? (params.normalizeTarget(target, request) ?? null)
+        : target;
+    };
+    const normalizeTargetForMatch = (target) =>
+      params.normalizeTargetForMatch?.(target, request) ?? target;
+    const turnSourceTarget =
+      typeof params.resolveTurnSourceTarget === "function"
+        ? normalizeTarget(params.resolveTurnSourceTarget(request))
+        : null;
+    const embeddedSessionTarget =
+      input.sessionTarget || (request.request && request.request.sessionTarget);
+    const sessionTarget =
+      embeddedSessionTarget && typeof params.resolveSessionTarget === "function"
+        ? normalizeTarget(params.resolveSessionTarget(embeddedSessionTarget, request))
+        : null;
+    if (turnSourceTarget && sessionTarget) {
+      const normalizedLeft = normalizeTargetForMatch(turnSourceTarget);
+      const normalizedRight = normalizeTargetForMatch(sessionTarget);
+      if (!normalizedLeft || !normalizedRight || !targetsMatch(normalizedLeft, normalizedRight)) {
+        return null;
+      }
+    }
+    if (turnSourceTarget) {
+      return turnSourceTarget;
+    }
+    if (sessionTarget) {
+      return sessionTarget;
+    }
+    return typeof params.resolveFallbackTarget === "function"
+      ? normalizeTarget(params.resolveFallbackTarget(request))
+      : null;
+  };
+}
+
+function createChannelApproverDmTargetResolver(params = {}) {
+  const resolveApprovers =
+    typeof params.resolveApprovers === "function" ? params.resolveApprovers : () => [];
+  const mapApprover = typeof params.mapApprover === "function" ? params.mapApprover : () => null;
+  return (input = {}) => {
+    if (params.shouldHandleRequest && !params.shouldHandleRequest(input)) {
+      return [];
+    }
+    const targets = [];
+    const approvers = resolveApprovers({ cfg: input.cfg, accountId: input.accountId });
+    for (const approver of Array.isArray(approvers) ? approvers : []) {
+      const target = mapApprover(approver, input);
+      if (target) {
+        targets.push(target);
+      }
+    }
+    return targets;
+  };
+}
+
+const approvalNativeHelpersRuntime = {
+  createChannelApproverDmTargetResolver,
+  createChannelNativeOriginTargetResolver,
+  nativeApprovalTargetsMatch,
+};
+
+function buildChannelApprovalNativeTargetKey(target = {}) {
+  return channelRouteDedupeKey({
+    to: target.to,
+    threadId: target.threadId,
+  });
+}
+
+function dedupeNativeApprovalPlannedTargets(targets = []) {
+  const seen = new Set();
+  const deduped = [];
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const key = buildChannelApprovalNativeTargetKey(target.target || {});
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(target);
+  }
+  return deduped;
+}
+
+async function resolveChannelNativeApprovalDeliveryPlan(params = {}) {
+  const adapter = params.adapter;
+  if (!adapter || typeof adapter.describeDeliveryCapabilities !== "function") {
+    return {
+      targets: [],
+      originTarget: null,
+      notifyOriginWhenDmOnly: false,
+    };
+  }
+
+  const capabilities = await Promise.resolve(
+    adapter.describeDeliveryCapabilities({
+      cfg: params.cfg,
+      accountId: params.accountId,
+      approvalKind: params.approvalKind,
+      request: params.request,
+    }),
+  );
+  if (!capabilities || capabilities.enabled !== true) {
+    return {
+      targets: [],
+      originTarget: null,
+      notifyOriginWhenDmOnly: false,
+    };
+  }
+
+  const originTarget =
+    capabilities.supportsOriginSurface && typeof adapter.resolveOriginTarget === "function"
+      ? ((await Promise.resolve(
+          adapter.resolveOriginTarget({
+            cfg: params.cfg,
+            accountId: params.accountId,
+            approvalKind: params.approvalKind,
+            request: params.request,
+          }),
+        )) ?? null)
+      : null;
+  const approverDmTargets =
+    capabilities.supportsApproverDmSurface &&
+    typeof adapter.resolveApproverDmTargets === "function"
+      ? await Promise.resolve(
+          adapter.resolveApproverDmTargets({
+            cfg: params.cfg,
+            accountId: params.accountId,
+            approvalKind: params.approvalKind,
+            request: params.request,
+          }),
+        )
+      : [];
+
+  const plannedTargets = [];
+  const preferredSurface = capabilities.preferredSurface;
+  const preferOrigin = preferredSurface === "origin" || preferredSurface === "both";
+  const preferApproverDm =
+    preferredSurface === "approver-dm" || preferredSurface === "both";
+
+  if (preferOrigin && originTarget) {
+    plannedTargets.push({
+      surface: "origin",
+      target: originTarget,
+      reason: "preferred",
+    });
+  }
+  if (preferApproverDm) {
+    for (const target of Array.isArray(approverDmTargets) ? approverDmTargets : []) {
+      plannedTargets.push({
+        surface: "approver-dm",
+        target,
+        reason: "preferred",
+      });
+    }
+  } else if (!originTarget) {
+    for (const target of Array.isArray(approverDmTargets) ? approverDmTargets : []) {
+      plannedTargets.push({
+        surface: "approver-dm",
+        target,
+        reason: "fallback",
+      });
+    }
+  }
+
+  return {
+    targets: dedupeNativeApprovalPlannedTargets(plannedTargets),
+    originTarget,
+    notifyOriginWhenDmOnly:
+      preferredSurface === "approver-dm" &&
+      capabilities.notifyOriginWhenDmOnly === true &&
+      originTarget !== null,
+  };
+}
+
+async function deliverApprovalRequestViaChannelNativePlan(params = {}) {
+  const deliveryPlan = await resolveChannelNativeApprovalDeliveryPlan({
+    cfg: params.cfg,
+    accountId: params.accountId,
+    approvalKind: params.approvalKind,
+    request: params.request,
+    adapter: params.adapter,
+  });
+  const deliveredKeys = new Set();
+  const entries = [];
+  const deliveredTargets = [];
+
+  for (const plannedTarget of deliveryPlan.targets) {
+    try {
+      const preparedTarget =
+        typeof params.prepareTarget === "function"
+          ? await Promise.resolve(
+              params.prepareTarget({
+                plannedTarget,
+                request: params.request,
+              }),
+            )
+          : null;
+      if (!preparedTarget) {
+        continue;
+      }
+      if (deliveredKeys.has(preparedTarget.dedupeKey)) {
+        if (typeof params.onDuplicateSkipped === "function") {
+          params.onDuplicateSkipped({
+            plannedTarget,
+            preparedTarget,
+            request: params.request,
+          });
+        }
+        continue;
+      }
+      const entry =
+        typeof params.deliverTarget === "function"
+          ? await Promise.resolve(
+              params.deliverTarget({
+                plannedTarget,
+                preparedTarget: preparedTarget.target,
+                request: params.request,
+              }),
+            )
+          : null;
+      if (!entry) {
+        continue;
+      }
+      deliveredKeys.add(preparedTarget.dedupeKey);
+      entries.push(entry);
+      deliveredTargets.push(plannedTarget);
+      if (typeof params.onDelivered === "function") {
+        params.onDelivered({
+          plannedTarget,
+          preparedTarget,
+          request: params.request,
+          entry,
+        });
+      }
+    } catch (error) {
+      if (typeof params.onDeliveryError === "function") {
+        params.onDeliveryError({
+          error,
+          plannedTarget,
+          request: params.request,
+        });
+      }
+    }
+  }
+
+  return {
+    entries,
+    deliveryPlan,
+    deliveredTargets,
+  };
+}
+
+function defaultChannelApprovalKind(request = {}) {
+  const requestId = normalizeOptionalString(request.id) || "";
+  return requestId.startsWith("plugin:") ? "plugin" : "exec";
+}
+
+function createChannelNativeApprovalRuntime(adapter = {}) {
+  const activeEntries = new Map();
+  const activeTimers = new Map();
+  const nowMs = typeof adapter.nowMs === "function" ? adapter.nowMs : Date.now;
+  const resolveApprovalKind =
+    typeof adapter.resolveApprovalKind === "function"
+      ? adapter.resolveApprovalKind
+      : defaultChannelApprovalKind;
+  const label = normalizeOptionalString(adapter.label) || "native approval runtime";
+
+  return {
+    ...(adapter.eventKinds ? { eventKinds: adapter.eventKinds } : {}),
+    label,
+    clientDisplayName: adapter.clientDisplayName,
+    isConfigured: () =>
+      typeof adapter.isConfigured === "function" ? Boolean(adapter.isConfigured()) : true,
+    shouldHandle: (request) =>
+      typeof adapter.shouldHandle === "function" ? Boolean(adapter.shouldHandle(request)) : true,
+    async request(method, params) {
+      if (typeof adapter.request === "function") {
+        return await adapter.request(method, params);
+      }
+      throw new Error(`${label}: gateway client not connected`);
+    },
+    async start() {
+      if (typeof adapter.beforeGatewayClientStart === "function") {
+        await adapter.beforeGatewayClientStart();
+      }
+    },
+    async stop() {
+      for (const timer of activeTimers.values()) {
+        clearTimeout(timer);
+      }
+      activeTimers.clear();
+      activeEntries.clear();
+      if (typeof adapter.onStopped === "function") {
+        await adapter.onStopped();
+      }
+    },
+    async handleRequested(request) {
+      if (typeof adapter.shouldHandle === "function" && !adapter.shouldHandle(request)) {
+        return [];
+      }
+      const approvalKind = resolveApprovalKind(request);
+      const pendingContent =
+        typeof adapter.buildPendingContent === "function"
+          ? await adapter.buildPendingContent({
+              request,
+              approvalKind,
+              nowMs: nowMs(),
+            })
+          : undefined;
+      const deliveryResult = await deliverApprovalRequestViaChannelNativePlan({
+        cfg: adapter.cfg,
+        accountId: adapter.accountId,
+        approvalKind,
+        request,
+        adapter: adapter.nativeAdapter,
+        prepareTarget: async ({ plannedTarget, request }) =>
+          typeof adapter.prepareTarget === "function"
+            ? await adapter.prepareTarget({
+                plannedTarget,
+                request,
+                approvalKind,
+                pendingContent,
+              })
+            : null,
+        deliverTarget: async ({ plannedTarget, preparedTarget, request }) =>
+          typeof adapter.deliverTarget === "function"
+            ? await adapter.deliverTarget({
+                plannedTarget,
+                preparedTarget,
+                request,
+                approvalKind,
+                pendingContent,
+              })
+            : null,
+        onDeliveryError:
+          typeof adapter.onDeliveryError === "function"
+            ? ({ error, plannedTarget, request }) =>
+                adapter.onDeliveryError({
+                  error,
+                  plannedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                })
+            : undefined,
+        onDuplicateSkipped:
+          typeof adapter.onDuplicateSkipped === "function"
+            ? ({ plannedTarget, preparedTarget, request }) =>
+                adapter.onDuplicateSkipped({
+                  plannedTarget,
+                  preparedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                })
+            : undefined,
+        onDelivered:
+          typeof adapter.onDelivered === "function"
+            ? ({ plannedTarget, preparedTarget, request, entry }) =>
+                adapter.onDelivered({
+                  plannedTarget,
+                  preparedTarget,
+                  request,
+                  approvalKind,
+                  pendingContent,
+                  entry,
+                })
+            : undefined,
+      });
+      activeEntries.set(request.id, {
+        request,
+        entries: deliveryResult.entries,
+      });
+      const expiresAtMs = Number(request && request.expiresAtMs);
+      if (Number.isFinite(expiresAtMs) && typeof adapter.finalizeExpired === "function") {
+        const requestId = normalizeOptionalString(request.id);
+        if (requestId) {
+          const delayMs = Math.max(0, expiresAtMs - Number(nowMs()));
+          if (activeTimers.has(requestId)) {
+            clearTimeout(activeTimers.get(requestId));
+          }
+          const timer = setTimeout(async () => {
+            const active = activeEntries.get(requestId);
+            if (!active) {
+              activeTimers.delete(requestId);
+              return;
+            }
+            activeEntries.delete(requestId);
+            activeTimers.delete(requestId);
+            await adapter.finalizeExpired({
+              request: active.request,
+              entries: active.entries,
+            });
+          }, delayMs);
+          activeTimers.set(requestId, timer);
+        }
+      }
+      return deliveryResult.entries;
+    },
+    async handleResolved(resolved) {
+      const requestId = normalizeOptionalString(resolved && resolved.id);
+      const active = requestId ? activeEntries.get(requestId) : null;
+      if (!active) {
+        return undefined;
+      }
+      activeEntries.delete(requestId);
+      if (activeTimers.has(requestId)) {
+        clearTimeout(activeTimers.get(requestId));
+        activeTimers.delete(requestId);
+      }
+      if (typeof adapter.finalizeResolved === "function") {
+        return await adapter.finalizeResolved({
+          request: active.request,
+          resolved,
+          entries: active.entries,
+        });
+      }
+      return undefined;
+    },
+    async handleExpired(requestOrId) {
+      const requestId =
+        typeof requestOrId === "string"
+          ? normalizeOptionalString(requestOrId)
+          : normalizeOptionalString(requestOrId && requestOrId.id);
+      const active = requestId ? activeEntries.get(requestId) : null;
+      if (!active) {
+        return undefined;
+      }
+      activeEntries.delete(requestId);
+      if (activeTimers.has(requestId)) {
+        clearTimeout(activeTimers.get(requestId));
+        activeTimers.delete(requestId);
+      }
+      if (typeof adapter.finalizeExpired === "function") {
+        return await adapter.finalizeExpired({
+          request: active.request,
+          entries: active.entries,
+        });
+      }
+      return undefined;
+    },
+  };
+}
+
+const approvalNativeRuntime = {
+  buildChannelApprovalNativeTargetKey,
+  createChannelNativeApprovalRuntime,
+  createChannelApproverDmTargetResolver,
+  createChannelNativeOriginTargetResolver,
+  deliverApprovalRequestViaChannelNativePlan,
+  resolveChannelNativeApprovalDeliveryPlan,
+};
+
+const CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY = "approval.native";
+
+function isApprovalGatewayNotFoundError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const code =
+    normalizeOptionalString(error.gatewayCode) ||
+    normalizeOptionalString(error.code) ||
+    normalizeOptionalString(error.details && error.details.gatewayCode) ||
+    normalizeOptionalString(error.details && error.details.code) ||
+    normalizeOptionalString(error.data && error.data.gatewayCode) ||
+    normalizeOptionalString(error.data && error.data.code);
+  if (code === "APPROVAL_NOT_FOUND") {
+    return true;
+  }
+  return String(error.message || "").includes("unknown or expired approval id");
+}
+
+async function resolveApprovalOverGateway(params = {}) {
+  const withClient =
+    typeof params.withOperatorApprovalsGatewayClient === "function"
+      ? params.withOperatorApprovalsGatewayClient
+      : params.gatewayClient && typeof params.gatewayClient.request === "function"
+        ? async (_options, run) => await run(params.gatewayClient)
+        : typeof params.request === "function"
+          ? async (_options, run) => await run({ request: params.request })
+          : null;
+  if (!withClient) {
+    throw new Error("operator approvals gateway client unavailable");
+  }
+  const approvalId = normalizeOptionalString(params.approvalId) || "";
+  const decision = normalizeOptionalString(params.decision) || "";
+  const clientDisplayName =
+    normalizeOptionalString(params.clientDisplayName) ||
+    `Approval (${normalizeOptionalString(params.senderId) || "unknown"})`;
+  await withClient(
+    {
+      config: params.cfg,
+      gatewayUrl: params.gatewayUrl,
+      clientDisplayName,
+    },
+    async (gatewayClient) => {
+      const requestResolve = async (method) => {
+        await gatewayClient.request(method, {
+          id: approvalId,
+          decision,
+        });
+      };
+      if (approvalId.startsWith("plugin:")) {
+        await requestResolve("plugin.approval.resolve");
+        return;
+      }
+      try {
+        await requestResolve("exec.approval.resolve");
+      } catch (error) {
+        if (params.allowPluginFallback !== true || !isApprovalGatewayNotFoundError(error)) {
+          throw error;
+        }
+        await requestResolve("plugin.approval.resolve");
+      }
+    },
+  );
+}
+
+const approvalGatewayRuntime = {
+  resolveApprovalOverGateway,
+};
+
+function createLazyRuntimeModuleLoader(load) {
+  let runtimePromise = null;
+  return () => {
+    if (!runtimePromise) {
+      runtimePromise = Promise.resolve(load());
+    }
+    return runtimePromise;
+  };
+}
+
+function createLazyChannelApprovalNativeRuntimeAdapter(params = {}) {
+  const loadRuntime = createLazyRuntimeModuleLoader(params.load || (() => ({})));
+  let loadedRuntime = null;
+  const loadResolvedRuntime = async () => {
+    const runtime = await loadRuntime();
+    loadedRuntime = runtime;
+    return runtime;
+  };
+  const loadRequired = async (select) => select(await loadResolvedRuntime());
+  const loadOptional = async (select) => select(await loadResolvedRuntime());
+  const isConfigured =
+    typeof params.isConfigured === "function" ? params.isConfigured : () => false;
+  const shouldHandle =
+    typeof params.shouldHandle === "function" ? params.shouldHandle : () => false;
+
+  return {
+    ...(params.eventKinds ? { eventKinds: params.eventKinds } : {}),
+    ...(params.resolveApprovalKind ? { resolveApprovalKind: params.resolveApprovalKind } : {}),
+    availability: {
+      isConfigured,
+      shouldHandle,
+    },
+    presentation: {
+      buildPendingPayload: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildPendingPayload))(
+          runtimeParams,
+        ),
+      buildResolvedResult: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildResolvedResult))(
+          runtimeParams,
+        ),
+      buildExpiredResult: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.presentation.buildExpiredResult))(
+          runtimeParams,
+        ),
+    },
+    transport: {
+      prepareTarget: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.transport.prepareTarget))(runtimeParams),
+      deliverPending: async (runtimeParams) =>
+        (await loadRequired((runtime) => runtime.transport.deliverPending))(runtimeParams),
+      updateEntry: async (runtimeParams) => {
+        const updateEntry = await loadOptional((runtime) => runtime.transport.updateEntry);
+        return updateEntry ? await updateEntry(runtimeParams) : undefined;
+      },
+      deleteEntry: async (runtimeParams) => {
+        const deleteEntry = await loadOptional((runtime) => runtime.transport.deleteEntry);
+        return deleteEntry ? await deleteEntry(runtimeParams) : undefined;
+      },
+    },
+    interactions: {
+      bindPending: async (runtimeParams) => {
+        const bindPending = await loadOptional((runtime) => runtime.interactions?.bindPending);
+        return bindPending ? await bindPending(runtimeParams) : null;
+      },
+      unbindPending: async (runtimeParams) => {
+        const unbindPending = await loadOptional(
+          (runtime) => runtime.interactions?.unbindPending,
+        );
+        return unbindPending ? await unbindPending(runtimeParams) : undefined;
+      },
+      clearPendingActions: async (runtimeParams) => {
+        const clearPendingActions = await loadOptional(
+          (runtime) => runtime.interactions?.clearPendingActions,
+        );
+        return clearPendingActions ? await clearPendingActions(runtimeParams) : undefined;
+      },
+    },
+    observe: {
+      onDeliveryError: (runtimeParams) =>
+        loadedRuntime?.observe?.onDeliveryError?.(runtimeParams),
+      onDuplicateSkipped: (runtimeParams) =>
+        loadedRuntime?.observe?.onDuplicateSkipped?.(runtimeParams),
+      onDelivered: (runtimeParams) => loadedRuntime?.observe?.onDelivered?.(runtimeParams),
+    },
+  };
+}
+
+const approvalHandlerAdapterRuntime = {
+  CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+  createLazyChannelApprovalNativeRuntimeAdapter,
+};
+
+function createChannelApprovalNativeRuntimeAdapter(spec = {}) {
+  const availability = spec.availability || {};
+  const presentation = spec.presentation || {};
+  const transport = spec.transport || {};
+  const interactions = spec.interactions || null;
+  const observe = spec.observe || null;
+  const runtime = {
+    ...(spec.eventKinds ? { eventKinds: spec.eventKinds } : {}),
+    ...(spec.resolveApprovalKind ? { resolveApprovalKind: spec.resolveApprovalKind } : {}),
+    availability: {
+      isConfigured:
+        typeof availability.isConfigured === "function"
+          ? availability.isConfigured
+          : () => false,
+      shouldHandle:
+        typeof availability.shouldHandle === "function" ? availability.shouldHandle : () => false,
+    },
+    presentation: {
+      buildPendingPayload: async (params) =>
+        await presentation.buildPendingPayload(params),
+      buildResolvedResult: async (params) =>
+        await presentation.buildResolvedResult(params),
+      buildExpiredResult: async (params) => await presentation.buildExpiredResult(params),
+    },
+    transport: {
+      prepareTarget: async (params) => await transport.prepareTarget(params),
+      deliverPending: async (params) => await transport.deliverPending(params),
+      ...(typeof transport.updateEntry === "function"
+        ? { updateEntry: async (params) => await transport.updateEntry(params) }
+        : {}),
+      ...(typeof transport.deleteEntry === "function"
+        ? { deleteEntry: async (params) => await transport.deleteEntry(params) }
+        : {}),
+    },
+  };
+  if (interactions) {
+    runtime.interactions = {
+      ...(typeof interactions.bindPending === "function"
+        ? { bindPending: async (params) => (await interactions.bindPending(params)) ?? null }
+        : {}),
+      ...(typeof interactions.unbindPending === "function"
+        ? { unbindPending: async (params) => await interactions.unbindPending(params) }
+        : {}),
+      ...(typeof interactions.clearPendingActions === "function"
+        ? {
+            clearPendingActions: async (params) =>
+              await interactions.clearPendingActions(params),
+          }
+        : {}),
+    };
+  }
+  if (observe) {
+    runtime.observe = {
+      ...(typeof observe.onDeliveryError === "function"
+        ? { onDeliveryError: (params) => observe.onDeliveryError(params) }
+        : {}),
+      ...(typeof observe.onDuplicateSkipped === "function"
+        ? { onDuplicateSkipped: (params) => observe.onDuplicateSkipped(params) }
+        : {}),
+      ...(typeof observe.onDelivered === "function"
+        ? { onDelivered: (params) => observe.onDelivered(params) }
+        : {}),
+    };
+  }
+  return runtime;
+}
+
+function createChannelApprovalHandler(adapter = {}) {
+  const runtime = adapter.runtime || {};
+  const content = adapter.content || {};
+  const transport = adapter.transport || {};
+  const lifecycle = adapter.lifecycle || {};
+  return createChannelNativeApprovalRuntime({
+    label: runtime.label,
+    clientDisplayName: runtime.clientDisplayName,
+    cfg: runtime.cfg,
+    gatewayUrl: runtime.gatewayUrl,
+    eventKinds: runtime.eventKinds,
+    channel: runtime.channel,
+    channelLabel: runtime.channelLabel,
+    accountId: runtime.accountId,
+    nativeAdapter: runtime.nativeAdapter,
+    resolveApprovalKind: runtime.resolveApprovalKind,
+    isConfigured: runtime.isConfigured,
+    shouldHandle: runtime.shouldHandle,
+    nowMs: runtime.nowMs,
+    buildPendingContent: content.buildPendingContent,
+    prepareTarget: transport.prepareTarget,
+    deliverTarget: transport.deliverTarget,
+    onDeliveryError: lifecycle.onDeliveryError,
+    onDuplicateSkipped: lifecycle.onDuplicateSkipped,
+    onDelivered: lifecycle.onDelivered,
+    finalizeResolved: lifecycle.finalizeResolved,
+    finalizeExpired: lifecycle.finalizeExpired,
+    onStopped: lifecycle.onStopped,
+  });
+}
+
+function buildPendingApprovalView(request = {}) {
+  const requestId = normalizeOptionalString(request.id) || "";
+  const payload = request.request || {};
+  if (requestId.startsWith("plugin:")) {
+    return {
+      approvalId: requestId,
+      approvalKind: "plugin",
+      phase: "pending",
+      title: normalizeOptionalString(payload.title) || "Plugin approval",
+      description: normalizeOptionalString(payload.description),
+      metadata: [],
+      agentId: normalizeOptionalString(payload.agentId),
+      pluginId: normalizeOptionalString(payload.pluginId),
+      toolName: normalizeOptionalString(payload.toolName),
+      severity: normalizeOptionalString(payload.severity) || "warning",
+      actions: buildExecApprovalActionDescriptors({ approvalCommandId: requestId }),
+      expiresAtMs: request.expiresAtMs,
+    };
+  }
+  const display = resolveExecApprovalCommandDisplay(payload);
+  return {
+    approvalId: requestId,
+    approvalKind: "exec",
+    phase: "pending",
+    title: "Exec Approval Required",
+    description: "A command needs your approval.",
+    metadata: [],
+    ask: normalizeOptionalString(payload.ask),
+    agentId: normalizeOptionalString(payload.agentId),
+    warningText: normalizeOptionalString(payload.warningText),
+    commandText: display.commandText,
+    commandPreview: display.commandPreview,
+    cwd: normalizeOptionalString(payload.cwd),
+    envKeys: Array.isArray(payload.envKeys) ? payload.envKeys : undefined,
+    host: normalizeOptionalString(payload.host),
+    nodeId: normalizeOptionalString(payload.nodeId),
+    sessionKey: normalizeOptionalString(payload.sessionKey),
+    actions: buildExecApprovalActionDescriptors({
+      approvalCommandId: requestId,
+      ask: payload.ask,
+      allowedDecisions: payload.allowedDecisions,
+    }),
+    expiresAtMs: request.expiresAtMs,
+  };
+}
+
+function buildResolvedApprovalView(request = {}, resolved = {}) {
+  const pendingView = buildPendingApprovalView(request);
+  const view = {
+    ...pendingView,
+    phase: "resolved",
+    decision: resolved.decision,
+    resolvedBy: normalizeOptionalString(resolved.resolvedBy),
+  };
+  delete view.actions;
+  delete view.expiresAtMs;
+  return view;
+}
+
+function buildExpiredApprovalView(request = {}) {
+  const pendingView = buildPendingApprovalView(request);
+  const view = {
+    ...pendingView,
+    phase: "expired",
+  };
+  delete view.actions;
+  delete view.expiresAtMs;
+  return view;
+}
+
+async function applyChannelApprovalFinalAction(params = {}) {
+  const result = params.result || {};
+  if (result.kind === "update") {
+    await params.nativeRuntime.transport.updateEntry?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      payload: result.payload,
+      phase: params.phase,
+    });
+  } else if (result.kind === "delete") {
+    await params.nativeRuntime.transport.deleteEntry?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      phase: params.phase,
+    });
+  } else if (result.kind === "clear-actions") {
+    await params.nativeRuntime.interactions?.clearPendingActions?.({
+      ...params.baseContext,
+      entry: params.wrapped.entry,
+      phase: params.phase,
+    });
+  }
+}
+
+async function createChannelApprovalHandlerFromCapability(params = {}) {
+  const nativeRuntime = params.capability && params.capability.nativeRuntime;
+  if (!nativeRuntime) {
+    return null;
+  }
+  const resolveApprovalKind =
+    nativeRuntime.resolveApprovalKind || defaultChannelApprovalKind;
+  const baseContext = {
+    cfg: params.cfg,
+    accountId: params.accountId,
+    gatewayUrl: params.gatewayUrl,
+    context: params.context,
+  };
+  return createChannelApprovalHandler({
+    runtime: {
+      label: params.label,
+      clientDisplayName: params.clientDisplayName,
+      cfg: params.cfg,
+      gatewayUrl: params.gatewayUrl,
+      eventKinds: nativeRuntime.eventKinds,
+      channel: params.channel,
+      channelLabel: params.channelLabel,
+      accountId: params.accountId,
+      nativeAdapter: params.capability.native,
+      resolveApprovalKind,
+      isConfigured: () => nativeRuntime.availability.isConfigured(baseContext),
+      shouldHandle: (request) =>
+        nativeRuntime.availability.shouldHandle({ ...baseContext, request }),
+      nowMs: params.nowMs,
+    },
+    content: {
+      buildPendingContent: async ({ request, approvalKind, nowMs }) => {
+        const view = buildPendingApprovalView(request);
+        return {
+          view,
+          payload: await nativeRuntime.presentation.buildPendingPayload({
+            ...baseContext,
+            request,
+            approvalKind,
+            nowMs,
+            view,
+          }),
+        };
+      },
+    },
+    transport: {
+      prepareTarget: async ({ plannedTarget, request, approvalKind, pendingContent }) =>
+        await nativeRuntime.transport.prepareTarget({
+          ...baseContext,
+          plannedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      deliverTarget: async ({
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) => {
+        const entry = await nativeRuntime.transport.deliverPending({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        });
+        if (!entry) {
+          return null;
+        }
+        const binding = await nativeRuntime.interactions?.bindPending?.({
+          ...baseContext,
+          entry,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        });
+        return {
+          entry,
+          ...(binding === undefined || binding === null ? {} : { binding }),
+        };
+      },
+    },
+    lifecycle: {
+      onDeliveryError: ({ error, plannedTarget, request, approvalKind, pendingContent }) =>
+        nativeRuntime.observe?.onDeliveryError?.({
+          ...baseContext,
+          error,
+          plannedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      onDuplicateSkipped: ({
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) =>
+        nativeRuntime.observe?.onDuplicateSkipped?.({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+        }),
+      onDelivered: ({
+        entry,
+        plannedTarget,
+        preparedTarget,
+        request,
+        approvalKind,
+        pendingContent,
+      }) =>
+        nativeRuntime.observe?.onDelivered?.({
+          ...baseContext,
+          plannedTarget,
+          preparedTarget,
+          request,
+          approvalKind,
+          view: pendingContent.view,
+          pendingPayload: pendingContent.payload,
+          entry: entry.entry,
+        }),
+      finalizeResolved: async ({ request, resolved, entries }) => {
+        const approvalKind = resolveApprovalKind(request);
+        const view = buildResolvedApprovalView(request, resolved);
+        for (const wrapped of entries) {
+          if (wrapped.binding !== undefined) {
+            await nativeRuntime.interactions?.unbindPending?.({
+              ...baseContext,
+              entry: wrapped.entry,
+              binding: wrapped.binding,
+              request,
+              approvalKind,
+            });
+          }
+          const result = await nativeRuntime.presentation.buildResolvedResult({
+            ...baseContext,
+            request,
+            resolved,
+            view,
+            entry: wrapped.entry,
+          });
+          await applyChannelApprovalFinalAction({
+            nativeRuntime,
+            baseContext,
+            wrapped,
+            result,
+            phase: "resolved",
+          });
+        }
+      },
+      finalizeExpired: async ({ request, entries }) => {
+        const approvalKind = resolveApprovalKind(request);
+        const view = buildExpiredApprovalView(request);
+        for (const wrapped of entries) {
+          if (wrapped.binding !== undefined) {
+            await nativeRuntime.interactions?.unbindPending?.({
+              ...baseContext,
+              entry: wrapped.entry,
+              binding: wrapped.binding,
+              request,
+              approvalKind,
+            });
+          }
+          const result = await nativeRuntime.presentation.buildExpiredResult({
+            ...baseContext,
+            request,
+            view,
+            entry: wrapped.entry,
+          });
+          await applyChannelApprovalFinalAction({
+            nativeRuntime,
+            baseContext,
+            wrapped,
+            result,
+            phase: "expired",
+          });
+        }
+      },
+    },
+  });
+}
+
+const approvalHandlerRuntime = new Proxy(
+  {
+    CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+    createChannelApprovalHandler,
+    createChannelApprovalHandlerFromCapability,
+    createChannelApprovalNativeRuntimeAdapter,
+    createLazyChannelApprovalNativeRuntimeAdapter,
+    resolveApprovalOverGateway,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
+const approvalRuntimeAggregate = new Proxy(
+  {
+    buildApprovalPendingReplyPayload,
+    buildExecApprovalPendingReplyPayload,
+    buildPluginApprovalPendingReplyPayload,
+    createApproverRestrictedNativeApprovalAdapter,
+    createApproverRestrictedNativeApprovalCapability,
+    createChannelApprovalCapability,
+    createChannelApproverDmTargetResolver,
+    createChannelExecApprovalProfile,
+    createChannelNativeApprovalRuntime,
+    createChannelNativeOriginTargetResolver,
+    createResolvedApproverActionAuthAdapter,
+    getExecApprovalApproverDmNoticeText,
+    getExecApprovalReplyMetadata,
+    isChannelExecApprovalClientEnabledFromConfig,
+    isChannelExecApprovalTargetRecipient,
+    matchesApprovalRequestFilters,
+    matchesApprovalRequestSessionFilter,
+    resolveApprovalApprovers,
+    resolveExecApprovalAllowedDecisions,
+    resolveExecApprovalCommandDisplay,
+    resolveExecApprovalRequestAllowedDecisions,
+    splitChannelApprovalCapability,
+  },
+  {
+    get(target, prop) {
+      if (prop in target) {
+        return target[prop];
+      }
+      if (prop === "default") {
+        return target;
+      }
+      return passthrough;
+    },
+  },
+);
+
 const providerAuthFacadeRuntime = {
   CLAUDE_CLI_PROFILE_ID: "claude-cli",
   CODEX_CLI_PROFILE_ID: "codex-cli",
@@ -40287,6 +42297,10 @@ const runCommandRuntime = {
   runPluginCommandWithTimeout,
 };
 
+const simpleCompletionRuntime = {
+  extractAssistantText,
+};
+
 const channelSetupRuntime = {
   DEFAULT_ACCOUNT_ID,
   createOptionalChannelSetupAdapter,
@@ -41313,10 +43327,72 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return runCommandRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/simple-completion-runtime" ||
+    request === "@openclaw/plugin-sdk/simple-completion-runtime"
+  ) {
+    return simpleCompletionRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/approval-auth-runtime" ||
     request === "@openclaw/plugin-sdk/approval-auth-runtime"
   ) {
     return approvalAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-reply-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-reply-runtime"
+  ) {
+    return approvalReplyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-client-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-client-helpers"
+  ) {
+    return approvalClientHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-delivery-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-delivery-helpers" ||
+    request === "openclaw/plugin-sdk/approval-delivery-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-delivery-runtime"
+  ) {
+    return approvalDeliveryHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-native-helpers" ||
+    request === "@openclaw/plugin-sdk/approval-native-helpers"
+  ) {
+    return approvalNativeHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-native-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-native-runtime"
+  ) {
+    return approvalNativeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-gateway-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-gateway-runtime"
+  ) {
+    return approvalGatewayRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-handler-adapter-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-handler-adapter-runtime"
+  ) {
+    return approvalHandlerAdapterRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-handler-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-handler-runtime"
+  ) {
+    return approvalHandlerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/approval-runtime" ||
+    request === "@openclaw/plugin-sdk/approval-runtime"
+  ) {
+    return approvalRuntimeAggregate;
   }
   if (
     request === "openclaw/plugin-sdk/runtime" ||

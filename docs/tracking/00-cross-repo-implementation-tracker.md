@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~84.5% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~85.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin session-visibility helper slice is checkpointed in
-`4e95bfcb`.
+The imported plugin approval-native-runtime expiration slice is checkpointed in
+`fa7cacbd`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,12 +62,301 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Session-visibility helper shim checkpointed in `4e95bfcb` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue remaining process/runtime helper breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Approval-native-runtime expiration checkpointed in `fa7cacbd` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader unresolved helper/runtime queue |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001XR` Imported approval-native-runtime expiration scheduling
+  - Source: `openclaw-main/src/infra/approval-native-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: requested native approvals with `expiresAtMs` install a timer,
+    resolved/expired/stop paths clear timers, and timer expiry finalizes the
+    stored active entries through the same expired lifecycle path.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `fa7cacbd`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-native-runtime expiration
+    proof (`1 passed`), adjacent approval proof (`13 passed, 953 deselected`),
+    adjacent imported-plugin proof (`154 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XQ` Imported approval-handler capability bridge shim
+  - Source: `openclaw-main/src/infra/approval-handler-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can turn a channel approval
+    capability's native adapter/runtime into a handler, build pending/
+    resolved/expired approval views, deliver and bind pending entries, call
+    loaded observe hooks with unwrapped entries, unbind on resolution, apply
+    final update/delete/clear-actions results, and return `null` when a
+    capability has no native runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `6ea77847`; native expiration scheduling remains
+    open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-handler capability proof
+    (`1 passed`), adjacent approval proof (`12 passed, 953 deselected`),
+    adjacent imported-plugin proof (`153 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XP` Imported approval-handler-runtime wrapper shim
+  - Source: `openclaw-main/src/infra/approval-handler-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can map the upstream
+    `{ runtime, content, transport, lifecycle }` handler adapter shape onto the
+    native approval runtime factory, preserving approval kind, pending content,
+    delivery callbacks, active entries, and resolved finalization.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e23b4e9e`; higher-level capability handler
+    wrapper remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-handler-runtime wrapper proof
+    (`1 passed`), adjacent approval proof (`12 passed, 952 deselected`),
+    adjacent imported-plugin proof (`152 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XO` Imported approval-native-runtime factory shim
+  - Source: `openclaw-main/src/infra/approval-native-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can create a native approval
+    runtime that resolves exec/plugin approval kind, builds pending content,
+    resolves and delivers planned native targets, forwards delivery lifecycle
+    callbacks with pending content, tracks active entries, finalizes resolved
+    requests, and exposes the factory through `approval-native-runtime` and
+    the aggregate `approval-runtime` barrel.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `67a72452`; expiration scheduling and the
+    higher-level capability handler wrapper remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-native-runtime factory proof
+    (`1 passed`), adjacent approval proof (`11 passed, 952 deselected`),
+    adjacent imported-plugin proof (`151 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XN` Imported approval-gateway-runtime resolver shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-gateway-runtime.ts`,
+    `openclaw-main/src/infra/approval-gateway-resolver.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-gateway-runtime` through scoped and unscoped aliases, route
+    plugin approvals through `plugin.approval.resolve`, route exec approvals
+    through `exec.approval.resolve`, preserve gateway URL/config/display-name
+    options, and fall back to plugin approval resolution only for not-found
+    exec approval errors when explicitly enabled.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `29c62d3f`; broader native approval runtime/
+    handler lifecycle remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-gateway-runtime proof
+    (`1 passed`), adjacent approval proof (`10 passed, 952 deselected`),
+    adjacent imported-plugin proof (`150 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XM` Imported approval-runtime aggregate shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-runtime` through scoped and unscoped aliases, resolve exec
+    approval decisions, build exec/plugin pending payloads, extract approval
+    metadata, compose approver authorization, channel approval profiles,
+    delivery capabilities, native origin targets, and request filters through
+    the aggregate barrel.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `63554e0a`; broader approval gateway/native
+    handler lifecycle remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-runtime proof (`1 passed`),
+    adjacent approval proof (`9 passed, 952 deselected`), adjacent
+    imported-plugin proof (`149 passed, 812 deselected`), `ruff check`, and
+    `mypy`.
+
+- [x] `OZ-PLUGIN-001XL` Imported approval-handler-runtime adapter factory
+  - Source: `openclaw-main/src/plugin-sdk/approval-handler-runtime.ts`,
+    `openclaw-main/src/infra/approval-handler-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-handler-runtime` through scoped and unscoped aliases, preserve
+    the `approval.native` context capability, wrap native runtime specs into
+    canonical availability, presentation, transport, interaction, and observe
+    adapters, preserve `eventKinds` and custom approval-kind resolution, and
+    keep fallback-safe access for broader handler functions that remain open.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `3434972a`; broader handler lifecycle/gateway
+    integration remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-handler-runtime proof
+    (`1 passed`), adjacent approval proof (`8 passed, 952 deselected`),
+    adjacent imported-plugin proof (`148 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XK` Imported approval-handler-adapter-runtime shim
+  - Source:
+    `openclaw-main/src/plugin-sdk/approval-handler-adapter-runtime.ts`,
+    `openclaw-main/src/infra/approval-handler-adapter-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-handler-adapter-runtime` through scoped and unscoped aliases,
+    preserve the `approval.native` context capability, expose eager
+    availability checks, lazy-load the backing native runtime once, delegate
+    presentation, transport, and interaction hooks, and fire observe hooks
+    only after a runtime has been loaded.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `21aa746b`; broader approval handler runtime/
+    gateway lifecycle remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-handler-adapter-runtime proof
+    (`1 passed`), adjacent approval proof (`7 passed, 952 deselected`),
+    adjacent imported-plugin proof (`147 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XJ` Imported approval-native-runtime delivery helpers
+  - Source: `openclaw-main/src/plugin-sdk/approval-native-runtime.ts`,
+    `openclaw-main/src/infra/approval-native-runtime.ts`,
+    `openclaw-main/src/infra/approval-native-delivery.ts`,
+    `openclaw-main/src/infra/approval-native-target-key.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-native-runtime` through scoped and unscoped aliases, build
+    stable native target keys, resolve origin/approver-DM delivery plans,
+    dedupe converged native targets, request DM-only origin notices, deliver
+    planned native targets with prepared-target dedupe, and continue after
+    per-target delivery failures.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `424e376a`; broader
+    `createChannelNativeApprovalRuntime` gateway/event lifecycle remains open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-native-runtime proof
+    (`1 passed`), adjacent approval proof (`6 passed, 952 deselected`),
+    adjacent imported-plugin proof (`146 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XI` Imported approval-native-helpers shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-native-helpers.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-native-helpers` through scoped and unscoped aliases, compare
+    native approval targets with shared route semantics, resolve channel origin
+    targets with `shouldHandleRequest` gating and target normalization,
+    preserve provider-native delivery targets while normalizing only match
+    inputs, and map approvers into DM delivery targets while filtering rejected
+    requests and null targets.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `51d8ecdc`; broader approval native runtime/
+    gateway/handler flows remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-native-helpers proof
+    (`1 passed`), adjacent approval proof (`5 passed, 952 deselected`),
+    adjacent imported-plugin proof (`145 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XH` Imported approval-delivery-helpers shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-delivery-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/approval-delivery-runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-delivery-helpers` and `approval-delivery-runtime` through
+    scoped and unscoped aliases, create and split channel approval
+    capabilities, preserve the deprecated `approvals` surface alias,
+    authorize exec/plugin approvals by sender, report native DM/channel
+    delivery availability, and suppress forwarding fallback only for matching
+    native delivery surfaces.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `d77756fa`; broader approval gateway/native/
+    handler runtimes remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-delivery-helpers proof
+    (`1 passed`), adjacent approval proof (`4 passed, 952 deselected`),
+    adjacent imported-plugin proof (`144 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XG` Imported approval-client-helpers shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-client-helpers.ts`,
+    `openclaw-main/src/infra/approval-request-filters.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-client-helpers` through scoped and unscoped aliases, resolve
+    channel approval enablement, match configured approval targets by
+    channel/account/sender, apply agent/session filters with session-key agent
+    fallback, compose channel approval profiles, and suppress local prompts
+    from approval metadata.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `8a40507d`; broader approval gateway/delivery/
+    native/handler runtimes remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-client-helpers proof
+    (`1 passed`), adjacent approval proof (`3 passed, 952 deselected`),
+    adjacent imported-plugin proof (`143 passed, 812 deselected`),
+    `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XF` Imported approval-reply-runtime helper shim
+  - Source: `openclaw-main/src/plugin-sdk/approval-reply-runtime.ts`,
+    `openclaw-main/src/infra/exec-approval-reply.ts`,
+    `openclaw-main/src/infra/exec-approval-command-display.ts`,
+    `openclaw-main/src/infra/exec-approvals.ts`,
+    `openclaw-main/src/plugin-sdk/approval-renderers.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `approval-reply-runtime` through scoped and unscoped aliases, build
+    approval action descriptors and interactive button payloads, parse
+    `/approve` commands, resolve allowed decisions, project command display
+    text, build exec/plugin pending reply payloads, and extract approval
+    metadata.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `2215e898`; broader approval gateway/client/
+    delivery/native/handler runtimes remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused approval-reply-runtime proof
+    (`1 passed`), adjacent approval/runtime proof (`3 passed, 951
+    deselected`), adjacent imported-plugin proof (`142 passed, 812
+    deselected`), `ruff check`, and `mypy`.
+
+- [x] `OZ-PLUGIN-001XE` Imported simple-completion-runtime helper shim
+  - Source: `openclaw-main/src/plugin-sdk/simple-completion-runtime.ts`,
+    `openclaw-main/src/agents/pi-embedded-utils.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: imported OpenClaw runtime tools can require
+    `simple-completion-runtime` through scoped and unscoped aliases and receive
+    deterministic `extractAssistantText` behavior for string content, text
+    blocks, non-text filtering, leaked tool XML stripping, MiniMax invocation
+    stripping, and HTTP-style assistant error copy.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `13a0fa6d`; broader completion model/auth
+    transport helpers remain open
+  - Weight: 1
+  - Last verified: 2026-05-06, focused simple-completion-runtime proof
+    (`1 passed`), adjacent runtime/provider proof (`3 passed, 950
+    deselected`), adjacent imported-plugin proof (`141 passed, 812
+    deselected`), `ruff check`, and `mypy`.
 
 - [x] `OZ-PLUGIN-001XD` Imported session-visibility helper shim
   - Source: `openclaw-main/src/plugin-sdk/session-visibility.ts`

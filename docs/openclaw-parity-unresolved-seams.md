@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~84.5% overall, with a reasonable
-  band of ~78-85%.
+- Repo-wide OpenClaw parity is estimated at ~85.9% overall, with a reasonable
+  band of ~78-86%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -86,7 +86,12 @@ Current percentage rollup:
   string-coerce-runtime primitive helper, provider-auth-login runtime alias,
   approval-auth-runtime helper, Telegram command config helper,
   param-readers helper, provider-zai-endpoint helper, provider-env-vars
-  helper, and session-visibility helper slices.
+  helper, session-visibility helper, simple-completion-runtime
+  extractAssistantText helper, approval-reply-runtime helper,
+  approval-client-helpers, approval-delivery-helpers,
+  approval-native-helpers, approval-native-runtime delivery-helper,
+  approval-handler-adapter-runtime helper, and approval-handler-runtime
+  adapter-factory slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -8068,6 +8073,169 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   Verified with focused session-visibility pytest, adjacent session proof,
   adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
   checkpointed in `4e95bfcb`.
+- Closed the imported OpenClaw plugin SDK simple-completion-runtime
+  `extractAssistantText` helper seam from
+  `src/plugin-sdk/simple-completion-runtime.ts` and
+  `src/agents/pi-embedded-utils.ts`: native runtime entries can require
+  scoped/unscoped simple-completion runtime helpers and receive deterministic
+  assistant text extraction for string content, text blocks, non-text
+  filtering, leaked tool XML stripping, MiniMax invocation stripping, and
+  HTTP-style assistant error copy. Repo-wide parity is now estimated at
+  ~84.6%. Verified with focused simple-completion-runtime pytest, adjacent
+  runtime/provider proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `13a0fa6d`. Broader completion
+  model/auth transport helpers remain open.
+- Closed the imported OpenClaw plugin SDK approval-reply-runtime helper seam
+  from `src/plugin-sdk/approval-reply-runtime.ts`,
+  `src/infra/exec-approval-reply.ts`,
+  `src/infra/exec-approval-command-display.ts`,
+  `src/infra/exec-approvals.ts`, and
+  `src/plugin-sdk/approval-renderers.ts`: native runtime entries can require
+  scoped/unscoped approval reply helpers, build action descriptors and
+  interactive button payloads, parse `/approve` commands, resolve allowed
+  decisions, project command display text, build exec/plugin pending reply
+  payloads, and extract approval metadata. Repo-wide parity is now estimated at
+  ~84.7%. Verified with focused approval-reply-runtime pytest, adjacent
+  approval/runtime proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `2215e898`. Broader approval gateway,
+  client, delivery, native, and handler runtimes remain open.
+- Closed the imported OpenClaw plugin SDK approval-client-helpers seam from
+  `src/plugin-sdk/approval-client-helpers.ts` and
+  `src/infra/approval-request-filters.ts`: native runtime entries can require
+  scoped/unscoped approval client helpers, resolve channel approval enablement,
+  match configured approval targets by channel/account/sender, apply agent and
+  session filters with session-key agent fallback, compose channel approval
+  profiles, and suppress local prompts from approval metadata. Repo-wide
+  parity is now estimated at ~84.8%. Verified with focused
+  approval-client-helpers pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `8a40507d`. Broader approval gateway, delivery, native, and handler runtimes
+  remain open.
+- Closed the imported OpenClaw plugin SDK approval-delivery-helpers seam from
+  `src/plugin-sdk/approval-delivery-helpers.ts` and
+  `src/plugin-sdk/approval-delivery-runtime.ts`: native runtime entries can
+  require scoped/unscoped approval delivery helpers, create and split channel
+  approval capabilities, preserve the deprecated `approvals` surface alias,
+  authorize exec/plugin approvals by sender, report native DM/channel delivery
+  availability, and suppress forwarding fallback only for matching native
+  delivery surfaces. Repo-wide parity is now estimated at ~84.9%. Verified
+  with focused approval-delivery-helpers pytest, adjacent approval proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `d77756fa`. Broader approval gateway, native, and handler
+  runtimes remain open.
+- Closed the imported OpenClaw plugin SDK approval-native-helpers seam from
+  `src/plugin-sdk/approval-native-helpers.ts`: native runtime entries can
+  require scoped/unscoped approval native helpers, compare native approval
+  targets with shared route semantics, resolve channel origin targets with
+  `shouldHandleRequest` gating and target normalization, preserve
+  provider-native delivery targets while normalizing only match inputs, and
+  map approvers into DM delivery targets while filtering rejected requests and
+  null targets. Repo-wide parity is now estimated at ~85.0%. Verified with
+  focused approval-native-helpers pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `51d8ecdc`. Broader approval native runtime, gateway, and handler flows
+  remain open.
+- Closed the imported OpenClaw plugin SDK approval-native-runtime
+  delivery-helper seam from `src/plugin-sdk/approval-native-runtime.ts`,
+  `src/infra/approval-native-runtime.ts`,
+  `src/infra/approval-native-delivery.ts`, and
+  `src/infra/approval-native-target-key.ts`: native runtime entries can build
+  stable native target keys, resolve origin/approver-DM delivery plans, dedupe
+  converged native targets, request DM-only origin notices, deliver planned
+  native targets with prepared-target dedupe, and continue after per-target
+  delivery failures. Repo-wide parity is now estimated at ~85.1%. Verified
+  with focused approval-native-runtime pytest, adjacent approval proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `424e376a`. The broader
+  `createChannelNativeApprovalRuntime` gateway/event lifecycle remains open.
+- Closed the imported OpenClaw plugin SDK approval-handler-adapter-runtime seam
+  from `src/plugin-sdk/approval-handler-adapter-runtime.ts` and
+  `src/infra/approval-handler-adapter-runtime.ts`: native runtime entries can
+  require scoped/unscoped approval handler adapter helpers, preserve the
+  `approval.native` context capability, expose eager availability checks,
+  lazy-load the backing native runtime once, delegate presentation, transport,
+  and interaction hooks, and fire observe hooks only after a runtime has been
+  loaded. Repo-wide parity is now estimated at ~85.2%. Verified with focused
+  approval-handler-adapter-runtime pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `21aa746b`. The broader approval handler runtime/gateway lifecycle remains
+  open.
+- Closed the imported OpenClaw plugin SDK approval-handler-runtime
+  adapter-factory seam from `src/plugin-sdk/approval-handler-runtime.ts` and
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can require
+  scoped/unscoped approval handler runtime helpers, preserve the
+  `approval.native` context capability, wrap native runtime specs into
+  canonical availability, presentation, transport, interaction, and observe
+  adapters, preserve `eventKinds` and custom approval-kind resolution, and keep
+  fallback-safe access for broader handler functions that remain open.
+  Repo-wide parity is now estimated at ~85.3%. Verified with focused
+  approval-handler-runtime pytest, adjacent approval proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `3434972a`. The broader handler lifecycle/gateway integration remains open.
+- Closed the imported OpenClaw plugin SDK approval-runtime aggregate seam from
+  `src/plugin-sdk/approval-runtime.ts`: native runtime entries can require
+  scoped/unscoped approval runtime helpers, resolve exec approval decisions,
+  build exec/plugin pending payloads, extract approval metadata, compose
+  approver authorization, channel approval profiles, delivery capabilities,
+  native origin targets, and request filters through the aggregate barrel.
+  Repo-wide parity is now estimated at ~85.4%. Verified with focused
+  approval-runtime pytest, adjacent approval proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `63554e0a`.
+  The broader approval gateway/native handler lifecycle remains open.
+- Closed the imported OpenClaw plugin SDK approval-gateway-runtime resolver
+  seam from `src/plugin-sdk/approval-gateway-runtime.ts` and
+  `src/infra/approval-gateway-resolver.ts`: native runtime entries can require
+  scoped/unscoped approval gateway helpers, route plugin approvals through
+  `plugin.approval.resolve`, route exec approvals through
+  `exec.approval.resolve`, preserve gateway URL/config/display-name options,
+  and fall back to plugin approval resolution only for not-found exec approval
+  errors when explicitly enabled. Repo-wide parity is now estimated at
+  ~85.5%. Verified with focused approval-gateway-runtime pytest, adjacent
+  approval proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `29c62d3f`. The broader native approval runtime
+  and handler lifecycle remains open.
+- Closed the imported OpenClaw plugin SDK
+  `createChannelNativeApprovalRuntime` factory seam from
+  `src/infra/approval-native-runtime.ts`: native runtime entries can create a
+  runtime that resolves exec/plugin approval kind, builds pending content,
+  resolves and delivers planned native targets, forwards delivery lifecycle
+  callbacks with pending content, tracks active entries, finalizes resolved
+  requests, and exposes the factory through `approval-native-runtime` and the
+  aggregate `approval-runtime` barrel. Repo-wide parity is now estimated at
+  ~85.6%. Verified with focused approval-native-runtime factory pytest,
+  adjacent approval proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `67a72452`. Expiration scheduling and the
+  higher-level capability handler wrapper remain open.
+- Closed the imported OpenClaw plugin SDK `createChannelApprovalHandler`
+  wrapper seam from `src/infra/approval-handler-runtime.ts`: native runtime
+  entries can map the upstream `{ runtime, content, transport, lifecycle }`
+  handler adapter shape onto the native approval runtime factory, preserving
+  approval kind, pending content, delivery callbacks, active entries, and
+  resolved finalization. Repo-wide parity is now estimated at ~85.7%.
+  Verified with focused approval-handler-runtime wrapper pytest, adjacent
+  approval proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `e23b4e9e`. The higher-level capability handler
+  wrapper remains open.
+- Closed the imported OpenClaw plugin SDK
+  `createChannelApprovalHandlerFromCapability` seam from
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can turn a
+  channel approval capability's native adapter/runtime into a handler, build
+  pending/resolved/expired approval views, deliver and bind pending entries,
+  call loaded observe hooks with unwrapped entries, unbind on resolution, apply
+  final update/delete/clear-actions results, and return `null` when a
+  capability has no native runtime. Repo-wide parity is now estimated at
+  ~85.8%. Verified with focused approval-handler capability pytest, adjacent
+  approval proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
+  source/test checkpointed in `6ea77847`. Native expiration scheduling remains
+  open.
+- Closed the imported OpenClaw plugin SDK native approval expiration
+  scheduling seam from `src/infra/approval-native-runtime.ts`: requested
+  approvals with `expiresAtMs` install a timer, resolved/expired/stop paths
+  clear timers, and timer expiry finalizes the stored active entries through
+  the same expired lifecycle path. Repo-wide parity is now estimated at
+  ~85.9%. Verified with focused approval-native-runtime expiration pytest,
+  adjacent approval proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `fa7cacbd`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
   text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
@@ -8094,7 +8262,11 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   image-generation-core.auth.runtime/model-session-runtime/process-runtime/
   run-command/string-coerce-runtime/provider-auth-login.runtime/
   approval-auth-runtime/telegram-command-config/approval-gateway-runtime/
-  param-readers/provider-zai-endpoint/provider-env-vars/channel-entry-contract/
+  param-readers/provider-zai-endpoint/provider-env-vars/session-visibility/
+  simple-completion-runtime/approval-reply-runtime/approval-client-helpers/
+  approval-delivery-helpers/approval-native-helpers/approval-native-runtime/
+  approval-handler-adapter-runtime/approval-handler-runtime/approval-runtime/
+  channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
   channel-config-helpers/channel-config-writes/channel-lifecycle path,
   starting with the next source-backed SDK helper subpath.

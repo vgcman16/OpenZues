@@ -3,11 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-06.
-- Estimated repo-wide parity: ~84.5% overall, with a reasonable band of ~78-85%.
+- Estimated repo-wide parity: ~85.9% overall, with a reasonable band of ~78-86%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-activity-runtime shim, and inbound-envelope shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, approval-reply-runtime helpers, approval-client-helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-activity-runtime shim, and inbound-envelope shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
@@ -14440,6 +14440,277 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`140 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
   Source/test checkpointed in `4e95bfcb`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/simple-completion-runtime` shim from
+  `src/plugin-sdk/simple-completion-runtime.ts` and
+  `src/agents/pi-embedded-utils.ts`: native runtime entries can require
+  scoped/unscoped simple-completion runtime helpers and receive deterministic
+  `extractAssistantText` behavior for string content, text blocks, non-text
+  filtering, leaked tool XML stripping, MiniMax invocation stripping, and
+  HTTP-style assistant error copy. This closes `OZ-PLUGIN-001XE`; repo-wide
+  parity is now estimated at ~84.6%. Broader completion model/auth transport
+  helpers remain open.
+- Verified the simple-completion-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_simple_completion_runtime_helpers -q`
+  (`1 passed`), adjacent runtime/provider proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "simple_completion_runtime or model_session or provider_env_vars"`
+  (`3 passed, 950 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`141 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `13a0fa6d`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-reply-runtime` shim from
+  `src/plugin-sdk/approval-reply-runtime.ts`,
+  `src/infra/exec-approval-reply.ts`,
+  `src/infra/exec-approval-command-display.ts`,
+  `src/infra/exec-approvals.ts`, and
+  `src/plugin-sdk/approval-renderers.ts`: native runtime entries can require
+  scoped/unscoped approval reply helpers, build approval action descriptors
+  and interactive button payloads, parse `/approve` commands, resolve allowed
+  decisions, project command display text, build exec/plugin pending reply
+  payloads, and extract approval metadata. This closes `OZ-PLUGIN-001XF`;
+  repo-wide parity is now estimated at ~84.7%. Broader approval gateway,
+  client, delivery, native, and handler runtimes remain open.
+- Verified the approval-reply-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_reply_runtime_helpers -q`
+  (`1 passed`), adjacent approval/runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_reply or approval_auth_runtime or telegram_command_config"`
+  (`3 passed, 951 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`142 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `2215e898`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-client-helpers` shim from
+  `src/plugin-sdk/approval-client-helpers.ts` and
+  `src/infra/approval-request-filters.ts`: native runtime entries can require
+  scoped/unscoped approval client helpers, resolve channel approval enablement,
+  match configured approval targets by channel/account/sender, apply agent and
+  session filters with session-key agent fallback, compose channel approval
+  profiles, and suppress local prompts from approval metadata. This closes
+  `OZ-PLUGIN-001XG`; repo-wide parity is now estimated at ~84.8%. Broader
+  approval gateway, delivery, native, and handler runtimes remain open.
+- Verified the approval-client-helpers slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_client_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_client or approval_reply or approval_auth_runtime"`
+  (`3 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`143 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `8a40507d`.
+- Imported OpenClaw plugin runtime entries now have native
+  `openclaw/plugin-sdk/approval-delivery-helpers` and
+  `openclaw/plugin-sdk/approval-delivery-runtime` shims from
+  `src/plugin-sdk/approval-delivery-helpers.ts` and
+  `src/plugin-sdk/approval-delivery-runtime.ts`: native runtime entries can
+  require scoped/unscoped approval delivery helpers, create and split channel
+  approval capabilities, preserve the deprecated `approvals` surface alias,
+  authorize exec/plugin approvals by sender, report native DM/channel delivery
+  availability, and suppress forwarding fallback only for matching native
+  delivery surfaces. This closes `OZ-PLUGIN-001XH`; repo-wide parity is now
+  estimated at ~84.9%. Broader approval gateway, native, and handler runtimes
+  remain open.
+- Verified the approval-delivery-helpers slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_delivery_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`4 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`144 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `d77756fa`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-native-helpers` shim from
+  `src/plugin-sdk/approval-native-helpers.ts`: native runtime entries can
+  require scoped/unscoped approval native helpers, compare native approval
+  targets with shared route semantics, resolve channel origin targets with
+  `shouldHandleRequest` gating and target normalization, preserve
+  provider-native delivery targets while normalizing only match inputs, and
+  map approvers into DM delivery targets while filtering rejected requests and
+  null targets. This closes `OZ-PLUGIN-001XI`; repo-wide parity is now
+  estimated at ~85.0%. Broader approval native runtime, gateway, and handler
+  flows remain open.
+- Verified the approval-native-helpers slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_native_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`5 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`145 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `51d8ecdc`.
+- Imported OpenClaw plugin runtime entries now have native
+  `openclaw/plugin-sdk/approval-native-runtime` delivery-plan helpers from
+  `src/plugin-sdk/approval-native-runtime.ts`,
+  `src/infra/approval-native-runtime.ts`,
+  `src/infra/approval-native-delivery.ts`, and
+  `src/infra/approval-native-target-key.ts`: native runtime entries can build
+  stable native target keys, resolve origin/approver-DM delivery plans, dedupe
+  converged native targets, request DM-only origin notices, deliver planned
+  native targets with prepared-target dedupe, and continue after per-target
+  delivery failures. This closes `OZ-PLUGIN-001XJ`; repo-wide parity is now
+  estimated at ~85.1%. The broader `createChannelNativeApprovalRuntime`
+  gateway/event lifecycle remains open.
+- Verified the approval-native-runtime delivery-helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_native_runtime_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`6 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`146 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `424e376a`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-handler-adapter-runtime` shim from
+  `src/plugin-sdk/approval-handler-adapter-runtime.ts` and
+  `src/infra/approval-handler-adapter-runtime.ts`: native runtime entries can
+  require scoped/unscoped approval handler adapter helpers, preserve the
+  `approval.native` context capability, expose eager availability checks,
+  lazy-load the backing native runtime once, delegate presentation, transport,
+  and interaction hooks, and fire observe hooks only after a runtime has been
+  loaded. This closes `OZ-PLUGIN-001XK`; repo-wide parity is now estimated at
+  ~85.2%. The broader approval handler runtime/gateway lifecycle remains open.
+- Verified the approval-handler-adapter-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_handler_adapter_runtime_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`7 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`147 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `21aa746b`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-handler-runtime` adapter-factory shim from
+  `src/plugin-sdk/approval-handler-runtime.ts` and
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can require
+  scoped/unscoped approval handler runtime helpers, preserve the
+  `approval.native` context capability, wrap native runtime specs into
+  canonical availability, presentation, transport, interaction, and observe
+  adapters, preserve `eventKinds` and custom approval-kind resolution, and keep
+  fallback-safe access for broader handler functions that remain open. This
+  closes `OZ-PLUGIN-001XL`; repo-wide parity is now estimated at ~85.3%. The
+  broader handler lifecycle/gateway integration remains open.
+- Verified the approval-handler-runtime adapter-factory slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_handler_runtime_adapter_factory -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`8 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`148 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `3434972a`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-runtime` aggregate shim from
+  `src/plugin-sdk/approval-runtime.ts`: native runtime entries can require
+  scoped/unscoped approval runtime helpers, resolve exec approval decisions,
+  build exec/plugin pending payloads, extract approval metadata, compose
+  approver authorization, channel approval profiles, delivery capabilities,
+  native origin targets, and request filters through the aggregate barrel.
+  This closes `OZ-PLUGIN-001XM`; repo-wide parity is now estimated at ~85.4%.
+  The broader approval gateway/native handler lifecycle remains open.
+- Verified the approval-runtime aggregate slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_runtime_aggregate_helpers -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`9 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`149 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `63554e0a`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `openclaw/plugin-sdk/approval-gateway-runtime` shim from
+  `src/plugin-sdk/approval-gateway-runtime.ts` and
+  `src/infra/approval-gateway-resolver.ts`: native runtime entries can require
+  scoped/unscoped approval gateway helpers, route plugin approvals through
+  `plugin.approval.resolve`, route exec approvals through
+  `exec.approval.resolve`, preserve gateway URL/config/display-name options,
+  and fall back to plugin approval resolution only for not-found exec approval
+  errors when explicitly enabled. This closes `OZ-PLUGIN-001XN`; repo-wide
+  parity is now estimated at ~85.5%. The broader native approval runtime and
+  handler lifecycle remains open.
+- Verified the approval-gateway-runtime resolver slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_gateway_runtime_resolver -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`10 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`150 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `29c62d3f`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `createChannelNativeApprovalRuntime` factory from
+  `src/infra/approval-native-runtime.ts`: native runtime entries can create a
+  runtime that resolves exec/plugin approval kind, builds pending content,
+  resolves and delivers planned native targets, forwards delivery lifecycle
+  callbacks with pending content, tracks active entries, finalizes resolved
+  requests, and exposes the factory through `approval-native-runtime` and the
+  aggregate `approval-runtime` barrel. This closes `OZ-PLUGIN-001XO`;
+  repo-wide parity is now estimated at ~85.6%. Expiration scheduling and the
+  higher-level capability handler wrapper remain open.
+- Verified the approval-native-runtime factory slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_native_runtime_factory -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_native_factory or approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`11 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`151 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `67a72452`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `createChannelApprovalHandler` wrapper from
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can map the
+  upstream `{ runtime, content, transport, lifecycle }` handler adapter shape
+  onto the native approval runtime factory, preserving approval kind, pending
+  content, delivery callbacks, active entries, and resolved finalization. This
+  closes `OZ-PLUGIN-001XP`; repo-wide parity is now estimated at ~85.7%.
+  The higher-level capability handler wrapper remains open.
+- Verified the approval-handler-runtime wrapper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_handler_runtime_wrapper -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_handler_wrapper or approval_native_factory or approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`12 passed, 952 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`152 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `e23b4e9e`.
+- Imported OpenClaw plugin runtime entries now have a native
+  `createChannelApprovalHandlerFromCapability` bridge from
+  `src/infra/approval-handler-runtime.ts`: native runtime entries can turn a
+  channel approval capability's native adapter/runtime into a handler, build
+  pending/resolved/expired approval views, deliver and bind pending entries,
+  call loaded observe hooks with unwrapped entries, unbind on resolution, apply
+  final update/delete/clear-actions results, and return `null` when a
+  capability has no native runtime. This closes `OZ-PLUGIN-001XQ`; repo-wide
+  parity is now estimated at ~85.8%. Native expiration scheduling remains
+  open.
+- Verified the approval-handler capability bridge slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_handler_from_capability -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_handler_capability or approval_handler_wrapper or approval_native_factory or approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`12 passed, 953 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`153 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `6ea77847`.
+- Imported OpenClaw plugin runtime entries now schedule native approval
+  expiration in `createChannelNativeApprovalRuntime`, matching
+  `src/infra/approval-native-runtime.ts`: requested approvals with
+  `expiresAtMs` install a timer, resolved/expired/stop paths clear timers,
+  and timer expiry finalizes the stored active entries through the same
+  expired lifecycle path. This closes `OZ-PLUGIN-001XR`; repo-wide parity is
+  now estimated at ~85.9%. Remaining plugin SDK breadth rotates back to the
+  broader unresolved helper/runtime queue.
+- Verified the approval-native-runtime expiration slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_approval_native_runtime_expiration -q`
+  (`1 passed`), adjacent approval proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "approval_native_expiration or approval_handler_capability or approval_handler_wrapper or approval_native_factory or approval_gateway or approval_runtime or approval_handler_runtime or approval_handler_adapter or approval_native_runtime or approval_native or approval_delivery or approval_client or approval_reply or approval_auth_runtime"`
+  (`13 passed, 953 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`154 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, and `mypy src\openzues\cli.py`.
+  Source/test checkpointed in `fa7cacbd`.
 
 ## References
 

@@ -14023,6 +14023,3095 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_reply_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-reply.cjs"
+    runtime_entry.write_text(
+        """
+const reply = require("openclaw/plugin-sdk/approval-reply-runtime");
+const scopedReply = require("@openclaw/plugin-sdk/approval-reply-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_reply",
+      description: "Use OpenClaw approval reply runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const actions = reply.buildExecApprovalActionDescriptors({
+          approvalCommandId: "abc-1",
+          ask: "off"
+        });
+        const alwaysActions = reply.buildExecApprovalActionDescriptors({
+          approvalCommandId: "abc-1",
+          ask: "always"
+        });
+        const pending = reply.buildExecApprovalPendingReplyPayload({
+          warningText: "Careful",
+          approvalId: "approval-full-id",
+          approvalSlug: "abc-1",
+          ask: "always",
+          command: "npm test",
+          host: "gateway",
+          nodeId: "node-1",
+          agentId: "main",
+          sessionKey: "agent:main:main",
+          expiresAtMs: 65000,
+          nowMs: 5000
+        });
+        const pluginPending = reply.buildPluginApprovalPendingReplyPayload({
+          request: {
+            id: "plugin-approval-id",
+            request: {
+              pluginId: "demo-plugin",
+              title: "Use tool",
+              description: "Need permission",
+              severity: "warning"
+            },
+            createdAtMs: 0,
+            expiresAtMs: 120000
+          },
+          nowMs: 0,
+          text: "Plugin asks"
+        });
+        return {
+          keys: Object.keys(reply).sort(),
+          scopedType: typeof scopedReply.parseExecApprovalCommandText,
+          actions,
+          alwaysActions,
+          interactive: reply.buildApprovalInteractiveReplyFromActionDescriptors(
+            actions.slice(0, 2)
+          ),
+          parsed: [
+            reply.parseExecApprovalCommandText("/approve abc-1 allow-once"),
+            reply.parseExecApprovalCommandText("approve@OpenZues plugin:abc always"),
+            reply.parseExecApprovalCommandText("/reject abc")
+          ],
+          decisions: [
+            reply.resolveExecApprovalAllowedDecisions({ ask: "always" }),
+            reply.resolveExecApprovalAllowedDecisions({ ask: "on-miss" }),
+            reply.resolveExecApprovalRequestAllowedDecisions({
+              ask: "always",
+              allowedDecisions: ["deny", "bad", "allow-always"]
+            })
+          ],
+          display: reply.resolveExecApprovalCommandDisplay({
+            command: "echo hello",
+            commandPreview: "echo hi"
+          }),
+          metadata: reply.getExecApprovalReplyMetadata(pending),
+          pending: {
+            hasWarning: pending.text.includes("Careful"),
+            hasPrimaryCommand: pending.text.includes("/approve abc-1 allow-once"),
+            hidesAllowAlways: pending.text.includes("Allow Always is unavailable"),
+            hasExpires: pending.text.includes("Expires in: 1m"),
+            buttons: pending.interactive.blocks[0].buttons.map((button) => button.value)
+          },
+          pluginMetadata: reply.getExecApprovalReplyMetadata(pluginPending),
+          approverDm: reply.getExecApprovalApproverDmNoticeText()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-reply-plugin",
+                    "name": "Runtime Approval Reply Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-reply.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_reply"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_reply"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildApprovalInteractiveReplyFromActionDescriptors",
+            "buildExecApprovalActionDescriptors",
+            "buildExecApprovalPendingReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "getExecApprovalApproverDmNoticeText",
+            "getExecApprovalReplyMetadata",
+            "parseExecApprovalCommandText",
+            "resolveExecApprovalAllowedDecisions",
+            "resolveExecApprovalCommandDisplay",
+            "resolveExecApprovalRequestAllowedDecisions",
+        ],
+        "scopedType": "function",
+        "actions": [
+            {
+                "decision": "allow-once",
+                "label": "Allow Once",
+                "style": "success",
+                "command": "/approve abc-1 allow-once",
+            },
+            {
+                "decision": "allow-always",
+                "label": "Allow Always",
+                "style": "primary",
+                "command": "/approve abc-1 allow-always",
+            },
+            {
+                "decision": "deny",
+                "label": "Deny",
+                "style": "danger",
+                "command": "/approve abc-1 deny",
+            },
+        ],
+        "alwaysActions": [
+            {
+                "decision": "allow-once",
+                "label": "Allow Once",
+                "style": "success",
+                "command": "/approve abc-1 allow-once",
+            },
+            {
+                "decision": "deny",
+                "label": "Deny",
+                "style": "danger",
+                "command": "/approve abc-1 deny",
+            },
+        ],
+        "interactive": {
+            "blocks": [
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {
+                            "label": "Allow Once",
+                            "value": "/approve abc-1 allow-once",
+                            "style": "success",
+                        },
+                        {
+                            "label": "Allow Always",
+                            "value": "/approve abc-1 allow-always",
+                            "style": "primary",
+                        },
+                    ],
+                }
+            ]
+        },
+        "parsed": [
+            {"approvalId": "abc-1", "decision": "allow-once"},
+            {"approvalId": "plugin:abc", "decision": "allow-always"},
+            None,
+        ],
+        "decisions": [
+            ["allow-once", "deny"],
+            ["allow-once", "allow-always", "deny"],
+            ["deny", "allow-always"],
+        ],
+        "display": {"commandText": "echo hello", "commandPreview": "echo hi"},
+        "metadata": {
+            "approvalId": "approval-full-id",
+            "approvalSlug": "abc-1",
+            "approvalKind": "exec",
+            "agentId": "main",
+            "allowedDecisions": ["allow-once", "deny"],
+            "sessionKey": "agent:main:main",
+        },
+        "pending": {
+            "hasWarning": True,
+            "hasPrimaryCommand": True,
+            "hidesAllowAlways": True,
+            "hasExpires": True,
+            "buttons": [
+                "/approve approval-full-id allow-once",
+                "/approve approval-full-id deny",
+            ],
+        },
+        "pluginMetadata": {
+            "approvalId": "plugin-approval-id",
+            "approvalSlug": "plugin-a",
+            "approvalKind": "plugin",
+            "allowedDecisions": ["allow-once", "allow-always", "deny"],
+        },
+        "approverDm": (
+            "Approval required. I sent approval DMs to the approvers for this account."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_client_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-client.cjs"
+    runtime_entry.write_text(
+        """
+const client = require("openclaw/plugin-sdk/approval-client-helpers");
+const scopedClient = require("@openclaw/plugin-sdk/approval-client-helpers");
+
+const cfg = {
+  approvals: {
+    exec: {
+      enabled: true,
+      mode: "targets",
+      targets: [
+        { channel: "matrix", to: "user:@owner:example.org", accountId: "ops" },
+        { channel: "matrix", to: "user:@other:example.org", accountId: "other" }
+      ]
+    }
+  }
+};
+
+const profile = client.createChannelExecApprovalProfile({
+  resolveConfig: () => ({
+    enabled: true,
+    target: "channel",
+    agentFilter: ["ops"],
+    sessionFilter: ["tail$"]
+  }),
+  resolveApprovers: () => ["owner"],
+  isTargetRecipient: ({ senderId }) => senderId === "target",
+  matchesRequestAccount: ({ accountId }) => accountId !== "other"
+});
+
+const promptProfile = client.createChannelExecApprovalProfile({
+  resolveConfig: () => undefined,
+  resolveApprovers: () => [],
+  requireClientEnabledForLocalPromptSuppression: false
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_client",
+      description: "Use OpenClaw approval client helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const request = {
+          id: "req-1",
+          request: {
+            command: "echo hi",
+            agentId: "ops",
+            sessionKey: "agent:ops:telegram:direct:owner:tail"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        const approvalPayload = {
+          channelData: {
+            execApproval: {
+              approvalId: "req-1",
+              approvalSlug: "req-1"
+            }
+          }
+        };
+        return {
+          keys: Object.keys(client).sort(),
+          scopedType: typeof scopedClient.createChannelExecApprovalProfile,
+          enabled: [
+            client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 1 }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: "auto",
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: true,
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({
+              enabled: false,
+              approverCount: 1
+            }),
+            client.isChannelExecApprovalClientEnabledFromConfig({ approverCount: 0 })
+          ],
+          targets: [
+            client.isChannelExecApprovalTargetRecipient({
+              cfg,
+              senderId: "@owner:example.org",
+              accountId: "ops",
+              channel: " Matrix ",
+              matchTarget: ({ target, normalizedSenderId }) =>
+                target.to === `user:${normalizedSenderId}`
+            }),
+            client.isChannelExecApprovalTargetRecipient({
+              cfg,
+              senderId: "@owner:example.org",
+              accountId: "other",
+              channel: "matrix",
+              matchTarget: ({ target, normalizedSenderId }) =>
+                target.to === `user:${normalizedSenderId}`
+            }),
+            client.isChannelExecApprovalTargetRecipient({
+              cfg: { approvals: { exec: { enabled: true, mode: "off", targets: [] } } },
+              senderId: "@owner:example.org",
+              channel: "matrix",
+              matchTarget: () => true
+            })
+          ],
+          filters: [
+            client.matchesApprovalRequestFilters({
+              request: request.request,
+              agentFilter: ["ops"],
+              sessionFilter: ["tail$"]
+            }),
+            client.matchesApprovalRequestFilters({
+              request: { sessionKey: "agent:ops:main" },
+              agentFilter: ["ops"],
+              fallbackAgentIdFromSessionKey: true
+            }),
+            client.matchesApprovalRequestFilters({
+              request: request.request,
+              agentFilter: ["main"]
+            })
+          ],
+          profile: {
+            clientEnabled: profile.isClientEnabled({ cfg: {} }),
+            approver: profile.isApprover({ cfg: {}, senderId: "owner" }),
+            authorizedTarget: profile.isAuthorizedSender({ cfg: {}, senderId: "target" }),
+            target: profile.resolveTarget({ cfg: {} }),
+            handleGood: profile.shouldHandleRequest({
+              cfg: {},
+              accountId: "ops",
+              request
+            }),
+            handleWrongAccount: profile.shouldHandleRequest({
+              cfg: {},
+              accountId: "other",
+              request
+            }),
+            suppressEnabled: profile.shouldSuppressLocalPrompt({
+              cfg: {},
+              payload: approvalPayload
+            }),
+            suppressOverride: promptProfile.shouldSuppressLocalPrompt({
+              cfg: {},
+              payload: approvalPayload
+            })
+          },
+          metadata: client.getExecApprovalReplyMetadata(approvalPayload)
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-client-plugin",
+                    "name": "Runtime Approval Client Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-client.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_client"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_client"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createChannelExecApprovalProfile",
+            "getExecApprovalReplyMetadata",
+            "isChannelExecApprovalClientEnabledFromConfig",
+            "isChannelExecApprovalTargetRecipient",
+            "matchesApprovalRequestFilters",
+        ],
+        "scopedType": "function",
+        "enabled": [False, True, True, False, False],
+        "targets": [True, False, False],
+        "filters": [True, True, False],
+        "profile": {
+            "clientEnabled": True,
+            "approver": True,
+            "authorizedTarget": True,
+            "target": "channel",
+            "handleGood": True,
+            "handleWrongAccount": False,
+            "suppressEnabled": True,
+            "suppressOverride": True,
+        },
+        "metadata": {
+            "approvalId": "req-1",
+            "approvalSlug": "req-1",
+            "approvalKind": "exec",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_delivery_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-delivery.cjs"
+    runtime_entry.write_text(
+        """
+const delivery = require("openclaw/plugin-sdk/approval-delivery-helpers");
+const scopedDelivery = require("@openclaw/plugin-sdk/approval-delivery-helpers");
+const runtimeDelivery = require("openclaw/plugin-sdk/approval-delivery-runtime");
+
+const adapter = delivery.createApproverRestrictedNativeApprovalAdapter({
+  channel: "telegram",
+  channelLabel: "Telegram",
+  listAccountIds: () => ["dm-only", "channel-only", "disabled", "no-approvers"],
+  hasApprovers: ({ accountId }) => accountId !== "no-approvers",
+  isExecAuthorizedSender: ({ senderId }) => senderId === "exec-owner",
+  isPluginAuthorizedSender: ({ senderId }) => senderId === "plugin-owner",
+  isNativeDeliveryEnabled: ({ accountId }) => accountId !== "disabled",
+  resolveNativeDeliveryMode: ({ accountId }) =>
+    accountId === "channel-only" ? "channel" : "dm",
+  resolveOriginTarget: () => ({ to: "origin-chat" }),
+  resolveApproverDmTargets: () => [{ to: "approver-1" }]
+});
+
+const suppressingAdapter = delivery.createApproverRestrictedNativeApprovalAdapter({
+  channel: "telegram",
+  channelLabel: "Telegram",
+  listAccountIds: () => [],
+  hasApprovers: () => true,
+  isExecAuthorizedSender: () => true,
+  isNativeDeliveryEnabled: ({ accountId }) => accountId === "topic-1",
+  resolveNativeDeliveryMode: () => "both",
+  requireMatchingTurnSourceChannel: true,
+  resolveSuppressionAccountId: ({ request }) =>
+    request.request.turnSourceAccountId.trim() || undefined
+});
+
+const nativeRuntime = { id: "native-runtime" };
+const capability = delivery.createApproverRestrictedNativeApprovalCapability({
+  channel: "matrix",
+  channelLabel: "Matrix",
+  describeExecApprovalSetup: ({ channel, channelLabel, accountId }) =>
+    `${channelLabel}:${channel}:${accountId || "default"}:setup`,
+  listAccountIds: () => ["work"],
+  hasApprovers: () => true,
+  isExecAuthorizedSender: ({ senderId }) => senderId === "@owner:example.com",
+  isNativeDeliveryEnabled: () => true,
+  resolveNativeDeliveryMode: () => "dm",
+  resolveApproverDmTargets: () => [{ to: "user:@owner:example.com" }],
+  nativeRuntime
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_delivery",
+      description: "Use OpenClaw approval delivery helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const split = delivery.splitChannelApprovalCapability(capability);
+        const canonical = delivery.createChannelApprovalCapability({
+          delivery: { marker: "top" },
+          approvals: {
+            delivery: { marker: "legacy" },
+            nativeRuntime: { id: "legacy-runtime" },
+            native: { marker: "legacy-native" }
+          }
+        });
+        const legacy = delivery.createChannelApprovalCapability({
+          approvals: { delivery: { marker: "legacy-only" } }
+        });
+        const approvalRequest = {
+          id: "approval-1",
+          request: { command: "pwd" },
+          createdAtMs: 0,
+          expiresAtMs: 10000
+        };
+        const suppress = suppressingAdapter.delivery.shouldSuppressForwardingFallback;
+        return {
+          keys: Object.keys(delivery).sort(),
+          scopedType: typeof scopedDelivery.createChannelApprovalCapability,
+          runtimeType: typeof runtimeDelivery.createApproverRestrictedNativeApprovalAdapter,
+          auth: [
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "exec-owner",
+              action: "approve",
+              approvalKind: "exec"
+            }),
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "plugin-owner",
+              action: "approve",
+              approvalKind: "plugin"
+            }),
+            adapter.auth.authorizeActorAction({
+              cfg: {},
+              accountId: "dm-only",
+              senderId: "someone-else",
+              action: "approve",
+              approvalKind: "plugin"
+            })
+          ],
+          availability: [
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "dm-only",
+              action: "approve"
+            }),
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "no-approvers",
+              action: "approve"
+            }),
+            adapter.auth.getActionAvailabilityState({
+              cfg: {},
+              accountId: "disabled",
+              action: "approve"
+            }),
+            adapter.auth.getExecInitiatingSurfaceState({
+              cfg: {},
+              accountId: "disabled",
+              action: "approve"
+            })
+          ],
+          dmRoute: adapter.delivery.hasConfiguredDmRoute({ cfg: {} }),
+          nativeCapabilities: adapter.native.describeDeliveryCapabilities({
+            cfg: {},
+            accountId: "channel-only",
+            approvalKind: "exec",
+            request: approvalRequest
+          }),
+          suppression: [
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "telegram", accountId: "wrong" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: " topic-1 "
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "telegram", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "slack",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "exec",
+              target: { channel: "slack", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            }),
+            suppress({
+              cfg: {},
+              approvalKind: "plugin",
+              target: { channel: "telegram", accountId: "topic-1" },
+              request: {
+                request: {
+                  turnSourceChannel: "telegram",
+                  turnSourceAccountId: "topic-1"
+                }
+              }
+            })
+          ],
+          split: {
+            authType: typeof split.auth.authorizeActorAction,
+            deliveryRoute: split.delivery.hasConfiguredDmRoute({ cfg: {} }),
+            setup: split.describeExecApprovalSetup({
+              channel: "matrix",
+              channelLabel: "Matrix",
+              accountId: "ops"
+            }),
+            nativeRuntimeId: split.nativeRuntime.id,
+            preferredSurface: split.native.describeDeliveryCapabilities({
+              cfg: {},
+              accountId: "work",
+              approvalKind: "exec",
+              request: approvalRequest
+            }).preferredSurface
+          },
+          surfaces: {
+            canonicalDelivery: canonical.delivery.marker,
+            canonicalNativeRuntime: canonical.nativeRuntime.id,
+            canonicalNative: canonical.native.marker,
+            legacyDelivery: legacy.delivery.marker
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-delivery-plugin",
+                    "name": "Runtime Approval Delivery Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-delivery.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_delivery"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_delivery"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createApproverRestrictedNativeApprovalAdapter",
+            "createApproverRestrictedNativeApprovalCapability",
+            "createChannelApprovalCapability",
+            "splitChannelApprovalCapability",
+        ],
+        "scopedType": "function",
+        "runtimeType": "function",
+        "auth": [
+            {"authorized": True},
+            {"authorized": True},
+            {
+                "authorized": False,
+                "reason": "âŒ You are not authorized to approve plugin requests on Telegram.",
+            },
+        ],
+        "availability": [
+            {"kind": "enabled"},
+            {"kind": "disabled"},
+            {"kind": "enabled"},
+            {"kind": "disabled"},
+        ],
+        "dmRoute": True,
+        "nativeCapabilities": {
+            "enabled": True,
+            "preferredSurface": "origin",
+            "supportsOriginSurface": True,
+            "supportsApproverDmSurface": True,
+            "notifyOriginWhenDmOnly": False,
+        },
+        "suppression": [True, False, False, True],
+        "split": {
+            "authType": "function",
+            "deliveryRoute": True,
+            "setup": "Matrix:matrix:ops:setup",
+            "nativeRuntimeId": "native-runtime",
+            "preferredSurface": "approver-dm",
+        },
+        "surfaces": {
+            "canonicalDelivery": "top",
+            "canonicalNativeRuntime": "legacy-runtime",
+            "canonicalNative": "legacy-native",
+            "legacyDelivery": "legacy-only",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-helpers");
+const scopedNative = require("@openclaw/plugin-sdk/approval-native-helpers");
+
+const matrixRequest = {
+  id: "plugin:req-1",
+  request: {
+    title: "Plugin approval",
+    description: "Allow access",
+    turnSourceChannel: "matrix",
+    turnSourceTo: "room:!room:example.org",
+    turnSourceThreadId: "t1",
+    turnSourceAccountId: "ops"
+  },
+  createdAtMs: 0,
+  expiresAtMs: 1000
+};
+
+const resolveMatrixOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "matrix",
+  shouldHandleRequest: ({ accountId }) => accountId === "ops",
+  resolveTurnSourceTarget: (request) => ({
+    to: String(request.request.turnSourceTo),
+    threadId: request.request.turnSourceThreadId || undefined
+  }),
+  resolveSessionTarget: (sessionTarget) => ({
+    to: sessionTarget.to,
+    threadId: sessionTarget.threadId
+  })
+});
+
+const resolveSlackOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "slack",
+  resolveTurnSourceTarget: () => ({
+    to: "channel:C1",
+    threadId: "171234.567890"
+  }),
+  resolveSessionTarget: () => ({
+    to: "channel:c1",
+    threadId: "171234.567890"
+  }),
+  normalizeTargetForMatch: (target) => ({
+    ...target,
+    to: target.to.toLowerCase()
+  })
+});
+
+const resolveCustomOrigin = native.createChannelNativeOriginTargetResolver({
+  channel: "custom",
+  resolveTurnSourceTarget: () => ({ id: "ROOM-1", shard: "a" }),
+  resolveSessionTarget: () => ({ id: "room-1", shard: "b" }),
+  normalizeTarget: (target) => ({ ...target, id: target.id.toLowerCase() }),
+  targetsMatch: (left, right) => left.id === right.id
+});
+
+const resolveApproverDmTargets = native.createChannelApproverDmTargetResolver({
+  shouldHandleRequest: ({ approvalKind }) => approvalKind === "exec",
+  resolveApprovers: () => ["owner-1", "owner-2", "skip-me"],
+  mapApprover: (approver, params) =>
+    approver === "skip-me"
+      ? null
+      : {
+          to: `user:${approver}`,
+          accountId: params.accountId
+        }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native",
+      description: "Use OpenClaw approval native helper SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const commandRequest = {
+          id: "req-1",
+          request: {
+            command: "echo hi",
+            turnSourceChannel: "slack",
+            turnSourceTo: "channel:C1",
+            turnSourceThreadId: "171234.567890"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        const customRequest = {
+          id: "req-2",
+          request: {
+            command: "echo hi",
+            sessionKey: "agent:main:custom:room-1",
+            turnSourceChannel: "custom",
+            turnSourceTo: "ROOM-1"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 1000
+        };
+        return {
+          keys: Object.keys(native).sort(),
+          scopedType: typeof scopedNative.createChannelApproverDmTargetResolver,
+          matches: [
+            native.nativeApprovalTargetsMatch({
+              channel: "telegram",
+              left: { to: "-100123", threadId: 42.9 },
+              right: { to: "-100123", threadId: "42" }
+            }),
+            native.nativeApprovalTargetsMatch({
+              channel: "telegram",
+              left: { to: "-100123", accountId: "work" },
+              right: { to: "-100123" }
+            })
+          ],
+          origins: [
+            resolveMatrixOrigin({
+              cfg: {},
+              accountId: "ops",
+              request: matrixRequest
+            }),
+            resolveMatrixOrigin({
+              cfg: {},
+              accountId: "other",
+              request: matrixRequest
+            }),
+            resolveSlackOrigin({
+              cfg: {},
+              accountId: "default",
+              request: commandRequest
+            }),
+            resolveCustomOrigin({
+              cfg: {},
+              request: customRequest
+            })
+          ],
+          dms: [
+            resolveApproverDmTargets({
+              cfg: {},
+              accountId: "default",
+              approvalKind: "exec",
+              request: commandRequest
+            }),
+            resolveApproverDmTargets({
+              cfg: {},
+              accountId: "default",
+              approvalKind: "plugin",
+              request: matrixRequest
+            })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-plugin",
+                    "name": "Runtime Approval Native Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_native"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createChannelApproverDmTargetResolver",
+            "createChannelNativeOriginTargetResolver",
+            "nativeApprovalTargetsMatch",
+        ],
+        "scopedType": "function",
+        "matches": [True, False],
+        "origins": [
+            {"to": "room:!room:example.org", "threadId": "t1"},
+            None,
+            {"to": "channel:C1", "threadId": "171234.567890"},
+            {"id": "room-1", "shard": "a"},
+        ],
+        "dms": [
+            [
+                {"to": "user:owner-1", "accountId": "default"},
+                {"to": "user:owner-2", "accountId": "default"},
+            ],
+            [],
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const runtime = require("openclaw/plugin-sdk/approval-native-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/approval-native-runtime");
+
+const execRequest = {
+  id: "approval-1",
+  request: { command: "uname -a" },
+  createdAtMs: 0,
+  expiresAtMs: 120000
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_runtime",
+      description: "Use OpenClaw approval native runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const originPlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "origin",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => ({ to: "origin-chat", threadId: "42" }),
+            resolveApproverDmTargets: async () => [{ to: "approver-1" }]
+          }
+        });
+        const fallbackPlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "origin",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => null,
+            resolveApproverDmTargets: async () => [
+              { to: "approver-1" },
+              { to: "approver-2" }
+            ]
+          }
+        });
+        const dmNoticePlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "plugin",
+          request: { ...execRequest, id: "plugin:approval-1" },
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "approver-dm",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true,
+              notifyOriginWhenDmOnly: true
+            }),
+            resolveOriginTarget: async () => ({ to: "origin-chat" }),
+            resolveApproverDmTargets: async () => [{ to: "approver-1" }]
+          }
+        });
+        const dedupePlan = await runtime.resolveChannelNativeApprovalDeliveryPlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "both",
+              supportsOriginSurface: true,
+              supportsApproverDmSurface: true
+            }),
+            resolveOriginTarget: async () => ({ to: "shared-chat" }),
+            resolveApproverDmTargets: async () => [
+              { to: "shared-chat" },
+              { to: "approver-2" }
+            ]
+          }
+        });
+        const duplicateTargets = [];
+        const errors = [];
+        const delivered = [];
+        const deliveryResult = await runtime.deliverApprovalRequestViaChannelNativePlan({
+          cfg: {},
+          approvalKind: "exec",
+          request: execRequest,
+          adapter: {
+            describeDeliveryCapabilities: () => ({
+              enabled: true,
+              preferredSurface: "approver-dm",
+              supportsOriginSurface: false,
+              supportsApproverDmSurface: true
+            }),
+            resolveApproverDmTargets: async () => [
+              { to: "approver-1" },
+              { to: "approver-2" },
+              { to: "approver-3" }
+            ]
+          },
+          prepareTarget: async ({ plannedTarget }) => ({
+            dedupeKey:
+              plannedTarget.target.to === "approver-2"
+                ? "shared-dm"
+                : plannedTarget.target.to,
+            target: { chatId: plannedTarget.target.to }
+          }),
+          deliverTarget: async ({ preparedTarget }) => {
+            if (preparedTarget.chatId === "approver-1") {
+              throw new Error("boom");
+            }
+            return { chatId: preparedTarget.chatId };
+          },
+          onDeliveryError: ({ plannedTarget }) => errors.push(plannedTarget.target.to),
+          onDuplicateSkipped: ({ plannedTarget }) =>
+            duplicateTargets.push(plannedTarget.target.to),
+          onDelivered: ({ plannedTarget }) => delivered.push(plannedTarget.target.to)
+        });
+        return {
+          keys: Object.keys(runtime).sort(),
+          scopedType: typeof scopedRuntime.resolveChannelNativeApprovalDeliveryPlan,
+          helperType: typeof runtime.createChannelNativeOriginTargetResolver,
+          targetKeys: [
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: "!room:example.org",
+              threadId: "$event:example.org"
+            }) !==
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: "!room",
+                threadId: "example.org:$event:example.org"
+              }),
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: " room:one ",
+              threadId: " 123 "
+            }) ===
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: "room:one",
+                threadId: "123"
+              }),
+            runtime.buildChannelApprovalNativeTargetKey({
+              to: "telegram:-100123",
+              threadId: 42.9
+            }) ===
+              runtime.buildChannelApprovalNativeTargetKey({
+                to: " telegram:-100123 ",
+                threadId: "42"
+              })
+          ],
+          originPlan,
+          fallbackTargets: fallbackPlan.targets,
+          dmNotice: {
+            originTarget: dmNoticePlan.originTarget,
+            notifyOriginWhenDmOnly: dmNoticePlan.notifyOriginWhenDmOnly,
+            targets: dmNoticePlan.targets
+          },
+          dedupeTargets: dedupePlan.targets,
+          delivery: {
+            entries: deliveryResult.entries,
+            deliveredTargets: deliveryResult.deliveredTargets,
+            errors,
+            duplicateTargets,
+            delivered
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-runtime-plugin",
+                    "name": "Runtime Approval Native Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_runtime"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildChannelApprovalNativeTargetKey",
+            "createChannelApproverDmTargetResolver",
+            "createChannelNativeApprovalRuntime",
+            "createChannelNativeOriginTargetResolver",
+            "deliverApprovalRequestViaChannelNativePlan",
+            "resolveChannelNativeApprovalDeliveryPlan",
+        ],
+        "scopedType": "function",
+        "helperType": "function",
+        "targetKeys": [True, True, True],
+        "originPlan": {
+            "targets": [
+                {
+                    "surface": "origin",
+                    "target": {"to": "origin-chat", "threadId": "42"},
+                    "reason": "preferred",
+                }
+            ],
+            "originTarget": {"to": "origin-chat", "threadId": "42"},
+            "notifyOriginWhenDmOnly": False,
+        },
+        "fallbackTargets": [
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-1"},
+                "reason": "fallback",
+            },
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-2"},
+                "reason": "fallback",
+            },
+        ],
+        "dmNotice": {
+            "originTarget": {"to": "origin-chat"},
+            "notifyOriginWhenDmOnly": True,
+            "targets": [
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-1"},
+                    "reason": "preferred",
+                }
+            ],
+        },
+        "dedupeTargets": [
+            {
+                "surface": "origin",
+                "target": {"to": "shared-chat"},
+                "reason": "preferred",
+            },
+            {
+                "surface": "approver-dm",
+                "target": {"to": "approver-2"},
+                "reason": "preferred",
+            },
+        ],
+        "delivery": {
+            "entries": [{"chatId": "approver-2"}, {"chatId": "approver-3"}],
+            "deliveredTargets": [
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-2"},
+                    "reason": "preferred",
+                },
+                {
+                    "surface": "approver-dm",
+                    "target": {"to": "approver-3"},
+                    "reason": "preferred",
+                },
+            ],
+            "errors": ["approver-1"],
+            "duplicateTargets": [],
+            "delivered": ["approver-2", "approver-3"],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_factory(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-factory.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-runtime");
+const approval = require("openclaw/plugin-sdk/approval-runtime");
+
+const observed = [];
+const runtime = native.createChannelNativeApprovalRuntime({
+  label: "test/native-runtime",
+  clientDisplayName: "Test",
+  channel: "telegram",
+  channelLabel: "Telegram",
+  cfg: {},
+  accountId: "secondary",
+  eventKinds: ["exec", "plugin"],
+  nowMs: () => 1234,
+  nativeAdapter: {
+    describeDeliveryCapabilities: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "capabilities", approvalKind, accountId, requestId: request.id });
+      return {
+        enabled: true,
+        preferredSurface: "approver-dm",
+        supportsOriginSurface: false,
+        supportsApproverDmSurface: true
+      };
+    },
+    resolveApproverDmTargets: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "targets", approvalKind, accountId, requestId: request.id });
+      return [{ to: `${approvalKind}:${accountId}` }];
+    }
+  },
+  isConfigured: () => true,
+  shouldHandle: (request) => {
+    observed.push({ hook: "shouldHandle", requestId: request.id });
+    return true;
+  },
+  buildPendingContent: async ({ request, approvalKind, nowMs }) => {
+    observed.push({ hook: "pending", requestId: request.id, approvalKind, nowMs });
+    return `pending:${approvalKind}:${nowMs}`;
+  },
+  prepareTarget: ({ plannedTarget, request, approvalKind, pendingContent }) => {
+    observed.push({
+      hook: "prepare",
+      plannedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent
+    });
+    return {
+      dedupeKey: `dm:${plannedTarget.target.to}`,
+      target: { chatId: plannedTarget.target.to }
+    };
+  },
+  deliverTarget: ({ plannedTarget, preparedTarget, request, approvalKind, pendingContent }) => {
+    observed.push({
+      hook: "deliver",
+      plannedTarget,
+      preparedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent
+    });
+    return { chatId: preparedTarget.chatId, messageId: "m1" };
+  },
+  onDelivered: ({ plannedTarget, preparedTarget, request, approvalKind, pendingContent, entry }) =>
+    observed.push({
+      hook: "delivered",
+      plannedTarget,
+      preparedTarget,
+      requestId: request.id,
+      approvalKind,
+      pendingContent,
+      entry
+    }),
+  finalizeResolved: async ({ request, resolved, entries }) => {
+    observed.push({
+      hook: "resolved",
+      requestId: request.id,
+      decision: resolved.decision,
+      entries
+    });
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_factory",
+      description: "Use OpenClaw approval native runtime factory SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = await runtime.handleRequested({
+          id: "plugin:req-1",
+          request: {
+            title: "Plugin approval",
+            description: "Allow access"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 60000
+        });
+        await runtime.handleResolved({
+          id: "plugin:req-1",
+          decision: "allow-once",
+          ts: 1
+        });
+        return {
+          factoryType: typeof native.createChannelNativeApprovalRuntime,
+          aggregateType: typeof approval.createChannelNativeApprovalRuntime,
+          eventKinds: runtime.eventKinds,
+          entries,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-factory-plugin",
+                    "name": "Runtime Approval Native Factory Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-factory.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_factory"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_factory"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "factoryType": "function",
+        "aggregateType": "function",
+        "eventKinds": ["exec", "plugin"],
+        "entries": [{"chatId": "plugin:secondary", "messageId": "m1"}],
+        "observed": [
+            {"hook": "shouldHandle", "requestId": "plugin:req-1"},
+            {
+                "hook": "pending",
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "nowMs": 1234,
+            },
+            {
+                "hook": "capabilities",
+                "approvalKind": "plugin",
+                "accountId": "secondary",
+                "requestId": "plugin:req-1",
+            },
+            {
+                "hook": "targets",
+                "approvalKind": "plugin",
+                "accountId": "secondary",
+                "requestId": "plugin:req-1",
+            },
+            {
+                "hook": "prepare",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+            },
+            {
+                "hook": "deliver",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "preparedTarget": {"chatId": "plugin:secondary"},
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+            },
+            {
+                "hook": "delivered",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:secondary"},
+                    "reason": "preferred",
+                },
+                "preparedTarget": {
+                    "dedupeKey": "dm:plugin:secondary",
+                    "target": {"chatId": "plugin:secondary"},
+                },
+                "requestId": "plugin:req-1",
+                "approvalKind": "plugin",
+                "pendingContent": "pending:plugin:1234",
+                "entry": {"chatId": "plugin:secondary", "messageId": "m1"},
+            },
+            {
+                "hook": "resolved",
+                "requestId": "plugin:req-1",
+                "decision": "allow-once",
+                "entries": [{"chatId": "plugin:secondary", "messageId": "m1"}],
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_native_runtime_expiration(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-native-expiration.cjs"
+    runtime_entry.write_text(
+        """
+const native = require("openclaw/plugin-sdk/approval-native-runtime");
+
+const observed = [];
+const runtime = native.createChannelNativeApprovalRuntime({
+  label: "test/native-expiration",
+  clientDisplayName: "Test",
+  cfg: {},
+  accountId: "ops",
+  nowMs: () => 1000,
+  nativeAdapter: {
+    describeDeliveryCapabilities: () => ({
+      enabled: true,
+      preferredSurface: "approver-dm",
+      supportsOriginSurface: false,
+      supportsApproverDmSurface: true
+    }),
+    resolveApproverDmTargets: () => [{ to: "owner" }]
+  },
+  isConfigured: () => true,
+  shouldHandle: () => true,
+  buildPendingContent: async ({ approvalKind }) => `pending:${approvalKind}`,
+  prepareTarget: async ({ plannedTarget }) => ({
+    dedupeKey: plannedTarget.target.to,
+    target: { to: plannedTarget.target.to }
+  }),
+  deliverTarget: async ({ preparedTarget }) => ({ id: `entry:${preparedTarget.to}` }),
+  finalizeExpired: async ({ request, entries }) => {
+    observed.push({ hook: "expired", requestId: request.id, entries });
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_native_expiration",
+      description: "Use OpenClaw approval native runtime expiration SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = await runtime.handleRequested({
+          id: "req-expire",
+          request: { command: "echo hi" },
+          createdAtMs: 0,
+          expiresAtMs: 1005
+        });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { entries, observed };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-native-expiration-plugin",
+                    "name": "Runtime Approval Native Expiration Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-native-expiration.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_native_expiration"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_native_expiration"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "entries": [{"id": "entry:owner"}],
+        "observed": [
+            {
+                "hook": "expired",
+                "requestId": "req-expire",
+                "entries": [{"id": "entry:owner"}],
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_adapter_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-adapter.cjs"
+    runtime_entry.write_text(
+        """
+const handlerAdapter = require("openclaw/plugin-sdk/approval-handler-adapter-runtime");
+const scopedHandlerAdapter = require("@openclaw/plugin-sdk/approval-handler-adapter-runtime");
+
+let loadCount = 0;
+const observed = [];
+const lazy = handlerAdapter.createLazyChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  resolveApprovalKind: (request) => (request.id.startsWith("plugin:") ? "plugin" : "exec"),
+  isConfigured: ({ accountId }) => accountId === "ops",
+  shouldHandle: (request) => request.id !== "skip",
+  load: async () => {
+    loadCount += 1;
+    return {
+      presentation: {
+        buildPendingPayload: async ({ request }) => `pending:${request.id}`,
+        buildResolvedResult: async ({ resolved }) => ({ resolved: resolved.id }),
+        buildExpiredResult: async ({ request }) => ({ expired: request.id })
+      },
+      transport: {
+        prepareTarget: async ({ plannedTarget }) => ({
+          prepared: plannedTarget.target.to
+        }),
+        deliverPending: async ({ preparedTarget, pendingPayload }) => ({
+          delivered: preparedTarget.prepared,
+          pendingPayload
+        }),
+        updateEntry: async ({ entry }) => ({ updated: entry.id }),
+        deleteEntry: async ({ entry }) => ({ deleted: entry.id })
+      },
+      interactions: {
+        bindPending: async ({ entry }) => ({ binding: entry.id }),
+        unbindPending: async ({ binding }) => ({ unbound: binding.id }),
+        clearPendingActions: async ({ entry }) => ({ cleared: entry.id })
+      },
+      observe: {
+        onDeliveryError: ({ plannedTarget }) =>
+          observed.push(`error:${plannedTarget.target.to}`),
+        onDuplicateSkipped: ({ plannedTarget }) =>
+          observed.push(`duplicate:${plannedTarget.target.to}`),
+        onDelivered: ({ entry }) => observed.push(`delivered:${entry.id}`)
+      }
+    };
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_adapter",
+      description: "Use OpenClaw approval handler adapter runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        lazy.observe.onDelivered({ entry: { id: "before-load" } });
+        const pending = await lazy.presentation.buildPendingPayload({
+          request: { id: "req-1" }
+        });
+        const prepared = await lazy.transport.prepareTarget({
+          plannedTarget: { target: { to: "owner" } }
+        });
+        const delivered = await lazy.transport.deliverPending({
+          preparedTarget: prepared,
+          pendingPayload: pending
+        });
+        const resolved = await lazy.presentation.buildResolvedResult({
+          resolved: { id: "req-1" }
+        });
+        const expired = await lazy.presentation.buildExpiredResult({
+          request: { id: "req-expired" }
+        });
+        const updated = await lazy.transport.updateEntry({ entry: { id: "entry-1" } });
+        const deleted = await lazy.transport.deleteEntry({ entry: { id: "entry-2" } });
+        const binding = await lazy.interactions.bindPending({ entry: { id: "entry-3" } });
+        const unbound = await lazy.interactions.unbindPending({
+          binding: { id: "binding-1" }
+        });
+        const cleared = await lazy.interactions.clearPendingActions({
+          entry: { id: "entry-4" }
+        });
+        lazy.observe.onDelivered({ entry: { id: "after-load" } });
+        lazy.observe.onDuplicateSkipped({ plannedTarget: { target: { to: "owner" } } });
+        lazy.observe.onDeliveryError({ plannedTarget: { target: { to: "owner" } } });
+        return {
+          keys: Object.keys(handlerAdapter).sort(),
+          scopedType: typeof scopedHandlerAdapter.createLazyChannelApprovalNativeRuntimeAdapter,
+          capability: handlerAdapter.CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+          eventKinds: lazy.eventKinds,
+          approvalKind: lazy.resolveApprovalKind({ id: "plugin:req-1" }),
+          configured: [
+            lazy.availability.isConfigured({ accountId: "ops" }),
+            lazy.availability.isConfigured({ accountId: "other" })
+          ],
+          shouldHandle: [
+            lazy.availability.shouldHandle({ id: "req-1" }),
+            lazy.availability.shouldHandle({ id: "skip" })
+          ],
+          loadCount,
+          pending,
+          prepared,
+          delivered,
+          resolved,
+          expired,
+          updated,
+          deleted,
+          binding,
+          unbound,
+          cleared,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-adapter-plugin",
+                    "name": "Runtime Approval Handler Adapter Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-adapter.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_adapter"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_adapter"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
+            "createLazyChannelApprovalNativeRuntimeAdapter",
+        ],
+        "scopedType": "function",
+        "capability": "approval.native",
+        "eventKinds": ["exec", "plugin"],
+        "approvalKind": "plugin",
+        "configured": [True, False],
+        "shouldHandle": [True, False],
+        "loadCount": 1,
+        "pending": "pending:req-1",
+        "prepared": {"prepared": "owner"},
+        "delivered": {"delivered": "owner", "pendingPayload": "pending:req-1"},
+        "resolved": {"resolved": "req-1"},
+        "expired": {"expired": "req-expired"},
+        "updated": {"updated": "entry-1"},
+        "deleted": {"deleted": "entry-2"},
+        "binding": {"binding": "entry-3"},
+        "unbound": {"unbound": "binding-1"},
+        "cleared": {"cleared": "entry-4"},
+        "observed": ["delivered:after-load", "duplicate:owner", "error:owner"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_runtime_adapter_factory(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+const scopedHandler = require("@openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const runtime = handler.createChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  resolveApprovalKind: (request) => (request.id.startsWith("plugin:") ? "plugin" : "exec"),
+  availability: {
+    isConfigured: ({ accountId }) => accountId === "ops",
+    shouldHandle: ({ request }) => request.id !== "skip"
+  },
+  presentation: {
+    buildPendingPayload: async ({ request, view }) => ({
+      pending: request.id,
+      viewKind: view.kind
+    }),
+    buildResolvedResult: async ({ resolved, entry }) => ({
+      kind: "update",
+      payload: { resolved: resolved.id, entry: entry.id }
+    }),
+    buildExpiredResult: async ({ request }) => ({ kind: "delete", expired: request.id })
+  },
+  transport: {
+    prepareTarget: async ({ plannedTarget, pendingPayload }) => ({
+      dedupeKey: plannedTarget.target.to,
+      target: { to: plannedTarget.target.to, pending: pendingPayload.pending }
+    }),
+    deliverPending: async ({ preparedTarget }) => ({ id: `entry:${preparedTarget.to}` }),
+    updateEntry: async ({ entry, payload, phase }) => ({
+      updated: entry.id,
+      payload,
+      phase
+    }),
+    deleteEntry: async ({ entry, phase }) => ({ deleted: entry.id, phase })
+  },
+  interactions: {
+    bindPending: async ({ entry }) => ({ binding: entry.id }),
+    unbindPending: async ({ binding }) => ({ unbound: binding.id }),
+    clearPendingActions: async ({ entry, phase }) => ({ cleared: entry.id, phase })
+  },
+  observe: {
+    onDeliveryError: ({ plannedTarget }) => observed.push(`error:${plannedTarget.target.to}`),
+    onDuplicateSkipped: ({ plannedTarget }) =>
+      observed.push(`duplicate:${plannedTarget.target.to}`),
+    onDelivered: ({ entry }) => observed.push(`delivered:${entry.id}`)
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_runtime",
+      description: "Use OpenClaw approval handler runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const request = { id: "plugin:req-1", request: { title: "Plugin" } };
+        const pending = await runtime.presentation.buildPendingPayload({
+          request,
+          approvalKind: "plugin",
+          nowMs: 10,
+          view: { kind: "plugin-pending" }
+        });
+        const prepared = await runtime.transport.prepareTarget({
+          plannedTarget: { target: { to: "owner" } },
+          pendingPayload: pending
+        });
+        const delivered = await runtime.transport.deliverPending({
+          preparedTarget: prepared.target,
+          pendingPayload: pending
+        });
+        const resolved = await runtime.presentation.buildResolvedResult({
+          resolved: { id: "plugin:req-1" },
+          entry: delivered,
+          view: { kind: "plugin-resolved" }
+        });
+        const expired = await runtime.presentation.buildExpiredResult({
+          request: { id: "req-expired" },
+          view: { kind: "exec-expired" },
+          entry: delivered
+        });
+        const updated = await runtime.transport.updateEntry({
+          entry: delivered,
+          payload: resolved.payload,
+          phase: "resolved"
+        });
+        const deleted = await runtime.transport.deleteEntry({
+          entry: delivered,
+          phase: "expired"
+        });
+        const binding = await runtime.interactions.bindPending({ entry: delivered });
+        const unbound = await runtime.interactions.unbindPending({
+          binding: { id: "binding-1" }
+        });
+        const cleared = await runtime.interactions.clearPendingActions({
+          entry: delivered,
+          phase: "resolved"
+        });
+        runtime.observe.onDelivered({ entry: delivered });
+        runtime.observe.onDuplicateSkipped({ plannedTarget: { target: { to: "owner" } } });
+        runtime.observe.onDeliveryError({ plannedTarget: { target: { to: "owner" } } });
+        return {
+          keys: Object.keys(handler).sort(),
+          scopedType: typeof scopedHandler.createChannelApprovalNativeRuntimeAdapter,
+          capability: handler.CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
+          eventKinds: runtime.eventKinds,
+          approvalKind: runtime.resolveApprovalKind(request),
+          configured: [
+            runtime.availability.isConfigured({ accountId: "ops" }),
+            runtime.availability.isConfigured({ accountId: "other" })
+          ],
+          shouldHandle: [
+            runtime.availability.shouldHandle({ request }),
+            runtime.availability.shouldHandle({ request: { id: "skip" } })
+          ],
+          pending,
+          prepared,
+          delivered,
+          resolved,
+          expired,
+          updated,
+          deleted,
+          binding,
+          unbound,
+          cleared,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-runtime-plugin",
+                    "name": "Runtime Approval Handler Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_runtime"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY",
+            "createChannelApprovalHandler",
+            "createChannelApprovalHandlerFromCapability",
+            "createChannelApprovalNativeRuntimeAdapter",
+            "createLazyChannelApprovalNativeRuntimeAdapter",
+            "resolveApprovalOverGateway",
+        ],
+        "scopedType": "function",
+        "capability": "approval.native",
+        "eventKinds": ["exec", "plugin"],
+        "approvalKind": "plugin",
+        "configured": [True, False],
+        "shouldHandle": [True, False],
+        "pending": {"pending": "plugin:req-1", "viewKind": "plugin-pending"},
+        "prepared": {
+            "dedupeKey": "owner",
+            "target": {"to": "owner", "pending": "plugin:req-1"},
+        },
+        "delivered": {"id": "entry:owner"},
+        "resolved": {
+            "kind": "update",
+            "payload": {"resolved": "plugin:req-1", "entry": "entry:owner"},
+        },
+        "expired": {"kind": "delete", "expired": "req-expired"},
+        "updated": {
+            "updated": "entry:owner",
+            "payload": {"resolved": "plugin:req-1", "entry": "entry:owner"},
+            "phase": "resolved",
+        },
+        "deleted": {"deleted": "entry:owner", "phase": "expired"},
+        "binding": {"binding": "entry:owner"},
+        "unbound": {"unbound": "binding-1"},
+        "cleared": {"cleared": "entry:owner", "phase": "resolved"},
+        "observed": ["delivered:entry:owner", "duplicate:owner", "error:owner"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_runtime_wrapper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-wrapper.cjs"
+    runtime_entry.write_text(
+        """
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const runtime = handler.createChannelApprovalHandler({
+  runtime: {
+    label: "test/approval-handler",
+    clientDisplayName: "Test",
+    cfg: {},
+    accountId: "ops",
+    eventKinds: ["exec", "plugin"],
+    nativeAdapter: {
+      describeDeliveryCapabilities: ({ approvalKind, accountId, request }) => {
+        observed.push({ hook: "capabilities", approvalKind, accountId, requestId: request.id });
+        return {
+          enabled: true,
+          preferredSurface: "approver-dm",
+          supportsOriginSurface: false,
+          supportsApproverDmSurface: true
+        };
+      },
+      resolveApproverDmTargets: ({ approvalKind, accountId, request }) => {
+        observed.push({ hook: "targets", approvalKind, accountId, requestId: request.id });
+        return [{ to: `${approvalKind}:${accountId}` }];
+      }
+    },
+    isConfigured: () => true,
+    shouldHandle: (request) => {
+      observed.push({ hook: "shouldHandle", requestId: request.id });
+      return true;
+    },
+    nowMs: () => 5000
+  },
+  content: {
+    buildPendingContent: async ({ request, approvalKind, nowMs }) => {
+      observed.push({ hook: "pending", requestId: request.id, approvalKind, nowMs });
+      return `view:${approvalKind}:${nowMs}`;
+    }
+  },
+  transport: {
+    prepareTarget: async ({ plannedTarget, request, approvalKind, pendingContent }) => {
+      observed.push({
+        hook: "prepare",
+        plannedTarget,
+        requestId: request.id,
+        approvalKind,
+        pendingContent
+      });
+      return {
+        dedupeKey: plannedTarget.target.to,
+        target: { to: plannedTarget.target.to }
+      };
+    },
+    deliverTarget: async ({ preparedTarget, request, approvalKind, pendingContent }) => {
+      observed.push({
+        hook: "deliver",
+        preparedTarget,
+        requestId: request.id,
+        approvalKind,
+        pendingContent
+      });
+      return { id: `entry:${preparedTarget.to}` };
+    }
+  },
+  lifecycle: {
+    onDelivered: ({ entry, request, approvalKind, pendingContent }) => {
+      observed.push({
+        hook: "delivered",
+        entry,
+        requestId: request.id,
+        approvalKind,
+        pendingContent
+      });
+    },
+    finalizeResolved: async ({ request, resolved, entries }) => {
+      observed.push({
+        hook: "resolved",
+        requestId: request.id,
+        decision: resolved.decision,
+        entries
+      });
+    }
+  }
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_wrapper",
+      description: "Use OpenClaw approval handler wrapper SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const entries = await runtime.handleRequested({
+          id: "plugin:req-handler",
+          request: {
+            title: "Plugin approval"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 60000
+        });
+        await runtime.handleResolved({
+          id: "plugin:req-handler",
+          decision: "deny",
+          ts: 10
+        });
+        return {
+          handlerType: typeof handler.createChannelApprovalHandler,
+          eventKinds: runtime.eventKinds,
+          entries,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-wrapper-plugin",
+                    "name": "Runtime Approval Handler Wrapper Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-wrapper.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_wrapper"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_wrapper"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "handlerType": "function",
+        "eventKinds": ["exec", "plugin"],
+        "entries": [{"id": "entry:plugin:ops"}],
+        "observed": [
+            {"hook": "shouldHandle", "requestId": "plugin:req-handler"},
+            {
+                "hook": "pending",
+                "requestId": "plugin:req-handler",
+                "approvalKind": "plugin",
+                "nowMs": 5000,
+            },
+            {
+                "hook": "capabilities",
+                "approvalKind": "plugin",
+                "accountId": "ops",
+                "requestId": "plugin:req-handler",
+            },
+            {
+                "hook": "targets",
+                "approvalKind": "plugin",
+                "accountId": "ops",
+                "requestId": "plugin:req-handler",
+            },
+            {
+                "hook": "prepare",
+                "plannedTarget": {
+                    "surface": "approver-dm",
+                    "target": {"to": "plugin:ops"},
+                    "reason": "preferred",
+                },
+                "requestId": "plugin:req-handler",
+                "approvalKind": "plugin",
+                "pendingContent": "view:plugin:5000",
+            },
+            {
+                "hook": "deliver",
+                "preparedTarget": {"to": "plugin:ops"},
+                "requestId": "plugin:req-handler",
+                "approvalKind": "plugin",
+                "pendingContent": "view:plugin:5000",
+            },
+            {
+                "hook": "delivered",
+                "entry": {"id": "entry:plugin:ops"},
+                "requestId": "plugin:req-handler",
+                "approvalKind": "plugin",
+                "pendingContent": "view:plugin:5000",
+            },
+            {
+                "hook": "resolved",
+                "requestId": "plugin:req-handler",
+                "decision": "deny",
+                "entries": [{"id": "entry:plugin:ops"}],
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_handler_from_capability(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-handler-capability.cjs"
+    runtime_entry.write_text(
+        """
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const nativeRuntime = handler.createChannelApprovalNativeRuntimeAdapter({
+  eventKinds: ["exec", "plugin"],
+  availability: {
+    isConfigured: ({ accountId, context }) => {
+      observed.push({ hook: "configured", accountId, context });
+      return accountId === "ops";
+    },
+    shouldHandle: ({ request, accountId }) => {
+      observed.push({ hook: "shouldHandle", requestId: request.id, accountId });
+      return request.id !== "skip";
+    }
+  },
+  presentation: {
+    buildPendingPayload: async ({ request, approvalKind, view, context }) => {
+      observed.push({
+        hook: "pendingPayload",
+        requestId: request.id,
+        approvalKind,
+        view: {
+          approvalId: view.approvalId,
+          approvalKind: view.approvalKind,
+          phase: view.phase,
+          title: view.title,
+          severity: view.severity
+        },
+        context
+      });
+      return { text: `pending:${view.title}` };
+    },
+    buildResolvedResult: async ({ resolved, view, entry }) => {
+      observed.push({
+        hook: "resolvedPayload",
+        resolved: resolved.id,
+        view: {
+          approvalId: view.approvalId,
+          approvalKind: view.approvalKind,
+          phase: view.phase,
+          decision: view.decision
+        },
+        entry
+      });
+      return { kind: "update", payload: { resolved: resolved.id, decision: view.decision } };
+    },
+    buildExpiredResult: async ({ request, view, entry }) => ({
+      kind: "delete",
+      expired: request.id,
+      phase: view.phase,
+      entry
+    })
+  },
+  transport: {
+    prepareTarget: async ({ plannedTarget, pendingPayload, view }) => {
+      observed.push({ hook: "prepare", plannedTarget, pendingPayload, phase: view.phase });
+      return { dedupeKey: plannedTarget.target.to, target: { to: plannedTarget.target.to } };
+    },
+    deliverPending: async ({ preparedTarget, pendingPayload, view }) => {
+      observed.push({ hook: "deliver", preparedTarget, pendingPayload, phase: view.phase });
+      return { id: `entry:${preparedTarget.to}` };
+    },
+    updateEntry: async ({ entry, payload, phase }) => {
+      observed.push({ hook: "update", entry, payload, phase });
+      return { updated: entry.id, payload, phase };
+    }
+  },
+  interactions: {
+    bindPending: async ({ entry, pendingPayload }) => {
+      observed.push({ hook: "bind", entry, pendingPayload });
+      return { id: `binding:${entry.id}` };
+    },
+    unbindPending: async ({ entry, binding, approvalKind }) => {
+      observed.push({ hook: "unbind", entry, binding, approvalKind });
+    }
+  },
+  observe: {
+    onDelivered: ({ entry, approvalKind }) =>
+      observed.push({ hook: "observed", entry, approvalKind })
+  }
+});
+
+const capability = {
+  nativeRuntime,
+  native: {
+    describeDeliveryCapabilities: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "capabilities", approvalKind, accountId, requestId: request.id });
+      return {
+        enabled: true,
+        preferredSurface: "approver-dm",
+        supportsOriginSurface: false,
+        supportsApproverDmSurface: true
+      };
+    },
+    resolveApproverDmTargets: ({ approvalKind, accountId, request }) => {
+      observed.push({ hook: "targets", approvalKind, accountId, requestId: request.id });
+      return [{ to: `${approvalKind}:${accountId}` }];
+    }
+  }
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_handler_capability",
+      description: "Use OpenClaw approval handler capability SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const runtime = await handler.createChannelApprovalHandlerFromCapability({
+          capability,
+          label: "test/capability",
+          clientDisplayName: "Capability",
+          channel: "telegram",
+          channelLabel: "Telegram",
+          cfg: {},
+          accountId: "ops",
+          gatewayUrl: "ws://gateway.example.test",
+          context: { source: "unit" },
+          nowMs: () => 7000
+        });
+        const missing = await handler.createChannelApprovalHandlerFromCapability({
+          capability: {},
+          label: "missing",
+          clientDisplayName: "Missing",
+          channel: "telegram",
+          channelLabel: "Telegram",
+          cfg: {}
+        });
+        const configured = runtime.isConfigured();
+        const entries = await runtime.handleRequested({
+          id: "plugin:req-capability",
+          request: {
+            pluginId: "demo",
+            title: "Plugin asks",
+            description: "Needs access",
+            severity: "critical"
+          },
+          createdAtMs: 0,
+          expiresAtMs: 60000
+        });
+        await runtime.handleResolved({
+          id: "plugin:req-capability",
+          decision: "allow-once",
+          resolvedBy: "owner",
+          ts: 10
+        });
+        return {
+          factoryType: typeof handler.createChannelApprovalHandlerFromCapability,
+          missing,
+          configured,
+          entries,
+          observed
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-handler-capability-plugin",
+                    "name": "Runtime Approval Handler Capability Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-handler-capability.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_handler_capability"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.approval_handler_capability"},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"]["factoryType"] == "function"
+    assert payload["result"]["missing"] is None
+    assert payload["result"]["configured"] is True
+    assert payload["result"]["entries"] == [
+        {
+            "entry": {"id": "entry:plugin:ops"},
+            "binding": {"id": "binding:entry:plugin:ops"},
+        }
+    ]
+    assert payload["result"]["observed"] == [
+        {"hook": "configured", "accountId": "ops", "context": {"source": "unit"}},
+        {"hook": "shouldHandle", "requestId": "plugin:req-capability", "accountId": "ops"},
+        {
+            "hook": "pendingPayload",
+            "requestId": "plugin:req-capability",
+            "approvalKind": "plugin",
+            "view": {
+                "approvalId": "plugin:req-capability",
+                "approvalKind": "plugin",
+                "phase": "pending",
+                "title": "Plugin asks",
+                "severity": "critical",
+            },
+            "context": {"source": "unit"},
+        },
+        {
+            "hook": "capabilities",
+            "approvalKind": "plugin",
+            "accountId": "ops",
+            "requestId": "plugin:req-capability",
+        },
+        {
+            "hook": "targets",
+            "approvalKind": "plugin",
+            "accountId": "ops",
+            "requestId": "plugin:req-capability",
+        },
+        {
+            "hook": "prepare",
+            "plannedTarget": {
+                "surface": "approver-dm",
+                "target": {"to": "plugin:ops"},
+                "reason": "preferred",
+            },
+            "pendingPayload": {"text": "pending:Plugin asks"},
+            "phase": "pending",
+        },
+        {
+            "hook": "deliver",
+            "preparedTarget": {"to": "plugin:ops"},
+            "pendingPayload": {"text": "pending:Plugin asks"},
+            "phase": "pending",
+        },
+        {
+            "hook": "bind",
+            "entry": {"id": "entry:plugin:ops"},
+            "pendingPayload": {"text": "pending:Plugin asks"},
+        },
+        {
+            "hook": "observed",
+            "entry": {"id": "entry:plugin:ops"},
+            "approvalKind": "plugin",
+        },
+        {
+            "hook": "unbind",
+            "entry": {"id": "entry:plugin:ops"},
+            "binding": {"id": "binding:entry:plugin:ops"},
+            "approvalKind": "plugin",
+        },
+        {
+            "hook": "resolvedPayload",
+            "resolved": "plugin:req-capability",
+            "view": {
+                "approvalId": "plugin:req-capability",
+                "approvalKind": "plugin",
+                "phase": "resolved",
+                "decision": "allow-once",
+            },
+            "entry": {"id": "entry:plugin:ops"},
+        },
+        {
+            "hook": "update",
+            "entry": {"id": "entry:plugin:ops"},
+            "payload": {"resolved": "plugin:req-capability", "decision": "allow-once"},
+            "phase": "resolved",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_runtime_aggregate_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const approval = require("openclaw/plugin-sdk/approval-runtime");
+const scopedApproval = require("@openclaw/plugin-sdk/approval-runtime");
+
+const auth = approval.createResolvedApproverActionAuthAdapter({
+  channelLabel: "Matrix",
+  resolveApprovers: () => ["owner"]
+});
+const profile = approval.createChannelExecApprovalProfile({
+  resolveConfig: () => ({ enabled: "auto", target: "channel" }),
+  resolveApprovers: () => ["owner"],
+  isTargetRecipient: ({ senderId }) => senderId === "target"
+});
+const capability = approval.createApproverRestrictedNativeApprovalCapability({
+  channel: "matrix",
+  channelLabel: "Matrix",
+  listAccountIds: () => ["work"],
+  hasApprovers: () => true,
+  isExecAuthorizedSender: ({ senderId }) => senderId === "owner",
+  isNativeDeliveryEnabled: () => true,
+  resolveNativeDeliveryMode: () => "dm",
+  resolveApproverDmTargets: () => [{ to: "user:owner" }]
+});
+const originResolver = approval.createChannelNativeOriginTargetResolver({
+  channel: "matrix",
+  resolveTurnSourceTarget: (request) => ({
+    to: request.request.turnSourceTo,
+    threadId: request.request.turnSourceThreadId
+  }),
+  resolveSessionTarget: (sessionTarget) => ({ to: sessionTarget.to })
+});
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_runtime",
+      description: "Use OpenClaw approval runtime aggregate SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const pending = approval.buildExecApprovalPendingReplyPayload({
+          approvalId: "approval-full-id",
+          approvalSlug: "slug",
+          ask: "always",
+          command: "npm test",
+          expiresAtMs: 65000,
+          nowMs: 5000
+        });
+        const pluginPending = approval.buildPluginApprovalPendingReplyPayload({
+          request: {
+            id: "plugin:approval-id",
+            request: {
+              pluginId: "demo",
+              title: "Plugin asks",
+              description: "Needs access"
+            }
+          },
+          text: "Plugin asks"
+        });
+        const split = approval.splitChannelApprovalCapability(capability);
+        return {
+          scopedType: typeof scopedApproval.createChannelApprovalCapability,
+          selectedKeys: [
+            "buildExecApprovalPendingReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "createApproverRestrictedNativeApprovalCapability",
+            "createChannelExecApprovalProfile",
+            "createChannelNativeOriginTargetResolver",
+            "createResolvedApproverActionAuthAdapter",
+            "matchesApprovalRequestFilters",
+            "resolveExecApprovalAllowedDecisions",
+            "splitChannelApprovalCapability"
+          ].filter((key) => typeof approval[key] === "function"),
+          decisions: approval.resolveExecApprovalAllowedDecisions({ ask: "always" }),
+          auth: [
+            auth.authorizeActorAction({ senderId: "owner", approvalKind: "exec" }),
+            auth.authorizeActorAction({ senderId: "other", approvalKind: "plugin" })
+          ],
+          profile: {
+            enabled: profile.isClientEnabled({}),
+            approver: profile.isApprover({ senderId: "owner" }),
+            target: profile.resolveTarget({}),
+            authorizedTarget: profile.isAuthorizedSender({ senderId: "target" })
+          },
+          metadata: [
+            approval.getExecApprovalReplyMetadata(pending),
+            approval.getExecApprovalReplyMetadata(pluginPending)
+          ],
+          split: {
+            authType: typeof split.auth.authorizeActorAction,
+            dmRoute: split.delivery.hasConfiguredDmRoute({ cfg: {} }),
+            preferredSurface: split.native.describeDeliveryCapabilities({
+              cfg: {},
+              accountId: "work",
+              approvalKind: "exec",
+              request: { id: "req-1", request: { command: "pwd" } }
+            }).preferredSurface
+          },
+          origin: originResolver({
+            cfg: {},
+            accountId: "ops",
+            request: {
+              id: "req-1",
+              request: {
+                command: "pwd",
+                turnSourceChannel: "matrix",
+                turnSourceTo: "room:!room",
+                turnSourceThreadId: "t1"
+              }
+            }
+          }),
+          filters: approval.matchesApprovalRequestFilters({
+            request: {
+              sessionKey: "agent:ops:matrix:room:tail"
+            },
+            agentFilter: ["ops"],
+            fallbackAgentIdFromSessionKey: true,
+            sessionFilter: ["tail$"]
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-runtime-plugin",
+                    "name": "Runtime Approval Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "scopedType": "function",
+        "selectedKeys": [
+            "buildExecApprovalPendingReplyPayload",
+            "buildPluginApprovalPendingReplyPayload",
+            "createApproverRestrictedNativeApprovalCapability",
+            "createChannelExecApprovalProfile",
+            "createChannelNativeOriginTargetResolver",
+            "createResolvedApproverActionAuthAdapter",
+            "matchesApprovalRequestFilters",
+            "resolveExecApprovalAllowedDecisions",
+            "splitChannelApprovalCapability",
+        ],
+        "decisions": ["allow-once", "deny"],
+        "auth": [
+            {"authorized": True},
+            {
+                "authorized": False,
+                "reason": "❌ You are not authorized to approve plugin requests on Matrix.",
+            },
+        ],
+        "profile": {
+            "enabled": True,
+            "approver": True,
+            "target": "channel",
+            "authorizedTarget": True,
+        },
+        "metadata": [
+            {
+                "approvalId": "approval-full-id",
+                "approvalSlug": "slug",
+                "approvalKind": "exec",
+                "allowedDecisions": ["allow-once", "deny"],
+            },
+            {
+                "approvalId": "plugin:approval-id",
+                "approvalSlug": "plugin:a",
+                "approvalKind": "plugin",
+                "allowedDecisions": ["allow-once", "allow-always", "deny"],
+            },
+        ],
+        "split": {
+            "authType": "function",
+            "dmRoute": True,
+            "preferredSurface": "approver-dm",
+        },
+        "origin": {"to": "room:!room", "threadId": "t1"},
+        "filters": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_approval_gateway_runtime_resolver(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-approval-gateway-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/approval-gateway-runtime");
+const scopedGateway = require("@openclaw/plugin-sdk/approval-gateway-runtime");
+const handler = require("openclaw/plugin-sdk/approval-handler-runtime");
+
+const observed = [];
+const makeFactory = (label, behavior) => async (options, run) => {
+  observed.push({ label, options });
+  await run({
+    request: async (method, payload) => {
+      observed.push({ label, method, payload });
+      if (behavior) {
+        await behavior(method, payload);
+      }
+    }
+  });
+};
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.approval_gateway",
+      description: "Use OpenClaw approval gateway resolver SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        await gateway.resolveApprovalOverGateway({
+          cfg: { gateway: { auth: { token: "cfg-token" } } },
+          approvalId: "approval-1",
+          decision: "allow-once",
+          gatewayUrl: "ws://gateway.example.test",
+          clientDisplayName: "QuietChat approval (default)",
+          withOperatorApprovalsGatewayClient: makeFactory("exec")
+        });
+        await scopedGateway.resolveApprovalOverGateway({
+          cfg: {},
+          approvalId: "plugin:approval-1",
+          decision: "deny",
+          senderId: " plugin-owner ",
+          withOperatorApprovalsGatewayClient: makeFactory("plugin")
+        });
+        let fallbackFirst = true;
+        await gateway.resolveApprovalOverGateway({
+          cfg: {},
+          approvalId: "approval-fallback",
+          decision: "allow-always",
+          allowPluginFallback: true,
+          withOperatorApprovalsGatewayClient: makeFactory("fallback", async () => {
+            if (fallbackFirst) {
+              fallbackFirst = false;
+              const error = new Error("unknown or expired approval id");
+              error.gatewayCode = "APPROVAL_NOT_FOUND";
+              throw error;
+            }
+          })
+        });
+        let denied = "";
+        try {
+          await handler.resolveApprovalOverGateway({
+            cfg: {},
+            approvalId: "approval-denied",
+            decision: "deny",
+            allowPluginFallback: true,
+            senderId: " denied-user ",
+            withOperatorApprovalsGatewayClient: makeFactory("denied", async () => {
+              throw new Error("permission denied");
+            })
+          });
+        } catch (error) {
+          denied = error.message;
+        }
+        return {
+          scopedType: typeof scopedGateway.resolveApprovalOverGateway,
+          handlerType: typeof handler.resolveApprovalOverGateway,
+          observed,
+          denied
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-approval-gateway-plugin",
+                    "name": "Runtime Approval Gateway Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-approval-gateway.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.approval_gateway"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.approval_gateway"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "scopedType": "function",
+        "handlerType": "function",
+        "observed": [
+            {
+                "label": "exec",
+                "options": {
+                    "config": {"gateway": {"auth": {"token": "cfg-token"}}},
+                    "gatewayUrl": "ws://gateway.example.test",
+                    "clientDisplayName": "QuietChat approval (default)",
+                },
+            },
+            {
+                "label": "exec",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-1", "decision": "allow-once"},
+            },
+            {
+                "label": "plugin",
+                "options": {"config": {}, "clientDisplayName": "Approval (plugin-owner)"},
+            },
+            {
+                "label": "plugin",
+                "method": "plugin.approval.resolve",
+                "payload": {"id": "plugin:approval-1", "decision": "deny"},
+            },
+            {
+                "label": "fallback",
+                "options": {"config": {}, "clientDisplayName": "Approval (unknown)"},
+            },
+            {
+                "label": "fallback",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-fallback", "decision": "allow-always"},
+            },
+            {
+                "label": "fallback",
+                "method": "plugin.approval.resolve",
+                "payload": {"id": "approval-fallback", "decision": "allow-always"},
+            },
+            {
+                "label": "denied",
+                "options": {"config": {}, "clientDisplayName": "Approval (denied-user)"},
+            },
+            {
+                "label": "denied",
+                "method": "exec.approval.resolve",
+                "payload": {"id": "approval-denied", "decision": "deny"},
+            },
+        ],
+        "denied": "permission denied",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_telegram_command_config_helpers(
     tmp_path,
 ) -> None:
@@ -14592,6 +17681,133 @@ module.exports = {
         "constructor": [],
         "authContains": [True] * 11,
         "omitted": {"OPENCLAW_API_KEY": "keep-me"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_simple_completion_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-simple-completion.cjs"
+    runtime_entry.write_text(
+        """
+const completion = require("openclaw/plugin-sdk/simple-completion-runtime");
+const scopedCompletion = require("@openclaw/plugin-sdk/simple-completion-runtime");
+
+function message(content, extra = {}) {
+  return {
+    role: "assistant",
+    content,
+    stopReason: "stop",
+    ...extra
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.simple_completion_runtime",
+      description: "Use OpenClaw simple completion runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(completion).sort(),
+          scopedType: typeof scopedCompletion.extractAssistantText,
+          stringText: completion.extractAssistantText(
+            message("  Hello\\nworld  ")
+          ),
+          blockText: completion.extractAssistantText(message([
+            { type: "text", text: " First " },
+            { type: "thinking", thinking: "hidden" },
+            { type: "text", text: "Second" }
+          ])),
+          toolXml: completion.extractAssistantText(message([
+            {
+              type: "text",
+              text: "Let me check.\\n\\n<tool_call> " +
+                "{\\"name\\":\\"read\\",\\"arguments\\":{}} </tool_call> Done."
+            }
+          ])),
+          minimaxOnly: completion.extractAssistantText(message([
+            {
+              type: "text",
+              text: "<invoke name=\\"Bash\\">\\n" +
+                "<parameter name=\\"command\\">test</parameter>\\n" +
+                "</invoke>\\n</minimax:tool_call>"
+            }
+          ])),
+          errorText: completion.extractAssistantText(message([
+            { type: "text", text: "500 Internal Server Error" }
+          ], { stopReason: "error" })),
+          nonText: completion.extractAssistantText(message([
+            { type: "image", source: { type: "url", url: "https://example.test/a.png" } }
+          ]))
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-simple-completion-plugin",
+                    "name": "Runtime Simple Completion Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-simple-completion.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.simple_completion_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.simple_completion_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["extractAssistantText"],
+        "scopedType": "function",
+        "stringText": "Hello\nworld",
+        "blockText": "First\nSecond",
+        "toolXml": "Let me check.\n\n Done.",
+        "minimaxOnly": "",
+        "errorText": "HTTP 500: Internal Server Error",
+        "nonText": "",
     }
 
 
