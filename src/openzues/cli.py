@@ -34460,6 +34460,102 @@ async function tryDispatchAcpReplyHook(event = {}, ctx = {}) {
   };
 }
 
+let acpSessionManagerSingleton = null;
+
+function getAcpSessionManager() {
+  if (!acpSessionManagerSingleton) {
+    acpSessionManagerSingleton = {
+      createdAt: new Date().toISOString(),
+      sessions: new Map(),
+    };
+  }
+  return acpSessionManagerSingleton;
+}
+
+function resetAcpSessionManagerForTests() {
+  acpSessionManagerSingleton = null;
+}
+
+function setAcpSessionManagerForTests(manager) {
+  acpSessionManagerSingleton = manager || null;
+}
+
+function resetAcpRuntimeBackendsForTests() {
+  acpRuntimeBackendsById.clear();
+}
+
+function getAcpRuntimeRegistryGlobalStateForTests() {
+  return {
+    backendsById: acpRuntimeBackendsById,
+  };
+}
+
+const acpRuntimeTesting = {
+  getAcpRuntimeRegistryGlobalStateForTests,
+  resetAcpRuntimeBackendsForTests,
+  resetAcpSessionManagerForTests,
+  setAcpSessionManagerForTests,
+};
+
+function resolveAcpSessionStorePath(cfg = {}) {
+  const store = cfg && cfg.session && cfg.session.store;
+  if (typeof store === "string" && store.trim()) {
+    return store.trim();
+  }
+  if (store && typeof store.path === "string" && store.path.trim()) {
+    return store.path.trim();
+  }
+  return path.join(os.tmpdir(), "openclaw", "sessions.json");
+}
+
+function resolveAcpStoreSessionKey(store, sessionKey) {
+  const normalized = String(sessionKey || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (store && Object.prototype.hasOwnProperty.call(store, normalized)) {
+    return normalized;
+  }
+  const lower = normalizeLowercaseStringOrEmpty(normalized);
+  if (store && Object.prototype.hasOwnProperty.call(store, lower)) {
+    return lower;
+  }
+  for (const key of Object.keys(store || {})) {
+    if (normalizeLowercaseStringOrEmpty(key) === lower) {
+      return key;
+    }
+  }
+  return lower;
+}
+
+function readAcpSessionEntry(params = {}) {
+  const sessionKey = String(params.sessionKey || "").trim();
+  if (!sessionKey) {
+    return null;
+  }
+  const cfg = params.cfg || {};
+  const storePath = resolveAcpSessionStorePath(cfg);
+  let store = {};
+  let storeReadFailed = false;
+  try {
+    const raw = fs.readFileSync(storePath, "utf8");
+    const parsed = JSON.parse(raw);
+    store = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    storeReadFailed = true;
+  }
+  const storeSessionKey = resolveAcpStoreSessionKey(store, sessionKey);
+  const entry = store[storeSessionKey];
+  return {
+    cfg,
+    storePath,
+    sessionKey,
+    storeSessionKey,
+    ...(entry ? { entry, acp: entry.acp } : {}),
+    ...(storeReadFailed ? { storeReadFailed: true } : {}),
+  };
+}
+
 const acpRuntimeBackendRuntime = {
   AcpRuntimeError,
   getAcpRuntimeBackend,
@@ -34468,6 +34564,13 @@ const acpRuntimeBackendRuntime = {
   requireAcpRuntimeBackend,
   tryDispatchAcpReplyHook,
   unregisterAcpRuntimeBackend,
+};
+
+const acpRuntimeRuntime = {
+  ...acpRuntimeBackendRuntime,
+  __testing: acpRuntimeTesting,
+  getAcpSessionManager,
+  readAcpSessionEntry,
 };
 
 const acpxRuntime = {
@@ -45762,6 +45865,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/acp-runtime-backend"
   ) {
     return acpRuntimeBackendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/acp-runtime" ||
+    request === "@openclaw/plugin-sdk/acp-runtime"
+  ) {
+    return acpRuntimeRuntime;
   }
   if (typeOnlyPluginSdkRequests.has(request)) {
     return typeOnlyPluginSdkRuntime;

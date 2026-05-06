@@ -32941,6 +32941,209 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_acp_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-acp-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const acp = require("openclaw/plugin-sdk/acp-runtime");
+const scopedAcp = require("@openclaw/plugin-sdk/acp-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.acp",
+      description: "Use OpenClaw ACP runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        acp.__testing.resetAcpRuntimeBackendsForTests();
+        acp.__testing.resetAcpSessionManagerForTests();
+        const manager1 = acp.getAcpSessionManager();
+        const manager2 = acp.getAcpSessionManager();
+        acp.__testing.setAcpSessionManagerForTests({ custom: true });
+        const customManager = acp.getAcpSessionManager();
+        acp.__testing.resetAcpSessionManagerForTests();
+        const managerAfterReset = acp.getAcpSessionManager();
+        acp.registerAcpRuntimeBackend({
+          id: "runtime-one",
+          runtime: { id: "runtime-one" },
+          healthy: () => true
+        });
+        const backend = acp.requireAcpRuntimeBackend("RUNTIME-ONE");
+        const storePath = path.join(__dirname, "acp-sessions.json");
+        fs.writeFileSync(
+          storePath,
+          JSON.stringify({
+            Main: {
+              model: "gpt-test",
+              acp: {
+                runtimeSessionId: "runtime-session-1",
+                runtimeThreadId: "runtime-thread-1"
+              }
+            }
+          }),
+          "utf8"
+        );
+        const entry = acp.readAcpSessionEntry({
+          sessionKey: " main ",
+          cfg: { session: { store: storePath } }
+        });
+        const missing = acp.readAcpSessionEntry({
+          sessionKey: "missing",
+          cfg: { session: { store: path.join(__dirname, "missing.json") } }
+        });
+        const empty = acp.readAcpSessionEntry({
+          sessionKey: "   ",
+          cfg: { session: { store: storePath } }
+        });
+        const earlyHook = await acp.tryDispatchAcpReplyHook(
+          {
+            sendPolicy: "deny",
+            suppressUserDelivery: false,
+            isTailDispatch: false,
+            ctx: { BodyForCommands: "plain text" }
+          },
+          { cfg: {} }
+        );
+        acp.unregisterAcpRuntimeBackend("runtime-one");
+        return {
+          keys: Object.keys(acp).sort(),
+          testingKeys: Object.keys(acp.__testing).sort(),
+          scopedType: typeof scopedAcp.getAcpSessionManager,
+          manager: {
+            same: manager1 === manager2,
+            custom: customManager.custom,
+            resetCreatedNew: managerAfterReset !== customManager
+          },
+          backend: {
+            id: backend.id,
+            runtimeId: backend.runtime.id
+          },
+          entry: {
+            storePath: entry.storePath.replace(/\\\\/g, "/").endsWith("/acp-sessions.json"),
+            sessionKey: entry.sessionKey,
+            storeSessionKey: entry.storeSessionKey,
+            model: entry.entry && entry.entry.model,
+            acp: entry.acp
+          },
+          missing: {
+            storeReadFailed: missing.storeReadFailed,
+            storeSessionKey: missing.storeSessionKey,
+            hasEntry: Boolean(missing.entry)
+          },
+          empty,
+          earlyHook: earlyHook === undefined ? null : earlyHook
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-acp-plugin",
+                    "name": "Runtime ACP Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-acp-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.acp"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.acp", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "AcpRuntimeError",
+            "__testing",
+            "getAcpRuntimeBackend",
+            "getAcpSessionManager",
+            "isAcpRuntimeError",
+            "readAcpSessionEntry",
+            "registerAcpRuntimeBackend",
+            "requireAcpRuntimeBackend",
+            "tryDispatchAcpReplyHook",
+            "unregisterAcpRuntimeBackend",
+        ],
+        "testingKeys": [
+            "getAcpRuntimeRegistryGlobalStateForTests",
+            "resetAcpRuntimeBackendsForTests",
+            "resetAcpSessionManagerForTests",
+            "setAcpSessionManagerForTests",
+        ],
+        "scopedType": "function",
+        "manager": {
+            "same": True,
+            "custom": True,
+            "resetCreatedNew": True,
+        },
+        "backend": {
+            "id": "runtime-one",
+            "runtimeId": "runtime-one",
+        },
+        "entry": {
+            "storePath": True,
+            "sessionKey": "main",
+            "storeSessionKey": "Main",
+            "model": "gpt-test",
+            "acp": {
+                "runtimeSessionId": "runtime-session-1",
+                "runtimeThreadId": "runtime-thread-1",
+            },
+        },
+        "missing": {
+            "storeReadFailed": True,
+            "storeSessionKey": "missing",
+            "hasEntry": False,
+        },
+        "empty": None,
+        "earlyHook": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_primitives_runtime_helpers(
     tmp_path,
 ) -> None:
