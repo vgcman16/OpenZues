@@ -18443,6 +18443,845 @@ function resolveHeartbeatVisibility(params) {
   };
 }
 
+function parseJsonOrNull(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function loadJsonFile(pathname) {
+  try {
+    return JSON.parse(fs.readFileSync(pathname, "utf8"));
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+function renameJsonFileWithFallback(tmpPath, pathname) {
+  try {
+    fs.renameSync(tmpPath, pathname);
+    return;
+  } catch (error) {
+    if (!error || (error.code !== "EPERM" && error.code !== "EEXIST")) {
+      throw error;
+    }
+  }
+  fs.copyFileSync(tmpPath, pathname);
+  fs.rmSync(tmpPath, { force: true });
+}
+
+function saveJsonFile(pathname, data) {
+  const tmpPath = `${pathname}.${crypto.randomUUID()}.tmp`;
+  const payload = `${JSON.stringify(data, null, 2)}\n`;
+  fs.mkdirSync(path.dirname(pathname), { recursive: true, mode: 0o700 });
+  try {
+    fs.writeFileSync(tmpPath, payload, { encoding: "utf8", mode: 0o600 });
+    try {
+      fs.chmodSync(tmpPath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    renameJsonFileWithFallback(tmpPath, pathname);
+    try {
+      fs.chmodSync(pathname, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch (_error) {
+      // Best effort cleanup.
+    }
+  }
+}
+
+async function readJsonFileWithFallback(filePath, fallback) {
+  try {
+    const raw = await fs.promises.readFile(filePath, "utf8");
+    const parsed = parseJsonOrNull(raw);
+    if (parsed == null) {
+      return { value: fallback, exists: true };
+    }
+    return { value: parsed, exists: true };
+  } catch (_error) {
+    return { value: fallback, exists: false };
+  }
+}
+
+async function writeJsonFileAtomically(filePath, value) {
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  try {
+    await fs.promises.writeFile(tmpPath, payload, { encoding: "utf8", mode: 0o600 });
+    try {
+      await fs.promises.chmod(tmpPath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    try {
+      await fs.promises.rename(tmpPath, filePath);
+    } catch (error) {
+      if (!error || (error.code !== "EPERM" && error.code !== "EEXIST")) {
+        throw error;
+      }
+      await fs.promises.copyFile(tmpPath, filePath);
+      await fs.promises.rm(tmpPath, { force: true });
+    }
+    try {
+      await fs.promises.chmod(filePath, 0o600);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
+}
+
+const DIAGNOSTICS_ENV = "OPENCLAW_DIAGNOSTICS";
+const DIAGNOSTIC_EVENTS_STATE_KEY = Symbol.for("openclaw.diagnosticEvents.state.v1");
+const DIAGNOSTIC_TRACEPARENT_VERSION = "00";
+const DIAGNOSTIC_TRACE_FLAGS_DEFAULT = "01";
+const DIAGNOSTIC_TRACEPARENT_MAX_LENGTH = 128;
+const DIAGNOSTIC_TRACE_ID_RE = /^[0-9a-f]{32}$/;
+const DIAGNOSTIC_SPAN_ID_RE = /^[0-9a-f]{16}$/;
+const DIAGNOSTIC_TRACE_FLAGS_RE = /^[0-9a-f]{2}$/;
+const DIAGNOSTIC_TRACEPARENT_VERSION_RE = /^[0-9a-f]{2}$/;
+const ASYNC_DIAGNOSTIC_EVENT_TYPES = new Set([
+  "tool.execution.started",
+  "tool.execution.completed",
+  "tool.execution.error",
+  "exec.process.completed",
+  "message.delivery.started",
+  "message.delivery.completed",
+  "message.delivery.error",
+  "model.call.started",
+  "model.call.completed",
+  "model.call.error",
+  "run.progress",
+  "harness.run.started",
+  "harness.run.completed",
+  "harness.run.error",
+  "context.assembled",
+  "log.record",
+]);
+
+function parseDiagnosticEnvFlags(raw) {
+  if (!raw) {
+    return { flags: [], disablesAll: false };
+  }
+  const trimmed = String(raw).trim();
+  const lowered = normalizeLowercaseStringOrEmpty(trimmed);
+  if (!lowered) {
+    return { flags: [], disablesAll: false };
+  }
+  if (["0", "false", "off", "none"].includes(lowered)) {
+    return { flags: [], disablesAll: true };
+  }
+  if (["1", "true", "all", "*"].includes(lowered)) {
+    return { flags: ["*"], disablesAll: false };
+  }
+  return {
+    flags: trimmed
+      .split(/[,\s]+/)
+      .map((value) => normalizeLowercaseStringOrEmpty(value))
+      .filter(Boolean),
+    disablesAll: false,
+  };
+}
+
+function uniqueDiagnosticFlags(flags) {
+  const seen = new Set();
+  const out = [];
+  for (const flag of flags) {
+    const normalized = normalizeLowercaseStringOrEmpty(flag);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function resolveDiagnosticFlags(cfg, env = process.env) {
+  const configFlags =
+    cfg && cfg.diagnostics && Array.isArray(cfg.diagnostics.flags)
+      ? cfg.diagnostics.flags
+      : [];
+  const envFlags = parseDiagnosticEnvFlags(env && env[DIAGNOSTICS_ENV]);
+  if (envFlags.disablesAll) {
+    return [];
+  }
+  return uniqueDiagnosticFlags([...configFlags, ...envFlags.flags]);
+}
+
+function matchesDiagnosticFlag(flag, enabledFlags) {
+  const target = normalizeLowercaseStringOrEmpty(flag);
+  if (!target) {
+    return false;
+  }
+  for (const raw of enabledFlags) {
+    const enabled = normalizeLowercaseStringOrEmpty(raw);
+    if (!enabled) {
+      continue;
+    }
+    if (enabled === "*" || enabled === "all") {
+      return true;
+    }
+    if (enabled.endsWith(".*")) {
+      const prefix = enabled.slice(0, -2);
+      if (target === prefix || target.startsWith(`${prefix}.`)) {
+        return true;
+      }
+    }
+    if (enabled.endsWith("*")) {
+      const prefix = enabled.slice(0, -1);
+      if (target.startsWith(prefix)) {
+        return true;
+      }
+    }
+    if (enabled === target) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isDiagnosticFlagEnabled(flag, cfg, env = process.env) {
+  return matchesDiagnosticFlag(flag, resolveDiagnosticFlags(cfg, env));
+}
+
+function isDiagnosticsEnabled(config) {
+  return !config || !config.diagnostics || config.diagnostics.enabled !== false;
+}
+
+function getDiagnosticEventsState() {
+  return resolveGlobalSingleton(DIAGNOSTIC_EVENTS_STATE_KEY, () => ({
+    marker: DIAGNOSTIC_EVENTS_STATE_KEY,
+    enabled: true,
+    seq: 0,
+    listeners: new Set(),
+    dispatchDepth: 0,
+    asyncQueue: [],
+    asyncDrainScheduled: false,
+  }));
+}
+
+function deepFreezeDiagnosticValue(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreezeDiagnosticValue(item, seen);
+    }
+    return Object.freeze(value);
+  }
+  for (const nested of Object.values(value)) {
+    deepFreezeDiagnosticValue(nested, seen);
+  }
+  return Object.freeze(value);
+}
+
+function cloneDiagnosticEventForListener(event) {
+  const cloned =
+    typeof structuredClone === "function"
+      ? structuredClone(event)
+      : JSON.parse(JSON.stringify(event));
+  return deepFreezeDiagnosticValue(cloned);
+}
+
+function createDiagnosticMetadataForListener(metadata) {
+  return Object.freeze({ ...metadata });
+}
+
+function dispatchDiagnosticEvent(state, enriched, metadata) {
+  if (state.dispatchDepth > 100) {
+    return;
+  }
+  state.dispatchDepth += 1;
+  try {
+    for (const listener of Array.from(state.listeners)) {
+      try {
+        listener(
+          cloneDiagnosticEventForListener(enriched),
+          createDiagnosticMetadataForListener(metadata),
+        );
+      } catch (_error) {
+        // Diagnostic listener failures are isolated from runtime execution.
+      }
+    }
+  } finally {
+    state.dispatchDepth -= 1;
+  }
+}
+
+function scheduleAsyncDiagnosticDrain(state) {
+  if (state.asyncDrainScheduled) {
+    return;
+  }
+  state.asyncDrainScheduled = true;
+  setImmediate(() => {
+    state.asyncDrainScheduled = false;
+    const batch = state.asyncQueue.splice(0);
+    for (const entry of batch) {
+      dispatchDiagnosticEvent(state, entry.event, entry.metadata);
+    }
+    if (state.asyncQueue.length > 0) {
+      scheduleAsyncDiagnosticDrain(state);
+    }
+  });
+}
+
+function enrichDiagnosticEvent(state, event) {
+  const enriched = {};
+  for (const [key, value] of Object.entries(event && typeof event === "object" ? event : {})) {
+    if (isBlockedObjectKey(key)) {
+      continue;
+    }
+    enriched[key] = value;
+  }
+  state.seq += 1;
+  enriched.seq = state.seq;
+  enriched.ts = Date.now();
+  return enriched;
+}
+
+function emitDiagnosticEventWithTrust(event, trusted) {
+  const state = getDiagnosticEventsState();
+  if (!state.enabled) {
+    return;
+  }
+  const enriched = enrichDiagnosticEvent(state, event);
+  const metadata = { trusted };
+  if (ASYNC_DIAGNOSTIC_EVENT_TYPES.has(enriched.type)) {
+    if (state.asyncQueue.length >= 10000) {
+      return;
+    }
+    state.asyncQueue.push({ event: enriched, metadata });
+    scheduleAsyncDiagnosticDrain(state);
+    return;
+  }
+  dispatchDiagnosticEvent(state, enriched, metadata);
+}
+
+function emitDiagnosticEvent(event) {
+  emitDiagnosticEventWithTrust(event, false);
+}
+
+function emitTrustedDiagnosticEvent(event) {
+  emitDiagnosticEventWithTrust(event, true);
+}
+
+function onInternalDiagnosticEvent(listener) {
+  const state = getDiagnosticEventsState();
+  state.listeners.add(listener);
+  return () => {
+    state.listeners.delete(listener);
+  };
+}
+
+function onDiagnosticEvent(listener) {
+  return onInternalDiagnosticEvent((event, metadata) => {
+    if ((metadata && metadata.trusted) || event.type === "log.record") {
+      return;
+    }
+    listener(event);
+  });
+}
+
+function resetDiagnosticEventsForTest() {
+  const state = getDiagnosticEventsState();
+  state.enabled = true;
+  state.seq = 0;
+  state.listeners.clear();
+  state.dispatchDepth = 0;
+  state.asyncQueue = [];
+  state.asyncDrainScheduled = false;
+}
+
+function randomDiagnosticHex(bytes) {
+  return crypto.randomBytes(bytes).toString("hex");
+}
+
+function isNonZeroDiagnosticHex(value) {
+  return !/^0+$/.test(value);
+}
+
+function randomDiagnosticTraceId() {
+  let traceId = randomDiagnosticHex(16);
+  while (!isNonZeroDiagnosticHex(traceId)) {
+    traceId = randomDiagnosticHex(16);
+  }
+  return traceId;
+}
+
+function randomDiagnosticSpanId() {
+  let spanId = randomDiagnosticHex(8);
+  while (!isNonZeroDiagnosticHex(spanId)) {
+    spanId = randomDiagnosticHex(8);
+  }
+  return spanId;
+}
+
+function isValidDiagnosticTraceId(value) {
+  return (
+    typeof value === "string" &&
+    DIAGNOSTIC_TRACE_ID_RE.test(value) &&
+    isNonZeroDiagnosticHex(value)
+  );
+}
+
+function isValidDiagnosticSpanId(value) {
+  return (
+    typeof value === "string" &&
+    DIAGNOSTIC_SPAN_ID_RE.test(value) &&
+    isNonZeroDiagnosticHex(value)
+  );
+}
+
+function isValidDiagnosticTraceFlags(value) {
+  return typeof value === "string" && DIAGNOSTIC_TRACE_FLAGS_RE.test(value);
+}
+
+function normalizeDiagnosticTraceId(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticTraceId(normalized) ? normalized : undefined;
+}
+
+function normalizeDiagnosticSpanId(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticSpanId(normalized) ? normalized : undefined;
+}
+
+function normalizeDiagnosticTraceFlags(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.toLowerCase();
+  return isValidDiagnosticTraceFlags(normalized) ? normalized : undefined;
+}
+
+function parseDiagnosticTraceparent(traceparent) {
+  if (
+    typeof traceparent !== "string" ||
+    traceparent.length > DIAGNOSTIC_TRACEPARENT_MAX_LENGTH
+  ) {
+    return undefined;
+  }
+  const parts = traceparent.trim().toLowerCase().split("-");
+  if (!parts || parts.length < 4) {
+    return undefined;
+  }
+  const [version, traceId, spanId, traceFlags] = parts;
+  if (
+    !DIAGNOSTIC_TRACEPARENT_VERSION_RE.test(version) ||
+    version === "ff" ||
+    (version === DIAGNOSTIC_TRACEPARENT_VERSION && parts.length !== 4)
+  ) {
+    return undefined;
+  }
+  const normalizedTraceId = normalizeDiagnosticTraceId(traceId);
+  const normalizedSpanId = normalizeDiagnosticSpanId(spanId);
+  const normalizedTraceFlags = normalizeDiagnosticTraceFlags(traceFlags);
+  if (!normalizedTraceId || !normalizedSpanId || !normalizedTraceFlags) {
+    return undefined;
+  }
+  return {
+    traceId: normalizedTraceId,
+    spanId: normalizedSpanId,
+    traceFlags: normalizedTraceFlags,
+  };
+}
+
+function formatDiagnosticTraceparent(context) {
+  if (!context || !context.spanId) {
+    return undefined;
+  }
+  const traceId = normalizeDiagnosticTraceId(context.traceId);
+  const spanId = normalizeDiagnosticSpanId(context.spanId);
+  const traceFlags =
+    normalizeDiagnosticTraceFlags(context.traceFlags) || DIAGNOSTIC_TRACE_FLAGS_DEFAULT;
+  if (!traceId || !spanId) {
+    return undefined;
+  }
+  return `${DIAGNOSTIC_TRACEPARENT_VERSION}-${traceId}-${spanId}-${traceFlags}`;
+}
+
+function createDiagnosticTraceContext(input = {}) {
+  const parsed = parseDiagnosticTraceparent(input.traceparent);
+  const traceId =
+    normalizeDiagnosticTraceId(input.traceId) ||
+    (parsed && parsed.traceId) ||
+    randomDiagnosticTraceId();
+  const spanId =
+    normalizeDiagnosticSpanId(input.spanId) ||
+    (parsed && parsed.spanId) ||
+    randomDiagnosticSpanId();
+  const parentSpanId = normalizeDiagnosticSpanId(input.parentSpanId);
+  return {
+    traceId,
+    spanId,
+    ...(parentSpanId && parentSpanId !== spanId ? { parentSpanId } : {}),
+    traceFlags:
+      normalizeDiagnosticTraceFlags(input.traceFlags) ||
+      (parsed && parsed.traceFlags) ||
+      DIAGNOSTIC_TRACE_FLAGS_DEFAULT,
+  };
+}
+
+function createChildDiagnosticTraceContext(parent, input = {}) {
+  const parentSpanId =
+    normalizeDiagnosticSpanId(input.parentSpanId) ||
+    normalizeDiagnosticSpanId(parent && parent.spanId);
+  return createDiagnosticTraceContext({
+    traceId: parent && parent.traceId,
+    spanId: input.spanId,
+    parentSpanId,
+    traceFlags: input.traceFlags || (parent && parent.traceFlags),
+  });
+}
+
+const SYSTEM_EVENT_QUEUES_KEY = Symbol.for("openclaw.systemEvents.queues");
+const MAX_SYSTEM_EVENTS = 20;
+
+function requireSystemEventSessionKey(key) {
+  const trimmed = normalizeOptionalString(key) || "";
+  if (!trimmed) {
+    throw new Error("system events require a sessionKey");
+  }
+  return trimmed;
+}
+
+function normalizeSystemEventContextKey(key) {
+  return normalizeOptionalLowercaseString(key) || null;
+}
+
+function getSystemEventQueues() {
+  return resolveGlobalMap(SYSTEM_EVENT_QUEUES_KEY);
+}
+
+function getSystemEventQueue(sessionKey) {
+  return getSystemEventQueues().get(requireSystemEventSessionKey(sessionKey));
+}
+
+function getOrCreateSystemEventQueue(sessionKey) {
+  const key = requireSystemEventSessionKey(sessionKey);
+  const queues = getSystemEventQueues();
+  const existing = queues.get(key);
+  if (existing) {
+    return existing;
+  }
+  const created = {
+    queue: [],
+    lastText: null,
+    lastContextKey: null,
+  };
+  queues.set(key, created);
+  return created;
+}
+
+function cloneSystemEvent(event) {
+  return {
+    ...event,
+    ...(event.deliveryContext ? { deliveryContext: { ...event.deliveryContext } } : {}),
+  };
+}
+
+function enqueueSystemEvent(text, options = {}) {
+  const key = requireSystemEventSessionKey(options && options.sessionKey);
+  const entry = getOrCreateSystemEventQueue(key);
+  const cleaned = String(text || "").trim();
+  if (!cleaned) {
+    return false;
+  }
+  const contextKey = normalizeSystemEventContextKey(options && options.contextKey);
+  const deliveryContext = normalizeDeliveryContext(options && options.deliveryContext);
+  entry.lastContextKey = contextKey;
+  if (entry.lastText === cleaned) {
+    return false;
+  }
+  entry.lastText = cleaned;
+  entry.queue.push({
+    text: cleaned,
+    ts: Date.now(),
+    contextKey,
+    ...(deliveryContext ? { deliveryContext } : {}),
+    trusted: !options || options.trusted !== false,
+  });
+  if (entry.queue.length > MAX_SYSTEM_EVENTS) {
+    entry.queue.shift();
+  }
+  return true;
+}
+
+function peekSystemEventEntries(sessionKey) {
+  const entry = getSystemEventQueue(sessionKey);
+  return entry ? entry.queue.map(cloneSystemEvent) : [];
+}
+
+function resetSystemEventsForTest() {
+  getSystemEventQueues().clear();
+}
+
+function toFormUrlEncoded(data) {
+  return Object.entries(data || {})
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+}
+
+function createPkceChallenge(verifier) {
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+function generatePkceVerifierChallenge() {
+  const verifier = crypto.randomBytes(32).toString("base64url");
+  return { verifier, challenge: createPkceChallenge(verifier) };
+}
+
+function generateHexPkceVerifierChallenge() {
+  const verifier = crypto.randomBytes(32).toString("hex");
+  return { verifier, challenge: createPkceChallenge(verifier) };
+}
+
+const RUNTIME_CONFIG_SNAPSHOT_STATE_KEY = Symbol.for("openclaw.runtimeConfigSnapshot.state");
+
+function getRuntimeConfigSnapshotState() {
+  return resolveGlobalSingleton(RUNTIME_CONFIG_SNAPSHOT_STATE_KEY, () => ({
+    runtimeConfigSnapshot: null,
+    runtimeConfigSourceSnapshot: null,
+  }));
+}
+
+function isConfigRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stableConfigStringify(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) || "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableConfigStringify(entry)).join(",")}]`;
+  }
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableConfigStringify(value[key])}`)
+    .join(",")}}`;
+}
+
+function configSnapshotsMatch(left, right) {
+  if (left === right) {
+    return true;
+  }
+  try {
+    return stableConfigStringify(left) === stableConfigStringify(right);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function resolveInitialRuntimeConfig() {
+  const pluginContext = isConfigRecord(context.plugin) ? context.plugin : {};
+  if (isConfigRecord(context.config)) {
+    return context.config;
+  }
+  if (isConfigRecord(pluginContext.config)) {
+    return pluginContext.config;
+  }
+  if (isConfigRecord(context.rawConfig)) {
+    return context.rawConfig;
+  }
+  if (isConfigRecord(pluginContext.rawConfig)) {
+    return pluginContext.rawConfig;
+  }
+  return {};
+}
+
+function setRuntimeConfigSnapshot(config, sourceConfig) {
+  const state = getRuntimeConfigSnapshotState();
+  state.runtimeConfigSnapshot = config || {};
+  state.runtimeConfigSourceSnapshot = sourceConfig || null;
+}
+
+function clearRuntimeConfigSnapshot() {
+  const state = getRuntimeConfigSnapshotState();
+  state.runtimeConfigSnapshot = null;
+  state.runtimeConfigSourceSnapshot = null;
+}
+
+function getRuntimeConfigSnapshot() {
+  return getRuntimeConfigSnapshotState().runtimeConfigSnapshot;
+}
+
+function getRuntimeConfigSourceSnapshot() {
+  return getRuntimeConfigSnapshotState().runtimeConfigSourceSnapshot;
+}
+
+function getRuntimeConfig() {
+  const state = getRuntimeConfigSnapshotState();
+  if (!state.runtimeConfigSnapshot) {
+    setRuntimeConfigSnapshot(resolveInitialRuntimeConfig());
+  }
+  return getRuntimeConfigSnapshot();
+}
+
+function clearConfigCache() {
+  return undefined;
+}
+
+function selectApplicableRuntimeConfig(params = {}) {
+  const runtimeConfig = params.runtimeConfig || null;
+  if (!runtimeConfig) {
+    return params.inputConfig;
+  }
+  const inputConfig = params.inputConfig;
+  if (!inputConfig) {
+    return runtimeConfig;
+  }
+  if (inputConfig === runtimeConfig) {
+    return inputConfig;
+  }
+  const runtimeSourceConfig = params.runtimeSourceConfig || null;
+  if (!runtimeSourceConfig) {
+    return runtimeConfig;
+  }
+  if (configSnapshotsMatch(inputConfig, runtimeSourceConfig)) {
+    return runtimeConfig;
+  }
+  return inputConfig;
+}
+
+function isMockedFetch(fetchImpl) {
+  return typeof fetchImpl === "function" && typeof fetchImpl.mock === "object";
+}
+
+async function fetchWithRuntimeDispatcher(input, init) {
+  if (typeof globalThis.fetch !== "function") {
+    throw new Error("runtime fetch is not available in this Node.js runtime");
+  }
+  return await globalThis.fetch(input, init);
+}
+
+async function fetchWithRuntimeDispatcherOrMockedGlobal(input, init) {
+  if (isMockedFetch(globalThis.fetch)) {
+    return await globalThis.fetch(input, init);
+  }
+  return await fetchWithRuntimeDispatcher(input, init);
+}
+
+const wrapFetchWithAbortSignalMarker = Symbol.for("openclaw.fetch.abort-signal-wrapped");
+
+function withFetchDuplex(init, input) {
+  const hasInitBody = init && init.body != null;
+  const hasRequestBody =
+    !hasInitBody &&
+    typeof Request !== "undefined" &&
+    input instanceof Request &&
+    input.body != null;
+  if (!hasInitBody && !hasRequestBody) {
+    return init;
+  }
+  if (init && Object.prototype.hasOwnProperty.call(init, "duplex")) {
+    return init;
+  }
+  return init ? { ...init, duplex: "half" } : { duplex: "half" };
+}
+
+function bindAbortRelay(controller) {
+  return () => {
+    try {
+      controller.abort();
+    } catch (_error) {
+      // Foreign AbortController implementations can throw. Preserve fetch behavior.
+    }
+  };
+}
+
+function wrapFetchWithAbortSignal(fetchImpl) {
+  if (fetchImpl && fetchImpl[wrapFetchWithAbortSignalMarker]) {
+    return fetchImpl;
+  }
+  const wrapped = (input, init) => {
+    const patchedInit = withFetchDuplex(init, input);
+    const signal = patchedInit && patchedInit.signal;
+    if (!signal) {
+      return fetchImpl(input, patchedInit);
+    }
+    if (typeof AbortSignal !== "undefined" && signal instanceof AbortSignal) {
+      return fetchImpl(input, patchedInit);
+    }
+    if (typeof AbortController === "undefined" || typeof signal.addEventListener !== "function") {
+      return fetchImpl(input, patchedInit);
+    }
+    const controller = new AbortController();
+    const onAbort = bindAbortRelay(controller);
+    let listenerAttached = false;
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+      listenerAttached = true;
+    }
+    const cleanup = () => {
+      if (!listenerAttached || typeof signal.removeEventListener !== "function") {
+        return;
+      }
+      listenerAttached = false;
+      try {
+        signal.removeEventListener("abort", onAbort);
+      } catch (_error) {
+        // Never let cleanup mask the original fetch result or error.
+      }
+    };
+    try {
+      const response = fetchImpl(input, { ...patchedInit, signal: controller.signal });
+      if (response && typeof response.finally === "function") {
+        return response.finally(cleanup);
+      }
+      cleanup();
+      return response;
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
+  };
+  Object.assign(wrapped, fetchImpl);
+  wrapped.preconnect =
+    fetchImpl && typeof fetchImpl.preconnect === "function"
+      ? fetchImpl.preconnect.bind(fetchImpl)
+      : () => {};
+  Object.defineProperty(wrapped, wrapFetchWithAbortSignalMarker, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return wrapped;
+}
+
+function resolveFetch(fetchImpl) {
+  const resolved = fetchImpl || globalThis.fetch;
+  if (!resolved) {
+    return undefined;
+  }
+  return wrapFetchWithAbortSignal(resolved);
+}
+
 const ABORT_TRIGGERS = new Set([
   "stop",
   "esc",
@@ -18825,6 +19664,174 @@ async function detectMime(opts) {
     return headerMime;
   }
   return undefined;
+}
+
+const MEDIA_MAX_BYTES = 5 * 1024 * 1024;
+const MEDIA_FILE_MODE = 0o644;
+
+function formatMediaLimitMb(maxBytes) {
+  return `${(maxBytes / (1024 * 1024)).toFixed(0)}MB`;
+}
+
+function resolveMediaDir() {
+  return path.join(resolveStateDir(), "media");
+}
+
+function resolveMediaSubdir(subdir, caller) {
+  if (typeof subdir !== "string") {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  if (!subdir || subdir === ".") {
+    return "";
+  }
+  if (
+    subdir.includes("\0") ||
+    path.isAbsolute(subdir) ||
+    path.posix.isAbsolute(subdir) ||
+    path.win32.isAbsolute(subdir)
+  ) {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  const segments = subdir.split(/[\\/]+/u);
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`${caller}: unsafe media subdir: ${JSON.stringify(subdir)}`);
+  }
+  return path.join(...segments);
+}
+
+function resolveMediaScopedDir(subdir, caller) {
+  const mediaDir = resolveMediaDir();
+  const safeSubdir = resolveMediaSubdir(subdir, caller);
+  const dir = safeSubdir ? path.join(mediaDir, safeSubdir) : mediaDir;
+  const relative = path.relative(mediaDir, dir);
+  if (relative && (relative === ".." || relative.startsWith(`..${path.sep}`))) {
+    throw new Error(`${caller}: media subdir escapes media directory: ${JSON.stringify(subdir)}`);
+  }
+  return dir;
+}
+
+function sanitizeMediaFilename(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  return trimmed
+    .replace(/[^\p{L}\p{N}._-]+/gu, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 60);
+}
+
+function safeOriginalFilenameExtension(originalFilename) {
+  if (!originalFilename) {
+    return undefined;
+  }
+  const ext = path.extname(originalFilename).toLowerCase();
+  return /^\.[a-z0-9]{1,16}$/.test(ext) ? ext : undefined;
+}
+
+function buildSavedMediaId(params) {
+  if (!params.originalFilename) {
+    return params.ext ? `${params.baseId}${params.ext}` : params.baseId;
+  }
+  const base = path.parse(params.originalFilename).name;
+  const sanitized = sanitizeMediaFilename(base);
+  return sanitized
+    ? `${sanitized}---${params.baseId}${params.ext}`
+    : `${params.baseId}${params.ext}`;
+}
+
+function buildSavedMediaResult(params) {
+  return {
+    id: params.id,
+    path: path.join(params.dir, params.id),
+    size: params.size,
+    contentType: params.contentType,
+  };
+}
+
+async function retryMediaAfterRecreatingDir(dir, run) {
+  try {
+    return await run();
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") {
+      throw err;
+    }
+    await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+    return run();
+  }
+}
+
+async function writeSavedMediaBuffer(params) {
+  const dest = path.join(params.dir, params.id);
+  await retryMediaAfterRecreatingDir(params.dir, async () => {
+    const tempDest = path.join(params.dir, `.${params.id}.${crypto.randomUUID()}.tmp`);
+    try {
+      await fs.promises.writeFile(tempDest, params.buffer, { mode: MEDIA_FILE_MODE });
+      const handle = await fs.promises.open(tempDest, "r");
+      try {
+        await handle.sync().catch((err) => {
+          if (!err || (err.code !== "EPERM" && err.code !== "EINVAL")) {
+            throw err;
+          }
+        });
+      } finally {
+        await handle.close();
+      }
+      await fs.promises.rename(tempDest, dest);
+    } catch (err) {
+      await fs.promises.rm(tempDest, { force: true }).catch(() => {});
+      throw err;
+    }
+  });
+  return dest;
+}
+
+async function saveMediaBuffer(
+  buffer,
+  contentType,
+  subdir = "inbound",
+  maxBytes = MEDIA_MAX_BYTES,
+  originalFilename,
+) {
+  const mediaBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+  if (mediaBuffer.byteLength > maxBytes) {
+    throw new Error(`Media exceeds ${formatMediaLimitMb(maxBytes)} limit`);
+  }
+  const dir = resolveMediaScopedDir(subdir, "saveMediaBuffer");
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const baseId = crypto.randomUUID();
+  const contentTypeBase = String(contentType || "").split(";")[0];
+  const headerExt = extensionForMime(normalizeOptionalString(contentTypeBase));
+  const mime = await detectMime({ buffer: mediaBuffer, headerMime: contentType });
+  const ext =
+    headerExt ?? extensionForMime(mime) ?? safeOriginalFilenameExtension(originalFilename) ?? "";
+  const id = buildSavedMediaId({ baseId, ext, originalFilename });
+  await writeSavedMediaBuffer({ dir, id, buffer: mediaBuffer });
+  return buildSavedMediaResult({ dir, id, size: mediaBuffer.byteLength, contentType: mime });
+}
+
+async function resolveMediaBufferPath(id, subdir = "inbound") {
+  if (!id || id.includes("/") || id.includes("\\") || id.includes("\0") || id === "..") {
+    throw new Error(`resolveMediaBufferPath: unsafe media ID: ${JSON.stringify(id)}`);
+  }
+  const dir = resolveMediaScopedDir(subdir, "resolveMediaBufferPath");
+  const resolved = path.join(dir, id);
+  if (!resolved.startsWith(dir + path.sep) && resolved !== dir) {
+    throw new Error(`resolveMediaBufferPath: path escapes media directory: ${JSON.stringify(id)}`);
+  }
+  const stat = await fs.promises.lstat(resolved);
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `resolveMediaBufferPath: refusing to follow symlink for media ID: ${JSON.stringify(id)}`,
+    );
+  }
+  if (!stat.isFile()) {
+    throw new Error(
+      `resolveMediaBufferPath: media ID does not resolve to a file: ${JSON.stringify(id)}`,
+    );
+  }
+  return resolved;
 }
 
 function parseFiniteNumber(value) {
@@ -19635,6 +20642,251 @@ async function fetchWithBearerAuthScopeFallback(params) {
   return firstAttempt;
 }
 
+const PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+];
+
+function hasProxyEnvConfigured(env = process.env) {
+  for (const key of PROXY_ENV_KEYS) {
+    const value = env && env[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeProxyEnvValue(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveEnvHttpProxyUrl(protocol = "https", env = process.env) {
+  const lowerHttpProxy = normalizeProxyEnvValue(env && env.http_proxy);
+  const lowerHttpsProxy = normalizeProxyEnvValue(env && env.https_proxy);
+  const httpProxy =
+    lowerHttpProxy !== undefined ? lowerHttpProxy : normalizeProxyEnvValue(env && env.HTTP_PROXY);
+  const httpsProxy =
+    lowerHttpsProxy !== undefined
+      ? lowerHttpsProxy
+      : normalizeProxyEnvValue(env && env.HTTPS_PROXY);
+  if (protocol === "https") {
+    return httpsProxy || httpProxy || undefined;
+  }
+  return httpProxy || undefined;
+}
+
+function hasEnvHttpProxyConfigured(protocol = "https", env = process.env) {
+  return resolveEnvHttpProxyUrl(protocol, env) !== undefined;
+}
+
+function resolveEnvAllProxyUrl(env = process.env) {
+  const lowerAllProxy = normalizeProxyEnvValue(env && env.all_proxy);
+  return lowerAllProxy !== undefined ? lowerAllProxy : normalizeProxyEnvValue(env && env.ALL_PROXY);
+}
+
+function resolveEnvHttpProxyAgentOptions(env = process.env) {
+  const allProxy = resolveEnvAllProxyUrl(env);
+  const httpProxy = resolveEnvHttpProxyUrl("http", env) || allProxy;
+  const httpsProxy = resolveEnvHttpProxyUrl("https", env) || httpProxy;
+  const options = {
+    ...(httpProxy ? { httpProxy } : {}),
+    ...(httpsProxy ? { httpsProxy } : {}),
+  };
+  return options.httpProxy || options.httpsProxy ? options : undefined;
+}
+
+function hasEnvHttpProxyAgentConfigured(env = process.env) {
+  return resolveEnvHttpProxyAgentOptions(env) !== undefined;
+}
+
+function matchesNoProxy(targetUrl, env = process.env) {
+  const raw =
+    normalizeProxyEnvValue(env && env.no_proxy) ||
+    normalizeProxyEnvValue(env && env.NO_PROXY);
+  if (!raw) {
+    return false;
+  }
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch (_error) {
+    return false;
+  }
+  const targetHost = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!targetHost) {
+    return false;
+  }
+  const targetPort =
+    parsed.port ||
+    (parsed.protocol === "https:" ? "443" : parsed.protocol === "http:" ? "80" : "");
+  for (const rawEntry of raw.split(/[,\s]/)) {
+    const entry = rawEntry.trim().toLowerCase();
+    if (!entry) {
+      continue;
+    }
+    if (entry === "*") {
+      return true;
+    }
+    let entryHost;
+    let entryPort;
+    if (entry.startsWith("[")) {
+      const match = entry.match(/^\[([^\]]+)\](?::(\d+))?$/);
+      if (!match) {
+        continue;
+      }
+      entryHost = match[1];
+      entryPort = match[2];
+    } else {
+      const colonIdx = entry.lastIndexOf(":");
+      if (colonIdx > 0 && /^\d+$/.test(entry.slice(colonIdx + 1))) {
+        entryHost = entry.slice(0, colonIdx);
+        entryPort = entry.slice(colonIdx + 1);
+      } else {
+        entryHost = entry;
+      }
+    }
+    if (entryPort && entryPort !== targetPort) {
+      continue;
+    }
+    const normalizedEntry = entryHost.replace(/^\*?\./, "");
+    if (!normalizedEntry) {
+      continue;
+    }
+    if (targetHost === normalizedEntry || targetHost.endsWith(`.${normalizedEntry}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function shouldUseEnvHttpProxyForUrl(targetUrl, env = process.env) {
+  let protocol;
+  try {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol === "http:") {
+      protocol = "http";
+    } else if (parsed.protocol === "https:") {
+      protocol = "https";
+    } else {
+      return false;
+    }
+  } catch (_error) {
+    return false;
+  }
+  return hasEnvHttpProxyConfigured(protocol, env) && !matchesNoProxy(targetUrl, env);
+}
+
+const PROXY_FETCH_PROXY_URL = Symbol.for("openclaw.proxyFetch.proxyUrl");
+
+function makeProxyFetch(proxyUrl) {
+  let agent = null;
+  const proxyFetch = async (input, init) => {
+    try {
+      const undici = require("undici");
+      if (!agent && typeof undici.ProxyAgent === "function") {
+        agent = new undici.ProxyAgent(proxyUrl);
+      }
+      if (typeof undici.fetch === "function" && agent) {
+        return await undici.fetch(input, { ...(init || {}), dispatcher: agent });
+      }
+    } catch (_error) {
+      // Fall back to the ambient fetch when undici proxy support is unavailable.
+    }
+    if (typeof globalThis.fetch !== "function") {
+      throw new Error("runtime fetch is not available in this Node.js runtime");
+    }
+    return await globalThis.fetch(input, init);
+  };
+  Object.defineProperty(proxyFetch, PROXY_FETCH_PROXY_URL, {
+    value: proxyUrl,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return proxyFetch;
+}
+
+function getProxyUrlFromFetch(fetchImpl) {
+  const proxyUrl = fetchImpl && fetchImpl[PROXY_FETCH_PROXY_URL];
+  if (typeof proxyUrl !== "string") {
+    return undefined;
+  }
+  const trimmed = proxyUrl.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function withTrustedEnvProxyGuardedFetchMode(params) {
+  return { ...(params || {}), mode: "trusted_env_proxy" };
+}
+
+function padSecretBytes(bytes, length) {
+  if (bytes.length === length) {
+    return bytes;
+  }
+  const padded = Buffer.alloc(length);
+  bytes.copy(padded);
+  return padded;
+}
+
+function safeEqualSecret(provided, expected) {
+  if (typeof provided !== "string" || typeof expected !== "string") {
+    return false;
+  }
+  const providedBytes = Buffer.from(provided, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  const byteLength = Math.max(providedBytes.length, expectedBytes.length);
+  if (byteLength === 0) {
+    return true;
+  }
+  return (
+    crypto.timingSafeEqual(
+      padSecretBytes(providedBytes, byteLength),
+      padSecretBytes(expectedBytes, byteLength),
+    ) && providedBytes.length === expectedBytes.length
+  );
+}
+
+function ensurePortAvailable(port) {
+  return new Promise((resolve, reject) => {
+    const net = require("net");
+    const server = net.createServer();
+    let settled = false;
+    const finish = (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
+    server.once("error", (err) => {
+      if (err && err.code === "EADDRINUSE") {
+        const portError = new Error(`Port ${port} is already in use.`);
+        portError.name = "PortInUseError";
+        portError.port = port;
+        finish(portError);
+        return;
+      }
+      finish(err);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close((err) => finish(err));
+    });
+  });
+}
+
 function asNullableRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -19774,6 +21026,13 @@ function isPrivateNetworkAllowedByPolicy(policy) {
   return policy && (policy.dangerouslyAllowPrivateNetwork === true || policy.allowPrivateNetwork);
 }
 
+class SsrFBlockedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SsrFBlockedError";
+  }
+}
+
 function isHostnameAllowedByPattern(hostname, pattern) {
   if (pattern.startsWith("*.")) {
     const suffix = pattern.slice(2);
@@ -19858,6 +21117,55 @@ function normalizeLookupResults(results) {
     return [];
   }
   return Array.isArray(results) ? results : [results];
+}
+
+function createPinnedLookup(params) {
+  const normalizedHost = normalizeHostname(params && params.hostname);
+  const addresses = Array.isArray(params && params.addresses) ? params.addresses : [];
+  if (addresses.length === 0) {
+    throw new Error(`Pinned lookup requires at least one address for ${params && params.hostname}`);
+  }
+  const fallback =
+    (params && params.fallback) ||
+    ((host, options, callback) => {
+      const cb = typeof options === "function" ? options : callback;
+      if (typeof cb === "function") {
+        cb(null, host, String(host || "").includes(":") ? 6 : 4);
+      }
+    });
+  const records = addresses.map((address) => ({
+    address,
+    family: String(address || "").includes(":") ? 6 : 4,
+  }));
+  let index = 0;
+  return (host, options, callback) => {
+    const cb = typeof options === "function" ? options : callback;
+    if (typeof cb !== "function") {
+      return;
+    }
+    const normalized = normalizeHostname(host);
+    if (!normalized || normalized !== normalizedHost) {
+      if (typeof options === "function" || options === undefined) {
+        return fallback(host, cb);
+      }
+      return fallback(host, options, cb);
+    }
+    const opts = options && typeof options === "object" ? options : {};
+    const requestedFamily =
+      typeof options === "number" ? options : typeof opts.family === "number" ? opts.family : 0;
+    const candidates =
+      requestedFamily === 4 || requestedFamily === 6
+        ? records.filter((entry) => entry.family === requestedFamily)
+        : records;
+    const usable = candidates.length > 0 ? candidates : records;
+    if (opts.all) {
+      cb(null, usable);
+      return;
+    }
+    const chosen = usable[index % usable.length];
+    index += 1;
+    cb(null, chosen.address, chosen.family);
+  };
 }
 
 async function resolvePinnedHostnameWithPolicy(hostname, params = {}) {
@@ -23837,6 +25145,36 @@ function normalizeOptionalLowercaseString(value) {
   return normalizeOptionalString(value)?.toLowerCase();
 }
 
+function normalizeGroupActivation(raw) {
+  const value = normalizeOptionalLowercaseString(raw);
+  if (value === "mention") {
+    return "mention";
+  }
+  if (value === "always") {
+    return "always";
+  }
+  return undefined;
+}
+
+function parseActivationCommand(raw) {
+  if (!raw) {
+    return { hasCommand: false };
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return { hasCommand: false };
+  }
+  const normalized = trimmed.replace(/^\/([^\s:]+)\s*:(.*)$/, (_match, cmd, rest) => {
+    const trimmedRest = String(rest || "").trimStart();
+    return trimmedRest ? `/${cmd} ${trimmedRest}` : `/${cmd}`;
+  });
+  const match = normalized.match(/^\/activation(?:\s+([a-zA-Z]+))?\s*$/i);
+  if (!match) {
+    return { hasCommand: false };
+  }
+  return { hasCommand: true, mode: normalizeGroupActivation(match[1]) };
+}
+
 function normalizeStringEntries(list) {
   return (Array.isArray(list) ? list : [])
     .map((entry) => normalizeOptionalString(String(entry)) || "")
@@ -24876,6 +26214,10 @@ class SafeOpenError extends Error {
   }
 }
 
+function isNotFoundPathError(value) {
+  return Boolean(value && (value.code === "ENOENT" || value.code === "ENOTDIR"));
+}
+
 function ensureTrailingPathSeparator(value) {
   return value.endsWith(path.sep) ? value : value + path.sep;
 }
@@ -24885,12 +26227,16 @@ function isPathInsideRoot(rootDir, candidatePath) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function isPathInside(root, target) {
+  return isPathInsideRoot(path.resolve(root), path.resolve(target));
+}
+
 async function resolveFileAccessPathWithinRoot(params) {
   let rootReal;
   try {
     rootReal = await fs.promises.realpath(params.rootDir);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (isNotFoundPathError(err)) {
       throw new SafeOpenError("not-found", "root dir not found");
     }
     throw err;
@@ -24903,13 +26249,35 @@ async function resolveFileAccessPathWithinRoot(params) {
   return { rootReal, rootWithSep, resolved };
 }
 
+async function openFileWithinRoot(params) {
+  const resolved = await resolveFileAccessPathWithinRoot(params || {});
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolved.resolved);
+  } catch (err) {
+    if (isNotFoundPathError(err)) {
+      throw new SafeOpenError("not-found", "file not found");
+    }
+    throw err;
+  }
+  if (!stat.isFile()) {
+    throw new SafeOpenError("not-file", "not a file");
+  }
+  const realPath = await fs.promises.realpath(resolved.resolved);
+  if (!isPathInsideRoot(resolved.rootReal, realPath)) {
+    throw new SafeOpenError("outside-workspace", "file is outside workspace root");
+  }
+  const handle = await fs.promises.open(realPath, "r");
+  return { handle, realPath, stat };
+}
+
 async function readFileWithinRoot(params) {
   const resolved = await resolveFileAccessPathWithinRoot(params || {});
   let stat;
   try {
     stat = await fs.promises.stat(resolved.resolved);
   } catch (err) {
-    if (err && err.code === "ENOENT") {
+    if (isNotFoundPathError(err)) {
       throw new SafeOpenError("not-found", "file not found");
     }
     throw err;
@@ -24941,6 +26309,17 @@ async function writeFileWithinRoot(params) {
   await fs.promises.writeFile(resolved.resolved, data, {
     encoding: (params && params.encoding) || undefined,
     mode: 0o600,
+  });
+}
+
+async function writeFileFromPathWithinRoot(params) {
+  const sourcePath = path.resolve(params.sourcePath);
+  const data = await fs.promises.readFile(sourcePath);
+  await writeFileWithinRoot({
+    rootDir: params.rootDir,
+    relativePath: params.relativePath,
+    data,
+    encoding: undefined,
   });
 }
 
@@ -26984,6 +28363,130 @@ function createRecordSchema() {
       value && typeof value === "object" && !Array.isArray(value) ? undefined : "Expected object",
     { typeName: "ZodRecord", jsonSchema: { type: "object", additionalProperties: true } },
   );
+}
+
+const OpenClawSchema = createRecordSchema();
+
+function cloneJsonSchemaValidationValue(value) {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function makeJsonSchemaValidationError(path, message, allowedValues) {
+  const error = {
+    path,
+    message,
+    text: `${path}: ${message}`,
+  };
+  if (Array.isArray(allowedValues)) {
+    error.allowedValues = allowedValues;
+    error.allowedValuesHiddenCount = 0;
+  }
+  return error;
+}
+
+function jsonSchemaTypeMatches(type, value) {
+  if (type === "object") {
+    return value && typeof value === "object" && !Array.isArray(value);
+  }
+  if (type === "array") {
+    return Array.isArray(value);
+  }
+  if (type === "number") {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  if (type === "integer") {
+    return typeof value === "number" && Number.isInteger(value);
+  }
+  if (type === "boolean") {
+    return typeof value === "boolean";
+  }
+  if (type === "string") {
+    return typeof value === "string";
+  }
+  if (type === "null") {
+    return value === null;
+  }
+  return true;
+}
+
+function validateJsonSchemaNode(schema, value, path, applyDefaults) {
+  if (!schema || typeof schema !== "object") {
+    return [];
+  }
+  const type = schema.type;
+  if (typeof type === "string" && !jsonSchemaTypeMatches(type, value)) {
+    return [makeJsonSchemaValidationError(path, `must be ${type}`)];
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.some((entry) => Object.is(entry, value))) {
+    const allowedValues = schema.enum.map((entry) => String(entry));
+    return [
+      makeJsonSchemaValidationError(
+        path,
+        `must be equal to one of the allowed values (allowed: ${allowedValues.join(", ")})`,
+        allowedValues,
+      ),
+    ];
+  }
+  if (type !== "object" || !value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const properties =
+    schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+  for (const key of schema.required || []) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      return [
+        makeJsonSchemaValidationError(key, `must have required property '${key}'`),
+      ];
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(value)) {
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+        return [makeJsonSchemaValidationError(key, "must NOT have additional properties")];
+      }
+    }
+  }
+  for (const [key, childSchema] of Object.entries(properties)) {
+    if (
+      applyDefaults &&
+      value[key] === undefined &&
+      childSchema &&
+      typeof childSchema === "object" &&
+      Object.prototype.hasOwnProperty.call(childSchema, "default")
+    ) {
+      value[key] = cloneJsonSchemaValidationValue(childSchema.default);
+    }
+    if (value[key] === undefined) {
+      continue;
+    }
+    const childErrors = validateJsonSchemaNode(childSchema, value[key], key, applyDefaults);
+    if (childErrors.length > 0) {
+      return childErrors;
+    }
+  }
+  return [];
+}
+
+function validateJsonSchemaValue(params) {
+  const value = params && params.applyDefaults
+    ? cloneJsonSchemaValidationValue(params.value)
+    : params && params.value;
+  const errors = validateJsonSchemaNode(
+    params && params.schema,
+    value,
+    "<root>",
+    Boolean(params && params.applyDefaults),
+  );
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+  return { ok: true, value };
 }
 
 function createArraySchema(itemSchema) {
@@ -32735,6 +34238,110 @@ const heartbeatRuntime = {
   resolveIndicatorType,
 };
 
+const jsonStoreRuntime = {
+  loadJsonFile,
+  readJsonFileWithFallback,
+  saveJsonFile,
+  writeJsonFileAtomically,
+};
+
+const diagnosticRuntime = {
+  createChildDiagnosticTraceContext,
+  createDiagnosticTraceContext,
+  emitDiagnosticEvent,
+  emitTrustedDiagnosticEvent,
+  formatDiagnosticTraceparent,
+  isDiagnosticFlagEnabled,
+  isDiagnosticsEnabled,
+  isValidDiagnosticSpanId,
+  isValidDiagnosticTraceFlags,
+  isValidDiagnosticTraceId,
+  onDiagnosticEvent,
+  onInternalDiagnosticEvent,
+  parseDiagnosticTraceparent,
+  resetDiagnosticEventsForTest,
+};
+
+const systemEventRuntime = {
+  enqueueSystemEvent,
+  peekSystemEventEntries,
+  resetSystemEventsForTest,
+};
+
+const oauthUtilsRuntime = {
+  generateHexPkceVerifierChallenge,
+  generatePkceVerifierChallenge,
+  toFormUrlEncoded,
+};
+
+const runtimeConfigSnapshotRuntime = {
+  clearConfigCache,
+  clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+  selectApplicableRuntimeConfig,
+  setRuntimeConfigSnapshot,
+};
+
+const runtimeFetchRuntime = {
+  fetchWithRuntimeDispatcher,
+  fetchWithRuntimeDispatcherOrMockedGlobal,
+  isMockedFetch,
+};
+
+const fetchRuntime = {
+  createPinnedLookup,
+  getProxyUrlFromFetch,
+  hasEnvHttpProxyAgentConfigured,
+  hasEnvHttpProxyConfigured,
+  makeProxyFetch,
+  resolveEnvHttpProxyAgentOptions,
+  resolveEnvHttpProxyUrl,
+  resolveFetch,
+  shouldUseEnvHttpProxyForUrl,
+  withTrustedEnvProxyGuardedFetchMode,
+  wrapFetchWithAbortSignal,
+};
+
+const CLI_FRESH_WATCHDOG_DEFAULTS = Object.freeze({
+  noOutputTimeoutRatio: 0.8,
+  minMs: 180000,
+  maxMs: 600000,
+});
+
+const CLI_RESUME_WATCHDOG_DEFAULTS = Object.freeze({
+  noOutputTimeoutRatio: 0.3,
+  minMs: 60000,
+  maxMs: 180000,
+});
+
+const cliBackendRuntime = {
+  CLI_FRESH_WATCHDOG_DEFAULTS,
+  CLI_RESUME_WATCHDOG_DEFAULTS,
+};
+
+const configSchemaRuntime = {
+  OpenClawSchema,
+  validateJsonSchemaValue,
+};
+
+const typeOnlyPluginSdkRuntime = Object.freeze({});
+const typeOnlyPluginSdkRequests = new Set([
+  "openclaw/plugin-sdk/config-types",
+  "@openclaw/plugin-sdk/config-types",
+  "openclaw/plugin-sdk/document-extractor",
+  "@openclaw/plugin-sdk/document-extractor",
+  "openclaw/plugin-sdk/music-generation",
+  "@openclaw/plugin-sdk/music-generation",
+  "openclaw/plugin-sdk/provider-model-types",
+  "@openclaw/plugin-sdk/provider-model-types",
+  "openclaw/plugin-sdk/qa-channel-protocol",
+  "@openclaw/plugin-sdk/qa-channel-protocol",
+  "openclaw/plugin-sdk/tts-runtime.types",
+  "@openclaw/plugin-sdk/tts-runtime.types",
+]);
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -32759,6 +34366,11 @@ const mediaMimeRuntime = {
   getFileExtension,
   mediaKindFromMime,
   normalizeMimeType,
+};
+
+const mediaStoreRuntime = {
+  resolveMediaBufferPath,
+  saveMediaBuffer,
 };
 
 const stringNormalizationRuntime = {
@@ -41787,6 +43399,11 @@ const groupAccessRuntime = {
   resolveSenderScopedGroupPolicy,
 };
 
+const groupActivationRuntime = {
+  normalizeGroupActivation,
+  parseActivationCommand,
+};
+
 const providerSelectionRuntime = {
   resolveConfiguredCapabilityProvider,
   resolveProviderRawConfig,
@@ -42828,6 +44445,31 @@ const fileAccessRuntime = {
   writeFileWithinRoot,
 };
 
+const browserSecurityRuntime = {
+  SafeOpenError,
+  SsrFBlockedError,
+  createSubsystemLogger,
+  ensurePortAvailable,
+  extractErrorCode,
+  formatErrorMessage,
+  generateSecureToken,
+  hasConfiguredSecretInput,
+  hasProxyEnvConfigured,
+  isBlockedHostnameOrIp,
+  isNotFoundPathError,
+  isPathInside,
+  isPrivateNetworkAllowedByPolicy,
+  matchesHostnameAllowlist,
+  normalizeHostname,
+  openFileWithinRoot,
+  redactSensitiveText,
+  resolvePinnedHostnameWithPolicy,
+  resolvePreferredOpenClawTmpDir,
+  safeEqualSecret,
+  wrapExternalContent,
+  writeFileFromPathWithinRoot,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -43513,6 +45155,63 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return heartbeatRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/json-store" ||
+    request === "@openclaw/plugin-sdk/json-store"
+  ) {
+    return jsonStoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/diagnostic-runtime" ||
+    request === "@openclaw/plugin-sdk/diagnostic-runtime"
+  ) {
+    return diagnosticRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/system-event-runtime" ||
+    request === "@openclaw/plugin-sdk/system-event-runtime"
+  ) {
+    return systemEventRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/oauth-utils" ||
+    request === "@openclaw/plugin-sdk/oauth-utils"
+  ) {
+    return oauthUtilsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-config-snapshot" ||
+    request === "@openclaw/plugin-sdk/runtime-config-snapshot"
+  ) {
+    return runtimeConfigSnapshotRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-fetch" ||
+    request === "@openclaw/plugin-sdk/runtime-fetch"
+  ) {
+    return runtimeFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/fetch-runtime" ||
+    request === "@openclaw/plugin-sdk/fetch-runtime"
+  ) {
+    return fetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/cli-backend" ||
+    request === "@openclaw/plugin-sdk/cli-backend"
+  ) {
+    return cliBackendRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/config-schema" ||
+    request === "@openclaw/plugin-sdk/config-schema"
+  ) {
+    return configSchemaRuntime;
+  }
+  if (typeOnlyPluginSdkRequests.has(request)) {
+    return typeOnlyPluginSdkRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/command-primitives-runtime" ||
     request === "@openclaw/plugin-sdk/command-primitives-runtime"
   ) {
@@ -43535,6 +45234,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/media-mime"
   ) {
     return mediaMimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-store" ||
+    request === "@openclaw/plugin-sdk/media-store"
+  ) {
+    return mediaStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
@@ -44051,6 +45756,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return groupAccessRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/group-activation" ||
+    request === "@openclaw/plugin-sdk/group-activation"
+  ) {
+    return groupActivationRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/provider-selection-runtime" ||
     request === "@openclaw/plugin-sdk/provider-selection-runtime"
   ) {
@@ -44283,6 +45994,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/file-access-runtime"
   ) {
     return fileAccessRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-security-runtime" ||
+    request === "@openclaw/plugin-sdk/browser-security-runtime"
+  ) {
+    return browserSecurityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
@@ -44733,6 +46450,18 @@ async function activatePlugin(plugin) {
       factory: isFactory ? definition : undefined,
       factoryTool: isFactory,
       runtimeEntrySource: entryPath,
+      config:
+        context.config && typeof context.config === "object"
+          ? context.config
+          : undefined,
+      rawConfig:
+        context.rawConfig && typeof context.rawConfig === "object"
+          ? context.rawConfig
+          : undefined,
+      activationSourceConfig:
+        context.activationSourceConfig && typeof context.activationSourceConfig === "object"
+          ? context.activationSourceConfig
+          : undefined,
       description:
         metadata && typeof metadata === "object" && typeof metadata.description === "string"
           ? metadata.description
@@ -44844,7 +46573,7 @@ class _NativeInstalledPluginRuntimeActivationAdapter:
             context_path = tmp_path / "context.json"
             loader_path.write_text(_NATIVE_PLUGIN_RUNTIME_LOADER_JS, encoding="utf-8")
             context_path.write_text(
-                json.dumps({"plugins": plugins}, default=str),
+                json.dumps(context, default=str),
                 encoding="utf-8",
             )
             completed = subprocess.run(
@@ -44967,6 +46696,11 @@ def _native_plugin_runtime_specs_from_loader_payload(
         runtime_entry_source = _optional_cli_string(
             entry.get("runtimeEntrySource", entry.get("runtime_entry_source"))
         )
+        config_payload = entry.get("config")
+        raw_config_payload = entry.get("rawConfig", entry.get("raw_config"))
+        activation_source_config_payload = entry.get(
+            "activationSourceConfig", entry.get("activation_source_config")
+        )
         raw_names = entry.get("names")
         names = _string_list_or_none(raw_names)
         if not names:
@@ -44989,6 +46723,14 @@ def _native_plugin_runtime_specs_from_loader_payload(
             }
             if runtime_entry_source is not None:
                 plugin_context["runtimeEntrySource"] = runtime_entry_source
+            if isinstance(config_payload, Mapping):
+                plugin_context["config"] = dict(config_payload)
+            if isinstance(raw_config_payload, Mapping):
+                plugin_context["rawConfig"] = dict(raw_config_payload)
+            if isinstance(activation_source_config_payload, Mapping):
+                plugin_context["activationSourceConfig"] = dict(
+                    activation_source_config_payload
+                )
             executor = (
                 _native_plugin_runtime_executor_factory(
                     plugin=plugin_context,

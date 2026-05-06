@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~86.8% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~88.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -970,6 +970,66 @@ may lag behind this tracker.
 - [x] Imported plugin SDK heartbeat-runtime shim for indicator mapping, shared
   heartbeat event state/listeners, reset helpers, and visibility precedence.
   - Status: checkpointed in `a5863a1d`
+
+- [x] Imported plugin SDK json-store shim for synchronous JSON load/save,
+  fallback/existence reads, and atomic secure JSON writes.
+  - Status: checkpointed in `9ba7a00e`
+
+- [x] Imported plugin SDK diagnostic-runtime shim for diagnostic flag matching,
+  public/internal event dispatch with trust metadata, reset helpers, and W3C
+  traceparent helpers.
+  - Status: checkpointed in `095e35fc`
+
+- [x] Imported plugin SDK system-event-runtime shim for session-keyed ephemeral
+  system-event queueing, duplicate suppression, cloned peeks, delivery-context
+  normalization, and reset helpers.
+  - Status: checkpointed in `5c49a1be`
+
+- [x] Imported plugin SDK oauth-utils shim for form-url encoding and base64url/
+  hex PKCE verifier/challenge generation.
+  - Status: checkpointed in `210beb78`
+
+- [x] Imported plugin SDK runtime-config-snapshot shim for activation-context
+  runtime config access, snapshot set/get/clear, config-cache no-op, and
+  source-snapshot selection.
+  - Status: checkpointed in `39afd0ea`
+
+- [x] Imported plugin SDK runtime-fetch shim for mocked-fetch detection,
+  dispatcher-aware runtime fetch, and mocked-global fallback behavior.
+  - Status: checkpointed in `14cdafc6`
+
+- [x] Imported plugin SDK group-activation shim for activation mode
+  normalization plus slash/colon activation command parsing.
+  - Status: checkpointed in `48d912d7`
+
+- [x] Imported plugin SDK media-store shim for file-backed media buffer saves,
+  MIME/extension-aware IDs, safe path resolution, and max-byte rejection.
+  - Status: checkpointed in `b45381ad`
+
+- [x] Imported plugin SDK browser-security-runtime shim for proxy-env, safe
+  file/path, SSRF, port, logging/redaction, external-content, and
+  secret-equality helper exports.
+  - Status: checkpointed in `66ee1a57`
+
+- [x] Imported plugin SDK fetch-runtime shim for abort-safe fetch resolution,
+  trusted-env proxy mode projection, HTTP proxy env precedence/NO_PROXY
+  bypass checks, proxy-fetch metadata, and pinned DNS lookup helpers.
+  - Status: checkpointed in `3aa66305`
+
+- [x] Imported plugin SDK cli-backend shim for fresh/resume CLI watchdog
+  default timeout windows and no-output timeout ratios.
+  - Status: checkpointed in `be724e3f`
+
+- [x] Imported plugin SDK type-only barrel shims for `config-types`,
+  `document-extractor`, `music-generation`, `provider-model-types`,
+  `qa-channel-protocol`, and `tts-runtime.types`, preserving empty runtime
+  modules rather than broad generic SDK fallback exports.
+  - Status: checkpointed in `fceeecc8`
+
+- [x] Imported plugin SDK config-schema shim for root config object parsing and
+  JSON Schema value validation with required/additional-property, enum
+  allowed-values, and default-application behavior.
+  - Status: checkpointed in `ae5489b2`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

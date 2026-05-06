@@ -4,8 +4,8 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~86.8% overall, with a reasonable
-  band of ~78-87%.
+- Repo-wide OpenClaw parity is estimated at ~88.1% overall, with a reasonable
+  band of ~78-88%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -59,7 +59,7 @@ Current percentage rollup:
   imported plugin SDK allow-from, access-groups, direct-DM access,
   direct-DM guard-policy, direct-DM, channel-send-result, channel-pairing,
   command-auth, channel-setup, allowlist-config-edit, group-access,
-  provider-selection-runtime, windows-spawn, command-status, command-auth
+  group-activation, provider-selection-runtime, windows-spawn, command-status, command-auth
   native, webhook, fetch/SSRF, provider model/catalog, provider
   entry/enable/auth-result, provider-auth-runtime, provider-auth API-key,
   provider-auth-login, provider-auth facade, provider web-search contract,
@@ -89,7 +89,11 @@ Current percentage rollup:
   helper, session-visibility helper, simple-completion-runtime
   extractAssistantText helper, poll-runtime helper, lazy-runtime helper,
   config-paths helper, context-visibility-runtime helper, heartbeat-runtime
-  helper, approval-auth-helpers,
+  helper, json-store helper, diagnostic-runtime helper, system-event-runtime
+  helper, oauth-utils helper, runtime-config-snapshot helper,
+  runtime-fetch helper, group-activation helper, media-store helper,
+  browser-security-runtime helper, fetch-runtime helper, cli-backend helper,
+  type-only SDK barrel helper, config-schema helper, approval-auth-helpers,
   approval-approvers helper,
   approval-reply-runtime helper,
   approval-renderers helper, approval-client-helpers,
@@ -8315,9 +8319,118 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   at ~86.8%. Verified with focused heartbeat-runtime pytest, adjacent SDK
   helper proof, adjacent imported-plugin proof, `ruff check`, and `mypy`;
   source/test checkpointed in `a5863a1d`.
+- Closed the imported OpenClaw plugin SDK json-store seam from
+  `src/plugin-sdk/json-store.ts`: scoped and unscoped native runtime entries
+  expose synchronous JSON load/save, fallback reads, and atomic secure writes.
+  Repo-wide parity is now estimated at ~86.9%. Verified with focused
+  json-store pytest, adjacent SDK helper proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `9ba7a00e`.
+- Closed the imported OpenClaw plugin SDK diagnostic-runtime seam from
+  `src/plugin-sdk/diagnostic-runtime.ts`, `src/infra/diagnostic-flags.ts`,
+  `src/infra/diagnostic-events.ts`, and
+  `src/infra/diagnostic-trace-context.ts`: scoped and unscoped native runtime
+  entries expose diagnostic flag matching, public/internal event dispatch with
+  trust metadata, test reset, and W3C traceparent helpers. Repo-wide parity is
+  now estimated at ~87.0%. Verified with focused diagnostic-runtime pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `095e35fc`.
+- Closed the imported OpenClaw plugin SDK system-event-runtime seam from
+  `src/plugin-sdk/system-event-runtime.ts` and `src/infra/system-events.ts`:
+  scoped and unscoped native runtime entries expose ephemeral session-keyed
+  system-event queueing, duplicate suppression, bounded queue depth, cloned
+  peeks, delivery context normalization, trust defaults, and test reset.
+  Repo-wide parity is now estimated at ~87.1%. Verified with focused
+  system-event-runtime pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `5c49a1be`.
+- Closed the imported OpenClaw plugin SDK oauth-utils seam from
+  `src/plugin-sdk/oauth-utils.ts`: scoped and unscoped native runtime entries
+  expose form-url encoding plus base64url and hex PKCE verifier/challenge
+  generation. Repo-wide parity is now estimated at ~87.2%. Verified with
+  focused oauth-utils pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `210beb78`.
+- Closed the imported OpenClaw plugin SDK runtime-config-snapshot seam from
+  `src/plugin-sdk/runtime-config-snapshot.ts`,
+  `src/config/runtime-snapshot.ts`, and `src/config/io.ts`: scoped and
+  unscoped native runtime entries expose in-process runtime config snapshot
+  set/get/clear, no-op config-cache clearing, runtime config access from
+  activation context, and applicable runtime/source snapshot selection.
+  Repo-wide parity is now estimated at ~87.3%. Verified with focused
+  runtime-config-snapshot pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `39afd0ea`.
+- Closed the imported OpenClaw plugin SDK runtime-fetch seam from
+  `src/plugin-sdk/runtime-fetch.ts` and `src/infra/net/runtime-fetch.ts`:
+  scoped and unscoped native runtime entries expose mocked fetch detection,
+  dispatcher-aware runtime fetch through the native Node runtime, and the
+  mocked-global fallback path. Repo-wide parity is now estimated at ~87.4%.
+  Verified with focused runtime-fetch pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `14cdafc6`.
+- Closed the imported OpenClaw plugin SDK group-activation seam from
+  `src/plugin-sdk/group-activation.ts` and
+  `src/auto-reply/group-activation.ts`: scoped and unscoped native runtime
+  entries expose activation mode normalization plus slash/colon activation
+  command parsing. Repo-wide parity is now estimated at ~87.5%. Verified with
+  focused group-activation pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `48d912d7`.
+- Closed the imported OpenClaw plugin SDK media-store seam from
+  `src/plugin-sdk/media-store.ts` and `src/media/store.ts`: scoped and
+  unscoped native runtime entries expose file-backed media buffer saves,
+  MIME/extension-aware IDs, safe media ID resolution, and Windows-native
+  best-effort file sync before atomic rename. Repo-wide parity is now estimated
+  at ~87.6%. Verified with focused media-store pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `b45381ad`.
+- Closed the imported OpenClaw plugin SDK browser-security-runtime seam from
+  `src/plugin-sdk/browser-security-runtime.ts`: scoped and unscoped native
+  runtime entries compose proxy-env, safe file/path, SSRF, port, secure-token,
+  temp-path, logging/redaction, external-content, and secret-equality helpers.
+  Repo-wide parity is now estimated at ~87.7%. Verified with focused
+  browser-security-runtime pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, and `mypy`; source/test checkpointed in
+  `66ee1a57`.
+- Closed the imported OpenClaw plugin SDK fetch-runtime seam from
+  `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
+  `src/infra/net/proxy-env.ts`, `src/infra/net/proxy-fetch.ts`, and
+  `src/infra/net/ssrf.ts`: scoped and unscoped native runtime entries expose
+  abort-safe fetch resolution, trusted-env proxy mode projection, HTTP proxy
+  env precedence/NO_PROXY checks, proxy-fetch metadata, and pinned DNS lookup
+  helpers. Repo-wide parity is now estimated at ~87.8%. Verified with focused
+  fetch-runtime pytest, adjacent SDK helper proof, adjacent imported-plugin
+  proof, `ruff check`, and `mypy`; source/test checkpointed in `3aa66305`.
+- Closed the imported OpenClaw plugin SDK cli-backend seam from
+  `src/plugin-sdk/cli-backend.ts` and `src/agents/cli-watchdog-defaults.ts`:
+  scoped and unscoped native runtime entries expose
+  `CLI_FRESH_WATCHDOG_DEFAULTS` and `CLI_RESUME_WATCHDOG_DEFAULTS` with the
+  upstream no-output timeout ratios and min/max timeout windows. Repo-wide
+  parity is now estimated at ~87.9%. Verified with focused cli-backend pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`, and
+  `mypy`; source/test checkpointed in `be724e3f`.
+- Closed the imported OpenClaw plugin SDK type-only barrel seam from
+  `src/plugin-sdk/config-types.ts`, `src/plugin-sdk/document-extractor.ts`,
+  `src/plugin-sdk/music-generation.ts`, `src/plugin-sdk/provider-model-types.ts`,
+  `src/plugin-sdk/qa-channel-protocol.ts`, and
+  `src/plugin-sdk/tts-runtime.types.ts`: scoped and unscoped native runtime
+  entries resolve to empty runtime modules instead of leaking broad generic SDK
+  exports or a fake default object. Repo-wide parity is now estimated at
+  ~88.0%. Verified with focused type-only barrel pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `fceeecc8`.
+- Closed the imported OpenClaw plugin SDK config-schema seam from
+  `src/plugin-sdk/config-schema.ts`, `src/config/zod-schema.ts`, and
+  `src/plugins/schema-validator.ts`: scoped and unscoped native runtime entries
+  expose root config object parsing plus JSON Schema value validation with
+  required-property, additional-property, enum allowed-values, and
+  default-application behavior. Repo-wide parity is now estimated at ~88.1%.
+  Verified with focused config-schema pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, and `mypy`; source/test
+  checkpointed in `ae5489b2`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
@@ -8338,7 +8451,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   secret-file-runtime/secret-ref-runtime/secret-input-runtime/secret-input-schema/
   cron-store-runtime/file-access-runtime/logging-core/
   native-command-config-runtime/host-runtime/poll-runtime/lazy-runtime/config-paths/
-  context-visibility-runtime/heartbeat-runtime/
+  context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/
+  system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/group-activation/media-store/
+  browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/
+  config-schema/
   image-generation-core.auth.runtime/model-session-runtime/process-runtime/
   run-command/string-coerce-runtime/provider-auth-login.runtime/
   approval-auth-runtime/approval-auth-helpers/approval-approvers/telegram-command-config/
