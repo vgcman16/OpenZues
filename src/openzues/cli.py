@@ -35456,6 +35456,10 @@ const providerAuthRuntimeRuntime = {
   waitForLocalOAuthCallback,
 };
 
+const imageGenerationCoreAuthRuntime = {
+  resolveApiKeyForProvider,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -40155,6 +40159,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-auth-runtime"
   ) {
     return providerAuthRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/image-generation-core.auth.runtime" ||
+    request === "@openclaw/plugin-sdk/image-generation-core.auth.runtime"
+  ) {
+    return imageGenerationCoreAuthRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||

@@ -13443,6 +13443,96 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_image_generation_core_auth_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-image-generation-core-auth.cjs"
+    runtime_entry.write_text(
+        """
+const imageAuth = require("openclaw/plugin-sdk/image-generation-core.auth.runtime");
+const scopedImageAuth = require("@openclaw/plugin-sdk/image-generation-core.auth.runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.image_generation_core_auth",
+      description: "Use OpenClaw image-generation core auth runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          keys: Object.keys(imageAuth).sort(),
+          scopedKeys: Object.keys(scopedImageAuth).sort(),
+          types: [
+            typeof imageAuth.resolveApiKeyForProvider,
+            typeof scopedImageAuth.resolveApiKeyForProvider
+          ],
+          resolved: await imageAuth.resolveApiKeyForProvider({ provider: "openai" })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-image-generation-core-auth-plugin",
+                    "name": "Runtime Image Generation Core Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-image-generation-core-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.image_generation_core_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.image_generation_core_auth"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveApiKeyForProvider"],
+        "scopedKeys": ["resolveApiKeyForProvider"],
+        "types": ["function", "function"],
+        "resolved": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
