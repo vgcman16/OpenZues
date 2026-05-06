@@ -22160,6 +22160,279 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_secret_basic_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-secret-basic.cjs"
+    runtime_entry.write_text(
+        """
+const secretBasic = require("openclaw/plugin-sdk/channel-secret-basic-runtime");
+const scopedSecretBasic = require("@openclaw/plugin-sdk/channel-secret-basic-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_secret_basic",
+      description: "Use OpenClaw channel secret basic SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const config = {
+          channels: {
+            telegram: {
+              enabled: true,
+              apiKey: "${TOP_KEY}",
+              phone: "${TOP_PHONE}",
+              nested: { token: "${TOP_NESTED}" },
+              accounts: {
+                main: {
+                  enabled: true,
+                  apiKey: "${MAIN_KEY}",
+                  phone: "${MAIN_PHONE}",
+                  nested: { token: "${MAIN_NESTED}" }
+                },
+                muted: {
+                  enabled: false,
+                  apiKey: "${MUTED_KEY}",
+                  phone: "${MUTED_PHONE}",
+                  nested: { token: "${MUTED_NESTED}" }
+                }
+              }
+            }
+          }
+        };
+        const context = { assignments: [], warnings: [], warningKeys: new Set() };
+        const surfaceResult = secretBasic.getChannelSurface(config, "telegram");
+        const surface = surfaceResult.surface;
+        secretBasic.collectSimpleChannelFieldAssignments({
+          channelKey: "telegram",
+          field: "apiKey",
+          channel: surfaceResult.channel,
+          surface,
+          defaults: { env: "default" },
+          context,
+          topInactiveReason: "top api inactive",
+          accountInactiveReason: "account api inactive"
+        });
+        secretBasic.collectNestedChannelFieldAssignments({
+          channelKey: "telegram",
+          nestedKey: "nested",
+          field: "token",
+          channel: surfaceResult.channel,
+          surface,
+          defaults: { env: "default" },
+          context,
+          topLevelActive: true,
+          topInactiveReason: "top nested inactive",
+          accountActive: (entry) => entry.enabled,
+          accountInactiveReason: (entry) => `${entry.accountId} nested inactive`
+        });
+        secretBasic.collectConditionalChannelFieldAssignments({
+          channelKey: "telegram",
+          field: "phone",
+          channel: surfaceResult.channel,
+          surface,
+          defaults: { env: "default" },
+          context,
+          topLevelActiveWithoutAccounts: false,
+          topLevelInheritedAccountActive: (entry) =>
+            entry.enabled && !secretBasic.hasOwnProperty(entry.account, "phone"),
+          accountActive: (entry) => entry.enabled,
+          topInactiveReason: "top phone inactive",
+          accountInactiveReason: (entry) => `${entry.accountId} phone inactive`
+        });
+        const directContext = { assignments: [], warnings: [], warningKeys: new Set() };
+        secretBasic.collectSecretInputAssignment({
+          value: "${DIRECT_KEY}",
+          path: "direct.key",
+          expected: "string",
+          defaults: { env: "default" },
+          context: directContext,
+          active: true,
+          apply: (value) => {
+            config.direct = value;
+          }
+        });
+        secretBasic.pushAssignment(directContext, {
+          ref: { source: "env", provider: "default", id: "PUSHED" },
+          path: "direct.pushed",
+          expected: "string",
+          apply: () => {}
+        });
+        secretBasic.pushWarning(directContext, {
+          code: "SECRETS_REF_OVERRIDES_PLAINTEXT",
+          path: "direct.warn",
+          message: "direct.warn: warning"
+        });
+        secretBasic.pushInactiveSurfaceWarning({
+          context: directContext,
+          path: "direct.inactive",
+          details: "inactive"
+        });
+        return {
+          keys: Object.keys(secretBasic).sort(),
+          scopedType: typeof scopedSecretBasic.resolveChannelAccountSurface,
+          recordChecks: [
+            secretBasic.isRecord(surfaceResult.channel),
+            secretBasic.isRecord([]),
+            Boolean(secretBasic.getChannelRecord(config, "missing")),
+            secretBasic.isEnabledFlag({ enabled: false }),
+            secretBasic.isEnabledFlag({}),
+            secretBasic.hasOwnProperty(surfaceResult.channel, "apiKey")
+          ],
+          surface: {
+            hasExplicitAccounts: surface.hasExplicitAccounts,
+            channelEnabled: surface.channelEnabled,
+            accounts: surface.accounts.map((entry) => [entry.accountId, entry.enabled])
+          },
+          baseActive: [
+            secretBasic.isBaseFieldActiveForChannelSurface(surface, "apiKey"),
+            secretBasic.isBaseFieldActiveForChannelSurface(surface, "webhook")
+          ],
+          normalized: [
+            secretBasic.normalizeSecretStringValue("  abc  "),
+            secretBasic.hasConfiguredSecretInputValue("${CONFIGURED}", { env: "default" }),
+            secretBasic.hasConfiguredSecretInputValue("  ", { env: "default" })
+          ],
+          assignments: context.assignments.map((assignment) => assignment.path),
+          warnings: context.warnings.map((warning) => [
+            warning.code,
+            warning.path,
+            warning.message
+          ]),
+          direct: {
+            assignments: directContext.assignments.map((assignment) => assignment.path),
+            warnings: directContext.warnings.map((warning) => [
+              warning.code,
+              warning.path
+            ])
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-secret-basic-plugin",
+                    "name": "Runtime Channel Secret Basic Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-secret-basic.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_secret_basic"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_secret_basic"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "collectConditionalChannelFieldAssignments",
+            "collectNestedChannelFieldAssignments",
+            "collectSecretInputAssignment",
+            "collectSimpleChannelFieldAssignments",
+            "getChannelRecord",
+            "getChannelSurface",
+            "hasConfiguredSecretInputValue",
+            "hasOwnProperty",
+            "isBaseFieldActiveForChannelSurface",
+            "isEnabledFlag",
+            "isRecord",
+            "normalizeSecretStringValue",
+            "pushAssignment",
+            "pushInactiveSurfaceWarning",
+            "pushWarning",
+            "resolveChannelAccountSurface",
+        ],
+        "scopedType": "function",
+        "recordChecks": [True, False, False, False, True, True],
+        "surface": {
+            "hasExplicitAccounts": True,
+            "channelEnabled": True,
+            "accounts": [["main", True], ["muted", False]],
+        },
+        "baseActive": [False, True],
+        "normalized": ["abc", True, False],
+        "assignments": [
+            "channels.telegram.accounts.main.apiKey",
+            "channels.telegram.nested.token",
+            "channels.telegram.accounts.main.nested.token",
+            "channels.telegram.accounts.main.phone",
+        ],
+        "warnings": [
+            [
+                "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "channels.telegram.apiKey",
+                "channels.telegram.apiKey: top api inactive",
+            ],
+            [
+                "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "channels.telegram.accounts.muted.apiKey",
+                "channels.telegram.accounts.muted.apiKey: account api inactive",
+            ],
+            [
+                "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "channels.telegram.accounts.muted.nested.token",
+                "channels.telegram.accounts.muted.nested.token: muted nested inactive",
+            ],
+            [
+                "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "channels.telegram.phone",
+                "channels.telegram.phone: top phone inactive",
+            ],
+            [
+                "SECRETS_REF_IGNORED_INACTIVE_SURFACE",
+                "channels.telegram.accounts.muted.phone",
+                "channels.telegram.accounts.muted.phone: muted phone inactive",
+            ],
+        ],
+        "direct": {
+            "assignments": ["direct.key", "direct.pushed"],
+            "warnings": [
+                ["SECRETS_REF_OVERRIDES_PLAINTEXT", "direct.warn"],
+                ["SECRETS_REF_IGNORED_INACTIVE_SURFACE", "direct.inactive"],
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:
