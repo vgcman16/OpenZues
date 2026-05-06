@@ -15149,6 +15149,326 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_store_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-store-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const sessionStore = require("openclaw/plugin-sdk/session-store-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_store_runtime",
+      description: "Use OpenClaw session store runtime SDK shims",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        sessionStore.clearSessionStoreCacheForTest();
+        const store = {
+          "agent:ops:main": { sessionId: "old-main", updatedAt: 10 },
+          "Agent:Ops:MAIN": { sessionId: "legacy-main", updatedAt: 25 }
+        };
+        const resolved = sessionStore.resolveSessionStoreEntry({
+          store,
+          sessionKey: "Agent:Ops:MAIN"
+        });
+        const group = sessionStore.resolveGroupSessionKey({
+          Provider: "slack",
+          ChatType: "channel",
+          From: "slack:channel:C123",
+          GroupChannel: "#ops"
+        });
+        const groupSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { Provider: "slack", ChatType: "channel", From: "slack:channel:C123" },
+          "home",
+          "ops"
+        );
+        const directSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { ChatType: "direct", From: "+1 (555) 0100" },
+          "home",
+          "ops"
+        );
+        const explicitSessionKey = sessionStore.resolveSessionKey(
+          "per-sender",
+          { SessionKey: " Agent:Review:MAIN " },
+          "home",
+          "ops"
+        );
+        const canonicalMain = sessionStore.canonicalizeMainSessionAlias({
+          cfg: { session: { mainKey: "home" } },
+          agentId: "ops",
+          sessionKey: "main"
+        });
+        const globalMain = sessionStore.canonicalizeMainSessionAlias({
+          cfg: { session: { scope: "global", mainKey: "home" } },
+          agentId: "ops",
+          sessionKey: "agent:main:home"
+        });
+        const storePath = sessionStore.resolveStorePath(
+          args.storeTemplate,
+          { agentId: "ops", env: { OPENCLAW_STATE_DIR: args.stateDir } }
+        );
+        await sessionStore.saveSessionStore(storePath, {
+          "Agent:Ops:MAIN": { sessionId: "legacy-main", updatedAt: 25 }
+        });
+        const loadedBefore = sessionStore.loadSessionStore(storePath);
+        const meta = await sessionStore.recordSessionMetaFromInbound({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN",
+          ctx: {
+            Provider: "slack",
+            ChatType: "channel",
+            From: "slack:channel:C123",
+            To: "bot",
+            Body: "hello",
+            GroupChannel: "#ops"
+          }
+        });
+        const routed = await sessionStore.updateLastRoute({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN",
+          channel: "slack",
+          to: "C123",
+          accountId: "work",
+          threadId: "166"
+        });
+        const updatedAt = sessionStore.readSessionUpdatedAt({
+          storePath,
+          sessionKey: "Agent:Ops:MAIN"
+        });
+        await sessionStore.updateSessionStore(storePath, (mutable) => {
+          mutable["agent:ops:extra"] = {
+            sessionId: "extra",
+            updatedAt: 40,
+            sessionStartedAt: 40
+          };
+          return "mutated";
+        });
+        const loadedAfter = sessionStore.loadSessionStore(storePath);
+        const resetType = sessionStore.resolveSessionResetType({
+          sessionKey: groupSessionKey
+        });
+        const threadFlag = sessionStore.resolveThreadFlag({
+          messageThreadId: "166"
+        });
+        const resetOverride = sessionStore.resolveChannelResetConfig({
+          sessionCfg: {
+            resetByChannel: {
+              slack: { mode: "idle", idleMinutes: 2 }
+            }
+          },
+          channel: "slack"
+        });
+        const resetPolicy = sessionStore.resolveSessionResetPolicy({
+          sessionCfg: { reset: { mode: "idle", idleMinutes: 1 } },
+          resetType: "direct"
+        });
+        const freshness = sessionStore.evaluateSessionFreshness({
+          updatedAt: 1000,
+          sessionStartedAt: 1000,
+          lastInteractionAt: 1000,
+          now: 70000,
+          policy: resetPolicy
+        });
+
+        return {
+          exportTypes: [
+            typeof sessionStore.loadSessionStore,
+            typeof sessionStore.resolveSessionStoreEntry,
+            typeof sessionStore.resolveStorePath,
+            typeof sessionStore.resolveSessionKey,
+            typeof sessionStore.resolveGroupSessionKey,
+            typeof sessionStore.canonicalizeMainSessionAlias,
+            typeof sessionStore.updateSessionStore,
+            typeof sessionStore.evaluateSessionFreshness,
+            typeof genericSdk.resolveSessionStoreEntry
+          ],
+          resolved: {
+            normalizedKey: resolved.normalizedKey,
+            existingSessionId: resolved.existing.sessionId,
+            legacyKeys: resolved.legacyKeys.sort()
+          },
+          group,
+          keys: {
+            groupSessionKey,
+            directSessionKey,
+            explicitSessionKey,
+            canonicalMain,
+            globalMain
+          },
+          storePath,
+          loadedBeforeKeys: Object.keys(loadedBefore).sort(),
+          meta: {
+            sessionId: meta.sessionId,
+            channel: meta.channel,
+            groupId: meta.groupId,
+            groupChannel: meta.groupChannel,
+            lastChannel: meta.lastChannel ?? null
+          },
+          routed: {
+            sessionId: routed.sessionId,
+            lastChannel: routed.lastChannel,
+            lastTo: routed.lastTo,
+            lastAccountId: routed.lastAccountId,
+            lastThreadId: routed.lastThreadId,
+            deliveryContext: routed.deliveryContext
+          },
+          updatedAt,
+          loadedAfterKeys: Object.keys(loadedAfter).sort(),
+          reset: {
+            resetType,
+            threadFlag,
+            resetOverride,
+            resetPolicy,
+            freshness
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "session-store-runtime-plugin",
+                    "name": "Session Store Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-session-store-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_store_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.session_store_runtime",
+            "args": {
+                "stateDir": str(tmp_path / "state"),
+                "storeTemplate": str(
+                    tmp_path
+                    / "state"
+                    / "agents"
+                    / "{agentId}"
+                    / "sessions"
+                    / "sessions.json"
+                ),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
+        "resolved": {
+            "normalizedKey": "agent:ops:main",
+            "existingSessionId": "legacy-main",
+            "legacyKeys": ["Agent:Ops:MAIN"],
+        },
+        "group": {
+            "key": "slack:channel:c123",
+            "channel": "slack",
+            "id": "c123",
+            "chatType": "channel",
+        },
+        "keys": {
+            "groupSessionKey": "agent:ops:slack:channel:c123",
+            "directSessionKey": "agent:ops:home",
+            "explicitSessionKey": "agent:review:main",
+            "canonicalMain": "agent:ops:home",
+            "globalMain": "global",
+        },
+        "storePath": str(
+            tmp_path / "state" / "agents" / "ops" / "sessions" / "sessions.json"
+        ),
+        "loadedBeforeKeys": ["Agent:Ops:MAIN"],
+        "meta": {
+            "sessionId": "legacy-main",
+            "channel": "slack",
+            "groupId": "c123",
+            "groupChannel": "#ops",
+            "lastChannel": None,
+        },
+        "routed": {
+            "sessionId": "legacy-main",
+            "lastChannel": "slack",
+            "lastTo": "C123",
+            "lastAccountId": "work",
+            "lastThreadId": "166",
+            "deliveryContext": {
+                "channel": "slack",
+                "to": "C123",
+                "accountId": "work",
+                "threadId": "166",
+            },
+        },
+        "updatedAt": 25,
+        "loadedAfterKeys": ["agent:ops:extra", "agent:ops:main"],
+        "reset": {
+            "resetType": "group",
+            "threadFlag": True,
+            "resetOverride": {"mode": "idle", "idleMinutes": 2},
+            "resetPolicy": {
+                "mode": "idle",
+                "atHour": 4,
+                "idleMinutes": 1,
+                "configured": True,
+            },
+            "freshness": {"fresh": False, "idleExpiresAt": 61000},
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -31834,6 +31834,634 @@ const sessionKeyRuntime = {
   resolveAgentIdFromSessionKey,
 };
 
+function normalizeStoreSessionKey(sessionKey) {
+  return normalizeLowercaseStringOrEmpty(sessionKey);
+}
+
+function cloneJsonRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function resolveSessionStoreEntry(params = {}) {
+  const store = params.store && typeof params.store === "object" ? params.store : {};
+  const trimmedKey = String(params.sessionKey || "").trim();
+  const normalizedKey = normalizeStoreSessionKey(trimmedKey);
+  const legacyKeySet = new Set();
+  if (
+    trimmedKey !== normalizedKey &&
+    Object.prototype.hasOwnProperty.call(store, trimmedKey)
+  ) {
+    legacyKeySet.add(trimmedKey);
+  }
+  let existing =
+    store[normalizedKey] ||
+    (legacyKeySet.size > 0 ? store[trimmedKey] : undefined);
+  let existingUpdatedAt =
+    existing && typeof existing.updatedAt === "number" ? existing.updatedAt : 0;
+  for (const [candidateKey, candidateEntry] of Object.entries(store)) {
+    if (candidateKey === normalizedKey) {
+      continue;
+    }
+    if (normalizeStoreSessionKey(candidateKey) !== normalizedKey) {
+      continue;
+    }
+    legacyKeySet.add(candidateKey);
+    const candidateUpdatedAt =
+      candidateEntry && typeof candidateEntry.updatedAt === "number"
+        ? candidateEntry.updatedAt
+        : 0;
+    if (!existing || candidateUpdatedAt > existingUpdatedAt) {
+      existing = candidateEntry;
+      existingUpdatedAt = candidateUpdatedAt;
+    }
+  }
+  return {
+    normalizedKey,
+    existing,
+    legacyKeys: Array.from(legacyKeySet),
+  };
+}
+
+function resolveSessionStateDir(env = process.env, homedir = () => os.homedir()) {
+  const stateDir =
+    env && typeof env.OPENCLAW_STATE_DIR === "string"
+      ? env.OPENCLAW_STATE_DIR.trim()
+      : "";
+  return path.resolve(stateDir || path.join(resolveRequiredHomeDir(env, homedir), ".openclaw"));
+}
+
+function resolveAgentSessionsDir(agentId, env = process.env, homedir = () => os.homedir()) {
+  return path.join(
+    resolveSessionStateDir(env, homedir),
+    "agents",
+    normalizeAgentId(agentId),
+    "sessions",
+  );
+}
+
+function resolveStorePath(store, opts = {}) {
+  const agentId = normalizeAgentId(opts.agentId || DEFAULT_AGENT_ID);
+  const env = opts.env || process.env;
+  const homedir = () => resolveRequiredHomeDir(env, os.homedir);
+  const rawStore = typeof store === "string" ? store.trim() : "";
+  if (!rawStore) {
+    return path.join(resolveAgentSessionsDir(agentId, env, homedir), "sessions.json");
+  }
+  let expanded = rawStore.includes("{agentId}")
+    ? rawStore.replaceAll("{agentId}", agentId)
+    : rawStore;
+  if (expanded.startsWith("~")) {
+    expanded = expandHomePrefix(expanded, {
+      home: resolveRequiredHomeDir(env, homedir),
+      env,
+      homedir,
+    });
+  }
+  return path.resolve(expanded);
+}
+
+function loadSessionStore(storePath, opts = {}) {
+  if (!storePath) {
+    return {};
+  }
+  if (storePath && typeof storePath === "object" && !Array.isArray(storePath)) {
+    const store = storePath.store && typeof storePath.store === "object" ? storePath.store : {};
+    return opts.clone === false ? store : cloneJsonRecord(store);
+  }
+  try {
+    const raw = fs.readFileSync(String(storePath), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return opts.clone === false ? parsed : cloneJsonRecord(parsed);
+  } catch (_error) {
+    return {};
+  }
+}
+
+async function saveSessionStore(storePath, store) {
+  const target = String(storePath || "").trim();
+  if (!target) {
+    throw new Error("saveSessionStore: storePath must be a non-empty string");
+  }
+  const record = store && typeof store === "object" && !Array.isArray(store) ? store : {};
+  fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(record, null, 2), "utf8");
+}
+
+function resolveSessionEntryUpdatedAt(entry, now = Date.now()) {
+  const value = entry && typeof entry.updatedAt === "number" ? entry.updatedAt : undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.min(value, now);
+}
+
+function mergeSessionEntryWithPolicy(existing, patch = {}, options = {}) {
+  const now = typeof options.now === "number" && Number.isFinite(options.now)
+    ? options.now
+    : Date.now();
+  const existingUpdatedAt = resolveSessionEntryUpdatedAt(existing, now);
+  const patchUpdatedAt = resolveSessionEntryUpdatedAt(patch, now);
+  const preserveActivity = options.policy === "preserve-activity" && existing;
+  const updatedAt = preserveActivity
+    ? existingUpdatedAt ?? patchUpdatedAt ?? now
+    : Math.max(existingUpdatedAt ?? 0, patchUpdatedAt ?? 0, now);
+  const sessionId =
+    patch.sessionId ||
+    (existing && existing.sessionId) ||
+    (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  if (!existing) {
+    return {
+      ...patch,
+      sessionId,
+      updatedAt,
+      sessionStartedAt: patch.sessionStartedAt ?? updatedAt,
+    };
+  }
+  return {
+    ...existing,
+    ...patch,
+    sessionId,
+    updatedAt,
+    sessionStartedAt:
+      patch.sessionStartedAt ??
+      (existing.sessionId === sessionId ? existing.sessionStartedAt : updatedAt),
+  };
+}
+
+function mergeSessionEntry(existing, patch = {}) {
+  return mergeSessionEntryWithPolicy(existing, patch);
+}
+
+function mergeSessionEntryPreserveActivity(existing, patch = {}) {
+  return mergeSessionEntryWithPolicy(existing, patch, { policy: "preserve-activity" });
+}
+
+function persistResolvedSessionEntry(params = {}) {
+  const store = params.store;
+  const resolved = params.resolved;
+  const next = params.next;
+  store[resolved.normalizedKey] = next;
+  for (const legacyKey of resolved.legacyKeys || []) {
+    delete store[legacyKey];
+  }
+  return next;
+}
+
+async function updateSessionStore(storePath, mutator, opts = {}) {
+  const store = loadSessionStore(storePath, { skipCache: true, clone: false });
+  const result = typeof mutator === "function" ? await mutator(store) : undefined;
+  await saveSessionStore(storePath, store, opts);
+  return result;
+}
+
+function readSessionUpdatedAt(params = {}) {
+  try {
+    const store = loadSessionStore(params.storePath);
+    const resolved = resolveSessionStoreEntry({
+      store,
+      sessionKey: params.sessionKey,
+    });
+    return resolved.existing && resolved.existing.updatedAt;
+  } catch (_error) {
+    return undefined;
+  }
+}
+
+const GROUP_SESSION_MARKERS = [":group:", ":channel:"];
+
+function getGroupSurfaces() {
+  return new Set([...ROUTING_KNOWN_GATEWAY_CHANNELS, "msteams", "teams", "webchat"]);
+}
+
+function resolveGroupSessionKey(ctx = {}) {
+  const from = normalizeOptionalString(ctx.From) || "";
+  const lowerFrom = normalizeLowercaseStringOrEmpty(from);
+  const chatType = normalizeOptionalLowercaseString(ctx.ChatType);
+  const normalizedChatType =
+    chatType === "channel" ? "channel" : chatType === "group" ? "group" : undefined;
+  const looksLikeGroup =
+    normalizedChatType === "group" ||
+    normalizedChatType === "channel" ||
+    lowerFrom.includes(":group:") ||
+    lowerFrom.includes(":channel:");
+  if (!looksLikeGroup) {
+    return null;
+  }
+  const providerHint = normalizeOptionalLowercaseString(ctx.Provider);
+  const parts = from.split(":").filter(Boolean);
+  const head = normalizeLowercaseStringOrEmpty(parts[0]);
+  const headIsSurface = head ? getGroupSurfaces().has(head) : false;
+  const provider = headIsSurface ? head : providerHint;
+  if (!provider) {
+    return null;
+  }
+  const second = normalizeOptionalLowercaseString(parts[1]);
+  const secondIsKind = second === "group" || second === "channel";
+  const kind = secondIsKind
+    ? second
+    : lowerFrom.includes(":channel:") || normalizedChatType === "channel"
+      ? "channel"
+      : "group";
+  const id = headIsSurface
+    ? secondIsKind
+      ? parts.slice(2).join(":")
+      : parts.slice(1).join(":")
+    : from;
+  const finalId = normalizeLowercaseStringOrEmpty(id);
+  if (!finalId) {
+    return null;
+  }
+  return {
+    key: `${provider}:${kind}:${finalId}`,
+    channel: provider,
+    id: finalId,
+    chatType: kind === "channel" ? "channel" : "group",
+  };
+}
+
+function deriveSessionKey(scope, ctx = {}) {
+  if (scope === "global") {
+    return "global";
+  }
+  const resolvedGroup = resolveGroupSessionKey(ctx);
+  if (resolvedGroup) {
+    return resolvedGroup.key;
+  }
+  const from = ctx.From ? normalizeE164(ctx.From) : "";
+  return from || "unknown";
+}
+
+function normalizeExplicitSessionKey(sessionKey) {
+  return normalizeStoreSessionKey(sessionKey);
+}
+
+function resolveSessionKey(scope, ctx = {}, mainKey, agentId = DEFAULT_AGENT_ID) {
+  const explicit = typeof ctx.SessionKey === "string" ? ctx.SessionKey.trim() : "";
+  if (explicit) {
+    return normalizeExplicitSessionKey(explicit);
+  }
+  const raw = deriveSessionKey(scope, ctx);
+  if (scope === "global") {
+    return raw;
+  }
+  const canonicalAgentId = normalizeAgentId(agentId);
+  const canonicalMainKey = normalizeMainKey(mainKey);
+  const canonical = buildAgentMainSessionKey({
+    agentId: canonicalAgentId,
+    mainKey: canonicalMainKey,
+  });
+  const isGroup = raw.includes(":group:") || raw.includes(":channel:");
+  if (!isGroup) {
+    return canonical;
+  }
+  return `agent:${canonicalAgentId}:${raw}`;
+}
+
+function canonicalizeMainSessionAlias(params = {}) {
+  const raw = String(params.sessionKey || "").trim();
+  if (!raw) {
+    return raw;
+  }
+  const cfg = params.cfg || {};
+  const agentId = normalizeAgentId(params.agentId);
+  const mainKey = normalizeMainKey(cfg.session && cfg.session.mainKey);
+  const agentMainSessionKey = buildAgentMainSessionKey({ agentId, mainKey });
+  const agentMainAliasKey = buildAgentMainSessionKey({ agentId, mainKey: "main" });
+  const legacyMainKey = buildAgentMainSessionKey({ agentId: DEFAULT_AGENT_ID, mainKey });
+  const legacyMainAliasKey = buildAgentMainSessionKey({
+    agentId: DEFAULT_AGENT_ID,
+    mainKey: "main",
+  });
+  const normalizedRaw = normalizeLowercaseStringOrEmpty(raw);
+  const isMainAlias =
+    normalizedRaw === "main" ||
+    normalizedRaw === mainKey ||
+    normalizedRaw === agentMainSessionKey ||
+    normalizedRaw === agentMainAliasKey ||
+    normalizedRaw === legacyMainKey ||
+    normalizedRaw === legacyMainAliasKey;
+  if (cfg.session && cfg.session.scope === "global" && isMainAlias) {
+    return "global";
+  }
+  if (isMainAlias) {
+    return agentMainSessionKey;
+  }
+  return raw;
+}
+
+function deriveSessionMetaPatch(params = {}) {
+  const ctx = params.ctx || {};
+  const sessionKey = params.sessionKey;
+  const groupResolution =
+    params.groupResolution === undefined
+      ? resolveGroupSessionKey(ctx)
+      : params.groupResolution;
+  const provider = normalizeOptionalString(ctx.Provider);
+  const from = normalizeOptionalString(ctx.From);
+  const to = normalizeOptionalString(ctx.To);
+  const chatType = normalizeOptionalLowercaseString(ctx.ChatType);
+  const origin = {
+    provider,
+    chatType,
+    from,
+    to,
+    nativeChannelId: groupResolution && groupResolution.id,
+    accountId: normalizeOptionalString(ctx.AccountId || ctx.accountId),
+    threadId: ctx.MessageThreadId || ctx.ThreadId || undefined,
+  };
+  Object.keys(origin).forEach((key) => {
+    if (origin[key] === undefined) {
+      delete origin[key];
+    }
+  });
+  if (groupResolution) {
+    return {
+      chatType: groupResolution.chatType,
+      channel: groupResolution.channel,
+      groupId: groupResolution.id,
+      subject: normalizeOptionalString(ctx.Subject),
+      groupChannel: normalizeOptionalString(ctx.GroupChannel),
+      space: normalizeOptionalString(ctx.Space),
+      origin,
+    };
+  }
+  if (provider || from || to || chatType) {
+    return {
+      chatType,
+      channel: provider,
+      origin,
+      lastInteractionAt: Date.now(),
+      sessionKey,
+    };
+  }
+  return null;
+}
+
+async function recordSessionMetaFromInbound(params = {}) {
+  const createIfMissing = params.createIfMissing !== false;
+  const sessionKey = params.sessionKey;
+  return await updateSessionStore(
+    params.storePath,
+    (store) => {
+      const resolved = resolveSessionStoreEntry({ store, sessionKey });
+      const existing = resolved.existing;
+      const patch = deriveSessionMetaPatch({
+        ctx: params.ctx || {},
+        sessionKey: resolved.normalizedKey,
+        existing,
+        groupResolution: params.groupResolution,
+      });
+      if (!patch) {
+        if (existing && resolved.legacyKeys.length > 0) {
+          persistResolvedSessionEntry({ store, resolved, next: existing });
+        }
+        return existing || null;
+      }
+      if (!existing && !createIfMissing) {
+        return null;
+      }
+      const next = existing
+        ? mergeSessionEntryPreserveActivity(existing, patch)
+        : mergeSessionEntry(existing, patch);
+      return persistResolvedSessionEntry({ store, resolved, next });
+    },
+    { activeSessionKey: normalizeStoreSessionKey(sessionKey) },
+  );
+}
+
+function normalizeDeliveryContext(input = {}) {
+  const channel = normalizeMessageChannel(input.channel);
+  const to = normalizeOptionalString(input.to);
+  const accountId = normalizeOptionalString(input.accountId);
+  const threadId =
+    input.threadId !== undefined && input.threadId !== null && String(input.threadId).trim()
+      ? String(input.threadId).trim()
+      : undefined;
+  const context = { channel, to, accountId, threadId };
+  Object.keys(context).forEach((key) => {
+    if (context[key] === undefined) {
+      delete context[key];
+    }
+  });
+  return Object.keys(context).length > 0 ? context : undefined;
+}
+
+async function updateLastRoute(params = {}) {
+  const createIfMissing = params.createIfMissing !== false;
+  const sessionKey = params.sessionKey;
+  return await updateSessionStore(params.storePath, (store) => {
+    const resolved = resolveSessionStoreEntry({ store, sessionKey });
+    const existing = resolved.existing;
+    if (!existing && !createIfMissing) {
+      return null;
+    }
+    const inputContext = normalizeDeliveryContext(params.deliveryContext || {});
+    const inlineContext = normalizeDeliveryContext({
+      channel: params.channel,
+      to: params.to,
+      accountId: params.accountId,
+      threadId: params.threadId,
+    });
+    const deliveryContext = {
+      ...((existing && existing.deliveryContext) || {}),
+      ...(inputContext || {}),
+      ...(inlineContext || {}),
+    };
+    const normalizedDelivery = normalizeDeliveryContext(deliveryContext);
+    const metaPatch = params.ctx
+      ? deriveSessionMetaPatch({
+          ctx: params.ctx,
+          sessionKey: resolved.normalizedKey,
+          existing,
+          groupResolution: params.groupResolution,
+        })
+      : null;
+    const basePatch = {
+      deliveryContext: normalizedDelivery,
+      lastChannel: normalizedDelivery && normalizedDelivery.channel,
+      lastTo: normalizedDelivery && normalizedDelivery.to,
+      lastAccountId: normalizedDelivery && normalizedDelivery.accountId,
+      lastThreadId: normalizedDelivery && normalizedDelivery.threadId,
+    };
+    const next = mergeSessionEntryPreserveActivity(
+      existing,
+      metaPatch ? { ...basePatch, ...metaPatch } : basePatch,
+    );
+    return persistResolvedSessionEntry({ store, resolved, next });
+  });
+}
+
+function isThreadSessionKey(sessionKey) {
+  return Boolean(normalizeLowercaseStringOrEmpty(sessionKey).includes(":thread:"));
+}
+
+function resolveSessionResetType(params = {}) {
+  if (params.isThread || isThreadSessionKey(params.sessionKey)) {
+    return "thread";
+  }
+  if (params.isGroup) {
+    return "group";
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(params.sessionKey);
+  if (GROUP_SESSION_MARKERS.some((marker) => normalized.includes(marker))) {
+    return "group";
+  }
+  return "direct";
+}
+
+function resolveThreadFlag(params = {}) {
+  if (params.messageThreadId !== undefined && params.messageThreadId !== null) {
+    return true;
+  }
+  if (normalizeOptionalString(params.threadLabel)) {
+    return true;
+  }
+  if (normalizeOptionalString(params.threadStarterBody)) {
+    return true;
+  }
+  if (normalizeOptionalString(params.parentSessionKey)) {
+    return true;
+  }
+  return isThreadSessionKey(params.sessionKey);
+}
+
+function resolveChannelResetConfig(params = {}) {
+  const resetByChannel = params.sessionCfg && params.sessionCfg.resetByChannel;
+  if (!resetByChannel || typeof resetByChannel !== "object") {
+    return undefined;
+  }
+  const key =
+    normalizeMessageChannel(params.channel) || normalizeOptionalLowercaseString(params.channel);
+  return key ? resetByChannel[key] : undefined;
+}
+
+const DEFAULT_RESET_MODE = "daily";
+const DEFAULT_RESET_AT_HOUR = 4;
+const DEFAULT_IDLE_MINUTES = 0;
+
+function normalizeResetAtHour(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_RESET_AT_HOUR;
+  }
+  const normalized = Math.floor(value);
+  if (!Number.isFinite(normalized)) {
+    return DEFAULT_RESET_AT_HOUR;
+  }
+  if (normalized < 0) {
+    return 0;
+  }
+  if (normalized > 23) {
+    return 23;
+  }
+  return normalized;
+}
+
+function resolveDailyResetAtMs(now, atHour) {
+  const resetAt = new Date(now);
+  resetAt.setHours(normalizeResetAtHour(atHour), 0, 0, 0);
+  if (now < resetAt.getTime()) {
+    resetAt.setDate(resetAt.getDate() - 1);
+  }
+  return resetAt.getTime();
+}
+
+function resolveSessionResetPolicy(params = {}) {
+  const sessionCfg = params.sessionCfg || {};
+  const baseReset = params.resetOverride ?? sessionCfg.reset;
+  const resetByType = sessionCfg.resetByType || {};
+  const typeReset = params.resetOverride
+    ? undefined
+    : (resetByType[params.resetType] ??
+      (params.resetType === "direct" ? resetByType.dm : undefined));
+  const hasExplicitReset = Boolean(baseReset || sessionCfg.resetByType);
+  const legacyIdleMinutes = params.resetOverride ? undefined : sessionCfg.idleMinutes;
+  const configured = Boolean(baseReset || typeReset || legacyIdleMinutes !== undefined);
+  const mode =
+    (typeReset && typeReset.mode) ??
+    (baseReset && baseReset.mode) ??
+    (!hasExplicitReset && legacyIdleMinutes !== undefined ? "idle" : DEFAULT_RESET_MODE);
+  const atHour = normalizeResetAtHour(
+    (typeReset && typeReset.atHour) ??
+      (baseReset && baseReset.atHour) ??
+      DEFAULT_RESET_AT_HOUR,
+  );
+  const idleMinutesRaw =
+    (typeReset && typeReset.idleMinutes) ??
+    (baseReset && baseReset.idleMinutes) ??
+    legacyIdleMinutes;
+  let idleMinutes;
+  if (idleMinutesRaw !== undefined && idleMinutesRaw !== null) {
+    const normalized = Math.floor(Number(idleMinutesRaw));
+    if (Number.isFinite(normalized)) {
+      idleMinutes = Math.max(normalized, 0);
+    }
+  } else if (mode === "idle") {
+    idleMinutes = DEFAULT_IDLE_MINUTES;
+  }
+  return { mode, atHour, idleMinutes, configured };
+}
+
+function resolveFreshnessTimestamp(value, now) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  if (typeof now === "number" && Number.isFinite(now) && value > now) {
+    return undefined;
+  }
+  return value;
+}
+
+function evaluateSessionFreshness(params = {}) {
+  const policy = params.policy || resolveSessionResetPolicy({});
+  const now = typeof params.now === "number" && Number.isFinite(params.now)
+    ? params.now
+    : Date.now();
+  const updatedAt = resolveFreshnessTimestamp(params.updatedAt, now) || 0;
+  const sessionStartedAt =
+    resolveFreshnessTimestamp(params.sessionStartedAt, now) || updatedAt;
+  const lastInteractionAt =
+    resolveFreshnessTimestamp(params.lastInteractionAt, now) || sessionStartedAt;
+  const dailyResetAt =
+    policy.mode === "daily" ? resolveDailyResetAtMs(now, policy.atHour) : undefined;
+  const idleExpiresAt =
+    policy.idleMinutes !== undefined && policy.idleMinutes > 0
+      ? lastInteractionAt + policy.idleMinutes * 60_000
+      : undefined;
+  const staleDaily = dailyResetAt !== undefined && sessionStartedAt < dailyResetAt;
+  const staleIdle = idleExpiresAt !== undefined && now > idleExpiresAt;
+  return {
+    fresh: !(staleDaily || staleIdle),
+    dailyResetAt,
+    idleExpiresAt,
+  };
+}
+
+const sessionStoreRuntime = {
+  clearSessionStoreCacheForTest: () => {},
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+  resolveSessionKey,
+  resolveGroupSessionKey,
+  canonicalizeMainSessionAlias,
+  readSessionUpdatedAt,
+  recordSessionMetaFromInbound,
+  saveSessionStore,
+  updateLastRoute,
+  updateSessionStore,
+  evaluateSessionFreshness,
+  resolveChannelResetConfig,
+  resolveSessionResetPolicy,
+  resolveSessionResetType,
+  resolveThreadFlag,
+};
+
 async function resolveForwardedRuntimeMethod(params) {
   const runtime =
     typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
@@ -32958,6 +33586,7 @@ const genericSdk = new Proxy(
     ...sessionBindingRuntime,
     ...threadBindingsSessionRuntime,
     ...sessionKeyRuntime,
+    ...sessionStoreRuntime,
     ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
@@ -33495,6 +34124,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/session-key-runtime"
   ) {
     return sessionKeyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-store-runtime" ||
+    request === "@openclaw/plugin-sdk/session-store-runtime"
+  ) {
+    return sessionStoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||
