@@ -31404,6 +31404,418 @@ const conversationRuntime = {
   resolveConversationLabel,
 };
 
+async function resolveForwardedRuntimeMethod(params) {
+  const runtime =
+    typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
+  const method =
+    typeof params.resolve === "function" ? params.resolve(runtime) : undefined;
+  if (typeof method === "function") {
+    return method;
+  }
+  throw new Error(params.unavailableMessage || "Runtime method is unavailable");
+}
+
+function createRuntimeOutboundDelegates(params = {}) {
+  const createDelegate = (name) => {
+    const spec = params[name];
+    if (!spec) {
+      return undefined;
+    }
+    return async (ctx) => {
+      const method = await resolveForwardedRuntimeMethod({
+        getRuntime: params.getRuntime,
+        resolve: spec.resolve,
+        unavailableMessage: spec.unavailableMessage,
+      });
+      return await method(ctx);
+    };
+  };
+  return {
+    sendText: createDelegate("sendText"),
+    sendMedia: createDelegate("sendMedia"),
+    sendPoll: createDelegate("sendPoll"),
+  };
+}
+
+function resolveLegacyOutboundSendDepKeys(channelId) {
+  const compact = String(channelId || "").replace(/[^a-z0-9]+/gi, "");
+  if (!compact) {
+    return [];
+  }
+  const pascal = compact.charAt(0).toUpperCase() + compact.slice(1);
+  const keys = new Set([`send${pascal}`]);
+  if (pascal.startsWith("I") && pascal.length > 1) {
+    keys.add(`sendI${pascal.slice(1)}`);
+  }
+  if (pascal.startsWith("Ms") && pascal.length > 2) {
+    keys.add(`sendMS${pascal.slice(2)}`);
+  }
+  return Array.from(keys);
+}
+
+function resolveOutboundSendDep(deps, channelId, options = {}) {
+  if (!deps || typeof deps !== "object") {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(deps, channelId) && deps[channelId] !== undefined) {
+    return deps[channelId];
+  }
+  const legacyKeys = [
+    ...resolveLegacyOutboundSendDepKeys(channelId),
+    ...(Array.isArray(options.legacyKeys) ? options.legacyKeys : []),
+  ];
+  for (const legacyKey of legacyKeys) {
+    if (Object.prototype.hasOwnProperty.call(deps, legacyKey) && deps[legacyKey] !== undefined) {
+      return deps[legacyKey];
+    }
+  }
+  return undefined;
+}
+
+function normalizeOutboundIdentity(identity) {
+  if (!identity || typeof identity !== "object") {
+    return undefined;
+  }
+  const name = normalizeOptionalString(identity.name || identity.displayName);
+  const avatarUrl = normalizeOptionalString(
+    identity.avatarUrl || (identity.avatar && identity.avatar.url),
+  );
+  const emoji = normalizeOptionalString(identity.emoji);
+  const theme = normalizeOptionalString(identity.theme);
+  if (!name && !avatarUrl && !emoji && !theme) {
+    return undefined;
+  }
+  return { name, avatarUrl, emoji, theme };
+}
+
+function resolveAgentOutboundIdentity(cfg, agentId) {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const agents = cfg && cfg.agents;
+  let candidate;
+  if (Array.isArray(agents)) {
+    candidate = agents.find((entry) => normalizeAgentId(entry && entry.id) === normalizedAgentId);
+  } else if (agents && typeof agents === "object") {
+    candidate = agents[agentId] || agents[normalizedAgentId];
+  }
+  if (!candidate && cfg && cfg.agent && normalizeAgentId(cfg.agent.id) === normalizedAgentId) {
+    candidate = cfg.agent;
+  }
+  return normalizeOutboundIdentity(candidate);
+}
+
+const INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN = "system-reminder|previous_response";
+const INTERNAL_RUNTIME_SCAFFOLDING_BLOCK_RE = new RegExp(
+  `<\\s*(${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>`,
+  "gi",
+);
+const INTERNAL_RUNTIME_SCAFFOLDING_SELF_CLOSING_RE = new RegExp(
+  `<\\s*(?:${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*\\/\\s*>`,
+  "gi",
+);
+const INTERNAL_RUNTIME_SCAFFOLDING_TAG_RE = new RegExp(
+  `<\\s*\\/?\\s*(?:${INTERNAL_RUNTIME_SCAFFOLDING_TAG_PATTERN})\\b[^>]*>`,
+  "gi",
+);
+const HTML_TAG_RE = /<\/?[a-z][a-z0-9_-]*\b[^>]*>/gi;
+
+function stripInternalRuntimeScaffolding(text) {
+  return String(text || "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_BLOCK_RE, "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_SELF_CLOSING_RE, "")
+    .replace(INTERNAL_RUNTIME_SCAFFOLDING_TAG_RE, "");
+}
+
+function stripRemainingHtmlTags(text) {
+  let previous;
+  let current = text;
+  do {
+    previous = current;
+    current = current.replace(HTML_TAG_RE, "");
+  } while (current !== previous);
+  return current;
+}
+
+function sanitizeForPlainText(text) {
+  const converted = stripInternalRuntimeScaffolding(text)
+    .replace(/<((?:https?:\/\/|mailto:)[^<>\s]+)>/gi, "$1")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?(p|div)>/gi, "\n")
+    .replace(/<(b|strong)>(.*?)<\/\1>/gi, "*$2*")
+    .replace(/<(i|em)>(.*?)<\/\1>/gi, "_$2_")
+    .replace(/<(s|strike|del)>(.*?)<\/\1>/gi, "~$2~")
+    .replace(/<code>(.*?)<\/code>/gi, "`$1`")
+    .replace(/<h[1-6][^>]*>(.*?)<\/h[1-6]>/gi, "\n*$1*\n")
+    .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n");
+  return stripRemainingHtmlTags(converted).replace(/\n{3,}/g, "\n\n");
+}
+
+function buildOutboundSessionContext(params = {}) {
+  const key = normalizeOptionalString(params.sessionKey);
+  const policyKey = normalizeOptionalString(params.policySessionKey);
+  const normalizedChatType = normalizeChatType(params.conversationType);
+  const conversationType =
+    normalizedChatType === "group" || normalizedChatType === "channel"
+      ? "group"
+      : normalizedChatType === "direct"
+        ? "direct"
+        : params.isGroup === true
+          ? "group"
+          : params.isGroup === false
+            ? "direct"
+            : undefined;
+  const explicitAgentId = normalizeOptionalString(params.agentId);
+  const derivedAgentId = key ? resolveAgentIdFromSessionKey(key) : undefined;
+  const agentId = explicitAgentId || derivedAgentId;
+  const requesterAccountId = normalizeOptionalString(params.requesterAccountId);
+  const requesterSenderId = normalizeOptionalString(params.requesterSenderId);
+  const requesterSenderName = normalizeOptionalString(params.requesterSenderName);
+  const requesterSenderUsername = normalizeOptionalString(params.requesterSenderUsername);
+  const requesterSenderE164 = normalizeOptionalString(params.requesterSenderE164);
+  if (
+    !key &&
+    !policyKey &&
+    !conversationType &&
+    !agentId &&
+    !requesterAccountId &&
+    !requesterSenderId &&
+    !requesterSenderName &&
+    !requesterSenderUsername &&
+    !requesterSenderE164
+  ) {
+    return undefined;
+  }
+  return {
+    ...(key ? { key } : {}),
+    ...(policyKey ? { policyKey } : {}),
+    ...(conversationType ? { conversationType } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(requesterAccountId ? { requesterAccountId } : {}),
+    ...(requesterSenderId ? { requesterSenderId } : {}),
+    ...(requesterSenderName ? { requesterSenderName } : {}),
+    ...(requesterSenderUsername ? { requesterSenderUsername } : {}),
+    ...(requesterSenderE164 ? { requesterSenderE164 } : {}),
+  };
+}
+
+function mergeOutboundMediaUrls(...lists) {
+  const seen = new Set();
+  const merged = [];
+  for (const list of lists) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const entry of list) {
+      const trimmed = normalizeOptionalString(entry);
+      if (!trimmed || seen.has(trimmed)) {
+        continue;
+      }
+      seen.add(trimmed);
+      merged.push(trimmed);
+    }
+  }
+  return merged;
+}
+
+function hasObjectContent(value) {
+  return Boolean(value && typeof value === "object" && Object.keys(value).length > 0);
+}
+
+function hasPresentationBlocks(value) {
+  return hasObjectContent(value) || (Array.isArray(value) && value.length > 0);
+}
+
+function createOutboundPayloadPlan(payloads, context = {}) {
+  const prepared = [];
+  for (const entry of Array.isArray(payloads) ? payloads : []) {
+    if (!entry || typeof entry !== "object" || isReasoningReplyPayload(entry)) {
+      continue;
+    }
+    const text = typeof entry.text === "string" ? entry.text : "";
+    const mediaUrls = mergeOutboundMediaUrls(
+      Array.isArray(entry.mediaUrls) ? entry.mediaUrls : [],
+      entry.mediaUrl ? [entry.mediaUrl] : [],
+    );
+    const isSilent = mediaUrls.length === 0 && isSilentReplyPayloadText(text);
+    const payload = {
+      ...entry,
+      text,
+      ...(mediaUrls.length ? { mediaUrls } : { mediaUrls: undefined }),
+      mediaUrl: mediaUrls.length === 1 ? mediaUrls[0] : undefined,
+      audioAsVoice: entry.audioAsVoice === true ? true : undefined,
+    };
+    const hasPresentation = hasPresentationBlocks(payload.presentation);
+    const hasInteractive = hasPresentationBlocks(payload.interactive);
+    const hasChannelData = hasObjectContent(payload.channelData);
+    const parts = resolveSendableOutboundReplyParts(payload);
+    if (!parts.hasContent && !hasPresentation && !hasInteractive && !hasChannelData && !isSilent) {
+      continue;
+    }
+    prepared.push({
+      payload,
+      parts,
+      isSilent,
+      hasPresentation,
+      hasInteractive,
+      hasChannelData,
+    });
+  }
+  const hasVisibleNonSilentContent = prepared.some(
+    (entry) => !entry.isSilent && entry.parts.hasContent,
+  );
+  return prepared
+    .filter((entry) => {
+      if (!entry.isSilent) {
+        return true;
+      }
+      return !hasVisibleNonSilentContent && context.hasPendingSpawnedChildren !== true;
+    })
+    .map((entry) => ({
+      payload: entry.payload,
+      parts: entry.parts,
+      hasPresentation: entry.hasPresentation,
+      hasInteractive: entry.hasInteractive,
+      hasChannelData: entry.hasChannelData,
+    }));
+}
+
+function projectOutboundPayloadPlanForDelivery(plan) {
+  return (Array.isArray(plan) ? plan : []).map((entry) => entry.payload);
+}
+
+function projectOutboundPayloadPlanForOutbound(plan) {
+  return (Array.isArray(plan) ? plan : [])
+    .map((entry) => ({
+      text: entry.parts && entry.parts.text ? entry.parts.text : "",
+      mediaUrls: entry.parts && Array.isArray(entry.parts.mediaUrls) ? entry.parts.mediaUrls : [],
+      audioAsVoice: entry.payload && entry.payload.audioAsVoice === true ? true : undefined,
+      ...(entry.hasPresentation ? { presentation: entry.payload.presentation } : {}),
+      ...(entry.payload && entry.payload.delivery ? { delivery: entry.payload.delivery } : {}),
+      ...(entry.hasInteractive ? { interactive: entry.payload.interactive } : {}),
+      ...(entry.hasChannelData ? { channelData: entry.payload.channelData } : {}),
+    }))
+    .filter((entry) => entry.text || entry.mediaUrls.length > 0 || entry.channelData);
+}
+
+function projectOutboundPayloadPlanForJson(plan) {
+  return (Array.isArray(plan) ? plan : []).map((entry) => ({
+    text: entry.parts && entry.parts.text ? entry.parts.text : "",
+    mediaUrl: (entry.payload && entry.payload.mediaUrl) || null,
+    mediaUrls:
+      entry.parts && Array.isArray(entry.parts.mediaUrls) && entry.parts.mediaUrls.length
+        ? entry.parts.mediaUrls
+        : undefined,
+    audioAsVoice: entry.payload && entry.payload.audioAsVoice === true ? true : undefined,
+    presentation: entry.payload && entry.payload.presentation,
+    delivery: entry.payload && entry.payload.delivery,
+    interactive: entry.payload && entry.payload.interactive,
+    channelData: entry.payload && entry.payload.channelData,
+  }));
+}
+
+function summarizeOutboundPayloadForTransport(payload) {
+  const parts = resolveSendableOutboundReplyParts(payload);
+  return {
+    text: parts.text,
+    mediaUrls: parts.mediaUrls,
+    audioAsVoice: payload && payload.audioAsVoice === true ? true : undefined,
+    presentation: payload && payload.presentation,
+    delivery: payload && payload.delivery,
+    interactive: payload && payload.interactive,
+    channelData: payload && payload.channelData,
+    ...(payload && payload.spokenText && !parts.text ? { hookContent: payload.spokenText } : {}),
+  };
+}
+
+async function deliverOutboundPayloads(params = {}) {
+  const channel =
+    normalizeMessageChannel(params.channel) || normalizeLowercaseStringOrEmpty(params.channel);
+  const sendDep = resolveOutboundSendDep(params.deps, channel);
+  if (typeof sendDep !== "function") {
+    throw new Error(`Outbound not configured for channel: ${channel || "unknown"}`);
+  }
+  const plan = createOutboundPayloadPlan(params.payloads, {
+    cfg: params.cfg,
+    sessionKey: params.session && (params.session.policyKey || params.session.key),
+    surface: channel,
+    conversationType: params.session && params.session.conversationType,
+  });
+  const replyFanout = createReplyToFanout({
+    replyToId: params.replyToId,
+    replyToMode: params.replyToMode,
+  });
+  const results = [];
+  for (const payload of projectOutboundPayloadPlanForDelivery(plan)) {
+    const parts = resolveSendableOutboundReplyParts(payload);
+    const replyToId =
+      payload && Object.prototype.hasOwnProperty.call(payload, "replyToId")
+        ? payload.replyToId || undefined
+        : replyFanout();
+    const baseCtx = {
+      cfg: params.cfg,
+      channel,
+      to: params.to,
+      accountId: params.accountId,
+      replyToId,
+      replyToMode: params.replyToMode,
+      threadId: params.threadId,
+      identity: params.identity,
+      forceDocument: params.forceDocument,
+      silent: params.silent,
+      payload,
+    };
+    if (parts.mediaUrls.length > 0) {
+      for (const [index, mediaUrl] of parts.mediaUrls.entries()) {
+        const result = await sendDep({
+          ...baseCtx,
+          text: index === 0 ? parts.text : "",
+          mediaUrl,
+          mediaUrls: [mediaUrl],
+          audioAsVoice: payload.audioAsVoice === true ? true : undefined,
+        });
+        if (Array.isArray(result)) {
+          results.push(...result.filter(Boolean));
+        } else if (result) {
+          results.push(result);
+        }
+      }
+      continue;
+    }
+    if (!parts.text && !payload.interactive && !payload.presentation && !payload.channelData) {
+      continue;
+    }
+    const result = await sendDep({
+      ...baseCtx,
+      text: parts.text,
+      mediaUrls: [],
+      audioAsVoice: payload.audioAsVoice === true ? true : undefined,
+    });
+    if (Array.isArray(result)) {
+      results.push(...result.filter(Boolean));
+    } else if (result) {
+      results.push(result);
+    }
+  }
+  return results;
+}
+
+const outboundRuntime = {
+  buildOutboundSessionContext,
+  createOutboundPayloadPlan,
+  createReplyToFanout,
+  createRuntimeOutboundDelegates,
+  deliverOutboundPayloads,
+  normalizeOutboundIdentity,
+  projectOutboundPayloadPlanForDelivery,
+  projectOutboundPayloadPlanForJson,
+  projectOutboundPayloadPlanForOutbound,
+  resolveAgentOutboundIdentity,
+  resolveLegacyOutboundSendDepKeys,
+  resolveOutboundSendDep,
+  sanitizeForPlainText,
+  stripInternalRuntimeScaffolding,
+  summarizeOutboundPayloadForTransport,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -32112,6 +32524,7 @@ const genericSdk = new Proxy(
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
+    ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -32624,6 +33037,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/conversation-runtime"
   ) {
     return conversationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/outbound-runtime" ||
+    request === "@openclaw/plugin-sdk/outbound-runtime"
+  ) {
+    return outboundRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

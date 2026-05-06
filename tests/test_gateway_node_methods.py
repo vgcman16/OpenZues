@@ -14465,6 +14465,236 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_outbound_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-outbound-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const outbound = require("openclaw/plugin-sdk/outbound-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.outbound_runtime",
+      description: "Use OpenClaw outbound runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const delegates = outbound.createRuntimeOutboundDelegates({
+          getRuntime: async () => ({
+            outbound: {
+              sendText: async (ctx) => {
+                calls.push(["text", ctx.text, ctx.replyToId]);
+                return { channel: "slack", messageId: "text-" + ctx.text };
+              },
+              sendMedia: async (ctx) => {
+                calls.push(["media", ctx.mediaUrl, ctx.text]);
+                return { channel: "slack", messageId: "media-" + ctx.mediaUrl };
+              },
+              sendPoll: async (ctx) => {
+                calls.push(["poll", ctx.question, ctx.options.length]);
+                return { channel: "slack", pollId: "poll-" + ctx.options.length };
+              }
+            }
+          }),
+          sendText: { resolve: (runtime) => runtime.outbound.sendText },
+          sendMedia: { resolve: (runtime) => runtime.outbound.sendMedia },
+          sendPoll: { resolve: (runtime) => runtime.outbound.sendPoll }
+        });
+        const textResult = await delegates.sendText({ text: "hello", replyToId: "root" });
+        const mediaResult = await delegates.sendMedia({
+          text: "caption",
+          mediaUrl: "https://example.test/a.png"
+        });
+        const pollResult = await delegates.sendPoll({
+          question: "Deploy?",
+          options: ["yes", "no"]
+        });
+        const fanout = outbound.createReplyToFanout({
+          replyToId: "root",
+          replyToMode: "first"
+        });
+        const explicitFanout = outbound.createReplyToFanout({
+          replyToId: "explicit",
+          replyToMode: "first",
+          replyToIdSource: "explicit"
+        });
+        const session = outbound.buildOutboundSessionContext({
+          cfg: {},
+          sessionKey: "agent:zeus:thread:one",
+          policySessionKey: "agent:zeus",
+          conversationType: "dm",
+          requesterAccountId: "work",
+          requesterSenderId: "U1",
+          requesterSenderName: "Ada"
+        });
+        const plan = outbound.createOutboundPayloadPlan([
+          {
+            text: "Hello",
+            mediaUrl: "https://example.test/one.png",
+            mediaUrls: ["https://example.test/two.png"],
+            audioAsVoice: true
+          },
+          { text: "NO_REPLY" },
+          { text: "reasoning: hidden" }
+        ], { hasPendingSpawnedChildren: false });
+        const deliveryPayloads = outbound.projectOutboundPayloadPlanForDelivery(plan);
+        const delivered = await outbound.deliverOutboundPayloads({
+          cfg: {},
+          channel: "slack",
+          to: "C1",
+          accountId: "work",
+          replyToId: "root",
+          payloads: deliveryPayloads,
+          deps: {
+            slack: async (ctx) => ({
+              channel: ctx.channel,
+              messageId: ctx.mediaUrl ? "sent-media" : "sent-text",
+              to: ctx.to,
+              mediaUrl: ctx.mediaUrl,
+              replyToId: ctx.replyToId
+            })
+          }
+        });
+
+        return {
+          exportTypes: [
+            typeof outbound.createRuntimeOutboundDelegates,
+            typeof outbound.resolveOutboundSendDep,
+            typeof outbound.resolveAgentOutboundIdentity,
+            typeof outbound.createReplyToFanout,
+            typeof outbound.deliverOutboundPayloads,
+            typeof genericSdk.sanitizeForPlainText
+          ],
+          calls,
+          delegates: [textResult.messageId, mediaResult.messageId, pollResult.pollId],
+          deps: [
+            outbound.resolveOutboundSendDep({ slack: "direct" }, "slack"),
+            outbound.resolveOutboundSendDep({ sendMSteams: "teams" }, "ms-teams"),
+            outbound.resolveOutboundSendDep({ customLegacy: "fallback" }, "custom", {
+              legacyKeys: ["customLegacy"]
+            })
+          ],
+          fanout: [fanout(), fanout(), explicitFanout(), explicitFanout()],
+          sanitized: outbound.sanitizeForPlainText(
+            "<system-reminder>hide</system-reminder><b>Hi</b><br><i>there</i><custom>x</custom>"
+          ),
+          session,
+          plan: {
+            count: plan.length,
+            mediaUrls: plan[0].parts.mediaUrls,
+            audioAsVoice: deliveryPayloads[0].audioAsVoice
+          },
+          delivered
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "outbound-runtime-plugin",
+                    "name": "Outbound Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-outbound-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.outbound_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.outbound_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "function", "function"],
+        "calls": [
+            ["text", "hello", "root"],
+            ["media", "https://example.test/a.png", "caption"],
+            ["poll", "Deploy?", 2],
+        ],
+        "delegates": [
+            "text-hello",
+            "media-https://example.test/a.png",
+            "poll-2",
+        ],
+        "deps": ["direct", "teams", "fallback"],
+        "fanout": ["root", None, "explicit", "explicit"],
+        "sanitized": "*Hi*\n_there_x",
+        "session": {
+            "key": "agent:zeus:thread:one",
+            "policyKey": "agent:zeus",
+            "conversationType": "direct",
+            "agentId": "zeus",
+            "requesterAccountId": "work",
+            "requesterSenderId": "U1",
+            "requesterSenderName": "Ada",
+        },
+        "plan": {
+            "count": 1,
+            "mediaUrls": [
+                "https://example.test/two.png",
+                "https://example.test/one.png",
+            ],
+            "audioAsVoice": True,
+        },
+        "delivered": [
+            {
+                "channel": "slack",
+                "messageId": "sent-media",
+                "to": "C1",
+                "mediaUrl": "https://example.test/two.png",
+                "replyToId": "root",
+            },
+            {
+                "channel": "slack",
+                "messageId": "sent-media",
+                "to": "C1",
+                "mediaUrl": "https://example.test/one.png",
+                "replyToId": "root",
+            },
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
