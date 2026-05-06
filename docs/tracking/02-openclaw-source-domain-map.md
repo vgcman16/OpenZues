@@ -85,7 +85,8 @@ are checkpointed in `6f11c3fa`; `runtime-secret-resolution` from
 `packages/memory-host-sdk/src/host/internal.ts`,
 `packages/memory-host-sdk/src/host/read-file.ts`, and
 `packages/memory-host-sdk/src/host/backend-config.ts` is checkpointed in
-`a8d7b586`. Count all with
+`a8d7b586`; `memory-host-files` from
+`src/plugin-sdk/memory-host-files.ts` is checkpointed in `857111d8`. Count all with
 the plugin/extension system row above.
 
 ## How To Use This Map
