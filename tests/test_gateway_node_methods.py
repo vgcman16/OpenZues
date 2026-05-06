@@ -27668,6 +27668,102 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_query_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-query.cjs"
+    runtime_entry.write_text(
+        """
+const queryRuntime = require("openclaw/plugin-sdk/memory-core-host-query");
+const scopedQueryRuntime = require("@openclaw/plugin-sdk/memory-core-host-query");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_query",
+      description: "Use OpenClaw memory-core-host-query SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(queryRuntime).sort(),
+          scopedType: typeof scopedQueryRuntime.extractKeywords,
+          keywords: queryRuntime.extractKeywords(
+            "that thing we discussed about the API API bug 123"
+          ),
+          trigramKeywords: queryRuntime.extractKeywords(
+            "\\u4e4b\\u524d\\u8ba8\\u8bba\\u7684\\u90a3\\u4e2a\\u65b9\\u6848",
+            { ftsTokenizer: "trigram" }
+          ),
+          stopWords: [
+            queryRuntime.isQueryStopWordToken("that"),
+            queryRuntime.isQueryStopWordToken("about"),
+            queryRuntime.isQueryStopWordToken("api")
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-query-plugin",
+                    "name": "Memory Query Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-query.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_query"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_query"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["extractKeywords", "isQueryStopWordToken"],
+        "scopedType": "function",
+        "keywords": ["discussed", "api", "bug"],
+        "trigramKeywords": ["\u4e4b\u524d\u8ba8\u8bba\u7684\u90a3\u4e2a\u65b9\u6848"],
+        "stopWords": [True, True, False],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

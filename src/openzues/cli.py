@@ -46880,6 +46880,201 @@ const secretFileRuntime = {
   writePrivateSecretFileAtomic,
 };
 
+const MEMORY_QUERY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "me",
+  "my",
+  "we",
+  "our",
+  "you",
+  "your",
+  "he",
+  "she",
+  "it",
+  "they",
+  "them",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "can",
+  "may",
+  "might",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "by",
+  "from",
+  "about",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "under",
+  "over",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "because",
+  "as",
+  "while",
+  "when",
+  "where",
+  "what",
+  "which",
+  "who",
+  "how",
+  "why",
+  "yesterday",
+  "today",
+  "tomorrow",
+  "earlier",
+  "later",
+  "recently",
+  "ago",
+  "just",
+  "now",
+  "thing",
+  "things",
+  "stuff",
+  "something",
+  "anything",
+  "everything",
+  "nothing",
+  "please",
+  "help",
+  "find",
+  "show",
+  "get",
+  "tell",
+  "give",
+  "\u7684",
+  "\u4e86",
+  "\u7740",
+  "\u8fc7",
+  "\u662f",
+  "\u6709",
+  "\u5728",
+  "\u4e4b\u524d",
+  "\u4ee5\u524d",
+  "\u4e4b\u540e",
+  "\u4ee5\u540e",
+  "\u4ec0\u4e48",
+  "\u8bf7",
+  "\u5e2e",
+]);
+
+function isQueryStopWordToken(token) {
+  return MEMORY_QUERY_STOP_WORDS.has(normalizeLowercaseStringOrEmpty(token));
+}
+
+function isValidMemoryQueryKeyword(token) {
+  if (!token) {
+    return false;
+  }
+  if (/^[a-zA-Z]+$/.test(token) && token.length < 3) {
+    return false;
+  }
+  if (/^\d+$/.test(token)) {
+    return false;
+  }
+  if (/^[\p{P}\p{S}]+$/u.test(token)) {
+    return false;
+  }
+  return true;
+}
+
+function tokenizeMemoryQuery(text, opts = {}) {
+  const useTrigram = opts && opts.ftsTokenizer === "trigram";
+  const tokens = [];
+  const normalized = normalizeLowercaseStringOrEmpty(text);
+  const segments = normalized.split(/[\s\p{P}]+/u).filter(Boolean);
+  for (const segment of segments) {
+    if (/[\u3040-\u30ff]/u.test(segment)) {
+      const parts =
+        segment.match(
+          /[a-z0-9_]+|[\u30a0-\u30ff\u30fc]+|[\u4e00-\u9fff]+|[\u3040-\u309f]{2,}/giu,
+        ) || [];
+      for (const part of parts) {
+        if (/^[\u4e00-\u9fff]+$/u.test(part)) {
+          tokens.push(part);
+          if (!useTrigram) {
+            for (let index = 0; index < part.length - 1; index += 1) {
+              tokens.push(part[index] + part[index + 1]);
+            }
+          }
+        } else {
+          tokens.push(part);
+        }
+      }
+    } else if (/[\u4e00-\u9fff]/u.test(segment)) {
+      const chars = Array.from(segment).filter((char) => /[\u4e00-\u9fff]/u.test(char));
+      if (useTrigram) {
+        const block = chars.join("");
+        if (block) {
+          tokens.push(block);
+        }
+      } else {
+        tokens.push(...chars);
+        for (let index = 0; index < chars.length - 1; index += 1) {
+          tokens.push(chars[index] + chars[index + 1]);
+        }
+      }
+    } else {
+      tokens.push(segment);
+    }
+  }
+  return tokens;
+}
+
+function extractKeywords(query, opts = {}) {
+  const keywords = [];
+  const seen = new Set();
+  for (const token of tokenizeMemoryQuery(query, opts)) {
+    if (isQueryStopWordToken(token) || !isValidMemoryQueryKeyword(token) || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    keywords.push(token);
+  }
+  return keywords;
+}
+
+const memoryCoreHostQueryRuntime = {
+  extractKeywords,
+  isQueryStopWordToken,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -47888,6 +48083,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-secret-resolution"
   ) {
     return runtimeSecretResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-query" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-query"
+  ) {
+    return memoryCoreHostQueryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||
