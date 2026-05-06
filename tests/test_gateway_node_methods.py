@@ -21886,6 +21886,101 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_activity_runtime_helper(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-activity.cjs"
+    runtime_entry.write_text(
+        """
+const activity = require("openclaw/plugin-sdk/channel-activity-runtime");
+const scopedActivity = require("@openclaw/plugin-sdk/channel-activity-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_activity",
+      description: "Use OpenClaw channel activity SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const inbound = activity.recordChannelActivity({
+          channel: "slack",
+          accountId: " default ",
+          direction: "inbound",
+          at: 123
+        });
+        const outbound = activity.recordChannelActivity({
+          channel: "slack",
+          accountId: "",
+          direction: "outbound",
+          at: 456
+        });
+        return {
+          keys: Object.keys(activity).sort(),
+          scopedType: typeof scopedActivity.recordChannelActivity,
+          returns: [inbound ?? null, outbound ?? null]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-activity-plugin",
+                    "name": "Runtime Channel Activity Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-activity.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_activity"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_activity"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["recordChannelActivity"],
+        "scopedType": "function",
+        "returns": [None, None],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

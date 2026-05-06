@@ -37349,6 +37349,29 @@ const channelRuntimeContextRuntime = {
   watchChannelRuntimeContexts,
 };
 
+const channelActivityRecords = new Map();
+
+function channelActivityKey(channel, accountId) {
+  return `${String(channel || "")}:${normalizeOptionalString(accountId) || "default"}`;
+}
+
+function recordChannelActivity(params) {
+  const key = channelActivityKey(params && params.channel, params && params.accountId);
+  const existing = channelActivityRecords.get(key) || { inboundAt: null, outboundAt: null };
+  const at = typeof (params && params.at) === "number" ? params.at : Date.now();
+  if (params && params.direction === "inbound") {
+    existing.inboundAt = at;
+  }
+  if (params && params.direction === "outbound") {
+    existing.outboundAt = at;
+  }
+  channelActivityRecords.set(key, existing);
+}
+
+const channelActivityRuntime = {
+  recordChannelActivity,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38220,6 +38243,7 @@ const genericSdk = new Proxy(
     ...channelEnvelopeRuntime,
     ...channelMentionGatingRuntime,
     ...channelRuntimeContextRuntime,
+    ...channelActivityRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39265,6 +39289,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-runtime-context"
   ) {
     return channelRuntimeContextRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-activity-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-activity-runtime"
+  ) {
+    return channelActivityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
