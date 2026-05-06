@@ -37438,6 +37438,410 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_engine_storage_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_root = json.dumps(str(tmp_path / "storage-workspace"))
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-engine-storage.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const storage = require("openclaw/plugin-sdk/memory-core-host-engine-storage");
+const scopedStorage = require("@openclaw/plugin-sdk/memory-core-host-engine-storage");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_engine_storage",
+      description: "Use OpenClaw memory-core-host-engine-storage SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const workspaceDir = {workspace_root};
+        const slash = (value) => String(value).replaceAll("\\\\", "/");
+        const rel = (value) => slash(path.relative(workspaceDir, value));
+        const memoryDir = path.join(workspaceDir, "memory");
+        const extraDir = path.join(workspaceDir, "extra");
+        storage.ensureDir(memoryDir);
+        storage.ensureDir(extraDir);
+        fs.writeFileSync(path.join(workspaceDir, "MEMORY.md"), "# Root\\n");
+        fs.writeFileSync(path.join(workspaceDir, "memory.md"), "# Legacy\\n");
+        fs.writeFileSync(path.join(memoryDir, "note.md"), "alpha\\nbeta\\ngamma", "utf-8");
+        fs.writeFileSync(path.join(extraDir, "external.md"), "outside\\nnotes", "utf-8");
+        fs.writeFileSync(path.join(extraDir, "diagram.png"), Buffer.from("png"));
+        fs.writeFileSync(path.join(extraDir, "ignore.txt"), "ignored", "utf-8");
+        const multimodal = {{
+          enabled: true,
+          modalities: ["image", "audio"],
+          maxFileBytes: 1024
+        }};
+        const files = (await storage.listMemoryFiles(
+          workspaceDir,
+          [path.join(workspaceDir, "memory.md"), extraDir],
+          multimodal
+        )).map(rel).sort();
+        const noteEntry = await storage.buildFileEntry(
+          path.join(memoryDir, "note.md"),
+          workspaceDir
+        );
+        const imageEntry = await storage.buildFileEntry(
+          path.join(extraDir, "diagram.png"),
+          workspaceDir,
+          multimodal
+        );
+        const imageChunk = imageEntry
+          ? await storage.buildMultimodalChunkForIndexing(imageEntry)
+          : null;
+        const chunks = storage.chunkMarkdown(
+          Array.from({{ length: 12 }}, (_, index) => `Line ${{index}}: memory`).join("\\n"),
+          {{ tokens: 5, overlap: 0 }}
+        );
+        const remapped = chunks.map((chunk) => ({{ ...chunk }}));
+        storage.remapChunkLines(
+          remapped,
+          Array.from({{ length: 12 }}, (_, index) => index * 3 + 4)
+        );
+        let statDirectoryError = "";
+        try {{
+          await storage.statRegularFile(workspaceDir);
+        }} catch (err) {{
+          statDirectoryError = String(err && err.message ? err.message : err);
+        }}
+        const fakeSchemaSql = [];
+        const fakeSchemaDb = {{
+          exec(sql) {{ fakeSchemaSql.push(String(sql)); }},
+          prepare() {{ return {{ all() {{ return []; }} }}; }}
+        }};
+        const schema = storage.ensureMemoryIndexSchema({{
+          db: fakeSchemaDb,
+          embeddingCacheTable: "embedding_cache",
+          cacheEnabled: true,
+          ftsTable: "chunks_fts",
+          ftsEnabled: true,
+          ftsTokenizer: "trigram"
+        }});
+        const loadedExtensions = [];
+        const vecResult = await storage.loadSqliteVecExtension({{
+          db: {{
+            enableLoadExtension(value) {{ loadedExtensions.push(["enable", value]); }},
+            loadExtension(value) {{ loadedExtensions.push(["load", value]); }}
+          }},
+          extensionPath: "vec0"
+        }});
+        const walExec = [];
+        const fakeWalDb = {{
+          exec(sql) {{ walExec.push(String(sql)); }}
+        }};
+        const wal = storage.configureMemorySqliteWalMaintenance(fakeWalDb, {{
+          checkpointIntervalMs: 1,
+          truncateIntervalMs: 2
+        }});
+        const walAgain = storage.configureMemorySqliteWalMaintenance(fakeWalDb);
+        const walClosed = storage.closeMemorySqliteWalMaintenance(fakeWalDb);
+        const readSlice = await scopedStorage.readMemoryFile({{
+          workspaceDir,
+          extraPaths: [extraDir],
+          relPath: "memory/note.md",
+          from: 2,
+          lines: 1
+        }});
+        return {{
+          keys: Object.keys(storage).sort(),
+          scopedType: typeof scopedStorage.buildFileEntry,
+          constants: {{
+            defaultLines: storage.DEFAULT_MEMORY_READ_LINES,
+            defaultMaxChars: storage.DEFAULT_MEMORY_READ_MAX_CHARS
+          }},
+          paths: {{
+            normalizedExtra: storage.normalizeExtraMemoryPaths(
+              workspaceDir,
+              [" notes ", extraDir, extraDir, ""]
+            ).map(slash),
+            files
+          }},
+          entries: {{
+            note: noteEntry && {{
+              path: noteEntry.path,
+              kind: noteEntry.kind,
+              hashMatches: noteEntry.hash === storage.hashText("alpha\\nbeta\\ngamma")
+            }},
+            image: imageEntry && {{
+              path: imageEntry.path,
+              kind: imageEntry.kind,
+              modality: imageEntry.modality,
+              mimeType: imageEntry.mimeType,
+              contentText: imageEntry.contentText,
+              dataHashType: typeof imageEntry.dataHash
+            }},
+            imageChunk: imageChunk && {{
+              text: imageChunk.chunk.text,
+              startLine: imageChunk.chunk.startLine,
+              endLine: imageChunk.chunk.endLine,
+              partSummary: imageChunk.chunk.embeddingInput.parts.map((part) => ({{
+                type: part.type,
+                text: part.text ?? null,
+                mimeType: part.mimeType ?? null,
+                dataType: typeof part.data
+              }})),
+              structuredPositive: imageChunk.structuredInputBytes > 0
+            }}
+          }},
+          chunks: {{
+            count: chunks.length,
+            hasLastLine: chunks.map((chunk) => chunk.text).join("\\n").includes("Line 11"),
+            firstHashMatches: chunks[0].hash === storage.hashText(chunks[0].text),
+            firstEmbeddingText: chunks[0].embeddingInput.text,
+            remappedStart: remapped[0].startLine,
+            remappedEnd: remapped[remapped.length - 1].endLine
+          }},
+          read: {{
+            slice: readSlice,
+            manual: storage.buildMemoryReadResult({{
+              content: "one\\ntwo\\nthree",
+              relPath: "memory/manual.md",
+              from: 1,
+              lines: 2,
+              maxChars: 50
+            }}),
+            hardCap: storage.buildMemoryReadResultFromSlice({{
+              selectedLines: ["abcdefghijkl"],
+              relPath: "memory/slice.md",
+              startLine: 4,
+              maxChars: 5,
+              suggestReadFallback: true
+            }})
+          }},
+          math: {{
+            parsed: storage.parseEmbedding("[1,2]"),
+            invalid: storage.parseEmbedding("nope"),
+            cosine: storage.cosineSimilarity([1, 0], [0.5, 0]),
+            zero: storage.cosineSimilarity([0], [1])
+          }},
+          fs: {{
+            missing: storage.isFileMissingError({{ code: "ENOENT" }}),
+            statMissing: await storage.statRegularFile(path.join(workspaceDir, "missing.md")),
+            statDirectoryError
+          }},
+          sqlite: {{
+            schema,
+            createdFts: fakeSchemaSql.some((sql) => sql.includes("USING fts5")),
+            alteredSource: fakeSchemaSql.some((sql) => sql.includes("ADD COLUMN source")),
+            vecResult,
+            loadedExtensions,
+            requireType: typeof storage.requireNodeSqlite,
+            walSame: wal === walAgain,
+            walClosed,
+            walCloseType: typeof wal.close
+          }},
+          concurrency: await storage.runWithConcurrency(
+            [async () => "a", async () => "b"],
+            1
+          ),
+          backend: storage.resolveMemoryBackendConfig({{
+            cfg: {{
+              agents: {{
+                list: [{{ id: "main", workspace: workspaceDir }}]
+              }},
+              memory: {{ backend: "builtin" }}
+            }},
+            agentId: "main"
+          }})
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-host-engine-storage-plugin",
+                    "name": "Memory Core Host Engine Storage Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-memory-core-host-engine-storage.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.memory_core_host_engine_storage"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_engine_storage"}
+    )
+
+    assert payload["ok"] is True
+    workspace_prefix = str(tmp_path / "storage-workspace").replace("\\", "/")
+    result = payload["result"]
+    assert result["keys"] == [
+        "DEFAULT_MEMORY_READ_LINES",
+        "DEFAULT_MEMORY_READ_MAX_CHARS",
+        "buildFileEntry",
+        "buildMemoryReadResult",
+        "buildMemoryReadResultFromSlice",
+        "buildMultimodalChunkForIndexing",
+        "chunkMarkdown",
+        "closeMemorySqliteWalMaintenance",
+        "configureMemorySqliteWalMaintenance",
+        "cosineSimilarity",
+        "ensureDir",
+        "ensureMemoryIndexSchema",
+        "hashText",
+        "isFileMissingError",
+        "listMemoryFiles",
+        "loadSqliteVecExtension",
+        "normalizeExtraMemoryPaths",
+        "parseEmbedding",
+        "readMemoryFile",
+        "remapChunkLines",
+        "requireNodeSqlite",
+        "resolveMemoryBackendConfig",
+        "runWithConcurrency",
+        "statRegularFile",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["constants"] == {"defaultLines": 120, "defaultMaxChars": 12000}
+    assert result["paths"] == {
+        "normalizedExtra": [
+            f"{workspace_prefix}/notes",
+            f"{workspace_prefix}/extra",
+        ],
+        "files": [
+            "MEMORY.md",
+            "extra/diagram.png",
+            "extra/external.md",
+            "memory/note.md",
+        ],
+    }
+    assert result["entries"] == {
+        "note": {"path": "memory/note.md", "kind": "markdown", "hashMatches": True},
+        "image": {
+            "path": "extra/diagram.png",
+            "kind": "multimodal",
+            "modality": "image",
+            "mimeType": "image/png",
+            "contentText": "Image file: extra/diagram.png",
+            "dataHashType": "string",
+        },
+        "imageChunk": {
+            "text": "Image file: extra/diagram.png",
+            "startLine": 1,
+            "endLine": 1,
+            "partSummary": [
+                {
+                    "type": "text",
+                    "text": "Image file: extra/diagram.png",
+                    "mimeType": None,
+                    "dataType": "undefined",
+                },
+                {
+                    "type": "inline-data",
+                    "text": None,
+                    "mimeType": "image/png",
+                    "dataType": "string",
+                },
+            ],
+            "structuredPositive": True,
+        },
+    }
+    assert result["chunks"]["count"] > 1
+    assert result["chunks"]["hasLastLine"] is True
+    assert result["chunks"]["firstHashMatches"] is True
+    assert result["chunks"]["firstEmbeddingText"].startswith("Line 0")
+    assert result["chunks"]["remappedStart"] == 4
+    assert result["chunks"]["remappedEnd"] >= 37
+    assert result["read"] == {
+        "slice": {
+            "text": "beta\n\n[More content available. Use from=3 to continue.]",
+            "path": "memory/note.md",
+            "from": 2,
+            "lines": 1,
+            "truncated": True,
+            "nextFrom": 3,
+        },
+        "manual": {
+            "text": "one\ntwo\n\n[More content available. Use from=3 to continue.]",
+            "path": "memory/manual.md",
+            "from": 1,
+            "lines": 2,
+            "truncated": True,
+            "nextFrom": 3,
+        },
+        "hardCap": {
+            "text": (
+                "abcde\n\n[More content available. Requested excerpt exceeded "
+                "the default maxChars budget. If you need the full raw line, "
+                "use read on the source file.]"
+            ),
+            "path": "memory/slice.md",
+            "from": 4,
+            "lines": 1,
+            "truncated": True,
+        },
+    }
+    assert result["math"] == {
+        "parsed": [1, 2],
+        "invalid": [],
+        "cosine": 1,
+        "zero": 0,
+    }
+    assert result["fs"] == {
+        "missing": True,
+        "statMissing": {"missing": True},
+        "statDirectoryError": "path required",
+    }
+    assert result["sqlite"] == {
+        "schema": {"ftsAvailable": True},
+        "createdFts": True,
+        "alteredSource": True,
+        "vecResult": {"ok": True, "extensionPath": "vec0"},
+        "loadedExtensions": [["enable", True], ["load", "vec0"]],
+        "requireType": "function",
+        "walSame": True,
+        "walClosed": True,
+        "walCloseType": "function",
+    }
+    assert result["concurrency"] == ["a", "b"]
+    assert result["backend"] == {"backend": "builtin", "citations": "auto"}
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:

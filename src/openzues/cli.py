@@ -50364,6 +50364,507 @@ const memoryCoreHostEngineQmdRuntime = {
   sessionPathForFile,
 };
 
+const CHARS_PER_TOKEN_ESTIMATE = 4;
+const memorySqliteWalMaintenanceByDb = new WeakMap();
+
+function hashText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function ensureDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {}
+  return dir;
+}
+
+function estimateStringChars(text) {
+  let codePointLength = 0;
+  let nonLatinCount = 0;
+  const cjkCharRe =
+    /[\u2e80-\u2eff\u3000-\u303f\u3040-\u30ff\u3130-\u318f\u31f0-\u31ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/u;
+  for (const char of String(text || "")) {
+    codePointLength += char.length;
+    if (cjkCharRe.test(char)) {
+      nonLatinCount += 1;
+    }
+  }
+  return codePointLength + nonLatinCount * (CHARS_PER_TOKEN_ESTIMATE - 1);
+}
+
+function buildTextEmbeddingInput(text) {
+  return { text };
+}
+
+function buildMemoryMultimodalLabel(modality, normalizedPath) {
+  const prefix = modality === "audio" ? "Audio file" : "Image file";
+  return `${prefix}: ${normalizedPath}`;
+}
+
+function isFileMissingError(err) {
+  return Boolean(err && typeof err === "object" && err.code === "ENOENT");
+}
+
+async function statRegularFile(absPath) {
+  let stat;
+  try {
+    stat = await fs.promises.lstat(absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return { missing: true };
+    }
+    throw err;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error("path required");
+  }
+  return { missing: false, stat };
+}
+
+async function buildFileEntry(absPath, workspaceDir, multimodal) {
+  let stat;
+  try {
+    stat = await fs.promises.stat(absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  const normalizedPath = path.relative(workspaceDir, absPath).replace(/\\/g, "/");
+  const multimodalSettings = multimodal || { enabled: false, modalities: [], maxFileBytes: 0 };
+  const modality = classifyMemoryMultimodalPath(absPath, multimodalSettings);
+  if (modality) {
+    if (stat.size > multimodalSettings.maxFileBytes) {
+      return null;
+    }
+    let buffer;
+    try {
+      buffer = await fs.promises.readFile(absPath);
+    } catch (err) {
+      if (isFileMissingError(err)) {
+        return null;
+      }
+      throw err;
+    }
+    const mimeType = await detectMime({ buffer: buffer.subarray(0, 512), filePath: absPath });
+    if (!mimeType || !mimeType.startsWith(`${modality}/`)) {
+      return null;
+    }
+    const contentText = buildMemoryMultimodalLabel(modality, normalizedPath);
+    const dataHash = crypto.createHash("sha256").update(buffer).digest("hex");
+    const chunkHash = hashText(
+      JSON.stringify({
+        path: normalizedPath,
+        contentText,
+        mimeType,
+        dataHash,
+      }),
+    );
+    return {
+      path: normalizedPath,
+      absPath,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hash: chunkHash,
+      dataHash,
+      kind: "multimodal",
+      contentText,
+      modality,
+      mimeType,
+    };
+  }
+  let content;
+  try {
+    content = await fs.promises.readFile(absPath, "utf8");
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  return {
+    path: normalizedPath,
+    absPath,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    hash: hashText(content),
+    kind: "markdown",
+  };
+}
+
+async function loadMultimodalEmbeddingInput(entry) {
+  if (!entry || entry.kind !== "multimodal" || !entry.contentText || !entry.mimeType) {
+    return null;
+  }
+  let stat;
+  try {
+    stat = await fs.promises.stat(entry.absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  if (stat.size !== entry.size) {
+    return null;
+  }
+  let buffer;
+  try {
+    buffer = await fs.promises.readFile(entry.absPath);
+  } catch (err) {
+    if (isFileMissingError(err)) {
+      return null;
+    }
+    throw err;
+  }
+  const dataHash = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (entry.dataHash && entry.dataHash !== dataHash) {
+    return null;
+  }
+  return {
+    text: entry.contentText,
+    parts: [
+      { type: "text", text: entry.contentText },
+      {
+        type: "inline-data",
+        mimeType: entry.mimeType,
+        data: buffer.toString("base64"),
+      },
+    ],
+  };
+}
+
+async function buildMultimodalChunkForIndexing(entry) {
+  const embeddingInput = await loadMultimodalEmbeddingInput(entry);
+  if (!embeddingInput) {
+    return null;
+  }
+  return {
+    chunk: {
+      startLine: 1,
+      endLine: 1,
+      text: entry.contentText || embeddingInput.text,
+      hash: entry.hash,
+      embeddingInput,
+    },
+    structuredInputBytes:
+      estimateMemoryCoreHostEngineStructuredEmbeddingInputBytes(embeddingInput),
+  };
+}
+
+function chunkMarkdown(content, chunking) {
+  const lines = String(content || "").split("\n");
+  if (lines.length === 0) {
+    return [];
+  }
+  const maxChars = Math.max(32, chunking.tokens * CHARS_PER_TOKEN_ESTIMATE);
+  const overlapChars = Math.max(0, chunking.overlap * CHARS_PER_TOKEN_ESTIMATE);
+  const chunks = [];
+  let current = [];
+  let currentChars = 0;
+
+  const flush = () => {
+    if (current.length === 0) {
+      return;
+    }
+    const firstEntry = current[0];
+    const lastEntry = current[current.length - 1];
+    if (!firstEntry || !lastEntry) {
+      return;
+    }
+    const text = current.map((entry) => entry.line).join("\n");
+    chunks.push({
+      startLine: firstEntry.lineNo,
+      endLine: lastEntry.lineNo,
+      text,
+      hash: hashText(text),
+      embeddingInput: buildTextEmbeddingInput(text),
+    });
+  };
+
+  const carryOverlap = () => {
+    if (overlapChars <= 0 || current.length === 0) {
+      current = [];
+      currentChars = 0;
+      return;
+    }
+    let acc = 0;
+    const kept = [];
+    for (let index = current.length - 1; index >= 0; index -= 1) {
+      const entry = current[index];
+      if (!entry) {
+        continue;
+      }
+      acc += estimateStringChars(entry.line) + 1;
+      kept.unshift(entry);
+      if (acc >= overlapChars) {
+        break;
+      }
+    }
+    current = kept;
+    currentChars = acc;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    const lineNo = index + 1;
+    const segments = [];
+    if (line.length === 0) {
+      segments.push("");
+    } else {
+      for (let start = 0; start < line.length; start += maxChars) {
+        const coarse = line.slice(start, start + maxChars);
+        if (estimateStringChars(coarse) > maxChars) {
+          const fineStep = Math.max(1, chunking.tokens);
+          for (let cursor = 0; cursor < coarse.length; ) {
+            let end = Math.min(cursor + fineStep, coarse.length);
+            if (end < coarse.length) {
+              const code = coarse.charCodeAt(end - 1);
+              if (code >= 0xd800 && code <= 0xdbff) {
+                end += 1;
+              }
+            }
+            segments.push(coarse.slice(cursor, end));
+            cursor = end;
+          }
+        } else {
+          segments.push(coarse);
+        }
+      }
+    }
+    for (const segment of segments) {
+      const lineSize = estimateStringChars(segment) + 1;
+      if (currentChars + lineSize > maxChars && current.length > 0) {
+        flush();
+        carryOverlap();
+      }
+      current.push({ line: segment, lineNo });
+      currentChars += lineSize;
+    }
+  }
+  flush();
+  return chunks;
+}
+
+function remapChunkLines(chunks, lineMap) {
+  if (!Array.isArray(lineMap) || lineMap.length === 0) {
+    return;
+  }
+  for (const chunk of chunks) {
+    chunk.startLine = lineMap[chunk.startLine - 1] || chunk.startLine;
+    chunk.endLine = lineMap[chunk.endLine - 1] || chunk.endLine;
+  }
+}
+
+function parseEmbedding(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function cosineSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
+    return 0;
+  }
+  const len = Math.min(a.length, b.length);
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let index = 0; index < len; index += 1) {
+    const av = a[index] || 0;
+    const bv = b[index] || 0;
+    dot += av * bv;
+    normA += av * av;
+    normB += bv * bv;
+  }
+  if (normA === 0 || normB === 0) {
+    return 0;
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+async function runWithConcurrency(tasks, limit) {
+  const { results, firstError, hasError } = await runTasksWithConcurrency({
+    tasks,
+    limit,
+    errorMode: "stop",
+  });
+  if (hasError) {
+    throw firstError;
+  }
+  return results;
+}
+
+function ensureMemoryIndexSchema(params) {
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS files (
+      path TEXT PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'memory',
+      hash TEXT NOT NULL,
+      mtime INTEGER NOT NULL,
+      size INTEGER NOT NULL
+    );
+  `);
+  params.db.exec(`
+    CREATE TABLE IF NOT EXISTS chunks (
+      id TEXT PRIMARY KEY,
+      path TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'memory',
+      start_line INTEGER NOT NULL,
+      end_line INTEGER NOT NULL,
+      hash TEXT NOT NULL,
+      model TEXT NOT NULL,
+      text TEXT NOT NULL,
+      embedding TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  if (params.cacheEnabled) {
+    params.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${params.embeddingCacheTable} (
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider_key TEXT NOT NULL,
+        hash TEXT NOT NULL,
+        embedding TEXT NOT NULL,
+        dims INTEGER,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, model, provider_key, hash)
+      );
+    `);
+    params.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_embedding_cache_updated_at ` +
+        `ON ${params.embeddingCacheTable}(updated_at);`,
+    );
+  }
+  let ftsAvailable = false;
+  let ftsError;
+  if (params.ftsEnabled) {
+    try {
+      const tokenizer = params.ftsTokenizer || "unicode61";
+      const tokenizeClause =
+        tokenizer === "trigram" ? `, tokenize='trigram case_sensitive 0'` : "";
+      params.db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS ${params.ftsTable} USING fts5(\n` +
+          `  text,\n` +
+          `  id UNINDEXED,\n` +
+          `  path UNINDEXED,\n` +
+          `  source UNINDEXED,\n` +
+          `  model UNINDEXED,\n` +
+          `  start_line UNINDEXED,\n` +
+          `  end_line UNINDEXED\n` +
+          `${tokenizeClause});`,
+      );
+      ftsAvailable = true;
+    } catch (err) {
+      ftsAvailable = false;
+      ftsError = formatErrorMessage(err);
+    }
+  }
+  ensureMemoryStorageColumn(params.db, "files", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  ensureMemoryStorageColumn(params.db, "chunks", "source", "TEXT NOT NULL DEFAULT 'memory'");
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);`);
+  params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source);`);
+  return { ftsAvailable, ...(ftsError ? { ftsError } : {}) };
+}
+
+function ensureMemoryStorageColumn(db, table, column, definition) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (rows.some((row) => row.name === column)) {
+    return;
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+async function loadSqliteVecExtension(params) {
+  try {
+    const resolvedPath = normalizeOptionalString(params.extensionPath);
+    params.db.enableLoadExtension(true);
+    if (resolvedPath) {
+      params.db.loadExtension(resolvedPath);
+      return { ok: true, extensionPath: resolvedPath };
+    }
+    return { ok: false, error: "sqlite-vec module unavailable in OpenZues plugin runtime." };
+  } catch (err) {
+    return { ok: false, error: formatErrorMessage(err) };
+  }
+}
+
+function requireNodeSqlite() {
+  try {
+    return require("node:sqlite");
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    throw new Error(
+      `SQLite support is unavailable in this Node runtime (missing node:sqlite). ${message}`,
+    );
+  }
+}
+
+function configureMemorySqliteWalMaintenance(db, options = {}) {
+  const existing = memorySqliteWalMaintenanceByDb.get(db);
+  if (existing) {
+    return existing;
+  }
+  try {
+    db.exec("PRAGMA journal_mode=WAL;");
+  } catch {}
+  const maintenance = {
+    options: { ...options },
+    close() {
+      return true;
+    },
+  };
+  memorySqliteWalMaintenanceByDb.set(db, maintenance);
+  return maintenance;
+}
+
+function closeMemorySqliteWalMaintenance(db) {
+  const maintenance = memorySqliteWalMaintenanceByDb.get(db);
+  if (!maintenance) {
+    return true;
+  }
+  memorySqliteWalMaintenanceByDb.delete(db);
+  return maintenance.close();
+}
+
+const memoryCoreHostEngineStorageRuntime = {
+  DEFAULT_MEMORY_READ_LINES,
+  DEFAULT_MEMORY_READ_MAX_CHARS,
+  buildFileEntry,
+  buildMemoryReadResult,
+  buildMemoryReadResultFromSlice,
+  buildMultimodalChunkForIndexing,
+  chunkMarkdown,
+  closeMemorySqliteWalMaintenance,
+  configureMemorySqliteWalMaintenance,
+  cosineSimilarity,
+  ensureDir,
+  ensureMemoryIndexSchema,
+  hashText,
+  isFileMissingError,
+  listMemoryFiles,
+  loadSqliteVecExtension,
+  normalizeExtraMemoryPaths,
+  parseEmbedding,
+  readMemoryFile,
+  remapChunkLines,
+  requireNodeSqlite,
+  resolveMemoryBackendConfig,
+  runWithConcurrency,
+  statRegularFile,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -51434,6 +51935,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-host-engine-qmd"
   ) {
     return memoryCoreHostEngineQmdRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-storage" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-storage"
+  ) {
+    return memoryCoreHostEngineStorageRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
