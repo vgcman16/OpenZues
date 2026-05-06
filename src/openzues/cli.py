@@ -31809,6 +31809,31 @@ const conversationBindingRuntime = {
   resolveRuntimeConversationBindingRoute,
 };
 
+const sessionBindingRuntimeTesting = {
+  resetSessionBindingAdaptersForTests: () => {
+    SESSION_BINDING_ADAPTERS.clear();
+  },
+  getRegisteredAdapterKeys: () => Array.from(SESSION_BINDING_ADAPTERS.keys()),
+};
+
+const sessionBindingRuntime = {
+  __testing: sessionBindingRuntimeTesting,
+  getSessionBindingService,
+  registerSessionBindingAdapter,
+};
+
+const threadBindingsSessionRuntime = {
+  registerSessionBindingAdapter,
+  resolveThreadBindingFarewellText,
+  resolveThreadBindingLifecycle,
+  unregisterSessionBindingAdapter,
+};
+
+const sessionKeyRuntime = {
+  parseAgentSessionKey,
+  resolveAgentIdFromSessionKey,
+};
+
 async function resolveForwardedRuntimeMethod(params) {
   const runtime =
     typeof params.getRuntime === "function" ? await params.getRuntime() : params.runtime;
@@ -32930,6 +32955,9 @@ const genericSdk = new Proxy(
     ...threadBindingsRuntime,
     ...conversationRuntime,
     ...conversationBindingRuntime,
+    ...sessionBindingRuntime,
+    ...threadBindingsSessionRuntime,
+    ...sessionKeyRuntime,
     ...outboundRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
@@ -33449,6 +33477,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/conversation-binding-runtime"
   ) {
     return conversationBindingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-binding-runtime" ||
+    request === "@openclaw/plugin-sdk/session-binding-runtime"
+  ) {
+    return sessionBindingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/thread-bindings-session-runtime" ||
+    request === "@openclaw/plugin-sdk/thread-bindings-session-runtime"
+  ) {
+    return threadBindingsSessionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/session-key-runtime" ||
+    request === "@openclaw/plugin-sdk/session-key-runtime"
+  ) {
+    return sessionKeyRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/outbound-runtime" ||

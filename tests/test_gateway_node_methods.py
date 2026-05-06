@@ -14970,6 +14970,185 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_session_binding_and_key_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-session-binding-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const sessionBinding = require("openclaw/plugin-sdk/session-binding-runtime");
+const threadSession = require("openclaw/plugin-sdk/thread-bindings-session-runtime");
+const sessionKey = require("openclaw/plugin-sdk/session-key-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.session_binding_runtime",
+      description: "Use OpenClaw session binding/key runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        sessionBinding.__testing.resetSessionBindingAdaptersForTests();
+        const records = [];
+        sessionBinding.registerSessionBindingAdapter({
+          channel: "demo",
+          accountId: "default",
+          bind: async (input) => {
+            const record = {
+              bindingId: "session-binding-1",
+              targetSessionKey: input.targetSessionKey,
+              targetKind: input.targetKind,
+              conversation: input.conversation,
+              status: "active",
+              boundAt: 10
+            };
+            records.push(record);
+            return record;
+          },
+          listBySession: (targetSessionKey) =>
+            records.filter((record) => record.targetSessionKey === targetSessionKey),
+          resolveByConversation: (ref) =>
+            records.find((record) => record.conversation.conversationId === ref.conversationId) ||
+            null,
+          touch: () => {}
+        });
+        const service = sessionBinding.getSessionBindingService();
+        const bound = await service.bind({
+          targetSessionKey: "agent:review:thread:one",
+          targetKind: "session",
+          conversation: {
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }
+        });
+        const lifecycle = threadSession.resolveThreadBindingLifecycle({
+          record: {
+            boundAt: 100,
+            lastActivityAt: 250,
+            idleTimeoutMs: 100,
+            maxAgeMs: 500
+          },
+          defaultIdleTimeoutMs: 0,
+          defaultMaxAgeMs: 0
+        });
+        const registeredBefore = sessionBinding.__testing.getRegisteredAdapterKeys();
+        const boundSummary = {
+          bindingId: bound.bindingId,
+          conversation: bound.conversation,
+          listCount: service.listBySession("agent:review:thread:one").length,
+          resolvedId: service.resolveByConversation({
+            channel: "demo",
+            accountId: "default",
+            conversationId: "room-1"
+          }).bindingId
+        };
+        sessionBinding.__testing.resetSessionBindingAdaptersForTests();
+
+        return {
+          exportTypes: [
+            typeof sessionBinding.getSessionBindingService,
+            typeof sessionBinding.registerSessionBindingAdapter,
+            typeof sessionBinding.__testing.resetSessionBindingAdaptersForTests,
+            typeof threadSession.resolveThreadBindingFarewellText,
+            typeof threadSession.registerSessionBindingAdapter,
+            typeof sessionKey.resolveAgentIdFromSessionKey,
+            typeof genericSdk.getSessionBindingService
+          ],
+          bound: boundSummary,
+          lifecycle,
+        farewell: threadSession.resolveThreadBindingFarewellText({
+          reason: "idle-expired",
+          idleTimeoutMs: 120000,
+          maxAgeMs: 0
+        }).includes("2m of inactivity"),
+          agentId: sessionKey.resolveAgentIdFromSessionKey("agent:review:thread:one"),
+          registeredBefore,
+          registeredAfter: sessionBinding.__testing.getRegisteredAdapterKeys()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "session-binding-runtime-plugin",
+                    "name": "Session Binding Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-session-binding-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.session_binding_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.session_binding_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": [
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+            "function",
+        ],
+        "bound": {
+            "bindingId": "session-binding-1",
+            "conversation": {
+                "channel": "demo",
+                "accountId": "default",
+                "conversationId": "room-1",
+            },
+            "listCount": 1,
+            "resolvedId": "session-binding-1",
+        },
+        "lifecycle": {"expiresAt": 350, "reason": "idle-expired"},
+        "farewell": True,
+        "agentId": "review",
+        "registeredBefore": ["demo:default"],
+        "registeredAfter": [],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
