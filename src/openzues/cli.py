@@ -31305,6 +31305,105 @@ const threadBindingsRuntime = {
   unregisterSessionBindingAdapter,
 };
 
+function normalizeConversationChatType(value) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return normalized === "direct" || normalized === "dm" || normalized === "private"
+    ? "direct"
+    : normalized;
+}
+
+function extractConversationIdFromAddress(from) {
+  const trimmed = normalizeOptionalString(from);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parts = trimmed.split(":").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : trimmed;
+}
+
+function shouldAppendConversationId(id) {
+  return /^[0-9]+$/.test(id) || /^[^\s:@]+@[^\s:@]+$/.test(id);
+}
+
+function resolveConversationLabel(ctx = {}) {
+  const explicit = normalizeOptionalString(ctx.ConversationLabel);
+  if (explicit) {
+    return explicit;
+  }
+  const threadLabel = normalizeOptionalString(ctx.ThreadLabel);
+  if (threadLabel) {
+    return threadLabel;
+  }
+  if (normalizeConversationChatType(ctx.ChatType) === "direct") {
+    return normalizeOptionalString(ctx.SenderName) ?? normalizeOptionalString(ctx.From);
+  }
+  const base =
+    normalizeOptionalString(ctx.GroupChannel) ||
+    normalizeOptionalString(ctx.GroupSubject) ||
+    normalizeOptionalString(ctx.GroupSpace) ||
+    normalizeOptionalString(ctx.From) ||
+    "";
+  if (!base) {
+    return undefined;
+  }
+  const id = extractConversationIdFromAddress(ctx.From);
+  if (!id || !shouldAppendConversationId(id) || base === id || base.includes(id)) {
+    return base;
+  }
+  if (normalizeLowercaseStringOrEmpty(base).includes(" id:")) {
+    return base;
+  }
+  if (base.startsWith("#") || base.startsWith("@")) {
+    return base;
+  }
+  return `${base} id:${id}`;
+}
+
+function shouldSkipPinnedMainDmRouteUpdate(pin) {
+  if (!pin) {
+    return false;
+  }
+  const owner = normalizeLowercaseStringOrEmpty(pin.ownerRecipient);
+  const sender = normalizeLowercaseStringOrEmpty(pin.senderRecipient);
+  if (!owner || !sender || owner === sender) {
+    return false;
+  }
+  if (typeof pin.onSkip === "function") {
+    pin.onSkip({
+      ownerRecipient: pin.ownerRecipient,
+      senderRecipient: pin.senderRecipient,
+    });
+  }
+  return true;
+}
+
+async function recordInboundSession(params = {}) {
+  const metaTask = Promise.resolve({
+    storePath: params.storePath,
+    sessionKey: normalizeLowercaseStringOrEmpty(params.sessionKey),
+    ctx: params.ctx,
+  });
+  if (typeof params.trackSessionMetaTask === "function") {
+    params.trackSessionMetaTask(metaTask);
+  }
+  const update = params.updateLastRoute;
+  if (!update) {
+    return;
+  }
+  shouldSkipPinnedMainDmRouteUpdate(update.mainDmOwnerPin);
+}
+
+async function recordInboundSessionMetaSafe(_params = {}) {
+  return;
+}
+
+const conversationRuntime = {
+  ...threadBindingsRuntime,
+  recordInboundSession,
+  recordInboundSessionMetaSafe,
+  resolveConversationLabel,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -32012,6 +32111,7 @@ const genericSdk = new Proxy(
     ...runtimeRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
+    ...conversationRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -32518,6 +32618,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/thread-bindings-runtime"
   ) {
     return threadBindingsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/conversation-runtime" ||
+    request === "@openclaw/plugin-sdk/conversation-runtime"
+  ) {
+    return conversationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||

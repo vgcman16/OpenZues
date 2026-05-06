@@ -14316,6 +14316,155 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_conversation_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-conversation-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const conversation = require("openclaw/plugin-sdk/conversation-runtime");
+const genericSdk = require("openclaw/plugin-sdk");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.conversation_runtime",
+      description: "Use OpenClaw conversation runtime SDK shims",
+      parameters: { type: "object" },
+      async execute() {
+        const skipped = [];
+        const tracked = [];
+        await conversation.recordInboundSession({
+          storePath: "memory",
+          sessionKey: " Agent:Main:Thread:One ",
+          ctx: { Body: "hello" },
+          onRecordError: (error) => skipped.push("error:" + error.message),
+          trackSessionMetaTask: (task) => tracked.push(typeof task.then),
+          updateLastRoute: {
+            sessionKey: "agent:main:thread:two",
+            channel: "discord",
+            to: "target",
+            accountId: "work",
+            mainDmOwnerPin: {
+              ownerRecipient: "owner",
+              senderRecipient: "sender",
+              onSkip: (info) => skipped.push(info.ownerRecipient + ":" + info.senderRecipient)
+            }
+          }
+        });
+        await conversation.recordInboundSessionMetaSafe({
+          cfg: {},
+          agentId: "main",
+          sessionKey: "agent:main:thread:one",
+          ctx: { Body: "hello" },
+          onError: (error) => skipped.push("meta:" + error.message)
+        });
+
+        return {
+          exportTypes: [
+            typeof conversation.resolveConversationLabel,
+            typeof conversation.recordInboundSession,
+            typeof conversation.recordInboundSessionMetaSafe,
+            typeof conversation.resolveThreadBindingFarewellText,
+            typeof genericSdk.resolveConversationLabel
+          ],
+          labels: [
+            conversation.resolveConversationLabel({
+              ConversationLabel: "Pinned Label",
+              ChatType: "group"
+            }),
+            conversation.resolveConversationLabel({
+              ChatType: "direct",
+              SenderName: "Ada",
+              From: "demo-channel:99"
+            }),
+            conversation.resolveConversationLabel({
+              ChatType: "group",
+              GroupSubject: "Ops",
+              From: "demo-channel:group:42"
+            }),
+            conversation.resolveConversationLabel({
+              ChatType: "channel",
+              GroupSubject: "#general",
+              From: "slack:channel:C123"
+            })
+          ],
+          thread: {
+            conversationId: conversation.resolveThreadBindingConversationIdFromBindingId({
+              accountId: "work",
+              bindingId: "work:thread-7"
+            }),
+            farewell: conversation.resolveThreadBindingFarewellText({
+              reason: "max-age-expired",
+              idleTimeoutMs: 0,
+              maxAgeMs: 120000
+            }).includes("max age of 2m")
+          },
+          recording: { skipped, tracked }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "conversation-runtime-plugin",
+                    "name": "Conversation Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-conversation-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.conversation_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.conversation_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "exportTypes": ["function", "function", "function", "function", "function"],
+        "labels": ["Pinned Label", "Ada", "Ops id:42", "#general"],
+        "thread": {"conversationId": "thread-7", "farewell": True},
+        "recording": {"skipped": ["owner:sender"], "tracked": ["function"]},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_selection_runtime_helpers(
     tmp_path,
 ) -> None:
