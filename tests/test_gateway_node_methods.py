@@ -28297,6 +28297,126 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_host_markdown_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-host-markdown.cjs"
+    runtime_entry.write_text(
+        """
+const markdown = require("openclaw/plugin-sdk/memory-host-markdown");
+const scopedMarkdown = require("@openclaw/plugin-sdk/memory-host-markdown");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_host_markdown",
+      description: "Use OpenClaw memory-host-markdown SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(markdown).sort(),
+          scopedType: typeof scopedMarkdown.replaceManagedMarkdownBlock,
+          trailing: [
+            markdown.withTrailingNewline("alpha"),
+            scopedMarkdown.withTrailingNewline("bravo\\n")
+          ],
+          emptyWithHeading: markdown.replaceManagedMarkdownBlock({
+            original: "  \\n",
+            body: "fresh",
+            startMarker: "<!-- start -->",
+            endMarker: "<!-- end -->",
+            heading: "## Memory"
+          }),
+          appended: markdown.replaceManagedMarkdownBlock({
+            original: "Intro\\n\\n",
+            body: "fresh",
+            startMarker: "<!-- start -->",
+            endMarker: "<!-- end -->"
+          }),
+          replacedWithHeading: scopedMarkdown.replaceManagedMarkdownBlock({
+            original:
+              "# Notes\\n\\n## Memory\\n<!-- start -->\\nold\\n<!-- end -->\\n\\nTail\\n",
+            body: "new\\nbody",
+            startMarker: "<!-- start -->",
+            endMarker: "<!-- end -->",
+            heading: "## Memory"
+          }),
+          escapedMarkers: markdown.replaceManagedMarkdownBlock({
+            original: "A\\n<!-- [start] -->\\nold\\n<!-- [end] -->\\nZ",
+            body: "new",
+            startMarker: "<!-- [start] -->",
+            endMarker: "<!-- [end] -->"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-host-markdown-plugin",
+                    "name": "Memory Host Markdown Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-host-markdown.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_host_markdown"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_host_markdown"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["replaceManagedMarkdownBlock", "withTrailingNewline"],
+        "scopedType": "function",
+        "trailing": ["alpha\n", "bravo\n"],
+        "emptyWithHeading": "## Memory\n<!-- start -->\nfresh\n<!-- end -->\n",
+        "appended": "Intro\n\n<!-- start -->\nfresh\n<!-- end -->\n",
+        "replacedWithHeading": (
+            "# Notes\n\n## Memory\n<!-- start -->\nnew\nbody\n"
+            "<!-- end -->\n\nTail\n"
+        ),
+        "escapedMarkers": "A\n<!-- [start] -->\nnew\n<!-- [end] -->\nZ",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_status_helpers(
     tmp_path,
 ) -> None:

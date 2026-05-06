@@ -47025,6 +47025,68 @@ const memoryCoreHostEventsRuntime = {
   resolveMemoryHostEventLogPath,
 };
 
+function escapeMemoryHostMarkdownRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isMemoryHostMarkdownLineWhitespace(value) {
+  return /^[\t \r\n]*$/.test(value);
+}
+
+function withTrailingNewline(content) {
+  const text = String(content ?? "");
+  return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function replaceManagedMarkdownBlock(params = {}) {
+  const original = String(params.original ?? "");
+  const body = String(params.body ?? "");
+  const startMarker = String(params.startMarker ?? "");
+  const endMarker = String(params.endMarker ?? "");
+  const heading = normalizeOptionalString(params.heading);
+  const headingPrefix = heading ? `${heading}\n` : "";
+  const managedBlock = `${headingPrefix}${startMarker}\n${body}\n${endMarker}`;
+  const headingPattern = heading
+    ? `${escapeMemoryHostMarkdownRegex(heading)}(?:[ \t]*(?:\r\n|\n|\r))+[ \t]*`
+    : "";
+  const existingPattern = new RegExp(
+    `${headingPattern}${escapeMemoryHostMarkdownRegex(startMarker)}[\\s\\S]*?${escapeMemoryHostMarkdownRegex(
+      endMarker,
+    )}`,
+    "g",
+  );
+  const matches = Array.from(original.matchAll(existingPattern));
+
+  if (matches.length > 0) {
+    let updated = "";
+    let lastEnd = 0;
+    matches.forEach((match, index) => {
+      const matchStart = match.index ?? 0;
+      const matchEnd = matchStart + match[0].length;
+      const betweenMatches = original.slice(lastEnd, matchStart);
+      if (index === 0) {
+        updated += original.slice(0, matchStart);
+        updated += managedBlock;
+      } else if (!isMemoryHostMarkdownLineWhitespace(betweenMatches)) {
+        updated += betweenMatches;
+      }
+      lastEnd = matchEnd;
+    });
+    return updated + original.slice(lastEnd);
+  }
+
+  const trimmed = original.trimEnd();
+  if (trimmed.length === 0) {
+    return `${managedBlock}\n`;
+  }
+  return `${trimmed}\n\n${managedBlock}\n`;
+}
+
+const memoryHostMarkdownRuntime = {
+  replaceManagedMarkdownBlock,
+  withTrailingNewline,
+};
+
 function resolveMemoryVectorState(vector) {
   if (!vector || !vector.enabled) {
     return { tone: "muted", state: "disabled" };
@@ -49429,6 +49491,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-host-events"
   ) {
     return memoryCoreHostEventsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-host-markdown" ||
+    request === "@openclaw/plugin-sdk/memory-host-markdown"
+  ) {
+    return memoryHostMarkdownRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||
