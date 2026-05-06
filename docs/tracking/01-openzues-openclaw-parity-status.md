@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~79.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~79.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -596,6 +596,12 @@ may lag behind this tracker.
   config/state media directories, canvas/workspace/sandbox roots, preferred
   temp root, and configured agent workspace.
   - Status: checkpointed in `21126502`
+
+- [x] Imported plugin SDK agent-config-primitives helper shim for the narrow
+  `ReplyRuntimeConfigSchemaShape` and `ToolPolicySchema` export surface,
+  optional reply runtime primitive parsing, and the OpenClaw tool-policy
+  `allow` plus `alsoAllow` conflict guard.
+  - Status: checkpointed in `99bb3098`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
