@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~84.2% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~84.3% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -830,6 +830,11 @@ may lag behind this tracker.
 - [x] Imported plugin SDK param-readers helper shim for common tool parameter
   coercion.
   - Status: checkpointed in `e7166e23`; deeper SDK/runtime breadth remains open
+
+- [x] Imported plugin SDK provider-zai-endpoint helper shim for fakeable Z.AI
+  endpoint probing and coding fallback metadata.
+  - Status: checkpointed in `b3d88717`; deeper provider runtime breadth remains
+    open
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from
