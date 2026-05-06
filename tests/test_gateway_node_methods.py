@@ -21690,6 +21690,202 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_runtime_context_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-runtime-context.cjs"
+    runtime_entry.write_text(
+        """
+const runtimeContext = require("openclaw/plugin-sdk/channel-runtime-context");
+const scopedRuntimeContext = require("@openclaw/plugin-sdk/channel-runtime-context");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_runtime_context",
+      description: "Use OpenClaw channel runtime-context SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const contexts = new Map();
+        const watchers = [];
+        const toKey = (params) => [
+          params.channelId,
+          params.accountId || "",
+          params.capability || ""
+        ].join(":");
+        const emit = (event) => {
+          for (const watcher of watchers.slice()) {
+            if (toKey(watcher) === toKey(event)) {
+              watcher.onEvent(event);
+            }
+          }
+        };
+        const channelRuntime = {
+          runtimeContexts: {
+            register(params) {
+              const key = toKey(params);
+              contexts.set(key, params.context);
+              emit({ type: "registered", ...params });
+              let disposed = false;
+              return {
+                dispose() {
+                  if (disposed) {
+                    return;
+                  }
+                  disposed = true;
+                  contexts.delete(key);
+                  emit({
+                    type: "unregistered",
+                    channelId: params.channelId,
+                    accountId: params.accountId,
+                    capability: params.capability
+                  });
+                }
+              };
+            },
+            get(params) {
+              return contexts.get(toKey(params));
+            },
+            watch(params) {
+              watchers.push(params);
+              return () => {
+                const index = watchers.indexOf(params);
+                if (index >= 0) {
+                  watchers.splice(index, 1);
+                }
+              };
+            }
+          }
+        };
+        const missingRegister = runtimeContext.registerChannelRuntimeContext({
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native",
+          context: { ignored: true }
+        });
+        const missingGet = runtimeContext.getChannelRuntimeContext({
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native"
+        });
+        const missingWatch = runtimeContext.watchChannelRuntimeContexts({
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native",
+          onEvent() {}
+        });
+        const events = [];
+        const unsubscribe = runtimeContext.watchChannelRuntimeContexts({
+          channelRuntime,
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native",
+          onEvent: (event) => events.push({
+            type: event.type,
+            context: event.context || null
+          })
+        });
+        const lease = runtimeContext.registerChannelRuntimeContext({
+          channelRuntime,
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native",
+          context: { app: "slack" }
+        });
+        const found = runtimeContext.getChannelRuntimeContext({
+          channelRuntime,
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native"
+        });
+        lease.dispose();
+        const afterDispose = runtimeContext.getChannelRuntimeContext({
+          channelRuntime,
+          channelId: "slack",
+          accountId: "default",
+          capability: "approval.native"
+        });
+        unsubscribe();
+        return {
+          keys: Object.keys(runtimeContext).sort(),
+          scopedType: typeof scopedRuntimeContext.getChannelRuntimeContext,
+          missing: [missingRegister, missingGet, missingWatch],
+          found,
+          afterDispose: afterDispose || null,
+          events
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-runtime-context-plugin",
+                    "name": "Runtime Channel Context Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-runtime-context.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_runtime_context"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_runtime_context"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "getChannelRuntimeContext",
+            "registerChannelRuntimeContext",
+            "watchChannelRuntimeContexts",
+        ],
+        "scopedType": "function",
+        "missing": [None, None, None],
+        "found": {"app": "slack"},
+        "afterDispose": None,
+        "events": [
+            {"type": "registered", "context": {"app": "slack"}},
+            {"type": "unregistered", "context": None},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_runtime_env_helpers(
     tmp_path,
 ) -> None:

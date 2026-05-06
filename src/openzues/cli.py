@@ -37288,6 +37288,67 @@ const channelMentionGatingRuntime = {
   resolveMentionGatingWithBypass,
 };
 
+function resolveChannelRuntimeContextRegistry(params) {
+  const runtimeContexts =
+    params &&
+    params.channelRuntime &&
+    params.channelRuntime.runtimeContexts;
+  if (
+    runtimeContexts &&
+    typeof runtimeContexts.register === "function" &&
+    typeof runtimeContexts.get === "function" &&
+    typeof runtimeContexts.watch === "function"
+  ) {
+    return runtimeContexts;
+  }
+  return null;
+}
+
+function registerChannelRuntimeContext(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return null;
+  }
+  return runtimeContexts.register({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+    context: params && params.context,
+    abortSignal: params && params.abortSignal,
+  });
+}
+
+function getChannelRuntimeContext(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return undefined;
+  }
+  return runtimeContexts.get({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+  });
+}
+
+function watchChannelRuntimeContexts(params) {
+  const runtimeContexts = resolveChannelRuntimeContextRegistry(params);
+  if (!runtimeContexts) {
+    return null;
+  }
+  return runtimeContexts.watch({
+    channelId: params && params.channelId,
+    accountId: params && params.accountId,
+    capability: params && params.capability,
+    onEvent: params && params.onEvent,
+  });
+}
+
+const channelRuntimeContextRuntime = {
+  getChannelRuntimeContext,
+  registerChannelRuntimeContext,
+  watchChannelRuntimeContexts,
+};
+
 const channelPluginCommonRuntime = {
   DEFAULT_ACCOUNT_ID,
   PAIRING_APPROVED_MESSAGE,
@@ -38158,6 +38219,7 @@ const genericSdk = new Proxy(
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
     ...channelMentionGatingRuntime,
+    ...channelRuntimeContextRuntime,
     ...channelEntryContractRuntime,
     ...channelPolicyRuntime,
     ...groupAccessRuntime,
@@ -39197,6 +39259,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-mention-gating"
   ) {
     return channelMentionGatingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-runtime-context" ||
+    request === "@openclaw/plugin-sdk/channel-runtime-context"
+  ) {
+    return channelRuntimeContextRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-entry-contract" ||
