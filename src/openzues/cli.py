@@ -49498,6 +49498,872 @@ const memoryCoreHostQueryRuntime = {
   isQueryStopWordToken,
 };
 
+const QMD_NO_RESULTS_RE =
+  /^(?:\[[^\]]+\]\s*)?(?:(?:warn(?:ing)?|info|error|qmd)\s*:\s*)+no results found\.?$/;
+const SESSION_ARCHIVE_TIMESTAMP_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:\.\d{3})?Z$/;
+const LEGACY_SESSION_STORE_BACKUP_RE = /^sessions\.json\.bak\.\d+$/;
+const COMPACTION_CHECKPOINT_TRANSCRIPT_RE =
+  /^(.+)\.checkpoint\.([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.jsonl$/i;
+const STRUCTURED_QMD_EXEC_COMPLETION_EVENT_RE =
+  /^exec (completed|failed) \(([a-z0-9_-]{1,64}), (code -?\d+|signal [^)]+)\)(?: :: ([\s\S]*))?$/i;
+const QMD_DREAMING_NARRATIVE_RUN_PREFIX = "dreaming-narrative-";
+const SESSION_EXPORT_CONTENT_WRAP_CHARS = 800;
+const DIRECT_CRON_PROMPT_RE = /^\[cron:[^\]]+\]\s*/;
+
+function isQmdNoResultsLine(line) {
+  return (
+    line === "no results found" ||
+    line === "no results found." ||
+    QMD_NO_RESULTS_RE.test(line)
+  );
+}
+
+function isQmdNoResultsOutput(raw) {
+  return String(raw || "")
+    .split(/\r?\n/)
+    .map((line) => normalizeLowercaseStringOrEmpty(line).replace(/\s+/g, " "))
+    .filter(Boolean)
+    .some(isQmdNoResultsLine);
+}
+
+function summarizeQmdStderr(raw) {
+  const value = String(raw || "");
+  return value.length <= 120 ? value : `${value.slice(0, 117)}...`;
+}
+
+function warnQmdQueryParseError(message) {
+  if (process.env.VITEST || process.env.NODE_ENV === "test") {
+    return;
+  }
+  process.stderr.write(`qmd query returned invalid JSON: ${message}\n`);
+}
+
+function parseQmdLineNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function parseQmdQueryResultArray(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return item;
+      }
+      return {
+        docid: typeof item.docid === "string" ? item.docid : undefined,
+        score:
+          typeof item.score === "number" && Number.isFinite(item.score)
+            ? item.score
+            : undefined,
+        collection: typeof item.collection === "string" ? item.collection : undefined,
+        file: typeof item.file === "string" ? item.file : undefined,
+        snippet: typeof item.snippet === "string" ? item.snippet : undefined,
+        body: typeof item.body === "string" ? item.body : undefined,
+        startLine: parseQmdLineNumber(item.start_line ?? item.startLine),
+        endLine: parseQmdLineNumber(item.end_line ?? item.endLine),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+function extractFirstQmdJsonArray(raw) {
+  const start = String(raw || "").indexOf("[");
+  if (start < 0) {
+    return null;
+  }
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
+}
+
+function parseQmdQueryJson(stdout, stderr = "") {
+  const trimmedStdout = String(stdout || "").trim();
+  const trimmedStderr = String(stderr || "").trim();
+  const stdoutIsMarker = trimmedStdout.length > 0 && isQmdNoResultsOutput(trimmedStdout);
+  const stderrIsMarker = trimmedStderr.length > 0 && isQmdNoResultsOutput(trimmedStderr);
+  if (stdoutIsMarker || (!trimmedStdout && stderrIsMarker)) {
+    return [];
+  }
+  if (!trimmedStdout) {
+    const context = trimmedStderr ? ` (stderr: ${summarizeQmdStderr(trimmedStderr)})` : "";
+    const message = `stdout empty${context}`;
+    warnQmdQueryParseError(message);
+    throw new Error(`qmd query returned invalid JSON: ${message}`);
+  }
+  try {
+    const parsed = parseQmdQueryResultArray(trimmedStdout);
+    if (parsed !== null) {
+      return parsed;
+    }
+    const noisyPayload = extractFirstQmdJsonArray(trimmedStdout);
+    if (!noisyPayload) {
+      throw new Error("qmd query JSON response was not an array");
+    }
+    const fallback = parseQmdQueryResultArray(noisyPayload);
+    if (fallback !== null) {
+      return fallback;
+    }
+    throw new Error("qmd query JSON response was not an array");
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    warnQmdQueryParseError(message);
+    throw new Error(`qmd query returned invalid JSON: ${message}`);
+  }
+}
+
+function parseQmdAgentSessionKey(sessionKey) {
+  const raw = normalizeOptionalLowercaseString(sessionKey);
+  if (!raw) {
+    return null;
+  }
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "agent") {
+    return null;
+  }
+  const rest = parts.slice(2).join(":");
+  return rest ? { rest } : null;
+}
+
+function normalizeQmdSessionKey(key) {
+  const trimmed = normalizeOptionalString(key);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = parseQmdAgentSessionKey(trimmed);
+  const normalized = normalizeLowercaseStringOrEmpty((parsed && parsed.rest) || trimmed);
+  return normalized.startsWith("subagent:") ? undefined : normalized;
+}
+
+function parseQmdSessionScope(key) {
+  const normalized = normalizeQmdSessionKey(key);
+  if (!normalized) {
+    return {};
+  }
+  const parts = normalized.split(":").filter(Boolean);
+  let chatType;
+  if (
+    parts.length >= 2 &&
+    (parts[1] === "group" ||
+      parts[1] === "channel" ||
+      parts[1] === "direct" ||
+      parts[1] === "dm")
+  ) {
+    if (parts.includes("group")) {
+      chatType = "group";
+    } else if (parts.includes("channel")) {
+      chatType = "channel";
+    }
+    return {
+      normalizedKey: normalized,
+      channel: normalizeOptionalLowercaseString(parts[0]),
+      chatType: chatType || "direct",
+    };
+  }
+  if (normalized.includes(":group:")) {
+    return { normalizedKey: normalized, chatType: "group" };
+  }
+  if (normalized.includes(":channel:")) {
+    return { normalizedKey: normalized, chatType: "channel" };
+  }
+  return { normalizedKey: normalized, chatType: "direct" };
+}
+
+function isQmdScopeAllowed(scope, sessionKey) {
+  if (!scope) {
+    return true;
+  }
+  const parsed = parseQmdSessionScope(sessionKey);
+  const channel = parsed.channel;
+  const chatType = parsed.chatType;
+  const normalizedKey = parsed.normalizedKey || "";
+  const rawKey = normalizeLowercaseStringOrEmpty(sessionKey || "");
+  for (const rule of scope.rules || []) {
+    if (!rule) {
+      continue;
+    }
+    const match = rule.match || {};
+    if (match.channel && match.channel !== channel) {
+      continue;
+    }
+    if (match.chatType && match.chatType !== chatType) {
+      continue;
+    }
+    const normalizedPrefix = normalizeOptionalLowercaseString(match.keyPrefix) || undefined;
+    const rawPrefix = normalizeOptionalLowercaseString(match.rawKeyPrefix) || undefined;
+    if (rawPrefix && !rawKey.startsWith(rawPrefix)) {
+      continue;
+    }
+    if (normalizedPrefix) {
+      if (normalizedPrefix.startsWith("agent:")) {
+        if (!rawKey.startsWith(normalizedPrefix)) {
+          continue;
+        }
+      } else if (!normalizedKey.startsWith(normalizedPrefix)) {
+        continue;
+      }
+    }
+    return rule.action === "allow";
+  }
+  const fallback = scope.default || "allow";
+  return fallback === "allow";
+}
+
+function deriveQmdScopeChannel(key) {
+  return parseQmdSessionScope(key).channel;
+}
+
+function deriveQmdScopeChatType(key) {
+  return parseQmdSessionScope(key).chatType;
+}
+
+function qmdHasArchiveSuffix(fileName, reason) {
+  const marker = `.${reason}.`;
+  const index = String(fileName || "").lastIndexOf(marker);
+  if (index < 0) {
+    return false;
+  }
+  const raw = fileName.slice(index + marker.length);
+  return SESSION_ARCHIVE_TIMESTAMP_RE.test(raw);
+}
+
+function isSessionArchiveArtifactName(fileName) {
+  return (
+    LEGACY_SESSION_STORE_BACKUP_RE.test(fileName) ||
+    qmdHasArchiveSuffix(fileName, "deleted") ||
+    qmdHasArchiveSuffix(fileName, "reset") ||
+    qmdHasArchiveSuffix(fileName, "bak")
+  );
+}
+
+function isCompactionCheckpointTranscriptFileName(fileName) {
+  return COMPACTION_CHECKPOINT_TRANSCRIPT_RE.test(fileName);
+}
+
+function isQmdTrajectoryRuntimeArtifactName(fileName) {
+  return String(fileName || "").endsWith(".trajectory.jsonl");
+}
+
+function isPrimarySessionTranscriptFileName(fileName) {
+  const name = String(fileName || "");
+  if (name === "sessions.json" || !name.endsWith(".jsonl")) {
+    return false;
+  }
+  if (isQmdTrajectoryRuntimeArtifactName(name) || isCompactionCheckpointTranscriptFileName(name)) {
+    return false;
+  }
+  return !isSessionArchiveArtifactName(name);
+}
+
+function isUsageCountedSessionTranscriptFileName(fileName) {
+  return (
+    isPrimarySessionTranscriptFileName(fileName) ||
+    qmdHasArchiveSuffix(fileName, "reset") ||
+    qmdHasArchiveSuffix(fileName, "deleted")
+  );
+}
+
+function parseUsageCountedSessionIdFromFileName(fileName) {
+  const name = String(fileName || "");
+  if (isPrimarySessionTranscriptFileName(name)) {
+    return name.slice(0, -".jsonl".length);
+  }
+  for (const reason of ["reset", "deleted"]) {
+    const marker = `.jsonl.${reason}.`;
+    const index = name.lastIndexOf(marker);
+    if (index > 0 && qmdHasArchiveSuffix(name, reason)) {
+      return name.slice(0, index);
+    }
+  }
+  return null;
+}
+
+function normalizeSessionTranscriptPathForComparison(pathname) {
+  const resolved = path.resolve(String(pathname || ""));
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function resolveQmdSessionStoreTranscriptPath(sessionsDir, entry) {
+  if (typeof (entry && entry.sessionFile) === "string" && entry.sessionFile.trim()) {
+    const sessionFile = entry.sessionFile.trim();
+    return normalizeSessionTranscriptPathForComparison(
+      path.isAbsolute(sessionFile) ? sessionFile : path.resolve(sessionsDir, sessionFile),
+    );
+  }
+  if (typeof (entry && entry.sessionId) === "string" && entry.sessionId.trim()) {
+    return normalizeSessionTranscriptPathForComparison(
+      path.join(sessionsDir, `${entry.sessionId.trim()}.jsonl`),
+    );
+  }
+  return null;
+}
+
+function readQmdSessionTranscriptClassificationStore(storePath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasQmdDreamingNarrativeRunId(value) {
+  return (
+    typeof value === "string" && value.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX)
+  );
+}
+
+function isQmdDreamingNarrativeSessionStoreKey(sessionKey) {
+  const trimmed = String(sessionKey || "").trim();
+  if (!trimmed) {
+    return false;
+  }
+  const firstSeparator = trimmed.indexOf(":");
+  if (firstSeparator < 0) {
+    return trimmed.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX);
+  }
+  const secondSeparator = trimmed.indexOf(":", firstSeparator + 1);
+  const sessionSegment = secondSeparator < 0 ? trimmed : trimmed.slice(secondSeparator + 1);
+  return sessionSegment.startsWith(QMD_DREAMING_NARRATIVE_RUN_PREFIX);
+}
+
+function isQmdCronRunSessionKey(sessionKey) {
+  const parsed = parseAgentSessionKey(sessionKey);
+  return Boolean(parsed && /^cron:[^:]+:run:[^:]+$/.test(parsed.rest));
+}
+
+function loadSessionTranscriptClassificationForSessionsDir(sessionsDir) {
+  const store = readQmdSessionTranscriptClassificationStore(
+    path.join(sessionsDir, "sessions.json"),
+  );
+  const dreamingTranscriptPaths = new Set();
+  const cronRunTranscriptPaths = new Set();
+  for (const [sessionKey, entry] of Object.entries(store)) {
+    const transcriptPath = resolveQmdSessionStoreTranscriptPath(sessionsDir, entry);
+    if (!transcriptPath) {
+      continue;
+    }
+    if (isQmdDreamingNarrativeSessionStoreKey(sessionKey)) {
+      dreamingTranscriptPaths.add(transcriptPath);
+    }
+    if (isQmdCronRunSessionKey(sessionKey)) {
+      cronRunTranscriptPaths.add(transcriptPath);
+    }
+  }
+  return {
+    dreamingNarrativeTranscriptPaths: dreamingTranscriptPaths,
+    cronRunTranscriptPaths,
+  };
+}
+
+function loadSessionTranscriptClassificationForAgent(agentId) {
+  return loadSessionTranscriptClassificationForSessionsDir(
+    resolveSessionTranscriptsDirForAgent(agentId),
+  );
+}
+
+function loadDreamingNarrativeTranscriptPathSetForAgent(agentId) {
+  return loadSessionTranscriptClassificationForAgent(agentId).dreamingNarrativeTranscriptPaths;
+}
+
+async function listSessionFilesForAgent(agentId) {
+  const dir = resolveSessionTranscriptsDirForAgent(agentId);
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => isUsageCountedSessionTranscriptFileName(name))
+      .map((name) => path.join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function sessionPathForFile(absPath) {
+  return path.join("sessions", path.basename(absPath)).replace(/\\/g, "/");
+}
+
+function isQmdDreamingNarrativeBootstrapRecord(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return false;
+  }
+  return (
+    record.type === "custom" &&
+    record.customType === "openclaw:bootstrap-context:full" &&
+    record.data &&
+    typeof record.data === "object" &&
+    !Array.isArray(record.data) &&
+    hasQmdDreamingNarrativeRunId(record.data.runId)
+  );
+}
+
+function isQmdDreamingNarrativeGeneratedRecord(record) {
+  if (isQmdDreamingNarrativeBootstrapRecord(record)) {
+    return true;
+  }
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return false;
+  }
+  if (
+    hasQmdDreamingNarrativeRunId(record.runId) ||
+    hasQmdDreamingNarrativeRunId(record.sessionKey)
+  ) {
+    return true;
+  }
+  const data = record.data;
+  return (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    (hasQmdDreamingNarrativeRunId(data.runId) || hasQmdDreamingNarrativeRunId(data.sessionKey))
+  );
+}
+
+function shouldSkipTranscriptFileForDreaming(absPath) {
+  const fileName = path.basename(absPath);
+  return (
+    isSessionArchiveArtifactName(fileName) ||
+    isCompactionCheckpointTranscriptFileName(fileName)
+  );
+}
+
+function normalizeSessionText(value) {
+  return String(value || "")
+    .replace(/\s*\n+\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function collectRawSessionText(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const parts = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    if (block.type === "text" && typeof block.text === "string") {
+      parts.push(block.text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+function splitLongSessionLine(text, maxChars = SESSION_EXPORT_CONTENT_WRAP_CHARS) {
+  const normalized = String(text || "").trim();
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.length <= maxChars) {
+    return [normalized];
+  }
+  const segments = [];
+  let cursor = 0;
+  while (cursor < normalized.length) {
+    const remaining = normalized.length - cursor;
+    if (remaining <= maxChars) {
+      segments.push(normalized.slice(cursor).trim());
+      break;
+    }
+    const limit = cursor + maxChars;
+    let splitAt = limit;
+    for (let index = limit; index > cursor; index -= 1) {
+      if (normalized[index] === " ") {
+        splitAt = index;
+        break;
+      }
+    }
+    if (
+      splitAt < normalized.length &&
+      splitAt > cursor &&
+      normalized.charCodeAt(splitAt - 1) >= 0xd800 &&
+      normalized.charCodeAt(splitAt - 1) <= 0xdbff &&
+      normalized.charCodeAt(splitAt) >= 0xdc00 &&
+      normalized.charCodeAt(splitAt) <= 0xdfff
+    ) {
+      splitAt -= 1;
+    }
+    segments.push(normalized.slice(cursor, splitAt).trim());
+    cursor = splitAt;
+    while (cursor < normalized.length && normalized[cursor] === " ") {
+      cursor += 1;
+    }
+  }
+  return segments.filter(Boolean);
+}
+
+function renderSessionExportLines(label, text) {
+  return splitLongSessionLine(text).map((segment) => `${label}: ${segment}`);
+}
+
+function hasQmdInterSessionUserProvenance(message) {
+  return (
+    message &&
+    message.role === "user" &&
+    message.provenance &&
+    typeof message.provenance === "object" &&
+    message.provenance.kind === "inter_session"
+  );
+}
+
+function isQmdExecCompletionEvent(evt) {
+  const trimmed = String(evt || "").trimStart();
+  const normalized = normalizeLowercaseStringOrEmpty(trimmed);
+  return (
+    /^exec finished(?::|\s*\()/.test(normalized) ||
+    STRUCTURED_QMD_EXEC_COMPLETION_EVENT_RE.test(trimmed)
+  );
+}
+
+function sanitizeQmdSessionText(text, role) {
+  const strippedInbound = role === "user" ? stripInboundMetadata(text) : text;
+  const normalized = normalizeSessionText(strippedInbound);
+  if (!normalized) {
+    return null;
+  }
+  if (role === "user" && /^System(?: \(untrusted\))?: \[[^\]]+\]\s*/.test(normalized)) {
+    return null;
+  }
+  if (role === "user" && DIRECT_CRON_PROMPT_RE.test(normalized)) {
+    return null;
+  }
+  if (isSilentReplyPayloadText(normalized)) {
+    return null;
+  }
+  if (role === "assistant" && normalized === SILENT_REPLY_TOKEN) {
+    return null;
+  }
+  if (isQmdExecCompletionEvent(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function parseSessionTimestampMs(record, message) {
+  for (const value of [message && message.timestamp, record && record.timestamp]) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const ms = value > 0 && value < 1e11 ? value * 1000 : value;
+      if (Number.isFinite(ms) && ms > 0) {
+        return ms;
+      }
+    }
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+  }
+  return 0;
+}
+
+function hashQmdSessionText(text) {
+  return crypto.createHash("sha256").update(String(text || "")).digest("hex");
+}
+
+function classifySessionTranscriptFromSessionStore(absPath) {
+  const sessionsDir = path.dirname(absPath);
+  const normalizedAbsPath = normalizeSessionTranscriptPathForComparison(absPath);
+  const classification = loadSessionTranscriptClassificationForSessionsDir(sessionsDir);
+  return {
+    generatedByDreamingNarrative:
+      classification.dreamingNarrativeTranscriptPaths.has(normalizedAbsPath),
+    generatedByCronRun: classification.cronRunTranscriptPaths.has(normalizedAbsPath),
+  };
+}
+
+async function buildSessionEntry(absPath, opts = {}) {
+  try {
+    const stat = await fs.promises.stat(absPath);
+    if (shouldSkipTranscriptFileForDreaming(absPath)) {
+      return {
+        path: sessionPathForFile(absPath),
+        absPath,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        hash: hashQmdSessionText("\n\n"),
+        content: "",
+        lineMap: [],
+        messageTimestampsMs: [],
+      };
+    }
+    const raw = await fs.promises.readFile(absPath, "utf8");
+    const lines = raw.split("\n");
+    const collected = [];
+    const lineMap = [];
+    const messageTimestampsMs = [];
+    const sessionStoreClassification =
+      opts.generatedByDreamingNarrative === undefined || opts.generatedByCronRun === undefined
+        ? classifySessionTranscriptFromSessionStore(absPath)
+        : null;
+    let generatedByDreamingNarrative =
+      opts.generatedByDreamingNarrative ??
+      (sessionStoreClassification && sessionStoreClassification.generatedByDreamingNarrative) ??
+      false;
+    const generatedByCronRun =
+      opts.generatedByCronRun ??
+      (sessionStoreClassification && sessionStoreClassification.generatedByCronRun) ??
+      false;
+    for (let jsonlIdx = 0; jsonlIdx < lines.length; jsonlIdx += 1) {
+      const line = lines[jsonlIdx];
+      if (!line.trim()) {
+        continue;
+      }
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!generatedByDreamingNarrative && isQmdDreamingNarrativeGeneratedRecord(record)) {
+        generatedByDreamingNarrative = true;
+      }
+      if (!record || typeof record !== "object" || record.type !== "message") {
+        continue;
+      }
+      const message = record.message;
+      if (!message || typeof message.role !== "string") {
+        continue;
+      }
+      if (message.role !== "user" && message.role !== "assistant") {
+        continue;
+      }
+      if (message.role === "user" && hasQmdInterSessionUserProvenance(message)) {
+        continue;
+      }
+      const rawText = collectRawSessionText(message.content);
+      if (rawText === null) {
+        continue;
+      }
+      const text = sanitizeQmdSessionText(rawText, message.role);
+      if (!text) {
+        continue;
+      }
+      if (generatedByDreamingNarrative || generatedByCronRun) {
+        continue;
+      }
+      const safe = redactSensitiveText(text);
+      const label = message.role === "user" ? "User" : "Assistant";
+      const renderedLines = renderSessionExportLines(label, safe);
+      const timestampMs = parseSessionTimestampMs(record, message);
+      collected.push(...renderedLines);
+      lineMap.push(...renderedLines.map(() => jsonlIdx + 1));
+      messageTimestampsMs.push(...renderedLines.map(() => timestampMs));
+    }
+    const content = collected.join("\n");
+    return {
+      path: sessionPathForFile(absPath),
+      absPath,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      hash: hashQmdSessionText(
+        `${content}\n${lineMap.join(",")}\n${messageTimestampsMs.join(",")}`,
+      ),
+      content,
+      lineMap,
+      messageTimestampsMs,
+      ...(generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
+      ...(generatedByCronRun ? { generatedByCronRun: true } : {}),
+    };
+  } catch (err) {
+    createSubsystemLogger("memory").debug(`Failed reading session file ${absPath}: ${String(err)}`);
+    return null;
+  }
+}
+
+function resolveCliSpawnInvocation(params) {
+  const program = resolveWindowsSpawnProgram({
+    command: params.command,
+    platform: process.platform,
+    env: params.env,
+    execPath: process.execPath,
+    packageName: params.packageName,
+    allowShellFallback: false,
+  });
+  return materializeWindowsSpawnProgram(program, params.args || []);
+}
+
+function formatQmdAvailabilityError(err) {
+  return err && err.message ? err.message : String(err);
+}
+
+async function checkQmdBinaryAvailability(params) {
+  let spawnInvocation;
+  try {
+    spawnInvocation = resolveCliSpawnInvocation({
+      command: params.command,
+      args: [],
+      env: params.env,
+      packageName: "qmd",
+    });
+  } catch (err) {
+    return { available: false, error: formatQmdAvailabilityError(err) };
+  }
+  return await new Promise((resolve) => {
+    let settled = false;
+    let didSpawn = false;
+    let timer;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer) {
+        clearTimeout(timer);
+      }
+      resolve(result);
+    };
+    const child = spawn(spawnInvocation.command, spawnInvocation.argv, {
+      env: params.env,
+      cwd: params.cwd || process.cwd(),
+      shell: spawnInvocation.shell,
+      windowsHide: spawnInvocation.windowsHide,
+      stdio: "ignore",
+    });
+    timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({
+        available: false,
+        error: `spawn ${params.command} timed out after ${params.timeoutMs || 2000}ms`,
+      });
+    }, params.timeoutMs || 2000);
+    child.once("error", (err) => {
+      finish({ available: false, error: formatQmdAvailabilityError(err) });
+    });
+    child.once("spawn", () => {
+      didSpawn = true;
+      child.kill();
+      finish({ available: true });
+    });
+    child.once("close", () => {
+      if (didSpawn) {
+        finish({ available: true });
+      }
+    });
+  });
+}
+
+function appendQmdOutputWithCap(current, chunk, maxChars) {
+  const appended = current + chunk;
+  if (appended.length <= maxChars) {
+    return { text: appended, truncated: false };
+  }
+  return { text: appended.slice(-maxChars), truncated: true };
+}
+
+async function runCliCommand(params) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(params.spawnInvocation.command, params.spawnInvocation.argv, {
+      env: params.env,
+      cwd: params.cwd,
+      shell: params.spawnInvocation.shell,
+      windowsHide: params.spawnInvocation.windowsHide,
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    const discardStdout = params.discardStdout === true;
+    const timer = params.timeoutMs
+      ? setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`${params.commandSummary} timed out after ${params.timeoutMs}ms`));
+        }, params.timeoutMs)
+      : null;
+    child.stdout.on("data", (data) => {
+      if (discardStdout) {
+        return;
+      }
+      const next = appendQmdOutputWithCap(stdout, data.toString("utf8"), params.maxOutputChars);
+      stdout = next.text;
+      stdoutTruncated = stdoutTruncated || next.truncated;
+    });
+    child.stderr.on("data", (data) => {
+      const next = appendQmdOutputWithCap(stderr, data.toString("utf8"), params.maxOutputChars);
+      stderr = next.text;
+      stderrTruncated = stderrTruncated || next.truncated;
+    });
+    child.on("error", (err) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (!discardStdout && (stdoutTruncated || stderrTruncated)) {
+        reject(
+          new Error(
+            `${params.commandSummary} produced too much output ` +
+              `(limit ${params.maxOutputChars} chars)`,
+          ),
+        );
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(`${params.commandSummary} failed (code ${code}): ${stderr || stdout}`));
+      }
+    });
+  });
+}
+
+const memoryCoreHostEngineQmdRuntime = {
+  buildSessionEntry,
+  checkQmdBinaryAvailability,
+  deriveQmdScopeChannel,
+  deriveQmdScopeChatType,
+  extractKeywords,
+  isQmdScopeAllowed,
+  isQueryStopWordToken,
+  listSessionFilesForAgent,
+  loadDreamingNarrativeTranscriptPathSetForAgent,
+  loadSessionTranscriptClassificationForAgent,
+  normalizeSessionTranscriptPathForComparison,
+  parseQmdQueryJson,
+  parseUsageCountedSessionIdFromFileName,
+  resolveCliSpawnInvocation,
+  runCliCommand,
+  sessionPathForFile,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -50562,6 +51428,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/memory-core-host-engine-foundation"
   ) {
     return memoryCoreHostEngineFoundationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-engine-qmd" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-engine-qmd"
+  ) {
+    return memoryCoreHostEngineQmdRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/memory-core-host-status" ||

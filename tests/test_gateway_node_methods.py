@@ -37030,6 +37030,414 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_engine_qmd_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    state_root = json.dumps(str(tmp_path / "qmd-state"))
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-engine-qmd.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const qmd = require("openclaw/plugin-sdk/memory-core-host-engine-qmd");
+const scopedQmd = require("@openclaw/plugin-sdk/memory-core-host-engine-qmd");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_engine_qmd",
+      description: "Use OpenClaw memory-core-host-engine-qmd SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+        process.env.OPENCLAW_STATE_DIR = {state_root};
+        const slash = (value) => String(value).replaceAll("\\\\", "/");
+        const sessionsDir = path.join(
+          process.env.OPENCLAW_STATE_DIR,
+          "agents",
+          "research-agent",
+          "sessions"
+        );
+        fs.mkdirSync(sessionsDir, {{ recursive: true }});
+        const chatPath = path.join(sessionsDir, "thread-1.jsonl");
+        const cronPath = path.join(sessionsDir, "cron-run.jsonl");
+        const dreamPath = path.join(sessionsDir, "dream.jsonl");
+        const deletedPath = path.join(
+          sessionsDir,
+          "deleted-session.jsonl.deleted.2025-01-02T03-04-05.000Z"
+        );
+        fs.writeFileSync(
+          chatPath,
+          [
+            JSON.stringify({{
+              type: "message",
+              timestamp: "2025-01-02T03:00:00Z",
+              message: {{
+                role: "user",
+                content: [{{ type: "text", text: "  User asked about API 123  " }}]
+              }}
+            }}),
+            JSON.stringify({{
+              type: "message",
+              message: {{
+                role: "assistant",
+                content: [{{ type: "text", text: " Answer text " }}]
+              }}
+            }}),
+            JSON.stringify({{
+              type: "message",
+              message: {{
+                role: "user",
+                provenance: {{ kind: "inter_session" }},
+                content: [{{ type: "text", text: "Skip routed payload" }}]
+              }}
+            }})
+          ].join("\\n") + "\\n"
+        );
+        fs.writeFileSync(
+          cronPath,
+          JSON.stringify({{
+            type: "message",
+            message: {{
+              role: "user",
+              content: [{{ type: "text", text: "cron-only payload" }}]
+            }}
+          }}) + "\\n"
+        );
+        fs.writeFileSync(
+          dreamPath,
+          [
+            JSON.stringify({{
+              type: "custom",
+              customType: "openclaw:bootstrap-context:full",
+              data: {{ runId: "dreaming-narrative-abc" }}
+            }}),
+            JSON.stringify({{
+              type: "message",
+              message: {{
+                role: "assistant",
+                content: [{{ type: "text", text: "dream payload" }}]
+              }}
+            }})
+          ].join("\\n") + "\\n"
+        );
+        fs.writeFileSync(deletedPath, "");
+        fs.writeFileSync(
+          path.join(sessionsDir, "sessions.json"),
+          JSON.stringify({{
+            "agent:research-agent:cron:job:run:001": {{ sessionFile: "cron-run.jsonl" }},
+            "agent:research-agent:dreaming-narrative-abc": {{ sessionFile: "dream.jsonl" }}
+          }})
+        );
+
+        const qmdJsonPayload = [
+          "qmd noise",
+          JSON.stringify([{{
+            docid: "doc-1",
+            score: 0.75,
+            collection: "memory",
+            file: "notes.md",
+            snippet: "hi",
+            body: "body",
+            start_line: 3,
+            endLine: 5
+          }}]),
+          "trailing"
+        ].join("\\n");
+        const parsed = qmd.parseQmdQueryJson(qmdJsonPayload, "warn");
+        const noResults = qmd.parseQmdQueryJson("", "WARN: no results found.");
+        let invalidError = "";
+        try {{
+          qmd.parseQmdQueryJson("", "boom");
+        }} catch (err) {{
+          invalidError = String(err && err.message ? err.message : err);
+        }}
+
+        const scope = {{
+          default: "deny",
+          rules: [
+            {{ match: {{ channel: "telegram", chatType: "direct" }}, action: "allow" }},
+            {{ match: {{ keyPrefix: "telegram:group:" }}, action: "deny" }},
+            {{
+              match: {{ rawKeyPrefix: "agent:research-agent:slack:channel:" }},
+              action: "allow"
+            }}
+          ]
+        }};
+        const files = (await qmd.listSessionFilesForAgent("Research Agent"))
+          .map((file) => path.basename(file))
+          .sort();
+        const entry = await qmd.buildSessionEntry(chatPath);
+        const cronEntry = await qmd.buildSessionEntry(cronPath);
+        const dreamEntry = await scopedQmd.buildSessionEntry(dreamPath);
+        const classification = qmd.loadSessionTranscriptClassificationForAgent("Research Agent");
+        const dreamingSet = qmd.loadDreamingNarrativeTranscriptPathSetForAgent("Research Agent");
+        const commandResult = await qmd.runCliCommand({{
+          commandSummary: "node echo",
+          spawnInvocation: {{
+            command: process.execPath,
+            argv: ["-e", "process.stdout.write('ok'); process.stderr.write('warn');"],
+            windowsHide: true
+          }},
+          env: process.env,
+          cwd: process.cwd(),
+          timeoutMs: 1000,
+          maxOutputChars: 20
+        }});
+        const missingBinary = await qmd.checkQmdBinaryAvailability({{
+          command: "definitely_missing_openzues_qmd_zzzz",
+          env: process.env,
+          cwd: process.cwd(),
+          timeoutMs: 100
+        }});
+        const invocation = qmd.resolveCliSpawnInvocation({{
+          command: process.execPath,
+          args: ["--version"],
+          env: process.env,
+          packageName: "qmd"
+        }});
+
+        if (previousStateDir === undefined) {{
+          delete process.env.OPENCLAW_STATE_DIR;
+        }} else {{
+          process.env.OPENCLAW_STATE_DIR = previousStateDir;
+        }}
+
+        return {{
+          keys: Object.keys(qmd).sort(),
+          scopedType: typeof scopedQmd.parseQmdQueryJson,
+          query: {{
+            parsed,
+            noResults,
+            invalidError
+          }},
+          scope: {{
+            directAllowed: qmd.isQmdScopeAllowed(
+              scope,
+              "agent:research-agent:telegram:direct:user-1"
+            ),
+            groupAllowed: qmd.isQmdScopeAllowed(
+              scope,
+              "agent:research-agent:telegram:group:group-1"
+            ),
+            rawAllowed: qmd.isQmdScopeAllowed(
+              scope,
+              "agent:research-agent:slack:channel:general"
+            ),
+            fallbackAllowed: qmd.isQmdScopeAllowed(scope, "discord:direct:user-1"),
+            channel: qmd.deriveQmdScopeChannel("agent:research-agent:telegram:group:group-1"),
+            chatType: qmd.deriveQmdScopeChatType("agent:research-agent:telegram:group:group-1"),
+            subagentChannel:
+              qmd.deriveQmdScopeChannel("agent:research-agent:subagent:child") ?? null
+          }},
+          keywords: qmd.extractKeywords("that thing about API API bug 123"),
+          stopWords: [
+            qmd.isQueryStopWordToken("that"),
+            qmd.isQueryStopWordToken("api")
+          ],
+          sessionIds: [
+            qmd.parseUsageCountedSessionIdFromFileName("thread-1.jsonl"),
+            qmd.parseUsageCountedSessionIdFromFileName(
+              "deleted-session.jsonl.deleted.2025-01-02T03-04-05.000Z"
+            ),
+            qmd.parseUsageCountedSessionIdFromFileName(
+              "thread-1.checkpoint.12345678-1234-4234-9234-123456789abc.jsonl"
+            )
+          ],
+          sessions: {{
+            files,
+            entry: {{
+              path: entry && entry.path,
+              content: entry && entry.content,
+              lineMap: entry && entry.lineMap,
+              messageTimestampsMs: entry && entry.messageTimestampsMs,
+              generatedByDreamingNarrative:
+                Boolean(entry && entry.generatedByDreamingNarrative),
+              generatedByCronRun: Boolean(entry && entry.generatedByCronRun)
+            }},
+            cron: {{
+              content: cronEntry && cronEntry.content,
+              generatedByCronRun: Boolean(cronEntry && cronEntry.generatedByCronRun)
+            }},
+            dream: {{
+              content: dreamEntry && dreamEntry.content,
+              generatedByDreamingNarrative:
+                Boolean(dreamEntry && dreamEntry.generatedByDreamingNarrative)
+            }},
+            classification: {{
+              dreaming: Array.from(classification.dreamingNarrativeTranscriptPaths)
+                .map(slash)
+                .sort(),
+              cron: Array.from(classification.cronRunTranscriptPaths).map(slash).sort(),
+              dreamingCount: dreamingSet.size,
+              normalizedPath: slash(qmd.normalizeSessionTranscriptPathForComparison(chatPath)),
+              sessionPath: qmd.sessionPathForFile(chatPath)
+            }}
+          }},
+          process: {{
+            commandResult,
+            missingBinary: {{
+              available: missingBinary.available,
+              errorType: typeof missingBinary.error
+            }},
+            invocation: {{
+              argv: invocation.argv.slice(-1),
+              shell: Boolean(invocation.shell),
+              windowsHide: Boolean(invocation.windowsHide)
+            }}
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-core-host-engine-qmd-plugin",
+                    "name": "Memory Core Host Engine QMD Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-core-host-engine-qmd.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.memory_core_host_engine_qmd"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.memory_core_host_engine_qmd"}
+    )
+
+    assert payload["ok"] is True
+    state_prefix = str(tmp_path / "qmd-state").replace("\\", "/").lower()
+    assert payload["result"] == {
+        "keys": [
+            "buildSessionEntry",
+            "checkQmdBinaryAvailability",
+            "deriveQmdScopeChannel",
+            "deriveQmdScopeChatType",
+            "extractKeywords",
+            "isQmdScopeAllowed",
+            "isQueryStopWordToken",
+            "listSessionFilesForAgent",
+            "loadDreamingNarrativeTranscriptPathSetForAgent",
+            "loadSessionTranscriptClassificationForAgent",
+            "normalizeSessionTranscriptPathForComparison",
+            "parseQmdQueryJson",
+            "parseUsageCountedSessionIdFromFileName",
+            "resolveCliSpawnInvocation",
+            "runCliCommand",
+            "sessionPathForFile",
+        ],
+        "scopedType": "function",
+        "query": {
+            "parsed": [
+                {
+                    "docid": "doc-1",
+                    "score": 0.75,
+                    "collection": "memory",
+                    "file": "notes.md",
+                    "snippet": "hi",
+                    "body": "body",
+                    "startLine": 3,
+                    "endLine": 5,
+                }
+            ],
+            "noResults": [],
+            "invalidError": "qmd query returned invalid JSON: stdout empty (stderr: boom)",
+        },
+        "scope": {
+            "directAllowed": True,
+            "groupAllowed": False,
+            "rawAllowed": True,
+            "fallbackAllowed": False,
+            "channel": "telegram",
+            "chatType": "group",
+            "subagentChannel": None,
+        },
+        "keywords": ["api", "bug"],
+        "stopWords": [True, False],
+        "sessionIds": ["thread-1", "deleted-session", None],
+        "sessions": {
+            "files": [
+                "cron-run.jsonl",
+                "deleted-session.jsonl.deleted.2025-01-02T03-04-05.000Z",
+                "dream.jsonl",
+                "thread-1.jsonl",
+            ],
+            "entry": {
+                "path": "sessions/thread-1.jsonl",
+                "content": "User: User asked about API 123\nAssistant: Answer text",
+                "lineMap": [1, 2],
+                "messageTimestampsMs": [1735786800000, 0],
+                "generatedByDreamingNarrative": False,
+                "generatedByCronRun": False,
+            },
+            "cron": {"content": "", "generatedByCronRun": True},
+            "dream": {"content": "", "generatedByDreamingNarrative": True},
+            "classification": {
+                "dreaming": [
+                    f"{state_prefix}/agents/research-agent/sessions/dream.jsonl"
+                ],
+                "cron": [
+                    f"{state_prefix}/agents/research-agent/sessions/cron-run.jsonl"
+                ],
+                "dreamingCount": 1,
+                "normalizedPath": (
+                    f"{state_prefix}/agents/research-agent/sessions/thread-1.jsonl"
+                ),
+                "sessionPath": "sessions/thread-1.jsonl",
+            },
+        },
+        "process": {
+            "commandResult": {"stdout": "ok", "stderr": "warn"},
+            "missingBinary": {"available": False, "errorType": "string"},
+            "invocation": {
+                "argv": ["--version"],
+                "shell": False,
+                "windowsHide": False,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_setup_helpers(
     tmp_path,
 ) -> None:
