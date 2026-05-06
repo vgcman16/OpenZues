@@ -14467,6 +14467,135 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_env_vars_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-env-vars.cjs"
+    runtime_entry.write_text(
+        """
+const envVars = require("openclaw/plugin-sdk/provider-env-vars");
+const scopedEnvVars = require("@openclaw/plugin-sdk/provider-env-vars");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_env_vars",
+      description: "Use OpenClaw provider env vars SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const authNames = envVars.listKnownProviderAuthEnvVarNames();
+        const omitted = envVars.omitEnvKeysCaseInsensitive(
+          {
+            OpenAI_Api_Key: "openai-secret",
+            Github_Token: "gh-secret",
+            OPENCLAW_API_KEY: "keep-me"
+          },
+          ["OPENAI_API_KEY", "GITHUB_TOKEN"]
+        );
+        return {
+          keys: Object.keys(envVars).sort(),
+          scopedType: typeof scopedEnvVars.getProviderEnvVars,
+          openai: envVars.getProviderEnvVars("openai"),
+          anthropic: envVars.getProviderEnvVars("anthropic"),
+          fal: envVars.getProviderEnvVars("fal"),
+          minimaxAuth: envVars.resolveProviderAuthEnvVarCandidates().minimax,
+          minimaxSetup: envVars.getProviderEnvVars("minimax"),
+          proto: envVars.getProviderEnvVars("__proto__"),
+          constructor: envVars.getProviderEnvVars("constructor"),
+          authContains: [
+            authNames.includes("GITHUB_TOKEN"),
+            authNames.includes("GH_TOKEN"),
+            authNames.includes("BRAVE_API_KEY"),
+            authNames.includes("DEEPGRAM_API_KEY"),
+            authNames.includes("FIRECRAWL_API_KEY"),
+            authNames.includes("GROQ_API_KEY"),
+            authNames.includes("PERPLEXITY_API_KEY"),
+            authNames.includes("OPENROUTER_API_KEY"),
+            authNames.includes("TAVILY_API_KEY"),
+            authNames.includes("MINIMAX_CODE_PLAN_KEY"),
+            authNames.includes("MINIMAX_CODING_API_KEY")
+          ],
+          omitted,
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-env-vars-plugin",
+                    "name": "Runtime Provider Env Vars Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-env-vars.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_env_vars"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.provider_env_vars"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "getProviderEnvVars",
+            "listKnownProviderAuthEnvVarNames",
+            "omitEnvKeysCaseInsensitive",
+            "resolveProviderAuthEnvVarCandidates",
+        ],
+        "scopedType": "function",
+        "openai": ["OPENAI_API_KEY"],
+        "anthropic": ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+        "fal": ["FAL_KEY", "FAL_API_KEY"],
+        "minimaxAuth": [
+            "MINIMAX_CODE_PLAN_KEY",
+            "MINIMAX_CODING_API_KEY",
+            "MINIMAX_API_KEY",
+        ],
+        "minimaxSetup": ["MINIMAX_API_KEY"],
+        "proto": [],
+        "constructor": [],
+        "authContains": [True] * 11,
+        "omitted": {"OPENCLAW_API_KEY": "keep-me"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_facade_helpers(
     tmp_path,
 ) -> None:

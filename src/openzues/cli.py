@@ -21653,16 +21653,126 @@ async function resolveCopilotApiToken(params) {
   };
 }
 
-const PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+const CORE_PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
   anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
   openai: ["OPENAI_API_KEY"],
   voyage: ["VOYAGE_API_KEY"],
   cerebras: ["CEREBRAS_API_KEY"],
   "anthropic-openai": ["ANTHROPIC_API_KEY"],
   "qwen-dashscope": ["DASHSCOPE_API_KEY"],
+};
+
+const BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
+  brave: ["BRAVE_API_KEY"],
+  deepgram: ["DEEPGRAM_API_KEY"],
+  fal: ["FAL_KEY", "FAL_API_KEY"],
+  firecrawl: ["FIRECRAWL_API_KEY"],
+  "github-copilot": ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"],
+  groq: ["GROQ_API_KEY"],
+  minimax: ["MINIMAX_CODE_PLAN_KEY", "MINIMAX_CODING_API_KEY", "MINIMAX_API_KEY"],
+  "minimax-portal": ["MINIMAX_OAUTH_TOKEN", "MINIMAX_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"],
+  perplexity: ["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
+  tavily: ["TAVILY_API_KEY"],
+  xai: ["XAI_API_KEY"],
+};
+
+const CORE_PROVIDER_SETUP_ENV_VAR_OVERRIDES = {
   minimax: ["MINIMAX_API_KEY"],
   "minimax-cn": ["MINIMAX_API_KEY"],
 };
+
+function uniqueTrimmedStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of Array.isArray(values) ? values : []) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+
+function mergeProviderEnvVarMaps(...maps) {
+  const out = Object.create(null);
+  for (const map of maps) {
+    if (!map || typeof map !== "object") {
+      continue;
+    }
+    for (const [provider, values] of Object.entries(map)) {
+      const providerId = String(provider || "").trim();
+      if (!providerId) {
+        continue;
+      }
+      const existing = Array.isArray(out[providerId]) ? out[providerId] : [];
+      const merged = uniqueTrimmedStrings([...existing, ...(Array.isArray(values) ? values : [])]);
+      if (merged.length > 0) {
+        out[providerId] = merged;
+      }
+    }
+  }
+  return out;
+}
+
+function resolveProviderAuthEnvVarCandidates() {
+  return mergeProviderEnvVarMaps(
+    BUNDLED_PROVIDER_AUTH_ENV_VAR_CANDIDATES,
+    CORE_PROVIDER_AUTH_ENV_VAR_CANDIDATES,
+  );
+}
+
+function resolveProviderEnvVarMap() {
+  return {
+    ...resolveProviderAuthEnvVarCandidates(),
+    ...CORE_PROVIDER_SETUP_ENV_VAR_OVERRIDES,
+  };
+}
+
+const PROVIDER_AUTH_ENV_VAR_CANDIDATES = resolveProviderAuthEnvVarCandidates();
+
+function getProviderEnvVars(providerId) {
+  const providerKey = typeof providerId === "string" ? providerId.trim() : "";
+  if (!providerKey || providerKey === "__proto__" || providerKey === "constructor") {
+    return [];
+  }
+  const map = resolveProviderEnvVarMap();
+  const values = Object.prototype.hasOwnProperty.call(map, providerKey)
+    ? map[providerKey]
+    : undefined;
+  return Array.isArray(values) ? [...values] : [];
+}
+
+function listKnownProviderAuthEnvVarNames() {
+  return Array.from(
+    new Set([
+      ...Object.values(resolveProviderAuthEnvVarCandidates()).flat(),
+      ...Object.values(resolveProviderEnvVarMap()).flat(),
+    ]),
+  );
+}
+
+function omitEnvKeysCaseInsensitive(baseEnv, keys) {
+  const env = { ...(baseEnv || {}) };
+  const denied = new Set();
+  for (const key of Array.from(keys || [])) {
+    const normalized = String(key || "").trim();
+    if (normalized) {
+      denied.add(normalized.toUpperCase());
+    }
+  }
+  if (denied.size === 0) {
+    return env;
+  }
+  for (const actualKey of Object.keys(env)) {
+    if (denied.has(actualKey.toUpperCase())) {
+      delete env[actualKey];
+    }
+  }
+  return env;
+}
 
 function resolveEnvApiKey(provider, env = process.env, options = {}) {
   const normalized = normalizeOptionalLowercaseString(provider);
@@ -35624,6 +35734,13 @@ const providerZaiEndpointRuntime = {
   detectZaiEndpoint,
 };
 
+const providerEnvVarsRuntime = {
+  getProviderEnvVars,
+  listKnownProviderAuthEnvVarNames,
+  omitEnvKeysCaseInsensitive,
+  resolveProviderAuthEnvVarCandidates,
+};
+
 function dedupeDefinedStrings(values = []) {
   const resolved = new Set();
   for (const value of values) {
@@ -35730,8 +35847,7 @@ const providerAuthFacadeRuntime = {
   isNonSecretApiKeyMarker: passthrough,
   isProviderApiKeyConfigured,
   isProviderAuthProfileConfigured,
-  listKnownProviderAuthEnvVarNames: () =>
-    Array.from(new Set(Object.values(PROVIDER_AUTH_ENV_VAR_CANDIDATES).flat())),
+  listKnownProviderAuthEnvVarNames,
   listProfilesForProvider: (store, provider) => {
     const normalized = resolveProviderIdForAuth(provider);
     const profiles = (store && store.profiles) || {};
@@ -35745,12 +35861,7 @@ const providerAuthFacadeRuntime = {
   normalizeOptionalSecretInput: normalizeSecretInput,
   normalizeSecretInput,
   normalizeSecretInputModeInput,
-  omitEnvKeysCaseInsensitive: (env, keys) => {
-    const denied = new Set(Array.from(keys || []).map((key) => String(key).toUpperCase()));
-    return Object.fromEntries(
-      Object.entries(env || {}).filter(([key]) => !denied.has(String(key).toUpperCase())),
-    );
-  },
+  omitEnvKeysCaseInsensitive,
   promptSecretRefForSetup,
   readClaudeCliCredentialsCached: () => undefined,
   removeProviderAuthProfilesWithLock: () => undefined,
@@ -41073,6 +41184,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-zai-endpoint"
   ) {
     return providerZaiEndpointRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-env-vars" ||
+    request === "@openclaw/plugin-sdk/provider-env-vars"
+  ) {
+    return providerEnvVarsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth" ||
