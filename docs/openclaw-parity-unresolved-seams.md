@@ -4,7 +4,7 @@ Updated: 2026-05-06
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~89.0% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~89.7% overall, with a reasonable
   band of ~79-90%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -91,8 +91,12 @@ Current percentage rollup:
   config-paths helper, context-visibility-runtime helper, heartbeat-runtime
   helper, json-store helper, diagnostic-runtime helper, system-event-runtime
   helper, oauth-utils helper, runtime-config-snapshot helper,
-  runtime-fetch helper, runtime-doctor helper, provider-setup helper,
-  self-hosted-provider-setup helper, group-activation helper, media-store helper,
+  runtime-fetch helper, runtime-doctor helper, runtime-secret-resolution helper,
+  memory-core-host-query helper, memory-core-host-multimodal helper,
+  memory-core-host-secret helper, memory-core-host-events helper,
+  memory-core-host-status helper, provider-setup helper,
+  self-hosted-provider-setup helper, LM Studio runtime helper,
+  group-activation helper, media-store helper,
   browser-security-runtime helper, fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -8524,9 +8528,87 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   proof, provider-auth API-key regression proof, adjacent imported-plugin
   proof, `ruff check`, `mypy`, and `git diff --check`; source/test
   checkpointed in `25ad92b6`.
+- Closed the imported OpenClaw plugin SDK LM Studio seam from
+  `src/plugin-sdk/lmstudio.ts`, `src/plugin-sdk/lmstudio-runtime.ts`,
+  `extensions/lmstudio/src/models.ts`, and
+  `extensions/lmstudio/src/runtime.ts`: scoped and unscoped native runtime
+  entries expose LM Studio default constants, server/inference base URL
+  normalization, provider config normalization, auth-header construction,
+  loaded context-window resolution, reasoning capability/compat projection, and
+  model wire entry mapping without leaking generic SDK exports. Repo-wide
+  parity is now estimated at ~89.1%. Verified with focused LM Studio runtime
+  pytest, adjacent SDK helper proof, adjacent imported-plugin proof,
+  `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
+  `6f11c3fa`.
+- Closed the imported OpenClaw plugin SDK runtime secret resolution seam from
+  `src/plugin-sdk/runtime-secret-resolution.ts`,
+  `src/cli/command-secret-targets.ts`, `src/secrets/resolve.ts`, and
+  `src/secrets/runtime-shared.ts`: scoped and unscoped native runtime entries
+  expose resolver context creation, resolved assignment application, env-backed
+  secret ref value maps, channel command secret target ids, and an honest
+  unavailable error for the gateway command-secret resolver. Repo-wide parity
+  is now estimated at ~89.2%. Verified with focused runtime-secret-resolution
+  pytest, adjacent SDK helper proof, adjacent imported-plugin proof,
+  `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
+  `d9574b0f`.
+- Closed the imported OpenClaw plugin SDK memory core host query seam from
+  `src/plugin-sdk/memory-core-host-query.ts`,
+  `packages/memory-host-sdk/src/query.ts`, and
+  `packages/memory-host-sdk/src/host/query-expansion.ts`: scoped and unscoped
+  native runtime entries expose `extractKeywords` and
+  `isQueryStopWordToken`, including stop-word filtering, duplicate/numeric
+  rejection, and CJK trigram-tokenizer behavior without generic SDK leakage.
+  Repo-wide parity is now estimated at ~89.3%. Verified with focused
+  memory-core-host-query pytest, adjacent SDK helper proof, adjacent
+  imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `0eaf8bf8`.
+- Closed the imported OpenClaw plugin SDK memory core host multimodal seam
+  from `src/plugin-sdk/memory-core-host-multimodal.ts`,
+  `packages/memory-host-sdk/src/multimodal.ts`, and
+  `packages/memory-host-sdk/src/host/multimodal.ts`: scoped and unscoped
+  native runtime entries expose `normalizeMemoryMultimodalSettings` and
+  `isMemoryMultimodalEnabled`, including default image/audio modality
+  selection, max-file-byte clamping/flooring, invalid modality filtering, and
+  enabled-state checks. Repo-wide parity is now estimated at ~89.4%. Verified
+  with focused memory-core-host-multimodal pytest, adjacent SDK helper proof,
+  adjacent imported-plugin proof, `ruff check`, `mypy`, and `git diff --check`;
+  source/test checkpointed in `5be944f7`.
+- Closed the imported OpenClaw plugin SDK memory core host secret seam from
+  `src/plugin-sdk/memory-core-host-secret.ts`,
+  `packages/memory-host-sdk/src/secret.ts`,
+  `packages/memory-host-sdk/src/host/secret-input.ts`, and
+  `packages/memory-host-sdk/src/host/secret-input-utils.ts`: scoped and
+  unscoped native runtime entries expose `hasConfiguredMemorySecretInput` and
+  `resolveMemorySecretInputString`, including inline secret trimming,
+  env-backed SecretRef resolution, legacy `secretref-env:` marker handling,
+  and unresolved-ref errors. Repo-wide parity is now estimated at ~89.5%.
+  Verified with focused memory-core-host-secret pytest, adjacent SDK helper
+  proof, adjacent imported-plugin proof, `ruff check`, `mypy`, and
+  `git diff --check`; source/test checkpointed in `78f2a009`.
+- Closed the imported OpenClaw plugin SDK memory core host events seam from
+  `src/plugin-sdk/memory-core-host-events.ts` and
+  `src/memory-host-sdk/events.ts`: scoped and unscoped native runtime entries
+  expose `MEMORY_HOST_EVENT_LOG_RELATIVE_PATH`,
+  `resolveMemoryHostEventLogPath`, `appendMemoryHostEvent`, and
+  `readMemoryHostEvents`, including JSONL append/read behavior, invalid-line
+  skipping, limit handling, and missing-log empty results. Repo-wide parity is
+  now estimated at ~89.6%. Verified with focused memory-core-host-events
+  pytest, adjacent SDK helper proof, adjacent imported-plugin proof,
+  `ruff check`, `mypy`, and `git diff --check`; source/test checkpointed in
+  `d5695975`.
+- Closed the imported OpenClaw plugin SDK memory core host status seam from
+  `src/plugin-sdk/memory-core-host-status.ts`,
+  `packages/memory-host-sdk/src/status.ts`, and
+  `packages/memory-host-sdk/src/host/status-format.ts`: scoped and unscoped
+  native runtime entries expose `resolveMemoryVectorState`,
+  `resolveMemoryFtsState`, and `resolveMemoryCacheSummary`, including
+  OpenClaw `tone` / `state` / `text` projections. Repo-wide parity is now
+  estimated at ~89.7%. Verified with focused memory-core-host-status pytest,
+  adjacent SDK helper proof, adjacent imported-plugin proof, `ruff check`,
+  `mypy`, and `git diff --check`; source/test checkpointed in `bfcb12a2`.
 - Next repo-wide queue head: continue broader plugin SDK helper/runtime surface
   breadth beyond the verified runtime import/execution/factory-context and
-  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/provider-setup/self-hosted-provider-setup/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/acp-binding-runtime/cli-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
+  text-runtime/text-autolink-runtime/dedupe-runtime/retry-runtime/keyed-async-queue/lazy-value/lazy-runtime/config-paths/context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/runtime-secret-resolution/memory-core-host-query/memory-core-host-multimodal/memory-core-host-secret/memory-core-host-events/memory-core-host-status/provider-setup/self-hosted-provider-setup/lmstudio/lmstudio-runtime/group-activation/media-store/browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/acp-binding-runtime/cli-runtime/command-primitives-runtime/media-mime/command-detection/global-singleton/concurrency-runtime/channel-inbound-debounce/channel-inbound/channel-route/channel-policy/group-access/provider-selection-runtime/windows-spawn/command-status/command-auth-native/webhook-helpers/fetch-ssrf-helpers/provider-model-catalog-helpers/allow-from/allowlist-config-edit/access-groups/direct-dm-access/direct-dm-guard-policy/direct-dm/channel-send-result/channel-pairing/command-auth/channel-setup/channel-reply-options-runtime/channel-reply-pipeline/channel-feedback/markdown-table-runtime/reply-history/reply-reference/reply-dedupe/string-normalization/dangerous-name/channel-logging/time-runtime/number-runtime/secure-random-runtime/collection-runtime/async-lock-runtime/transport-ready-runtime/target-resolver-runtime/response-limit-runtime/error-runtime/temp-path/secret-input/routing/reply-chunking/
   text-chunking/reply-payload/account-helper/account-core/tool-payload/boolean-param/
   channel-actions/status-helpers/channel-status/provider-entry-enable-auth/
   provider-auth-runtime/provider-auth-api-key/provider-auth-login/provider-auth
@@ -8548,8 +8630,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   cron-store-runtime/file-access-runtime/logging-core/
   native-command-config-runtime/host-runtime/poll-runtime/lazy-runtime/config-paths/
   context-visibility-runtime/heartbeat-runtime/json-store/diagnostic-runtime/
-  system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/provider-setup/
-  self-hosted-provider-setup/group-activation/media-store/
+  system-event-runtime/oauth-utils/runtime-config-snapshot/runtime-fetch/runtime-doctor/runtime-secret-resolution/memory-core-host-query/memory-core-host-multimodal/memory-core-host-secret/memory-core-host-events/memory-core-host-status/provider-setup/
+  self-hosted-provider-setup/lmstudio/lmstudio-runtime/group-activation/media-store/
   browser-security-runtime/fetch-runtime/cli-backend/type-only-sdk-barrels/
   config-schema/entrypoints/diffs/acpx/acp-runtime-backend/acp-runtime/
   acp-binding-runtime/cli-runtime/

@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~89.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~89.7% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -1077,6 +1077,39 @@ may lag behind this tracker.
   discovery guards, provider discovery projection, interactive auth-result
   helpers, and non-interactive model/auth-profile/default-model config updates.
   - Status: checkpointed in `25ad92b6`
+
+- [x] Imported plugin SDK LM Studio runtime shim for default constants,
+  server/inference base URL normalization, provider config normalization,
+  auth-header construction, loaded context-window resolution, reasoning
+  capability/compat projection, and model wire entry mapping.
+  - Status: checkpointed in `6f11c3fa`
+
+- [x] Imported plugin SDK runtime-secret-resolution shim for resolver context,
+  resolved assignment application, env-backed SecretRef maps, channel command
+  secret target ids, and gateway command-secret unavailable projection.
+  - Status: checkpointed in `d9574b0f`
+
+- [x] Imported plugin SDK memory-core-host-query shim for keyword extraction,
+  stop-word checks, duplicate/numeric filtering, and CJK trigram-tokenizer
+  behavior.
+  - Status: checkpointed in `0eaf8bf8`
+
+- [x] Imported plugin SDK memory-core-host-multimodal shim for multimodal
+  settings normalization and enabled-state checks.
+  - Status: checkpointed in `5be944f7`
+
+- [x] Imported plugin SDK memory-core-host-secret shim for configured-secret
+  detection, env-backed SecretRef resolution, and unresolved-ref errors.
+  - Status: checkpointed in `78f2a009`
+
+- [x] Imported plugin SDK memory-core-host-events shim for memory event-log
+  path resolution, append/read JSONL behavior, limit handling, and missing-log
+  empty results.
+  - Status: checkpointed in `d5695975`
+
+- [x] Imported plugin SDK memory-core-host-status shim for vector, FTS, and
+  cache status formatter projections.
+  - Status: checkpointed in `bfcb12a2`
 
 - [x] ESM bundled plugin runtime entry import without a fake activation
   adapter, transforming common OpenClaw `import ... from

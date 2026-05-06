@@ -26456,7 +26456,10 @@ function coerceSecretRef(value, defaults) {
           : (defaults && defaults.exec) || DEFAULT_SECRET_PROVIDER_ALIAS;
     return { source: value.source, provider, id: value.id };
   }
-  return parseEnvTemplateSecretRef(value, defaults && defaults.env);
+  return (
+    parseEnvTemplateSecretRef(value, defaults && defaults.env) ||
+    parseLegacySecretRefEnvMarker(value, defaults && defaults.env)
+  );
 }
 
 function resolveSecretInputRef(params) {
@@ -26753,6 +26756,186 @@ function collectSecretInputAssignment(params) {
     expected: params.expected,
     apply: params.apply,
   });
+}
+
+function secretRuntimeRefKey(ref) {
+  return `${ref.source}:${ref.provider}:${ref.id}`;
+}
+
+function createResolverContext(params) {
+  return {
+    sourceConfig: (params && params.sourceConfig) || {},
+    env: (params && params.env) || process.env || {},
+    cache: {},
+    warnings: [],
+    warningKeys: new Set(),
+    assignments: [],
+  };
+}
+
+function isExpectedResolvedSecretValue(value, expected) {
+  if (expected === "string") {
+    return normalizeSecretInputString(value) !== undefined;
+  }
+  return (
+    normalizeSecretInputString(value) !== undefined ||
+    (isRecord(value) && Object.keys(value).length > 0)
+  );
+}
+
+function assertExpectedResolvedSecretValue(params) {
+  if (!isExpectedResolvedSecretValue(params.value, params.expected)) {
+    throw new Error(params.errorMessage);
+  }
+}
+
+function applyResolvedAssignments(params) {
+  const assignments = Array.isArray(params && params.assignments) ? params.assignments : [];
+  const resolved = params && params.resolved;
+  for (const assignment of assignments) {
+    const key = secretRuntimeRefKey(assignment.ref);
+    if (!resolved || typeof resolved.has !== "function" || !resolved.has(key)) {
+      throw new Error(`Secret reference "${key}" resolved to no value.`);
+    }
+    const value = resolved.get(key);
+    assertExpectedResolvedSecretValue({
+      value,
+      expected: assignment.expected,
+      errorMessage:
+        assignment.expected === "string"
+          ? `${assignment.path} resolved to a non-string or empty value.`
+          : `${assignment.path} resolved to an unsupported value type.`,
+    });
+    assignment.apply(value);
+  }
+}
+
+function resolveResolutionLimits(config) {
+  const resolution = config && config.secrets && config.secrets.resolution;
+  const maxRefsPerProvider = Number(resolution && resolution.maxRefsPerProvider);
+  return {
+    maxRefsPerProvider:
+      Number.isFinite(maxRefsPerProvider) && maxRefsPerProvider > 0
+        ? Math.floor(maxRefsPerProvider)
+        : 512,
+  };
+}
+
+function normalizeSecretResolutionRef(ref) {
+  if (!isSecretRef(ref)) {
+    throw new Error("Secret reference must include source, provider, and id.");
+  }
+  const id = ref.id.trim();
+  if (!id) {
+    throw new Error("Secret reference id is empty.");
+  }
+  if (ref.source === "exec" && !isValidExecSecretRefId(id)) {
+    throw new Error(
+      `${formatExecSecretRefIdValidationMessage()} (ref: ${ref.source}:${ref.provider}:${id}).`,
+    );
+  }
+  return { ...ref, id };
+}
+
+function resolveEnvSecretRefs(params) {
+  const resolved = new Map();
+  const allowlist = Array.isArray(params.providerConfig && params.providerConfig.allowlist)
+    ? new Set(params.providerConfig.allowlist)
+    : null;
+  for (const ref of params.refs) {
+    if (allowlist && !allowlist.has(ref.id)) {
+      throw new Error(
+        `Environment variable "${ref.id}" is not allowlisted in ` +
+          `secrets.providers.${params.providerName}.allowlist.`,
+      );
+    }
+    const envValue = params.env && params.env[ref.id];
+    if (normalizeSecretInputString(envValue) === undefined) {
+      throw new Error(`Environment variable "${ref.id}" is missing or empty.`);
+    }
+    resolved.set(ref.id, envValue);
+  }
+  return resolved;
+}
+
+async function resolveSecretRefValues(refs, options = {}) {
+  if (!Array.isArray(refs) || refs.length === 0) {
+    return new Map();
+  }
+  const config = options.config || {};
+  const env = options.env || process.env || {};
+  const limits = resolveResolutionLimits(config);
+  const uniqueRefs = new Map();
+  for (const rawRef of refs) {
+    const ref = normalizeSecretResolutionRef(rawRef);
+    uniqueRefs.set(secretRuntimeRefKey(ref), ref);
+  }
+  const grouped = new Map();
+  for (const ref of uniqueRefs.values()) {
+    const groupKey = `${ref.source}:${ref.provider}`;
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, {
+        source: ref.source,
+        providerName: ref.provider,
+        refs: [],
+      });
+    }
+    grouped.get(groupKey).refs.push(ref);
+  }
+  const resolved = new Map();
+  for (const group of grouped.values()) {
+    if (group.refs.length > limits.maxRefsPerProvider) {
+      throw new Error(
+        `Secret provider "${group.providerName}" exceeded maxRefsPerProvider ` +
+          `(${limits.maxRefsPerProvider}).`,
+      );
+    }
+    const providerConfig = resolveConfiguredSecretProvider(group.refs[0], config);
+    if (providerConfig.source !== "env") {
+      throw new Error(
+        `Secret source "${providerConfig.source}" is unavailable in this runtime context.`,
+      );
+    }
+    const values = resolveEnvSecretRefs({
+      refs: group.refs,
+      providerName: group.providerName,
+      providerConfig,
+      env,
+    });
+    for (const ref of group.refs) {
+      if (!values.has(ref.id)) {
+        throw new Error(`Secret provider "${group.providerName}" did not return id "${ref.id}".`);
+      }
+      resolved.set(secretRuntimeRefKey(ref), values.get(ref.id));
+    }
+  }
+  return resolved;
+}
+
+async function resolveCommandSecretRefsViaGateway() {
+  throw new Error("resolveCommandSecretRefsViaGateway is unavailable in OpenZues plugin runtime.");
+}
+
+const CHANNELS_COMMAND_SECRET_TARGET_IDS = [
+  "channels.telegram.botToken",
+  "channels.slack.botToken",
+  "channels.slack.appToken",
+  "channels.slack.signingSecret",
+  "channels.discord.botToken",
+  "channels.discord.publicKey",
+  "channels.whatsapp.accessToken",
+  "channels.signal.jsonRpcToken",
+  "channels.twitch.accessToken",
+  "channels.googlechat.credentials",
+  "channels.msteams.botPassword",
+  "channels.feishu.appSecret",
+  "channels.nextcloud-talk.botSecret",
+  "channels.mattermost.botToken",
+  "channels.synology-chat.webhookToken",
+];
+
+function getChannelsCommandSecretTargetIds() {
+  return new Set(CHANNELS_COMMAND_SECRET_TARGET_IDS);
 }
 
 function collectTtsApiKeyAssignments(params) {
@@ -46700,6 +46883,368 @@ const secretFileRuntime = {
   writePrivateSecretFileAtomic,
 };
 
+const MEMORY_MULTIMODAL_MODALITIES = ["image", "audio"];
+const DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function normalizeMemoryMultimodalModalities(raw) {
+  if (!Array.isArray(raw) || raw.includes("all")) {
+    return [...MEMORY_MULTIMODAL_MODALITIES];
+  }
+  const normalized = new Set();
+  for (const value of raw) {
+    if (value === "image" || value === "audio") {
+      normalized.add(value);
+    }
+  }
+  return Array.from(normalized);
+}
+
+function normalizeMemoryMultimodalSettings(raw = {}) {
+  const enabled = raw && raw.enabled === true;
+  const rawMax = raw && raw.maxFileBytes;
+  const maxFileBytes =
+    typeof rawMax === "number" && Number.isFinite(rawMax)
+      ? Math.max(1, Math.floor(rawMax))
+      : DEFAULT_MEMORY_MULTIMODAL_MAX_FILE_BYTES;
+  return {
+    enabled,
+    modalities: enabled ? normalizeMemoryMultimodalModalities(raw.modalities) : [],
+    maxFileBytes,
+  };
+}
+
+function isMemoryMultimodalEnabled(settings) {
+  return Boolean(
+    settings &&
+      settings.enabled &&
+      Array.isArray(settings.modalities) &&
+      settings.modalities.length > 0,
+  );
+}
+
+const memoryCoreHostMultimodalRuntime = {
+  isMemoryMultimodalEnabled,
+  normalizeMemoryMultimodalSettings,
+};
+
+function hasConfiguredMemorySecretInput(value) {
+  return hasConfiguredSecretInput(value);
+}
+
+function resolveMemorySecretInputString(params = {}) {
+  const ref = resolveSecretInputRef({ value: params.value }).ref;
+  if (ref && ref.source === "env") {
+    const env = isRecord(params.env) ? params.env : process.env;
+    const envValue = normalizeSecretInputString(env && env[ref.id]);
+    if (envValue) {
+      return envValue;
+    }
+  }
+  return normalizeResolvedSecretInputString({
+    value: params.value,
+    path: params.path,
+  });
+}
+
+const memoryCoreHostSecretRuntime = {
+  hasConfiguredMemorySecretInput,
+  resolveMemorySecretInputString,
+};
+
+const MEMORY_HOST_EVENT_LOG_RELATIVE_PATH = path.join(
+  "memory",
+  ".dreams",
+  "events.jsonl",
+);
+
+function resolveMemoryHostEventLogPath(workspaceDir) {
+  return path.join(workspaceDir, MEMORY_HOST_EVENT_LOG_RELATIVE_PATH);
+}
+
+async function appendMemoryHostEvent(workspaceDir, event) {
+  const eventLogPath = resolveMemoryHostEventLogPath(workspaceDir);
+  await fs.promises.mkdir(path.dirname(eventLogPath), { recursive: true });
+  await fs.promises.appendFile(eventLogPath, `${JSON.stringify(event)}\n`, "utf8");
+}
+
+async function readMemoryHostEvents(params = {}) {
+  const eventLogPath = resolveMemoryHostEventLogPath(params.workspaceDir);
+  let raw = "";
+  try {
+    raw = await fs.promises.readFile(eventLogPath, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") {
+      return [];
+    }
+    throw err;
+  }
+  if (!raw.trim()) {
+    return [];
+  }
+  const events = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    });
+  if (!Number.isFinite(params.limit)) {
+    return events;
+  }
+  const limit = Math.max(0, Math.floor(params.limit));
+  return limit === 0 ? [] : events.slice(-limit);
+}
+
+const memoryCoreHostEventsRuntime = {
+  MEMORY_HOST_EVENT_LOG_RELATIVE_PATH,
+  appendMemoryHostEvent,
+  readMemoryHostEvents,
+  resolveMemoryHostEventLogPath,
+};
+
+function resolveMemoryVectorState(vector) {
+  if (!vector || !vector.enabled) {
+    return { tone: "muted", state: "disabled" };
+  }
+  if (vector.available === true) {
+    return { tone: "ok", state: "ready" };
+  }
+  if (vector.available === false) {
+    return { tone: "warn", state: "unavailable" };
+  }
+  return { tone: "muted", state: "unknown" };
+}
+
+function resolveMemoryFtsState(fts) {
+  if (!fts || !fts.enabled) {
+    return { tone: "muted", state: "disabled" };
+  }
+  return fts.available
+    ? { tone: "ok", state: "ready" }
+    : { tone: "warn", state: "unavailable" };
+}
+
+function resolveMemoryCacheSummary(cache) {
+  if (!cache || !cache.enabled) {
+    return { tone: "muted", text: "cache off" };
+  }
+  const suffix = typeof cache.entries === "number" ? ` (${cache.entries})` : "";
+  return { tone: "ok", text: `cache on${suffix}` };
+}
+
+const memoryCoreHostStatusRuntime = {
+  resolveMemoryCacheSummary,
+  resolveMemoryFtsState,
+  resolveMemoryVectorState,
+};
+
+const MEMORY_QUERY_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "me",
+  "my",
+  "we",
+  "our",
+  "you",
+  "your",
+  "he",
+  "she",
+  "it",
+  "they",
+  "them",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "can",
+  "may",
+  "might",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "by",
+  "from",
+  "about",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "under",
+  "over",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "because",
+  "as",
+  "while",
+  "when",
+  "where",
+  "what",
+  "which",
+  "who",
+  "how",
+  "why",
+  "yesterday",
+  "today",
+  "tomorrow",
+  "earlier",
+  "later",
+  "recently",
+  "ago",
+  "just",
+  "now",
+  "thing",
+  "things",
+  "stuff",
+  "something",
+  "anything",
+  "everything",
+  "nothing",
+  "please",
+  "help",
+  "find",
+  "show",
+  "get",
+  "tell",
+  "give",
+  "\u7684",
+  "\u4e86",
+  "\u7740",
+  "\u8fc7",
+  "\u662f",
+  "\u6709",
+  "\u5728",
+  "\u4e4b\u524d",
+  "\u4ee5\u524d",
+  "\u4e4b\u540e",
+  "\u4ee5\u540e",
+  "\u4ec0\u4e48",
+  "\u8bf7",
+  "\u5e2e",
+]);
+
+function isQueryStopWordToken(token) {
+  return MEMORY_QUERY_STOP_WORDS.has(normalizeLowercaseStringOrEmpty(token));
+}
+
+function isValidMemoryQueryKeyword(token) {
+  if (!token) {
+    return false;
+  }
+  if (/^[a-zA-Z]+$/.test(token) && token.length < 3) {
+    return false;
+  }
+  if (/^\d+$/.test(token)) {
+    return false;
+  }
+  if (/^[\p{P}\p{S}]+$/u.test(token)) {
+    return false;
+  }
+  return true;
+}
+
+function tokenizeMemoryQuery(text, opts = {}) {
+  const useTrigram = opts && opts.ftsTokenizer === "trigram";
+  const tokens = [];
+  const normalized = normalizeLowercaseStringOrEmpty(text);
+  const segments = normalized.split(/[\s\p{P}]+/u).filter(Boolean);
+  for (const segment of segments) {
+    if (/[\u3040-\u30ff]/u.test(segment)) {
+      const parts =
+        segment.match(
+          /[a-z0-9_]+|[\u30a0-\u30ff\u30fc]+|[\u4e00-\u9fff]+|[\u3040-\u309f]{2,}/giu,
+        ) || [];
+      for (const part of parts) {
+        if (/^[\u4e00-\u9fff]+$/u.test(part)) {
+          tokens.push(part);
+          if (!useTrigram) {
+            for (let index = 0; index < part.length - 1; index += 1) {
+              tokens.push(part[index] + part[index + 1]);
+            }
+          }
+        } else {
+          tokens.push(part);
+        }
+      }
+    } else if (/[\u4e00-\u9fff]/u.test(segment)) {
+      const chars = Array.from(segment).filter((char) => /[\u4e00-\u9fff]/u.test(char));
+      if (useTrigram) {
+        const block = chars.join("");
+        if (block) {
+          tokens.push(block);
+        }
+      } else {
+        tokens.push(...chars);
+        for (let index = 0; index < chars.length - 1; index += 1) {
+          tokens.push(chars[index] + chars[index + 1]);
+        }
+      }
+    } else {
+      tokens.push(segment);
+    }
+  }
+  return tokens;
+}
+
+function extractKeywords(query, opts = {}) {
+  const keywords = [];
+  const seen = new Set();
+  for (const token of tokenizeMemoryQuery(query, opts)) {
+    if (isQueryStopWordToken(token) || !isValidMemoryQueryKeyword(token) || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    keywords.push(token);
+  }
+  return keywords;
+}
+
+const memoryCoreHostQueryRuntime = {
+  extractKeywords,
+  isQueryStopWordToken,
+};
+
+const runtimeSecretResolutionRuntime = {
+  applyResolvedAssignments,
+  createResolverContext,
+  getChannelsCommandSecretTargetIds,
+  resolveCommandSecretRefsViaGateway,
+  resolveSecretRefValues,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
@@ -47694,6 +48239,42 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/runtime-logger"
   ) {
     return runtimeLoggerRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/runtime-secret-resolution" ||
+    request === "@openclaw/plugin-sdk/runtime-secret-resolution"
+  ) {
+    return runtimeSecretResolutionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-multimodal" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-multimodal"
+  ) {
+    return memoryCoreHostMultimodalRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-query" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-query"
+  ) {
+    return memoryCoreHostQueryRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-secret" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-secret"
+  ) {
+    return memoryCoreHostSecretRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-events" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-events"
+  ) {
+    return memoryCoreHostEventsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/memory-core-host-status" ||
+    request === "@openclaw/plugin-sdk/memory-core-host-status"
+  ) {
+    return memoryCoreHostStatusRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/runtime-env" ||

@@ -27475,6 +27475,813 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_runtime_secret_resolution_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-runtime-secret-resolution.cjs"
+    runtime_entry.write_text(
+        """
+const secretResolution = require("openclaw/plugin-sdk/runtime-secret-resolution");
+const scopedSecretResolution = require("@openclaw/plugin-sdk/runtime-secret-resolution");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.secret_resolution",
+      description: "Use OpenClaw runtime-secret-resolution SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const config = {
+          secrets: {
+            defaults: { env: "workspace" },
+            providers: {
+              workspace: {
+                source: "env",
+                allowlist: ["OPENAI_API_KEY", "OBJECT_SECRET"]
+              }
+            }
+          }
+        };
+        const env = {
+          OPENAI_API_KEY: "  resolved-secret  ",
+          OBJECT_SECRET: "header-value"
+        };
+        const context = secretResolution.createResolverContext({
+          sourceConfig: config,
+          env
+        });
+        const applied = {};
+        context.assignments.push({
+          ref: { source: "env", provider: "workspace", id: "OPENAI_API_KEY" },
+          path: "models.providers.openai.apiKey",
+          expected: "string",
+          apply(value) {
+            applied.apiKey = value;
+          }
+        });
+        context.assignments.push({
+          ref: { source: "env", provider: "workspace", id: "OBJECT_SECRET" },
+          path: "models.providers.openai.headers.Authorization",
+          expected: "string-or-object",
+          apply(value) {
+            applied.header = value;
+          }
+        });
+        const resolved = await secretResolution.resolveSecretRefValues(
+          context.assignments.map((entry) => entry.ref),
+          { config, env, cache: context.cache }
+        );
+        secretResolution.applyResolvedAssignments({
+          assignments: context.assignments,
+          resolved
+        });
+
+        let blocked = "";
+        try {
+          await secretResolution.resolveSecretRefValues(
+            [{ source: "env", provider: "workspace", id: "BLOCKED" }],
+            { config, env: { BLOCKED: "nope" } }
+          );
+        } catch (err) {
+          blocked = String(err && err.message ? err.message : err);
+        }
+
+        let gatewayUnavailable = "";
+        try {
+          await secretResolution.resolveCommandSecretRefsViaGateway({
+            config,
+            targetIds: new Set(["models.providers.*.apiKey"])
+          });
+        } catch (err) {
+          gatewayUnavailable = String(err && err.message ? err.message : err);
+        }
+
+        const channelTargets = [
+          ...secretResolution.getChannelsCommandSecretTargetIds()
+        ].sort();
+        return {
+          keys: Object.keys(secretResolution).sort(),
+          scopedType: typeof scopedSecretResolution.createResolverContext,
+          contextShape: {
+            cache: typeof context.cache,
+            warnings: Array.isArray(context.warnings),
+            warningKeys: typeof context.warningKeys.add,
+            assignments: context.assignments.length,
+            sameConfig: context.sourceConfig === config,
+            sameEnv: context.env === env
+          },
+          resolved: Object.fromEntries([...resolved.entries()]),
+          applied,
+          blocked,
+          gatewayUnavailable,
+          hasTelegramBotTokenTarget: channelTargets.includes("channels.telegram.botToken")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-secret-resolution-plugin",
+                    "name": "Runtime Secret Resolution Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-runtime-secret-resolution.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.secret_resolution"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.secret_resolution"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "applyResolvedAssignments",
+            "createResolverContext",
+            "getChannelsCommandSecretTargetIds",
+            "resolveCommandSecretRefsViaGateway",
+            "resolveSecretRefValues",
+        ],
+        "scopedType": "function",
+        "contextShape": {
+            "cache": "object",
+            "warnings": True,
+            "warningKeys": "function",
+            "assignments": 2,
+            "sameConfig": True,
+            "sameEnv": True,
+        },
+        "resolved": {
+            "env:workspace:OBJECT_SECRET": "header-value",
+            "env:workspace:OPENAI_API_KEY": "  resolved-secret  ",
+        },
+        "applied": {
+            "apiKey": "  resolved-secret  ",
+            "header": "header-value",
+        },
+        "blocked": (
+            'Environment variable "BLOCKED" is not allowlisted in '
+            "secrets.providers.workspace.allowlist."
+        ),
+        "gatewayUnavailable": (
+            "resolveCommandSecretRefsViaGateway is unavailable in OpenZues "
+            "plugin runtime."
+        ),
+        "hasTelegramBotTokenTarget": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_query_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-query.cjs"
+    runtime_entry.write_text(
+        """
+const queryRuntime = require("openclaw/plugin-sdk/memory-core-host-query");
+const scopedQueryRuntime = require("@openclaw/plugin-sdk/memory-core-host-query");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_query",
+      description: "Use OpenClaw memory-core-host-query SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(queryRuntime).sort(),
+          scopedType: typeof scopedQueryRuntime.extractKeywords,
+          keywords: queryRuntime.extractKeywords(
+            "that thing we discussed about the API API bug 123"
+          ),
+          trigramKeywords: queryRuntime.extractKeywords(
+            "\\u4e4b\\u524d\\u8ba8\\u8bba\\u7684\\u90a3\\u4e2a\\u65b9\\u6848",
+            { ftsTokenizer: "trigram" }
+          ),
+          stopWords: [
+            queryRuntime.isQueryStopWordToken("that"),
+            queryRuntime.isQueryStopWordToken("about"),
+            queryRuntime.isQueryStopWordToken("api")
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-query-plugin",
+                    "name": "Memory Query Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-query.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_query"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_query"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["extractKeywords", "isQueryStopWordToken"],
+        "scopedType": "function",
+        "keywords": ["discussed", "api", "bug"],
+        "trigramKeywords": ["\u4e4b\u524d\u8ba8\u8bba\u7684\u90a3\u4e2a\u65b9\u6848"],
+        "stopWords": [True, True, False],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_multimodal_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-multimodal.cjs"
+    runtime_entry.write_text(
+        """
+const multimodal = require("openclaw/plugin-sdk/memory-core-host-multimodal");
+const scopedMultimodal = require("@openclaw/plugin-sdk/memory-core-host-multimodal");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_multimodal",
+      description: "Use OpenClaw memory-core-host-multimodal SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const disabled = multimodal.normalizeMemoryMultimodalSettings({});
+        const enabledDefault = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true
+        });
+        const ordered = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["audio", "image", "audio", "video"],
+          maxFileBytes: 2048.9
+        });
+        const minBytes = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["image"],
+          maxFileBytes: 0
+        });
+        const noneEnabled = multimodal.normalizeMemoryMultimodalSettings({
+          enabled: true,
+          modalities: ["video"]
+        });
+        return {
+          keys: Object.keys(multimodal).sort(),
+          scopedType: typeof scopedMultimodal.normalizeMemoryMultimodalSettings,
+          disabled,
+          enabledDefault,
+          ordered,
+          minBytes,
+          enabledStates: [
+            multimodal.isMemoryMultimodalEnabled(disabled),
+            multimodal.isMemoryMultimodalEnabled(enabledDefault),
+            multimodal.isMemoryMultimodalEnabled(noneEnabled)
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-multimodal-plugin",
+                    "name": "Memory Multimodal Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-multimodal.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_multimodal"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_multimodal"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isMemoryMultimodalEnabled",
+            "normalizeMemoryMultimodalSettings",
+        ],
+        "scopedType": "function",
+        "disabled": {
+            "enabled": False,
+            "modalities": [],
+            "maxFileBytes": 10485760,
+        },
+        "enabledDefault": {
+            "enabled": True,
+            "modalities": ["image", "audio"],
+            "maxFileBytes": 10485760,
+        },
+        "ordered": {
+            "enabled": True,
+            "modalities": ["audio", "image"],
+            "maxFileBytes": 2048,
+        },
+        "minBytes": {
+            "enabled": True,
+            "modalities": ["image"],
+            "maxFileBytes": 1,
+        },
+        "enabledStates": [False, True, False],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_secret_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-secret.cjs"
+    runtime_entry.write_text(
+        """
+const secretRuntime = require("openclaw/plugin-sdk/memory-core-host-secret");
+const scopedSecretRuntime = require("@openclaw/plugin-sdk/memory-core-host-secret");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_secret",
+      description: "Use OpenClaw memory-core-host-secret SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const previous = process.env.MEMORY_CORE_HOST_SECRET;
+        process.env.MEMORY_CORE_HOST_SECRET = "  resolved-from-env  ";
+        let missing = "";
+        try {
+          secretRuntime.resolveMemorySecretInputString({
+            value: {
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_MISSING"
+            },
+            path: "agents.main.memorySearch.remote.apiKey"
+          });
+        } catch (err) {
+          missing = String(err && err.message ? err.message : err);
+        }
+        const result = {
+          keys: Object.keys(secretRuntime).sort(),
+          scopedType: typeof scopedSecretRuntime.resolveMemorySecretInputString,
+          configured: [
+            secretRuntime.hasConfiguredMemorySecretInput(undefined),
+            secretRuntime.hasConfiguredMemorySecretInput("  inline-secret  "),
+            secretRuntime.hasConfiguredMemorySecretInput({
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_SECRET"
+            }),
+            secretRuntime.hasConfiguredMemorySecretInput("${MEMORY_CORE_HOST_SECRET}"),
+            secretRuntime.hasConfiguredMemorySecretInput("secretref-env:MEMORY_CORE_HOST_SECRET")
+          ],
+          inline: secretRuntime.resolveMemorySecretInputString({
+            value: "  inline-secret  ",
+            path: "agents.main.memorySearch.remote.apiKey"
+          }),
+          env: secretRuntime.resolveMemorySecretInputString({
+            value: {
+              source: "env",
+              provider: "default",
+              id: "MEMORY_CORE_HOST_SECRET"
+            },
+            path: "agents.main.memorySearch.remote.apiKey"
+          }),
+          missing
+        };
+        if (previous === undefined) {
+          delete process.env.MEMORY_CORE_HOST_SECRET;
+        } else {
+          process.env.MEMORY_CORE_HOST_SECRET = previous;
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-secret-plugin",
+                    "name": "Memory Secret Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-secret.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_secret"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_secret"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hasConfiguredMemorySecretInput",
+            "resolveMemorySecretInputString",
+        ],
+        "scopedType": "function",
+        "configured": [False, True, True, True, True],
+        "inline": "inline-secret",
+        "env": "resolved-from-env",
+        "missing": (
+            'agents.main.memorySearch.remote.apiKey: unresolved SecretRef '
+            '"env:default:MEMORY_CORE_HOST_MISSING". Resolve this command '
+            "against an active gateway runtime snapshot before reading it."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_events_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    workspace_dir = tmp_path / "memory-events-workspace"
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-events.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("fs");
+const path = require("path");
+const events = require("openclaw/plugin-sdk/memory-core-host-events");
+const scopedEvents = require("@openclaw/plugin-sdk/memory-core-host-events");
+const workspaceDir = {json.dumps(str(workspace_dir))};
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.memory_core_host_events",
+      description: "Use OpenClaw memory-core-host-events SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const first = {{
+          type: "memory.recall.recorded",
+          timestamp: "2026-05-06T10:00:00.000Z",
+          query: "api bug",
+          resultCount: 1,
+          results: [{{ path: "MEMORY.md", startLine: 1, endLine: 3, score: 0.9 }}]
+        }};
+        const second = {{
+          type: "memory.dream.completed",
+          timestamp: "2026-05-06T10:01:00.000Z",
+          phase: "light",
+          inlinePath: "memory/dreams/light.md",
+          lineCount: 4,
+          storageMode: "inline"
+        }};
+        await events.appendMemoryHostEvent(workspaceDir, first);
+        const logPath = events.resolveMemoryHostEventLogPath(workspaceDir);
+        await fs.promises.appendFile(logPath, "not-json\\n", "utf8");
+        await events.appendMemoryHostEvent(workspaceDir, second);
+
+        const all = await events.readMemoryHostEvents({{ workspaceDir }});
+        const last = await events.readMemoryHostEvents({{ workspaceDir, limit: 1.8 }});
+        const zero = await events.readMemoryHostEvents({{ workspaceDir, limit: 0 }});
+        const missing = await events.readMemoryHostEvents({{
+          workspaceDir: path.join(workspaceDir, "missing")
+        }});
+        return {{
+          keys: Object.keys(events).sort(),
+          scopedType: typeof scopedEvents.appendMemoryHostEvent,
+          relativeParts: events.MEMORY_HOST_EVENT_LOG_RELATIVE_PATH.split(/[\\\\/]/),
+          logPathEndsWithRelative: logPath.endsWith(
+            path.join("memory", ".dreams", "events.jsonl")
+          ),
+          allTypes: all.map((entry) => entry.type),
+          firstQuery: all[0] && all[0].query,
+          lastTypes: last.map((entry) => entry.type),
+          zero,
+          missing
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-events-plugin",
+                    "name": "Memory Events Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-events.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_events"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_events"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MEMORY_HOST_EVENT_LOG_RELATIVE_PATH",
+            "appendMemoryHostEvent",
+            "readMemoryHostEvents",
+            "resolveMemoryHostEventLogPath",
+        ],
+        "scopedType": "function",
+        "relativeParts": ["memory", ".dreams", "events.jsonl"],
+        "logPathEndsWithRelative": True,
+        "allTypes": ["memory.recall.recorded", "memory.dream.completed"],
+        "firstQuery": "api bug",
+        "lastTypes": ["memory.dream.completed"],
+        "zero": [],
+        "missing": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_memory_core_host_status_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-memory-core-host-status.cjs"
+    runtime_entry.write_text(
+        """
+const status = require("openclaw/plugin-sdk/memory-core-host-status");
+const scopedStatus = require("@openclaw/plugin-sdk/memory-core-host-status");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.memory_core_host_status",
+      description: "Use OpenClaw memory-core-host-status SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(status).sort(),
+          scopedType: typeof scopedStatus.resolveMemoryVectorState,
+          vector: [
+            status.resolveMemoryVectorState({ enabled: false, available: true }),
+            status.resolveMemoryVectorState({ enabled: true, available: true }),
+            status.resolveMemoryVectorState({ enabled: true, available: false }),
+            status.resolveMemoryVectorState({ enabled: true })
+          ],
+          fts: [
+            status.resolveMemoryFtsState({ enabled: false, available: true }),
+            status.resolveMemoryFtsState({ enabled: true, available: true }),
+            status.resolveMemoryFtsState({ enabled: true, available: false })
+          ],
+          cache: [
+            status.resolveMemoryCacheSummary({ enabled: false, entries: 3 }),
+            status.resolveMemoryCacheSummary({ enabled: true, entries: 3 }),
+            status.resolveMemoryCacheSummary({ enabled: true })
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "memory-status-plugin",
+                    "name": "Memory Status Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-memory-status.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.memory_core_host_status"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.memory_core_host_status"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "resolveMemoryCacheSummary",
+            "resolveMemoryFtsState",
+            "resolveMemoryVectorState",
+        ],
+        "scopedType": "function",
+        "vector": [
+            {"tone": "muted", "state": "disabled"},
+            {"tone": "ok", "state": "ready"},
+            {"tone": "warn", "state": "unavailable"},
+            {"tone": "muted", "state": "unknown"},
+        ],
+        "fts": [
+            {"tone": "muted", "state": "disabled"},
+            {"tone": "ok", "state": "ready"},
+            {"tone": "warn", "state": "unavailable"},
+        ],
+        "cache": [
+            {"tone": "muted", "text": "cache off"},
+            {"tone": "ok", "text": "cache on (3)"},
+            {"tone": "ok", "text": "cache on"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_secret_input_schema_helpers(
     tmp_path,
 ) -> None:

@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~89.0% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~89.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,7 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin provider setup slice is checkpointed in `25ad92b6`.
+The imported plugin memory-core-host-status slice is checkpointed in `bfcb12a2`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,12 +61,152 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Provider setup checkpointed in `25ad92b6` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Rotate to broader unresolved helper/runtime queue |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Memory core host status checkpointed in `bfcb12a2` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue broader unresolved helper/runtime queue; next likely memory-core-host-runtime-files |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-001ZD` Imported memory-core-host-status helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-status.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/status.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/status-format.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-status`, exposing vector, FTS, and cache formatter
+    helpers with OpenClaw `tone` / `state` / `text` projections.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `bfcb12a2`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-status proof
+    (`1 passed`), adjacent SDK helper proof (`5 passed, 996 deselected`),
+    adjacent imported-plugin proof (`189 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZC` Imported memory-core-host-events helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-events.ts`,
+    `openclaw-main/src/memory-host-sdk/events.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-events`, exposing the memory event-log relative path,
+    path resolver, async append, JSONL read, invalid-line skipping, limit
+    handling, and missing-log empty results.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `d5695975`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-events proof
+    (`1 passed`), adjacent SDK helper proof (`4 passed, 996 deselected`),
+    adjacent imported-plugin proof (`188 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZB` Imported memory-core-host-secret helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-secret.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/secret.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/secret-input.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/secret-input-utils.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-secret`, exposing configured-secret detection and
+    `resolveMemorySecretInputString` with inline trimming, env-backed SecretRef
+    resolution through the runtime environment, and OpenClaw unresolved-ref
+    errors.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `78f2a009`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-secret proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 996 deselected`),
+    adjacent imported-plugin proof (`187 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001ZA` Imported memory-core-host-multimodal helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-multimodal.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/multimodal.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/multimodal.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-multimodal`, exposing
+    `normalizeMemoryMultimodalSettings` and `isMemoryMultimodalEnabled` with
+    OpenClaw default modalities, max-file-byte normalization, invalid
+    modality filtering, and disabled-state projection.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `5be944f7`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-multimodal proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 995 deselected`),
+    adjacent imported-plugin proof (`186 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001YZ` Imported memory-core-host-query helper shim
+  - Source: `openclaw-main/src/plugin-sdk/memory-core-host-query.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/query.ts`,
+    `openclaw-main/packages/memory-host-sdk/src/host/query-expansion.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `memory-core-host-query`, exposing `extractKeywords` and
+    `isQueryStopWordToken` with stop-word filtering, duplicate/numeric
+    rejection, and CJK trigram-tokenizer behavior without leaking generic SDK
+    exports.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0eaf8bf8`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused memory-core-host-query proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 994 deselected`),
+    adjacent imported-plugin proof (`185 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001YY` Imported runtime-secret-resolution helper shim
+  - Source: `openclaw-main/src/plugin-sdk/runtime-secret-resolution.ts`,
+    `openclaw-main/src/cli/command-secret-targets.ts`,
+    `openclaw-main/src/secrets/resolve.ts`,
+    `openclaw-main/src/secrets/runtime-shared.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `runtime-secret-resolution`, exposing resolver context shape, assignment
+    application, env-backed SecretRef resolution maps, channel command secret
+    target ids, and an honest unavailable error for gateway command-secret
+    resolution.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `d9574b0f`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused runtime-secret-resolution proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 993 deselected`),
+    adjacent imported-plugin proof (`184 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-001YX` Imported LM Studio runtime helper shim
+  - Source: `openclaw-main/src/plugin-sdk/lmstudio.ts`,
+    `openclaw-main/src/plugin-sdk/lmstudio-runtime.ts`,
+    `openclaw-main/extensions/lmstudio/src/models.ts`,
+    `openclaw-main/extensions/lmstudio/src/runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native runtime entries can require scoped and unscoped
+    `lmstudio` / `lmstudio-runtime`, exposing LM Studio default constants,
+    server/inference base URL normalization, provider config normalization,
+    auth-header construction, loaded context-window resolution, reasoning
+    capability/compat projection, and model wire entry mapping without generic
+    SDK leakage.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `6f11c3fa`
+  - Weight: 1
+  - Last verified: 2026-05-06, focused LM Studio runtime proof (`1 passed`),
+    adjacent SDK helper proof (`3 passed, 992 deselected`), adjacent
+    imported-plugin proof (`183 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001YW` Imported provider setup helper shim
   - Source: `openclaw-main/src/plugin-sdk/provider-setup.ts`,
