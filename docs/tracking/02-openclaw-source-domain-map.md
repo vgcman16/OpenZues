@@ -139,8 +139,10 @@ imported `browser-setup-tools` aggregate coverage from
 `src/plugin-sdk/browser-setup-tools.ts` and
 `extensions/browser/src/sdk-setup-tools.ts` is verified in `50876922`, and
 imported `browser-support` aggregate coverage from
-`src/plugin-sdk/browser-support.ts` is verified in `37eec77e`. All are counted
-with the plugin/extension system row above.
+`src/plugin-sdk/browser-support.ts` is verified in `37eec77e`, and imported
+`browser-bridge` exact facade coverage from `src/plugin-sdk/browser-bridge.ts`
+is verified in `f0635cce`. All are counted with the plugin/extension system
+row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
