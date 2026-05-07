@@ -36547,6 +36547,178 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_skills_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-skills-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const skills = require("openclaw/plugin-sdk/skills-runtime");
+const scopedSkills = require("@openclaw/plugin-sdk/skills-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.skills_refresh",
+      description: "Use OpenClaw skills-runtime SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const events = [];
+        const offThrowing = skills.registerSkillsChangeListener(() => {
+          throw new Error("listener boom");
+        });
+        const off = skills.registerSkillsChangeListener((event) => {
+          events.push({
+            workspaceDir: event.workspaceDir || null,
+            reason: event.reason,
+            changedPath: event.changedPath || null
+          });
+        });
+        const initialGlobal = skills.getSkillsSnapshotVersion();
+        const initialWorkspace = skills.getSkillsSnapshotVersion(args.workspaceDir);
+        const workspaceVersion = skills.bumpSkillsSnapshotVersion({
+          workspaceDir: args.workspaceDir,
+          reason: "watch",
+          changedPath: args.changedPath
+        });
+        const workspaceAfterBump = scopedSkills.getSkillsSnapshotVersion(args.workspaceDir);
+        const globalAfterWorkspaceBump = skills.getSkillsSnapshotVersion();
+        const globalVersion = scopedSkills.bumpSkillsSnapshotVersion({
+          reason: "config-change",
+          changedPath: "config/openclaw.json"
+        });
+        const workspaceAfterGlobalBump = skills.getSkillsSnapshotVersion(args.workspaceDir);
+        offThrowing();
+        off();
+        skills.bumpSkillsSnapshotVersion({ reason: "remote-node" });
+
+        return {
+          keys: Object.keys(skills).sort(),
+          scopedType: typeof scopedSkills.registerSkillsChangeListener,
+          initialGlobal,
+          initialWorkspace,
+          workspaceIncreased: workspaceVersion > initialWorkspace,
+          workspaceAfterBump,
+          workspaceVersion,
+          globalAfterWorkspaceBump,
+          globalVersion,
+          globalIncreased: globalVersion > initialGlobal,
+          workspaceAfterGlobalBump,
+          refresh: {
+            empty: skills.shouldRefreshSnapshotForVersion(),
+            cachedWithoutNext: skills.shouldRefreshSnapshotForVersion(1),
+            stale: skills.shouldRefreshSnapshotForVersion(1, 2),
+            current: skills.shouldRefreshSnapshotForVersion(2, 2),
+            future: skills.shouldRefreshSnapshotForVersion(3, 2),
+            missingCached: skills.shouldRefreshSnapshotForVersion(undefined, workspaceVersion)
+          },
+          events
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-skills-refresh-plugin",
+                    "name": "Runtime Skills Refresh Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-skills-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.skills_refresh"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.skills_refresh",
+            "args": {
+                "workspaceDir": str(tmp_path / "workspace"),
+                "changedPath": str(tmp_path / "workspace" / "skills" / "demo"),
+            },
+        },
+    )
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "bumpSkillsSnapshotVersion",
+        "getSkillsSnapshotVersion",
+        "registerSkillsChangeListener",
+        "shouldRefreshSnapshotForVersion",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["initialGlobal"] == 0
+    assert result["initialWorkspace"] == 0
+    assert result["workspaceIncreased"] is True
+    assert result["workspaceAfterBump"] == result["workspaceVersion"]
+    assert result["globalAfterWorkspaceBump"] == 0
+    assert result["globalIncreased"] is True
+    assert result["workspaceAfterGlobalBump"] == max(
+        result["workspaceVersion"],
+        result["globalVersion"],
+    )
+    assert result["refresh"] == {
+        "empty": False,
+        "cachedWithoutNext": True,
+        "stale": True,
+        "current": False,
+        "future": False,
+        "missingCached": True,
+    }
+    assert result["events"] == [
+        {
+            "workspaceDir": str(tmp_path / "workspace"),
+            "reason": "watch",
+            "changedPath": str(tmp_path / "workspace" / "skills" / "demo"),
+        },
+        {
+            "workspaceDir": None,
+            "reason": "config-change",
+            "changedPath": "config/openclaw.json",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

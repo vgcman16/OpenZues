@@ -25285,6 +25285,74 @@ function listSkillCommandsForAgents(params) {
   return dedupeSkillCommandsBySkillName(entries);
 }
 
+const skillsRuntimeListeners = new Set();
+const skillsRuntimeWorkspaceVersions = new Map();
+let skillsRuntimeGlobalVersion = 0;
+
+function bumpSkillsRuntimeVersion(current) {
+  const now = Date.now();
+  return now <= current ? current + 1 : now;
+}
+
+function emitSkillsRuntimeChange(event) {
+  for (const listener of skillsRuntimeListeners) {
+    try {
+      listener(event);
+    } catch {
+      // Match OpenClaw's default refresh-state behavior: listener failures do
+      // not prevent later listeners or version bumps from completing.
+    }
+  }
+}
+
+function registerSkillsChangeListener(listener) {
+  if (typeof listener !== "function") {
+    throw new TypeError("listener must be a function");
+  }
+  skillsRuntimeListeners.add(listener);
+  return () => {
+    skillsRuntimeListeners.delete(listener);
+  };
+}
+
+function bumpSkillsSnapshotVersion(params = {}) {
+  const reason = normalizeOptionalString(params.reason) || "manual";
+  const changedPath = normalizeOptionalString(params.changedPath);
+  const workspaceDir = normalizeOptionalString(params.workspaceDir);
+  if (workspaceDir) {
+    const current = skillsRuntimeWorkspaceVersions.get(workspaceDir) || 0;
+    const next = bumpSkillsRuntimeVersion(current);
+    skillsRuntimeWorkspaceVersions.set(workspaceDir, next);
+    emitSkillsRuntimeChange({
+      workspaceDir,
+      reason,
+      ...(changedPath ? { changedPath } : {}),
+    });
+    return next;
+  }
+  skillsRuntimeGlobalVersion = bumpSkillsRuntimeVersion(skillsRuntimeGlobalVersion);
+  emitSkillsRuntimeChange({
+    reason,
+    ...(changedPath ? { changedPath } : {}),
+  });
+  return skillsRuntimeGlobalVersion;
+}
+
+function getSkillsSnapshotVersion(workspaceDir) {
+  const workspace = normalizeOptionalString(workspaceDir);
+  if (!workspace) {
+    return skillsRuntimeGlobalVersion;
+  }
+  const local = skillsRuntimeWorkspaceVersions.get(workspace) || 0;
+  return Math.max(skillsRuntimeGlobalVersion, local);
+}
+
+function shouldRefreshSnapshotForVersion(cachedVersion, nextVersion) {
+  const cached = typeof cachedVersion === "number" ? cachedVersion : 0;
+  const next = typeof nextVersion === "number" ? nextVersion : 0;
+  return next === 0 ? cached > 0 : cached < next;
+}
+
 function getQaRunnerRuntimeHost() {
   return globalThis.__openzuesQaRunnerRuntime || {};
 }
@@ -51168,6 +51236,13 @@ const skillCommandsRuntime = {
   listSkillCommandsForWorkspace,
 };
 
+const skillsRuntime = {
+  bumpSkillsSnapshotVersion,
+  getSkillsSnapshotVersion,
+  registerSkillsChangeListener,
+  shouldRefreshSnapshotForVersion,
+};
+
 const qaRunnerRuntime = {
   isQaRuntimeAvailable,
   listQaRunnerCliContributions,
@@ -58259,6 +58334,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/skill-commands-runtime"
   ) {
     return skillCommandsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/skills-runtime" ||
+    request === "@openclaw/plugin-sdk/skills-runtime"
+  ) {
+    return skillsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
