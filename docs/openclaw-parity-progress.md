@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.999%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.9991%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17766,6 +17766,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `67872a14`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-test-api` facade from `src/plugin-sdk/plugin-test-api.ts`: scoped
+  and unscoped native runtime entries expose `createTestPluginApi` with the
+  upstream no-op plugin API defaults, async next-turn injection fallback,
+  run-context and scheduler no-op behavior, logger methods, runtime/config
+  defaults, and caller overrides without importing the TypeScript runtime. This
+  closes `OZ-PLUGIN-00289`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9991%.
+- Verified the plugin-test-api slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_test_api_helpers -q`
+  (`1 passed`), adjacent plugin-test-api proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_test_api or channel_test_helpers"`
+  (`2 passed, 1110 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`300 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `db9e84ac`.
 
 ## References
 

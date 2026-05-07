@@ -2631,6 +2631,17 @@ may lag behind this tracker.
     adjacent imported-plugin proof (`299 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
+- [x] Imported plugin SDK plugin-test-api facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/plugin-test-api.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `db9e84ac`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-test-api proof (`1 passed`),
+    adjacent plugin-test-api proof (`2 passed, 1110 deselected`), adjacent
+    imported-plugin proof (`300 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,
