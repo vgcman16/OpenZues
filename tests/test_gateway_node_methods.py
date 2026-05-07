@@ -35507,6 +35507,257 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_runtime_facade_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const channelRuntime = require("openclaw/plugin-sdk/channel-runtime");
+const scopedChannelRuntime = require("@openclaw/plugin-sdk/channel-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_runtime",
+      description: "Use OpenClaw channel-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        channelRuntime.resetHeartbeatEventsForTest();
+        channelRuntime.resetSystemEventsForTest();
+        const seen = [];
+        const unsubscribe = channelRuntime.onHeartbeatEvent((event) => {
+          seen.push(`${event.status}:${event.ts}`);
+        });
+        const originalNow = Date.now;
+        Date.now = () => 24680;
+        try {
+          channelRuntime.emitHeartbeatEvent({
+            status: "sent",
+            channel: "telegram"
+          });
+        } finally {
+          Date.now = originalNow;
+        }
+        const lastHeartbeat = channelRuntime.getLastHeartbeatEvent();
+        unsubscribe();
+        const cfg = {
+          agents: {
+            list: [
+              { id: "helper", identity: { name: "Helper" } }
+            ]
+          },
+          messages: { responsePrefix: "auto" },
+          channels: {
+            defaults: {
+              heartbeat: { showOk: false, showAlerts: true, useIndicator: true }
+            },
+            slack: {
+              responsePrefix: "slack-prefix",
+              heartbeat: { showOk: true, showAlerts: false },
+              accounts: {
+                default: {
+                  responsePrefix: "account-prefix",
+                  heartbeat: { useIndicator: false }
+                }
+              }
+            }
+          }
+        };
+        const prefix = channelRuntime.createReplyPrefixContext({
+          cfg,
+          agentId: "helper",
+          channel: "slack",
+          accountId: "default"
+        });
+        prefix.onModelSelected({
+          provider: "openai",
+          model: "gpt-5-latest",
+          thinkLevel: "high"
+        });
+        const poll = channelRuntime.normalizePollInput({
+          question: "  Pick one  ",
+          options: [" Alpha ", "", "Beta"],
+          maxSelections: 1,
+          durationSeconds: 30
+        });
+        const systemEnqueued = channelRuntime.enqueueSystemEvent("  Wake up  ", {
+          sessionKey: "agent:helper:session-a",
+          contextKey: " Slack:Thread "
+        });
+        channelRuntime.recordChannelActivity({
+          channel: "slack",
+          accountId: " default ",
+          direction: "outbound",
+          at: 123
+        });
+        const sinkPatches = [];
+        channelRuntime.createAccountStatusSink({
+          accountId: "primary",
+          setStatus: (patch) => sinkPatches.push(patch)
+        })({ busy: true });
+        const abort = new AbortController();
+        const abortTask = channelRuntime.waitUntilAbort(abort.signal, () => {
+          seen.push("aborted");
+        });
+        abort.abort();
+        await abortTask;
+        return {
+          keys: Object.keys(channelRuntime).sort(),
+          scopedType: typeof scopedChannelRuntime.normalizeChatType,
+          chatTypes: [
+            channelRuntime.normalizeChatType("DM"),
+            channelRuntime.normalizeChatType("CHANNEL"),
+            channelRuntime.normalizeChatType("other") || null
+          ],
+          channelId: channelRuntime.normalizeChannelId(" Slack "),
+          prefix: {
+            responsePrefix: prefix.responsePrefix,
+            context: prefix.responsePrefixContextProvider()
+          },
+          poll,
+          pollMaxSelections: channelRuntime.resolvePollMaxSelections(3, true),
+          pollDuration: channelRuntime.normalizePollDurationHours(undefined, {
+            defaultHours: 2,
+            maxHours: 4
+          }),
+          reduced: channelRuntime.reduceInteractiveReply(
+            { blocks: [{ type: "text", text: "A" }, { type: "button", id: "b" }] },
+            "",
+            (state, block, index) => `${state}${index}:${block.type};`
+          ),
+          heartbeat: {
+            seen,
+            last: lastHeartbeat,
+            indicator: channelRuntime.resolveIndicatorType("sent"),
+            visibility: channelRuntime.resolveHeartbeatVisibility({
+              cfg,
+              channel: "slack",
+              accountId: "default"
+            })
+          },
+          systemEnqueued,
+          sinkPatches,
+          waitType: typeof channelRuntime.waitForTransportReady
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-runtime-plugin",
+                    "name": "Runtime Channel Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.channel_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createAccountStatusSink",
+            "createReplyPrefixContext",
+            "createReplyPrefixOptions",
+            "createTypingCallbacks",
+            "emitHeartbeatEvent",
+            "enqueueSystemEvent",
+            "getLastHeartbeatEvent",
+            "keepHttpServerTaskAlive",
+            "normalizeChannelId",
+            "normalizeChatType",
+            "normalizePollDurationHours",
+            "normalizePollInput",
+            "onHeartbeatEvent",
+            "recordChannelActivity",
+            "reduceInteractiveReply",
+            "resetHeartbeatEventsForTest",
+            "resetSystemEventsForTest",
+            "resolveHeartbeatVisibility",
+            "resolveIndicatorType",
+            "resolvePollMaxSelections",
+            "waitForTransportReady",
+            "waitUntilAbort",
+        ],
+        "scopedType": "function",
+        "chatTypes": ["direct", "channel", None],
+        "channelId": "slack",
+        "prefix": {
+            "responsePrefix": "account-prefix",
+            "context": {
+                "identityName": "Helper",
+                "provider": "openai",
+                "model": "gpt-5",
+                "modelFull": "openai/gpt-5-latest",
+                "thinkingLevel": "high",
+            },
+        },
+        "poll": {
+            "question": "Pick one",
+            "options": ["Alpha", "Beta"],
+            "maxSelections": 1,
+            "durationSeconds": 30,
+        },
+        "pollMaxSelections": 3,
+        "pollDuration": 2,
+        "reduced": "0:text;1:button;",
+        "heartbeat": {
+            "seen": ["sent:24680", "aborted"],
+            "last": {"ts": 24680, "status": "sent", "channel": "telegram"},
+            "indicator": "alert",
+            "visibility": {
+                "showOk": True,
+                "showAlerts": False,
+                "useIndicator": False,
+            },
+        },
+        "systemEnqueued": True,
+        "sinkPatches": [{"accountId": "primary", "busy": True}],
+        "waitType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_inbound_envelope_helpers(
     tmp_path,
 ) -> None:

@@ -65947,6 +65947,31 @@ const transportReadyRuntime = {
   waitForTransportReady,
 };
 
+const channelRuntimeRuntime = {
+  createAccountStatusSink,
+  createReplyPrefixContext,
+  createReplyPrefixOptions,
+  createTypingCallbacks,
+  emitHeartbeatEvent,
+  enqueueSystemEvent,
+  getLastHeartbeatEvent,
+  keepHttpServerTaskAlive,
+  normalizeChannelId,
+  normalizeChatType,
+  normalizePollDurationHours,
+  normalizePollInput,
+  onHeartbeatEvent,
+  recordChannelActivity,
+  reduceInteractiveReply,
+  resetHeartbeatEventsForTest,
+  resetSystemEventsForTest,
+  resolveHeartbeatVisibility,
+  resolveIndicatorType,
+  resolvePollMaxSelections,
+  waitForTransportReady,
+  waitUntilAbort,
+};
+
 const targetResolverRuntime = {
   buildUnresolvedTargetResults,
   resolveTargetsWithOptionalToken,
@@ -83690,6 +83715,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-runtime-context"
   ) {
     return channelRuntimeContextRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-runtime" ||
+    request === "@openclaw/plugin-sdk/channel-runtime"
+  ) {
+    return channelRuntimeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-activity-runtime" ||
