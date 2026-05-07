@@ -48115,6 +48115,415 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_test_contracts(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/agent-runtime-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/agent-runtime-test-contracts");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_runtime_test_contracts",
+      description: "Use OpenClaw agent-runtime test contract helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const registry = contracts.createAuthAliasManifestRegistry();
+        const forwarded = contracts.expectedForwardedAuthProfile({
+          provider: contracts.AUTH_PROFILE_RUNTIME_CONTRACT.codexCliProvider,
+          authProfileProvider:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+          aliasLookupParams: { manifestRegistry: registry },
+          sessionAuthProfileId:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProfileId
+        });
+        const notForwarded = contracts.expectedForwardedAuthProfile({
+          provider: contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiProvider,
+          authProfileProvider:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+          aliasLookupParams: { manifestRegistry: registry },
+          sessionAuthProfileId:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProfileId
+        });
+        const text = contracts.textToolResult("hello", { ok: true });
+        const media = contracts.mediaToolResult(
+          "photo",
+          "https://media.example/photo.png",
+          true
+        );
+        const installedHooks = contracts.installOpenClawOwnedToolHooks({
+          adjustedParams: { path: "/tmp/demo" }
+        });
+        const beforeResult = await installedHooks.beforeToolCall({
+          toolCallId: "tool-1"
+        });
+        await installedHooks.afterToolCall({ toolCallId: "tool-1" });
+        const blockedHooks = contracts.installOpenClawOwnedToolHooks({
+          blockReason: "owner only"
+        });
+        const blockedResult = await blockedHooks.beforeToolCall({
+          toolCallId: "tool-2"
+        });
+        const middlewareHandle = contracts.installCodexToolResultMiddleware(
+          (event) => contracts.textToolResult(`handled:${event.toolCallId}`)
+        );
+        const middlewareResult = await middlewareHandle.middleware({
+          toolCallId: "tool-3"
+        });
+        contracts.resetOpenClawOwnedToolHooks();
+        const runResult = contracts.createContractRunResult({
+          didSendViaMessagingTool: true,
+          messagingToolSentTexts: ["sent"],
+          meta: { durationMs: 9, provider: "openai" }
+        });
+        return {
+          selectedTypes: {
+            createAuthAliasManifestRegistry:
+              typeof contracts.createAuthAliasManifestRegistry,
+            expectedForwardedAuthProfile:
+              typeof contracts.expectedForwardedAuthProfile,
+            installOpenClawOwnedToolHooks:
+              typeof contracts.installOpenClawOwnedToolHooks,
+            createContractRunResult: typeof contracts.createContractRunResult,
+            createParameterFreeTool: typeof contracts.createParameterFreeTool,
+            textOrphanLeaf: typeof contracts.textOrphanLeaf
+          },
+          scopedSame:
+            scopedContracts.textToolResult === contracts.textToolResult,
+          auth: {
+            contract: contracts.AUTH_PROFILE_RUNTIME_CONTRACT,
+            registryPluginId: registry.plugins[0].id,
+            forwarded,
+            notForwarded: notForwarded || null
+          },
+          delivery: contracts.DELIVERY_NO_REPLY_RUNTIME_CONTRACT,
+          tools: {
+            text,
+            media,
+            beforeResult,
+            beforeCalls: installedHooks.beforeToolCall.calls.length,
+            afterCalls: installedHooks.afterToolCall.calls.length,
+            blockedResult,
+            middlewareResult,
+            middlewareCalls: middlewareHandle.middleware.calls.length
+          },
+          fallback: {
+            config: contracts.createContractFallbackConfig(),
+            runResult
+          },
+          prompt: {
+            constants: [
+              contracts.GPT5_CONTRACT_MODEL_ID,
+              contracts.GPT5_PREFIXED_CONTRACT_MODEL_ID,
+              contracts.NON_GPT5_CONTRACT_MODEL_ID,
+              contracts.OPENAI_CONTRACT_PROVIDER_ID,
+              contracts.OPENAI_CODEX_CONTRACT_PROVIDER_ID,
+              contracts.CODEX_CONTRACT_PROVIDER_ID,
+              contracts.NON_OPENAI_CONTRACT_PROVIDER_ID
+            ],
+            openAiConfig: contracts.openAiPluginPersonalityConfig("friendly"),
+            sharedConfig: contracts.sharedGpt5PersonalityConfig("off"),
+            context: contracts.codexPromptOverlayContext({
+              modelId: contracts.GPT5_PREFIXED_CONTRACT_MODEL_ID,
+              config: { marker: "cfg" }
+            })
+          },
+          schema: {
+            parameterFree: contracts.createParameterFreeTool("ping"),
+            strict: contracts.createStrictCompatibleTool("lookup"),
+            permissive: contracts.createPermissiveTool("schedule"),
+            nativeOpenAI: contracts.createNativeOpenAIResponsesModel(),
+            nativeCodex: contracts.createNativeOpenAICodexResponsesModel(),
+            proxy: contracts.createProxyOpenAIResponsesModel(),
+            normalized: contracts.normalizedParameterFreeSchema()
+          },
+          transcript: {
+            marker: contracts.QUEUED_USER_MESSAGE_MARKER,
+            textOrphan: contracts.textOrphanLeaf("older"),
+            structuredOrphan: contracts.structuredOrphanLeaf(),
+            inlineDataUriLength:
+              contracts.inlineDataUriOrphanLeaf().content[1].image_url.url.length,
+            mediaOnly: contracts.mediaOnlyHistoryMessage(),
+            structuredHistory: contracts.structuredHistoryMessage(),
+            currentPrompt: contracts.currentPromptHistoryMessage("now"),
+            assistant: contracts.assistantHistoryMessage("done")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-runtime-test-contracts-plugin",
+                    "name": "Runtime Agent Runtime Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-agent-runtime-test-contracts-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.agent_runtime_test_contracts"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.agent_runtime_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["selectedTypes"] == {
+        "createAuthAliasManifestRegistry": "function",
+        "expectedForwardedAuthProfile": "function",
+        "installOpenClawOwnedToolHooks": "function",
+        "createContractRunResult": "function",
+        "createParameterFreeTool": "function",
+        "textOrphanLeaf": "function",
+    }
+    assert result["scopedSame"] is True
+    assert result["auth"] == {
+        "contract": {
+            "sessionId": "session-auth-contract",
+            "sessionKey": "agent:main:auth-contract",
+            "runId": "run-auth-contract",
+            "workspacePrompt": "continue with the bound Codex profile",
+            "openAiProvider": "openai",
+            "openAiCodexProvider": "openai-codex",
+            "codexCliProvider": "codex-cli",
+            "codexHarnessProvider": "codex",
+            "claudeCliProvider": "claude-cli",
+            "openAiProfileId": "openai:work",
+            "openAiCodexProfileId": "openai-codex:work",
+            "anthropicProfileId": "anthropic:work",
+        },
+        "registryPluginId": "openai",
+        "forwarded": "openai-codex:work",
+        "notForwarded": None,
+    }
+    assert result["delivery"] == {
+        "sessionId": "session-delivery-contract",
+        "sessionKey": "agent:main:delivery-contract",
+        "runId": "run-delivery-contract",
+        "prompt": "deliver the follow-up contract turn",
+        "originChannel": "discord",
+        "originTo": "channel:C1",
+        "dispatcherText": "visible dispatcher fallback",
+        "visibleText": "visible follow-up",
+        "silentText": "NO_REPLY",
+        "jsonSilentText": '{"action":"NO_REPLY"}',
+    }
+    assert result["tools"] == {
+        "text": {"content": [{"type": "text", "text": "hello"}], "details": {"ok": True}},
+        "media": {
+            "content": [{"type": "text", "text": "photo"}],
+            "details": {
+                "media": {
+                    "mediaUrl": "https://media.example/photo.png",
+                    "audioAsVoice": True,
+                }
+            },
+        },
+        "beforeResult": {"params": {"path": "/tmp/demo"}},
+        "beforeCalls": 1,
+        "afterCalls": 1,
+        "blockedResult": {"block": True, "blockReason": "owner only"},
+        "middlewareResult": {
+            "result": {
+                "content": [{"type": "text", "text": "handled:tool-3"}],
+                "details": {},
+            }
+        },
+        "middlewareCalls": 1,
+    }
+    assert result["fallback"] == {
+        "config": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": "openai-codex/gpt-5.4",
+                        "fallbacks": ["anthropic/claude-haiku-3-5"],
+                    }
+                }
+            }
+        },
+        "runResult": {
+            "payloads": [],
+            "didSendViaMessagingTool": True,
+            "messagingToolSentTexts": ["sent"],
+            "messagingToolSentMediaUrls": [],
+            "messagingToolSentTargets": [],
+            "successfulCronAdds": 0,
+            "meta": {"durationMs": 9, "provider": "openai"},
+        },
+    }
+    assert result["prompt"]["constants"] == [
+        "gpt-5.4",
+        "openai/gpt-5.4",
+        "gpt-4.1",
+        "openai",
+        "openai-codex",
+        "codex",
+        "openrouter",
+    ]
+    assert result["prompt"]["openAiConfig"] == {
+        "plugins": {"entries": {"openai": {"config": {"personality": "friendly"}}}}
+    }
+    assert result["prompt"]["sharedConfig"] == {
+        "agents": {"defaults": {"promptOverlays": {"gpt5": {"personality": "off"}}}}
+    }
+    assert result["prompt"]["context"] == {
+        "provider": "codex",
+        "modelId": "openai/gpt-5.4",
+        "promptMode": "full",
+        "agentDir": "/tmp/openclaw-codex-prompt-contract-agent",
+        "workspaceDir": "/tmp/openclaw-codex-prompt-contract-workspace",
+        "config": {"marker": "cfg"},
+    }
+    assert result["schema"] == {
+        "parameterFree": {
+            "name": "ping",
+            "description": "Parameter-free test tool",
+            "parameters": {},
+        },
+        "strict": {
+            "name": "lookup",
+            "description": "Strict-compatible test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+        "permissive": {
+            "name": "schedule",
+            "description": "Permissive test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "cron": {"type": "string"},
+                },
+                "required": ["action"],
+                "additionalProperties": True,
+            },
+        },
+        "nativeOpenAI": {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "api": "openai-responses",
+            "provider": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "nativeCodex": {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "api": "openai-codex-responses",
+            "provider": "openai-codex",
+            "baseUrl": "https://chatgpt.com/backend-api",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "proxy": {
+            "id": "custom-gpt",
+            "name": "Custom GPT",
+            "api": "openai-responses",
+            "provider": "openai",
+            "baseUrl": "https://proxy.example.com/v1",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "normalized": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
+    assert result["transcript"]["marker"] == (
+        "[Queued user message that arrived while the previous turn was still active]"
+    )
+    assert result["transcript"]["textOrphan"] == {"content": "older"}
+    assert result["transcript"]["structuredOrphan"]["content"][0] == {
+        "type": "text",
+        "text": "please inspect this",
+    }
+    assert result["transcript"]["inlineDataUriLength"] > 4096
+    assert result["transcript"]["mediaOnly"] == {
+        "role": "user",
+        "content": [{"type": "image", "data": "b" * 2048, "mimeType": "image/png"}],
+        "timestamp": 1,
+    }
+    assert result["transcript"]["structuredHistory"]["content"][0] == {
+        "type": "text",
+        "text": "older structured context",
+    }
+    assert result["transcript"]["currentPrompt"] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "now"}],
+        "timestamp": 2,
+    }
+    assert result["transcript"]["assistant"] == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "done"}],
+        "timestamp": 2,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_file_lock_helpers(
     tmp_path,
 ) -> None:
