@@ -67166,6 +67166,339 @@ const speechCoreRuntime = {
   truncateErrorDetail,
 };
 
+function normalizeSpeechResponseFormat(params) {
+  const next = normalizeOptionalLowercaseString(params.value);
+  if (!next) {
+    return undefined;
+  }
+  if (params.responseFormats.includes(next)) {
+    return next;
+  }
+  throw new Error(`Invalid ${params.providerLabel} speech responseFormat: ${next}`);
+}
+
+function speechResponseFormatToFileExtension(format) {
+  return `.${format}`;
+}
+
+function trimTrailingSpeechBaseUrl(value, fallback) {
+  return (normalizeOptionalString(value) || fallback).replace(/\/+$/u, "");
+}
+
+function normalizeOpenAiCompatibleSpeechBaseUrl(params) {
+  const normalized = trimTrailingSpeechBaseUrl(params.value, params.fallback);
+  if (!params.policy || params.policy.kind !== "canonical") {
+    return normalized;
+  }
+  const canonical = trimTrailingSpeechBaseUrl(params.fallback, params.fallback);
+  const aliases = new Set(
+    [canonical, ...((params.policy && params.policy.aliases) || [])].map((entry) =>
+      trimTrailingSpeechBaseUrl(entry, canonical),
+    ),
+  );
+  return aliases.has(normalized) || !params.policy.allowCustom ? canonical : normalized;
+}
+
+function resolveSpeechProviderConfigRecord(rawConfig, providerConfigKey) {
+  const root = speechCoreAsObject(rawConfig) || {};
+  const providers = speechCoreAsObject(root.providers);
+  return speechCoreAsObject(providers && providers[providerConfigKey]) ||
+    speechCoreAsObject(root[providerConfigKey]);
+}
+
+function readSpeechModelProviderConfig(cfg, providerConfigKey) {
+  const root = speechCoreAsObject(cfg);
+  const models = speechCoreAsObject(root && root.models);
+  const providers = speechCoreAsObject(models && models.providers);
+  return speechCoreAsObject(providers && providers[providerConfigKey]);
+}
+
+function readSpeechProviderOverrides(overrides) {
+  if (!overrides) {
+    return {};
+  }
+  return {
+    model: normalizeOptionalString(overrides.model || overrides.modelId),
+    voice: normalizeOptionalString(overrides.voice || overrides.voiceId),
+    speed: asFiniteNumber(overrides.speed),
+  };
+}
+
+function parseOpenAiCompatibleSpeechDirectiveToken(ctx, providerConfigKey) {
+  const compactProviderKey = providerConfigKey.replace(/[^a-z0-9]+/giu, "").toLowerCase();
+  switch (ctx.key) {
+    case "voice":
+    case "voice_id":
+    case "voiceid":
+    case `${providerConfigKey}_voice`:
+    case `${compactProviderKey}voice`:
+      if (!ctx.policy || !ctx.policy.allowVoice) {
+        return { handled: true };
+      }
+      return { handled: true, overrides: { voice: ctx.value } };
+    case "model":
+    case "model_id":
+    case "modelid":
+    case `${providerConfigKey}_model`:
+    case `${compactProviderKey}model`:
+      if (!ctx.policy || !ctx.policy.allowModelId) {
+        return { handled: true };
+      }
+      return { handled: true, overrides: { model: ctx.value } };
+    default:
+      return { handled: false };
+  }
+}
+
+function buildOpenAiCompatibleSpeechExtraJsonBodyFields(config, fields) {
+  const body = {};
+  for (const field of fields || []) {
+    const value = config[field.configKey];
+    if (value != null) {
+      body[field.requestKey || field.configKey] = value;
+    }
+  }
+  return body;
+}
+
+function createOpenAiCompatibleSpeechProvider(options) {
+  const providerConfigKey = options.configKey || options.id;
+  const normalizeModel =
+    options.normalizeModel ||
+    ((value, fallback) => normalizeOptionalString(value) || fallback);
+  const readExtraConfig = options.readExtraConfig || (() => ({}));
+
+  function normalizeConfig(rawConfig) {
+    const raw = resolveSpeechProviderConfigRecord(rawConfig, providerConfigKey) || {};
+    return {
+      apiKey: normalizeResolvedSecretInputString({
+        value: raw.apiKey,
+        path: `messages.tts.providers.${providerConfigKey}.apiKey`,
+      }),
+      baseUrl:
+        normalizeOptionalString(raw.baseUrl) == null
+          ? undefined
+          : normalizeOpenAiCompatibleSpeechBaseUrl({
+              value: raw.baseUrl,
+              fallback: options.defaultBaseUrl,
+              policy: options.baseUrlPolicy,
+            }),
+      model: normalizeModel(
+        normalizeOptionalString(raw.model || raw.modelId),
+        options.defaultModel,
+      ),
+      voice: normalizeOptionalString(raw.voice || raw.voiceId) || options.defaultVoice,
+      speed: asFiniteNumber(raw.speed),
+      responseFormat: normalizeSpeechResponseFormat({
+        providerLabel: options.label,
+        responseFormats: options.responseFormats,
+        value: raw.responseFormat,
+      }),
+      ...readExtraConfig(raw),
+    };
+  }
+
+  function readProviderConfig(config) {
+    const normalized = normalizeConfig({});
+    const rawConfig = config || {};
+    return {
+      apiKey: normalizeOptionalString(rawConfig.apiKey) || normalized.apiKey,
+      baseUrl:
+        normalizeOptionalString(rawConfig.baseUrl) == null
+          ? normalized.baseUrl
+          : normalizeOpenAiCompatibleSpeechBaseUrl({
+              value: rawConfig.baseUrl,
+              fallback: options.defaultBaseUrl,
+              policy: options.baseUrlPolicy,
+            }),
+      model: normalizeModel(
+        normalizeOptionalString(rawConfig.model || rawConfig.modelId),
+        normalized.model,
+      ),
+      voice: normalizeOptionalString(rawConfig.voice || rawConfig.voiceId) || normalized.voice,
+      speed: asFiniteNumber(rawConfig.speed) ?? normalized.speed,
+      responseFormat:
+        normalizeSpeechResponseFormat({
+          providerLabel: options.label,
+          responseFormats: options.responseFormats,
+          value: rawConfig.responseFormat,
+        }) || normalized.responseFormat,
+      ...readExtraConfig(rawConfig),
+    };
+  }
+
+  function resolveApiKey(params) {
+    return (
+      params.providerConfig.apiKey ||
+      normalizeResolvedSecretInputString({
+        value: (
+          readSpeechModelProviderConfig(params.cfg, providerConfigKey) || {}
+        ).apiKey,
+        path: `models.providers.${providerConfigKey}.apiKey`,
+      }) ||
+      normalizeOptionalString(process.env[options.envKey])
+    );
+  }
+
+  function resolveBaseUrl(params) {
+    const modelProviderConfig =
+      readSpeechModelProviderConfig(params.cfg, providerConfigKey) || {};
+    return normalizeOpenAiCompatibleSpeechBaseUrl({
+      value: params.providerConfig.baseUrl || modelProviderConfig.baseUrl,
+      fallback: options.defaultBaseUrl,
+      policy: options.baseUrlPolicy,
+    });
+  }
+
+  return {
+    id: options.id,
+    label: options.label,
+    autoSelectOrder: options.autoSelectOrder,
+    models: [...options.models],
+    voices: [...options.voices],
+    resolveConfig: ({ rawConfig }) => normalizeConfig(rawConfig),
+    parseDirectiveToken: (ctx) =>
+      parseOpenAiCompatibleSpeechDirectiveToken(ctx, providerConfigKey),
+    resolveTalkConfig: ({ baseTtsConfig, talkProviderConfig }) => {
+      const base = normalizeConfig(baseTtsConfig);
+      const talkConfig = talkProviderConfig || {};
+      const responseFormat = normalizeSpeechResponseFormat({
+        providerLabel: options.label,
+        responseFormats: options.responseFormats,
+        value: talkConfig.responseFormat,
+      });
+      const next = { ...base };
+      if (talkConfig.apiKey !== undefined) {
+        next.apiKey = normalizeResolvedSecretInputString({
+          value: talkConfig.apiKey,
+          path: `talk.providers.${providerConfigKey}.apiKey`,
+        });
+      }
+      const baseUrl = normalizeOptionalString(talkConfig.baseUrl);
+      if (baseUrl !== undefined) {
+        next.baseUrl = normalizeOpenAiCompatibleSpeechBaseUrl({
+          value: baseUrl,
+          fallback: options.defaultBaseUrl,
+          policy: options.baseUrlPolicy,
+        });
+      }
+      const modelId = normalizeOptionalString(talkConfig.modelId);
+      if (modelId !== undefined) {
+        next.model = normalizeModel(modelId, options.defaultModel);
+      }
+      const voiceId = normalizeOptionalString(talkConfig.voiceId);
+      if (voiceId !== undefined) {
+        next.voice = voiceId;
+      }
+      const speed = asFiniteNumber(talkConfig.speed);
+      if (speed !== undefined) {
+        next.speed = speed;
+      }
+      if (responseFormat !== undefined) {
+        next.responseFormat = responseFormat;
+      }
+      return next;
+    },
+    resolveTalkOverrides: ({ params }) => ({
+      ...(normalizeOptionalString(params.voiceId || params.voice) == null
+        ? {}
+        : { voice: normalizeOptionalString(params.voiceId || params.voice) }),
+      ...(normalizeOptionalString(params.modelId || params.model) == null
+        ? {}
+        : { model: normalizeOptionalString(params.modelId || params.model) }),
+      ...(asFiniteNumber(params.speed) == null ? {} : { speed: asFiniteNumber(params.speed) }),
+    }),
+    listVoices: async () => options.voices.map((voice) => ({ id: voice, name: voice })),
+    isConfigured: ({ cfg, providerConfig }) =>
+      Boolean(resolveApiKey({ cfg, providerConfig: readProviderConfig(providerConfig) })),
+    synthesize: async (req) => {
+      const config = readProviderConfig(req.providerConfig);
+      const overrides = readSpeechProviderOverrides(req.providerOverrides);
+      const apiKey = resolveApiKey({ cfg: req.cfg, providerConfig: config });
+      if (!apiKey) {
+        throw new Error(options.missingApiKeyError || `${options.label} API key missing`);
+      }
+      const baseUrl = resolveBaseUrl({ cfg: req.cfg, providerConfig: config });
+      const responseFormat = config.responseFormat || options.defaultResponseFormat;
+      const speed = overrides.speed ?? config.speed;
+      const requestConfig = resolveProviderHttpRequestConfig({
+        baseUrl,
+        defaultBaseUrl: options.defaultBaseUrl,
+        allowPrivateNetwork: false,
+        defaultHeaders: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          ...(options.extraHeaders || {}),
+        },
+        provider: options.id,
+        capability: "audio",
+        transport: "http",
+      });
+      const postResult = await postJsonRequest({
+        url: `${baseUrl}/audio/speech`,
+        headers: requestConfig.headers,
+        body: {
+          model: normalizeModel(overrides.model || config.model, options.defaultModel),
+          input: req.text,
+          voice: overrides.voice || config.voice,
+          response_format: responseFormat,
+          ...(speed == null ? {} : { speed }),
+          ...buildOpenAiCompatibleSpeechExtraJsonBodyFields(
+            config,
+            options.extraJsonBodyFields,
+          ),
+        },
+        timeoutMs: req.timeoutMs,
+        fetchFn: globalThis.fetch,
+        allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+        dispatcherPolicy: requestConfig.dispatcherPolicy,
+      });
+      try {
+        await assertOkOrThrowHttpError(
+          postResult.response,
+          options.apiErrorLabel || `${options.label} TTS API error`,
+        );
+        return {
+          audioBuffer: Buffer.from(await postResult.response.arrayBuffer()),
+          outputFormat: responseFormat,
+          fileExtension: speechResponseFormatToFileExtension(responseFormat),
+          voiceCompatible: options.voiceCompatibleResponseFormats.includes(responseFormat),
+        };
+      } finally {
+        await postResult.release();
+      }
+    },
+  };
+}
+
+const speechRuntime = {
+  TTS_AUTO_MODES,
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowProviderError,
+  canonicalizeSpeechProviderId,
+  createOpenAiCompatibleSpeechProvider,
+  createProviderHttpError,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getSpeechProvider,
+  listSpeechProviders,
+  normalizeApplyTextNormalization,
+  normalizeLanguageCode,
+  normalizeSeed,
+  normalizeSpeechProviderId,
+  normalizeTtsAutoMode,
+  parseTtsDirectives,
+  readResponseTextLimited,
+  requireInRange,
+  scheduleCleanup,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+};
+
 async function assertOkOrThrowHttpError(response, label) {
   if (response && response.ok) {
     return;
@@ -71706,6 +72039,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/speech-core"
   ) {
     return speechCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/speech" ||
+    request === "@openclaw/plugin-sdk/speech"
+  ) {
+    return speechRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/tts-runtime" ||

@@ -31829,6 +31829,306 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_speech_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-speech.cjs"
+    runtime_entry.write_text(
+        """
+const speech = require("openclaw/plugin-sdk/speech");
+const scopedSpeech = require("@openclaw/plugin-sdk/speech");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.speech",
+      description: "Use OpenClaw speech SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const provider = speech.createOpenAiCompatibleSpeechProvider({
+          id: "demo",
+          label: "Demo",
+          autoSelectOrder: 40,
+          models: ["demo-tts"],
+          voices: ["alloy", "nova"],
+          defaultModel: "demo-tts",
+          defaultVoice: "alloy",
+          defaultBaseUrl: "https://api.openai.com/v1",
+          envKey: "DEMO_SPEECH_KEY",
+          responseFormats: ["mp3", "opus"],
+          defaultResponseFormat: "mp3",
+          voiceCompatibleResponseFormats: ["opus"],
+          baseUrlPolicy: {
+            kind: "canonical",
+            aliases: ["https://alias.example.test/v1"]
+          },
+          readExtraConfig(raw) {
+            return raw && typeof raw.routing === "object" && !Array.isArray(raw.routing)
+              ? { routing: raw.routing }
+              : {};
+          },
+          extraJsonBodyFields: [{ configKey: "routing", requestKey: "provider" }]
+        });
+
+        const resolved = provider.resolveConfig({
+          cfg: {},
+          timeoutMs: 30000,
+          rawConfig: {
+            providers: {
+              demo: {
+                apiKey: " sk-demo ",
+                baseUrl: "https://alias.example.test/v1/",
+                modelId: "custom-tts",
+                voiceId: "nova",
+                speed: 1.25,
+                responseFormat: " OPUS ",
+                routing: { order: ["primary"] }
+              }
+            }
+          }
+        });
+        const voiceDirective = provider.parseDirectiveToken({
+          key: "demo_voice",
+          value: "verse",
+          policy: { allowVoice: true, allowModelId: true }
+        });
+        const blockedModelDirective = provider.parseDirectiveToken({
+          key: "demo_model",
+          value: "blocked",
+          policy: { allowVoice: true, allowModelId: false }
+        });
+        const unknownDirective = provider.parseDirectiveToken({
+          key: "style",
+          value: "calm",
+          policy: { allowVoice: true, allowModelId: true }
+        });
+        const talkConfig = provider.resolveTalkConfig({
+          baseTtsConfig: {
+            providers: {
+              demo: {
+                apiKey: "sk-base",
+                modelId: "base-tts",
+                voiceId: "alloy",
+                responseFormat: "mp3",
+                routing: { order: ["base"] }
+              }
+            }
+          },
+          talkProviderConfig: {
+            baseUrl: "https://alias.example.test/v1",
+            modelId: "talk-tts",
+            voiceId: "nova",
+            speed: 1.5,
+            responseFormat: "opus"
+          }
+        });
+        const talkOverrides = provider.resolveTalkOverrides({
+          params: { voiceId: "echo", model: "override-tts", speed: 1.1 }
+        });
+        process.env.DEMO_SPEECH_KEY = "sk-env";
+        const configured = provider.isConfigured({ cfg: {}, providerConfig: {} });
+        delete process.env.DEMO_SPEECH_KEY;
+
+        const fetchCalls = [];
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async (url, init = {}) => {
+          const headers = new Headers(init.headers);
+          fetchCalls.push({
+            url: String(url),
+            method: init.method,
+            auth: headers.get("authorization"),
+            contentType: headers.get("content-type"),
+            body: JSON.parse(init.body)
+          });
+          return new Response(new Uint8Array([4, 5, 6]), { status: 200 });
+        };
+        let synthesized;
+        try {
+          synthesized = await provider.synthesize({
+            text: "hello",
+            cfg: {},
+            providerConfig: {
+              apiKey: "sk-direct",
+              baseUrl: "https://api.openai.com/v1/",
+              responseFormat: "opus",
+              routing: { order: ["demo"] }
+            },
+            providerOverrides: {
+              modelId: "override-tts",
+              voiceId: "verse",
+              speed: 1.1
+            },
+            target: "voice-note",
+            timeoutMs: 1234
+          });
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+
+        return {
+          keys: Object.keys(speech).sort(),
+          scopedType: typeof scopedSpeech.createOpenAiCompatibleSpeechProvider,
+          providerMeta: {
+            id: provider.id,
+            label: provider.label,
+            autoSelectOrder: provider.autoSelectOrder,
+            models: provider.models,
+            voices: provider.voices
+          },
+          resolved,
+          directives: { voiceDirective, blockedModelDirective, unknownDirective },
+          talkConfig,
+          talkOverrides,
+          voices: await provider.listVoices(),
+          configured,
+          fetchCalls,
+          synthesized: {
+            audio: Array.from(synthesized.audioBuffer),
+            outputFormat: synthesized.outputFormat,
+            fileExtension: synthesized.fileExtension,
+            voiceCompatible: synthesized.voiceCompatible
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "speech-plugin",
+                    "name": "Speech Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-speech.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.speech"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.speech"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "TTS_AUTO_MODES",
+            "asBoolean",
+            "asFiniteNumber",
+            "asObject",
+            "assertOkOrThrowProviderError",
+            "canonicalizeSpeechProviderId",
+            "createOpenAiCompatibleSpeechProvider",
+            "createProviderHttpError",
+            "extractProviderErrorDetail",
+            "extractProviderRequestId",
+            "formatProviderErrorPayload",
+            "formatProviderHttpErrorMessage",
+            "getSpeechProvider",
+            "listSpeechProviders",
+            "normalizeApplyTextNormalization",
+            "normalizeLanguageCode",
+            "normalizeSeed",
+            "normalizeSpeechProviderId",
+            "normalizeTtsAutoMode",
+            "parseTtsDirectives",
+            "readResponseTextLimited",
+            "requireInRange",
+            "scheduleCleanup",
+            "trimToUndefined",
+            "truncateErrorDetail",
+        ],
+        "scopedType": "function",
+        "providerMeta": {
+            "id": "demo",
+            "label": "Demo",
+            "autoSelectOrder": 40,
+            "models": ["demo-tts"],
+            "voices": ["alloy", "nova"],
+        },
+        "resolved": {
+            "apiKey": "sk-demo",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "custom-tts",
+            "voice": "nova",
+            "speed": 1.25,
+            "responseFormat": "opus",
+            "routing": {"order": ["primary"]},
+        },
+        "directives": {
+            "voiceDirective": {"handled": True, "overrides": {"voice": "verse"}},
+            "blockedModelDirective": {"handled": True},
+            "unknownDirective": {"handled": False},
+        },
+        "talkConfig": {
+            "apiKey": "sk-base",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "talk-tts",
+            "voice": "nova",
+            "speed": 1.5,
+            "responseFormat": "opus",
+            "routing": {"order": ["base"]},
+        },
+        "talkOverrides": {"voice": "echo", "model": "override-tts", "speed": 1.1},
+        "voices": [{"id": "alloy", "name": "alloy"}, {"id": "nova", "name": "nova"}],
+        "configured": True,
+        "fetchCalls": [
+            {
+                "url": "https://api.openai.com/v1/audio/speech",
+                "method": "POST",
+                "auth": "Bearer sk-direct",
+                "contentType": "application/json",
+                "body": {
+                    "model": "override-tts",
+                    "input": "hello",
+                    "voice": "verse",
+                    "response_format": "opus",
+                    "speed": 1.1,
+                    "provider": {"order": ["demo"]},
+                },
+            }
+        ],
+        "synthesized": {
+            "audio": [4, 5, 6],
+            "outputFormat": "opus",
+            "fileExtension": ".opus",
+            "voiceCompatible": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_video_generation_core_helpers(
     tmp_path,
 ) -> None:
