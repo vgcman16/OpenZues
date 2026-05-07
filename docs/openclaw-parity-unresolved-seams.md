@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~98.2% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~98.3% overall, with a reasonable
   band of ~80-98%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -96,7 +96,7 @@ Current percentage rollup:
   memory-core-host-secret helper, memory-core-host-events helper,
   memory-core-host-status helper, provider-setup helper,
   self-hosted-provider-setup helper, LM Studio runtime helper,
-  group-activation helper, media-store helper,
+  group-activation helper, media-store helper, web-media helper,
   browser-security-runtime helper, browser-host-inspection helper,
   browser-node-host helper, browser-node-runtime helper,
   browser-setup-tools helper, browser-support helper, browser-bridge helper,
@@ -9366,6 +9366,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   conversion, plugin HTTP path normalization, auth rate limiting, and
   `DEFAULT_WEBHOOK_MAX_BODY_BYTES`. Source/test checkpointed in `399e784a`;
   repo-wide parity is now estimated at ~98.2%.
+- Current queue-head adjustment: imported plugin SDK `web-media` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports: local
+  and file-URL media loading under explicit local roots, default local media
+  roots, MIME/kind/fileName projection, `LocalMediaAccessError` shaping,
+  unsafe-bypass rejection, and image optimization helper error projection.
+  Source/test checkpointed in `a60b54f2`; repo-wide parity is now estimated at
+  ~98.3%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
