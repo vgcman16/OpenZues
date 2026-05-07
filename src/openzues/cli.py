@@ -18099,6 +18099,11 @@ Object.assign(MIME_BY_EXT, {
   ".htm": "text/html",
   ".xml": "text/xml",
 });
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 16 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+const MB = 1024 * 1024;
 const CHAT_COMMANDS = [
   { key: "help", aliases: ["/help"], acceptsArgs: false },
   { key: "commands", aliases: ["/commands"], acceptsArgs: false },
@@ -19687,6 +19692,11 @@ function getFileExtension(filePath) {
   return path.extname(raw).toLowerCase() || undefined;
 }
 
+function mimeTypeFromFilePath(filePath) {
+  const ext = getFileExtension(filePath);
+  return ext ? MIME_BY_EXT[ext] : undefined;
+}
+
 function extensionForMime(mime) {
   const normalized = normalizeMimeType(mime);
   return normalized ? EXT_BY_MIME[normalized] : undefined;
@@ -19716,6 +19726,54 @@ function mediaKindFromMime(mime) {
     return "document";
   }
   return undefined;
+}
+
+function maxBytesForKind(kind) {
+  switch (kind) {
+    case "image":
+      return MAX_IMAGE_BYTES;
+    case "audio":
+      return MAX_AUDIO_BYTES;
+    case "video":
+      return MAX_VIDEO_BYTES;
+    case "document":
+    default:
+      return MAX_DOCUMENT_BYTES;
+  }
+}
+
+function isGifMedia(opts = {}) {
+  if (normalizeMimeType(opts.contentType) === "image/gif") {
+    return true;
+  }
+  return getFileExtension(opts.fileName) === ".gif";
+}
+
+function imageMimeFromFormat(format) {
+  const normalized = normalizeLowercaseStringOrEmpty(format);
+  if (normalized === "jpg" || normalized === "jpeg") {
+    return "image/jpeg";
+  }
+  if (normalized === "heic") {
+    return "image/heic";
+  }
+  if (normalized === "heif") {
+    return "image/heif";
+  }
+  if (normalized === "png") {
+    return "image/png";
+  }
+  if (normalized === "webp") {
+    return "image/webp";
+  }
+  if (normalized === "gif") {
+    return "image/gif";
+  }
+  return undefined;
+}
+
+function kindFromMime(mime) {
+  return mediaKindFromMime(normalizeMimeType(mime));
 }
 
 function isGenericMime(mime) {
@@ -20540,21 +20598,126 @@ function getPathTeardownMap(targetsByPath) {
   return created;
 }
 
-function registerPluginHttpRoute(route) {
+function pluginHttpRoutesOverlap(a, b) {
+  const aPath = normalizePluginHttpPath(a && a.path, "/") || "/";
+  const bPath = normalizePluginHttpPath(b && b.path, "/") || "/";
+  const aMatch = (a && a.match) || "exact";
+  const bMatch = (b && b.match) || "exact";
+  if (aMatch === "exact" && bMatch === "exact") {
+    return aPath === bPath;
+  }
+  const prefixMatchPath = (pathname, prefix) =>
+    pathname === prefix || pathname.startsWith(`${prefix}/`) || pathname.startsWith(`${prefix}%`);
+  if (aMatch === "prefix" && bMatch === "prefix") {
+    return prefixMatchPath(aPath, bPath) || prefixMatchPath(bPath, aPath);
+  }
+  const prefixPath = aMatch === "prefix" ? aPath : bPath;
+  const exactPath = aMatch === "exact" ? aPath : bPath;
+  return (
+    exactPath === prefixPath ||
+    exactPath.startsWith(`${prefixPath}/`) ||
+    exactPath.startsWith(`${prefixPath}%`)
+  );
+}
+
+function findOverlappingPluginHttpRoute(routes, candidate) {
+  return routes.find((route) => pluginHttpRoutesOverlap(route, candidate));
+}
+
+function registerPluginHttpRoute(route = {}) {
+  const registry =
+    route && route.registry && typeof route.registry === "object"
+      ? route.registry
+      : { httpRoutes: registeredPluginHttpRoutes };
+  const routes = Array.isArray(registry.httpRoutes) ? registry.httpRoutes : [];
+  registry.httpRoutes = routes;
+  const normalizedPath = normalizePluginHttpPath(route.path, route.fallbackPath);
+  const suffix = route.accountId ? ` for account "${route.accountId}"` : "";
+  if (!normalizedPath) {
+    if (typeof route.log === "function") {
+      route.log(`plugin: webhook path missing${suffix}`);
+    }
+    return () => {};
+  }
+  const routeMatch = route.match || "exact";
+  const overlappingRoute = findOverlappingPluginHttpRoute(routes, {
+    path: normalizedPath,
+    match: routeMatch,
+  });
+  if (overlappingRoute && overlappingRoute.auth !== route.auth) {
+    if (typeof route.log === "function") {
+      const overlapMatch = overlappingRoute.match || "exact";
+      const overlapOwner =
+        `${overlappingRoute.pluginId || "unknown-plugin"} ` +
+        `(${overlappingRoute.source || "unknown-source"})`;
+      route.log(
+        [
+          `plugin: route overlap denied at ${normalizedPath}`,
+          `(${routeMatch}, ${route.auth})${suffix};`,
+          `overlaps ${overlappingRoute.path}`,
+          `(${overlapMatch}, ${overlappingRoute.auth}) owned by ${overlapOwner}`,
+        ].join(" "),
+      );
+    }
+    return () => {};
+  }
+  const existingIndex = routes.findIndex(
+    (entry) => entry.path === normalizedPath && (entry.match || "exact") === routeMatch,
+  );
+  if (existingIndex >= 0) {
+    const existing = routes[existingIndex];
+    if (!route.replaceExisting) {
+      if (typeof route.log === "function") {
+        const owner =
+          `${existing.pluginId || "unknown-plugin"} ` +
+          `(${existing.source || "unknown-source"})`;
+        route.log(
+          `plugin: route conflict at ${normalizedPath} (${routeMatch})${suffix}; ` +
+            `owned by ${owner}`,
+        );
+      }
+      return () => {};
+    }
+    if (existing.pluginId && route.pluginId && existing.pluginId !== route.pluginId) {
+      if (typeof route.log === "function") {
+        route.log(
+          `plugin: route replacement denied for ${normalizedPath} ` +
+            `(${routeMatch})${suffix}; owned by ${existing.pluginId}`,
+        );
+      }
+      return () => {};
+    }
+    if (typeof route.log === "function") {
+      const pluginHint = route.pluginId ? ` (${route.pluginId})` : "";
+      route.log(
+        `plugin: replacing stale webhook path ${normalizedPath} ` +
+          `(${routeMatch})${suffix}${pluginHint}`,
+      );
+    }
+    routes.splice(existingIndex, 1);
+  }
   const normalizedRoute = {
-    ...route,
-    path: normalizeWebhookPath(route && route.path ? route.path : "/"),
+    path: normalizedPath,
+    handler: route.handler,
+    auth: route.auth,
+    match: routeMatch,
+    ...(route.gatewayRuntimeScopeSurface
+      ? { gatewayRuntimeScopeSurface: route.gatewayRuntimeScopeSurface }
+      : {}),
+    pluginId: route.pluginId,
+    source: route.source,
+    ...(route.accountId ? { accountId: route.accountId } : {}),
   };
-  registeredPluginHttpRoutes.push(normalizedRoute);
+  routes.push(normalizedRoute);
   let active = true;
   return () => {
     if (!active) {
       return;
     }
     active = false;
-    const index = registeredPluginHttpRoutes.indexOf(normalizedRoute);
+    const index = routes.indexOf(normalizedRoute);
     if (index >= 0) {
-      registeredPluginHttpRoutes.splice(index, 1);
+      routes.splice(index, 1);
     }
   };
 }
@@ -27953,6 +28116,13 @@ async function withTempDownloadPath(params, fn) {
   } finally {
     await target.cleanup();
   }
+}
+
+async function unlinkIfExists(filePath) {
+  if (!filePath) {
+    return;
+  }
+  await fs.promises.unlink(filePath).catch(() => undefined);
 }
 
 const DEFAULT_SECRET_PROVIDER_ALIAS = "default";
@@ -41574,7 +41744,12 @@ const mediaMimeRuntime = {
   detectMime,
   extensionForMime,
   getFileExtension,
+  imageMimeFromFormat,
+  isGifMedia,
+  kindFromMime,
+  maxBytesForKind,
   mediaKindFromMime,
+  mimeTypeFromFilePath,
   normalizeMimeType,
 };
 
@@ -42135,6 +42310,133 @@ async function loadOutboundMediaFromUrl(mediaUrl, options = {}) {
 const outboundMediaRuntime = {
   loadOutboundMediaFromUrl,
 };
+
+function resolveChannelMediaMaxBytes(params = {}) {
+  const accountId = normalizeAccountId(params.accountId);
+  const channelLimit =
+    typeof params.resolveChannelLimitMb === "function"
+      ? params.resolveChannelLimitMb({
+          cfg: params.cfg || {},
+          accountId,
+        })
+      : undefined;
+  if (typeof channelLimit === "number" && Number.isFinite(channelLimit) && channelLimit > 0) {
+    return channelLimit * MB;
+  }
+  const defaultLimit =
+    params.cfg &&
+    params.cfg.agents &&
+    params.cfg.agents.defaults &&
+    params.cfg.agents.defaults.mediaMaxMb;
+  if (typeof defaultLimit === "number" && Number.isFinite(defaultLimit) && defaultLimit > 0) {
+    return defaultLimit * MB;
+  }
+  return undefined;
+}
+
+function resolveScopedChannelMediaMaxBytes(params = {}) {
+  return resolveChannelMediaMaxBytes(params);
+}
+
+function createScopedChannelMediaMaxBytesResolver(channel) {
+  return (params = {}) =>
+    resolveScopedChannelMediaMaxBytes({
+      cfg: params.cfg || {},
+      accountId: params.accountId,
+      resolveChannelLimitMb: ({ cfg, accountId }) => {
+        const channelCfg = cfg.channels && cfg.channels[channel];
+        const accountCfg = channelCfg && channelCfg.accounts && channelCfg.accounts[accountId];
+        return (
+          (accountCfg && accountCfg.mediaMaxMb) ||
+          (channelCfg && channelCfg.mediaMaxMb)
+        );
+      },
+    });
+}
+
+async function sendDirectTextMedia(params = {}) {
+  const send = params.resolveSender(params.deps);
+  const maxBytes = params.resolveMaxBytes({
+    cfg: params.cfg || {},
+    accountId: params.accountId,
+  });
+  const result = await send(
+    params.to,
+    params.text,
+    params.buildOptions({
+      cfg: params.cfg || {},
+      mediaUrl: params.mediaUrl,
+      mediaAccess: params.mediaAccess,
+      mediaLocalRoots: params.mediaLocalRoots,
+      mediaReadFile: params.mediaReadFile,
+      accountId: params.accountId,
+      replyToId: params.replyToId,
+      maxBytes,
+    }),
+  );
+  return { channel: params.channel, ...result };
+}
+
+function createDirectTextMediaOutbound(params = {}) {
+  const outbound = {
+    deliveryMode: "direct",
+    chunker: chunkText,
+    chunkerMode: "text",
+    textChunkLimit: 4000,
+    sanitizeText: ({ text }) => sanitizeForPlainText(text),
+    sendPayload: async (ctx) =>
+      await sendTextMediaPayload({ channel: params.channel, ctx, adapter: outbound }),
+    sendText: async ({ cfg, to, text, accountId, deps, replyToId }) =>
+      await sendDirectTextMedia({
+        cfg,
+        to,
+        text,
+        accountId,
+        deps,
+        replyToId,
+        channel: params.channel,
+        resolveSender: params.resolveSender,
+        resolveMaxBytes: params.resolveMaxBytes,
+        buildOptions: params.buildTextOptions,
+      }),
+    sendMedia: async ({
+      cfg,
+      to,
+      text,
+      mediaUrl,
+      mediaAccess,
+      mediaLocalRoots,
+      mediaReadFile,
+      accountId,
+      deps,
+      replyToId,
+    }) =>
+      await sendDirectTextMedia({
+        cfg,
+        to,
+        text,
+        mediaUrl,
+        mediaAccess:
+          mediaAccess ||
+          (mediaLocalRoots || mediaReadFile
+            ? {
+                ...(mediaLocalRoots ? { localRoots: mediaLocalRoots } : {}),
+                ...(mediaReadFile ? { readFile: mediaReadFile } : {}),
+              }
+            : undefined),
+        mediaLocalRoots,
+        mediaReadFile,
+        accountId,
+        deps,
+        replyToId,
+        channel: params.channel,
+        resolveSender: params.resolveSender,
+        resolveMaxBytes: params.resolveMaxBytes,
+        buildOptions: params.buildMediaOptions,
+      }),
+  };
+  return outbound;
+}
 
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
@@ -61622,8 +61924,49 @@ async function callGatewayFromCli() {
   throw new Error("UNAVAILABLE: gateway RPC unavailable in OpenZues plugin runtime");
 }
 
-async function startLazyPluginServiceModule() {
-  throw new Error("UNAVAILABLE: lazy plugin service unavailable in OpenZues plugin runtime");
+async function defaultLoadOverrideModule(
+  specifier,
+  importModule = async (source) => await import(source),
+) {
+  return await importModule(specifier);
+}
+
+function resolveLazyPluginServiceExport(mod, names = []) {
+  for (const name of names) {
+    const value = mod && mod[name];
+    if (typeof value === "function") {
+      return value;
+    }
+  }
+  return null;
+}
+
+async function startLazyPluginServiceModule(params = {}) {
+  const skipEnvVar = normalizeOptionalString(params.skipEnvVar);
+  if (skipEnvVar && isTruthyEnvValue(process.env[skipEnvVar])) {
+    return null;
+  }
+  const overrideEnvVar = normalizeOptionalString(params.overrideEnvVar);
+  const override = overrideEnvVar
+    ? normalizeOptionalString(process.env[overrideEnvVar])
+    : undefined;
+  const loadOverrideModule = params.loadOverrideModule || defaultLoadOverrideModule;
+  const validatedOverride =
+    override && typeof params.validateOverrideSpecifier === "function"
+      ? params.validateOverrideSpecifier(override)
+      : override;
+  const mod = validatedOverride
+    ? await loadOverrideModule(validatedOverride)
+    : await params.loadDefaultModule();
+  const start = resolveLazyPluginServiceExport(mod, params.startExportNames || []);
+  if (!start) {
+    return null;
+  }
+  const stop = resolveLazyPluginServiceExport(mod, params.stopExportNames || []);
+  await start();
+  return {
+    stop: stop || (async () => {}),
+  };
 }
 
 async function withAbortableTimeout(work, timeoutMs, label) {
@@ -71303,6 +71646,29 @@ const agentMediaPayloadRuntime = {
   getAgentScopedMediaLocalRoots,
 };
 
+const mediaRuntime = {
+  MAX_AUDIO_BYTES,
+  MAX_DOCUMENT_BYTES,
+  MAX_IMAGE_BYTES,
+  MAX_VIDEO_BYTES,
+  ...agentMediaPayloadRuntime,
+  ...mediaGenerationRuntime,
+  ...mediaGenerationRuntimeSharedRuntime,
+  ...mediaMimeRuntime,
+  ...mediaStoreRuntime,
+  ...mediaUnderstandingProviderRuntime,
+  ...mediaUnderstandingRuntime,
+  ...outboundMediaRuntime,
+  ...pollRuntime,
+  ...replyPayloadRuntime,
+  ...webMediaRuntime,
+  createDirectTextMediaOutbound,
+  createScopedChannelMediaMaxBytesResolver,
+  resolveChannelMediaMaxBytes,
+  resolveScopedChannelMediaMaxBytes,
+  unlinkIfExists,
+};
+
 const agentConfigPrimitivesRuntime = {
   ReplyRuntimeConfigSchemaShape,
   ToolPolicySchema,
@@ -71399,6 +71765,681 @@ const pluginConfigRuntime = {
   resolveEffectiveEnableState,
   resolveLivePluginConfigObject,
   resolvePluginConfigObject,
+};
+
+const PLUGIN_COMMAND_REGISTRY_KEY = Symbol.for("openclaw.pluginCommands");
+const PLUGIN_INTERACTIVE_REGISTRY_KEY = Symbol.for("openclaw.pluginInteractiveHandlers");
+const PLUGIN_INTERACTIVE_DEDUPE_KEY = Symbol.for("openclaw.pluginInteractiveDedupe");
+const PLUGIN_HOOK_RUNNER_STATE_KEY = Symbol.for("openclaw.plugins.hook-runner-global-state");
+const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY = Symbol.for(
+  "openclaw.pluginRuntimeGatewayRequestScope",
+);
+const RESERVED_PLUGIN_COMMAND_NAMES = new Set([
+  "help",
+  "commands",
+  "status",
+  "diagnostics",
+  "codex",
+  "whoami",
+  "context",
+  "btw",
+  "stop",
+  "restart",
+  "reset",
+  "new",
+  "compact",
+  "config",
+  "debug",
+  "allowlist",
+  "activation",
+  "skill",
+  "subagents",
+  "kill",
+  "steer",
+  "tell",
+  "model",
+  "models",
+  "queue",
+  "send",
+  "bash",
+  "exec",
+  "think",
+  "verbose",
+  "reasoning",
+  "elevated",
+  "usage",
+]);
+const VALID_PLUGIN_OPERATOR_SCOPES = new Set([
+  "operator.admin",
+  "operator.read",
+  "operator.write",
+  "operator.approvals",
+  "operator.pairing",
+  "operator.talk.secrets",
+]);
+const MAX_PLUGIN_COMMAND_ARGS_LENGTH = 4096;
+
+function getPluginCommandRegistryState() {
+  return resolveGlobalSingleton(PLUGIN_COMMAND_REGISTRY_KEY, () => ({
+    commands: new Map(),
+    locked: false,
+  }));
+}
+
+function getPluginInteractiveRegistryState() {
+  return resolveGlobalSingleton(PLUGIN_INTERACTIVE_REGISTRY_KEY, () => new Map());
+}
+
+function getPluginInteractiveDedupeState() {
+  return resolveGlobalSingleton(PLUGIN_INTERACTIVE_DEDUPE_KEY, () => new Set());
+}
+
+function normalizePluginCommandName(name) {
+  return normalizeLowercaseStringOrEmpty(name).replace(/^\/+/, "");
+}
+
+function isReservedPluginCommandName(name) {
+  const normalized = normalizePluginCommandName(name);
+  return Boolean(normalized && RESERVED_PLUGIN_COMMAND_NAMES.has(normalized));
+}
+
+function validateCommandName(name, opts = {}) {
+  const trimmed = normalizePluginCommandName(name);
+  if (!trimmed) {
+    return "Command name cannot be empty";
+  }
+  if (!/^[a-z][a-z0-9_-]*$/.test(trimmed)) {
+    return (
+      "Command name must start with a letter and contain only letters, " +
+      "numbers, hyphens, and underscores"
+    );
+  }
+  if (!opts.allowReservedCommandNames && RESERVED_PLUGIN_COMMAND_NAMES.has(trimmed)) {
+    return `Command name "${trimmed}" is reserved by a built-in command`;
+  }
+  return null;
+}
+
+function validatePluginCommandDefinition(command, opts = {}) {
+  if (typeof (command && command.handler) !== "function") {
+    return "Command handler must be a function";
+  }
+  if (typeof (command && command.name) !== "string") {
+    return "Command name must be a string";
+  }
+  if (typeof command.description !== "string") {
+    return "Command description must be a string";
+  }
+  if (!command.description.trim()) {
+    return "Command description cannot be empty";
+  }
+  if (command.ownership === "reserved") {
+    if (!opts.allowReservedCommandNames) {
+      return "Reserved command ownership is only available to bundled reserved commands";
+    }
+    if (!isReservedPluginCommandName(command.name)) {
+      return (
+        "Reserved command ownership requires a reserved command name: " +
+        normalizePluginCommandName(command.name)
+      );
+    }
+  }
+  if (command.agentPromptGuidance !== undefined && !Array.isArray(command.agentPromptGuidance)) {
+    return "Agent prompt guidance must be an array of strings";
+  }
+  for (const [index, guidance] of (command.agentPromptGuidance || []).entries()) {
+    if (typeof guidance !== "string") {
+      return `Agent prompt guidance ${index + 1} must be a string`;
+    }
+    if (!guidance.trim()) {
+      return `Agent prompt guidance ${index + 1} cannot be empty`;
+    }
+  }
+  if (command.requiredScopes !== undefined) {
+    if (!Array.isArray(command.requiredScopes)) {
+      return "Command requiredScopes must be an array of operator scopes";
+    }
+    const unknownScope = command.requiredScopes.find(
+      (scope) => typeof scope !== "string" || !VALID_PLUGIN_OPERATOR_SCOPES.has(scope),
+    );
+    if (unknownScope) {
+      return typeof unknownScope === "string"
+        ? `Command requiredScopes contains unknown operator scope: ${unknownScope}`
+        : "Command requiredScopes contains unknown operator scope";
+    }
+  }
+  const nameError = validateCommandName(command.name.trim(), opts);
+  if (nameError) {
+    return nameError;
+  }
+  for (const [label, alias] of Object.entries(command.nativeNames || {})) {
+    if (typeof alias !== "string") {
+      continue;
+    }
+    const aliasError = validateCommandName(alias.trim());
+    if (aliasError) {
+      return `Native command alias "${label}" invalid: ${aliasError}`;
+    }
+  }
+  for (const [label, message] of Object.entries(command.nativeProgressMessages || {})) {
+    if (typeof message !== "string") {
+      return `Native progress message "${label}" must be a string`;
+    }
+    if (!message.trim()) {
+      return `Native progress message "${label}" cannot be empty`;
+    }
+  }
+  for (const [locale, description] of Object.entries(command.descriptionLocalizations || {})) {
+    if (typeof description !== "string") {
+      return `Description localization "${locale}" must be a string`;
+    }
+    if (!description.trim()) {
+      return `Description localization "${locale}" cannot be empty`;
+    }
+  }
+  return null;
+}
+
+function listPluginInvocationKeys(command) {
+  const keys = new Set();
+  const push = (value) => {
+    const normalized = normalizePluginCommandName(value);
+    if (normalized) {
+      keys.add(`/${normalized}`);
+    }
+  };
+  push(command && command.name);
+  for (const alias of Object.values((command && command.nativeNames) || {})) {
+    if (typeof alias === "string") {
+      push(alias);
+    }
+  }
+  return [...keys];
+}
+
+function clearPluginCommands() {
+  getPluginCommandRegistryState().commands.clear();
+}
+
+function clearPluginCommandsForPlugin(pluginId) {
+  const normalizedPluginId = String(pluginId || "");
+  const commands = getPluginCommandRegistryState().commands;
+  for (const [key, command] of commands.entries()) {
+    if (command.pluginId === normalizedPluginId) {
+      commands.delete(key);
+    }
+  }
+}
+
+function registerPluginCommand(pluginId, command, opts = {}) {
+  const state = getPluginCommandRegistryState();
+  if (state.locked) {
+    return { ok: false, error: "Cannot register commands while processing is in progress" };
+  }
+  if (command && command.ownership === "reserved") {
+    return {
+      ok: false,
+      error: "Reserved command ownership is only available to bundled reserved commands",
+    };
+  }
+  const definitionError = validatePluginCommandDefinition(command, opts);
+  if (definitionError) {
+    return { ok: false, error: definitionError };
+  }
+  const name = command.name.trim();
+  const normalizedName = normalizePluginCommandName(name);
+  const normalizedCommand = {
+    ...command,
+    name,
+    description: command.description.trim(),
+    ...(command.agentPromptGuidance
+      ? { agentPromptGuidance: command.agentPromptGuidance.map((line) => line.trim()) }
+      : {}),
+  };
+  for (const invocationKey of listPluginInvocationKeys(normalizedCommand)) {
+    const existing =
+      state.commands.get(invocationKey) ||
+      Array.from(state.commands.values()).find((candidate) =>
+        listPluginInvocationKeys(candidate).includes(invocationKey),
+      );
+    if (existing) {
+      return {
+        ok: false,
+        error:
+          `Command "${invocationKey.slice(1)}" already registered by plugin ` +
+          `"${existing.pluginId}"`,
+      };
+    }
+  }
+  state.commands.set(`/${normalizedName}`, {
+    ...normalizedCommand,
+    pluginId,
+    pluginName: opts.pluginName,
+    pluginRoot: opts.pluginRoot,
+  });
+  return { ok: true };
+}
+
+function listPluginCommands() {
+  return Array.from(getPluginCommandRegistryState().commands.values()).map((command) => ({
+    name: command.name,
+    description: command.description,
+    pluginId: command.pluginId,
+    acceptsArgs: command.acceptsArgs || false,
+  }));
+}
+
+function resolvePluginCommandProviderName(command, provider) {
+  const providerKey = normalizePluginCommandName(provider);
+  const nativeName =
+    providerKey && command.nativeNames ? command.nativeNames[providerKey] : undefined;
+  return normalizePluginCommandName(nativeName || command.name);
+}
+
+function listProviderPluginCommandSpecs(provider) {
+  return Array.from(getPluginCommandRegistryState().commands.values()).map((command) => ({
+    name: resolvePluginCommandProviderName(command, provider),
+    description: command.description,
+    pluginId: command.pluginId,
+    acceptsArgs: command.acceptsArgs || false,
+  }));
+}
+
+function getPluginCommandSpecs(provider) {
+  return listProviderPluginCommandSpecs(provider);
+}
+
+function findPluginCommandByInvocationKey(key) {
+  const commands = getPluginCommandRegistryState().commands;
+  const alternateKeys = [key];
+  if (key.includes("_")) {
+    alternateKeys.push(key.replace(/_/g, "-"));
+  }
+  if (key.includes("-")) {
+    alternateKeys.push(key.replace(/-/g, "_"));
+  }
+  for (const candidateKey of alternateKeys) {
+    const direct = commands.get(candidateKey);
+    if (direct) {
+      return direct;
+    }
+    const indirect = Array.from(commands.values()).find((command) =>
+      listPluginInvocationKeys(command).includes(candidateKey),
+    );
+    if (indirect) {
+      return indirect;
+    }
+  }
+  return null;
+}
+
+function matchPluginCommand(commandBody) {
+  const trimmed = typeof commandBody === "string" ? commandBody.trim() : "";
+  if (!trimmed.startsWith("/")) {
+    return null;
+  }
+  const spaceIndex = trimmed.indexOf(" ");
+  const commandName = spaceIndex === -1 ? trimmed : trimmed.slice(0, spaceIndex);
+  const args = spaceIndex === -1 ? undefined : trimmed.slice(spaceIndex + 1).trim();
+  const command = findPluginCommandByInvocationKey(`/${normalizePluginCommandName(commandName)}`);
+  if (!command) {
+    return null;
+  }
+  if (args && !command.acceptsArgs) {
+    return null;
+  }
+  return { command, args: args || undefined };
+}
+
+function sanitizePluginCommandArgs(args) {
+  if (!args) {
+    return undefined;
+  }
+  const capped = args.length > MAX_PLUGIN_COMMAND_ARGS_LENGTH
+    ? args.slice(0, MAX_PLUGIN_COMMAND_ARGS_LENGTH)
+    : args;
+  let sanitized = "";
+  for (const char of capped) {
+    const code = char.charCodeAt(0);
+    if ((code <= 0x1f && code !== 0x09 && code !== 0x0a) || code === 0x7f) {
+      continue;
+    }
+    sanitized += char;
+  }
+  return sanitized;
+}
+
+async function executePluginCommand(params = {}) {
+  const command = params.command;
+  if (!command || typeof command.handler !== "function") {
+    return { text: "Command failed. Please try again later." };
+  }
+  if (command.requireAuth !== false && !params.isAuthorizedSender) {
+    return { text: "This command requires authorization." };
+  }
+  if (command.requiredScopes !== undefined && !Array.isArray(command.requiredScopes)) {
+    return { text: "This command has invalid gateway scope configuration." };
+  }
+  const requiredScopes = command.requiredScopes || [];
+  const unknownScope = requiredScopes.find(
+    (scope) => typeof scope !== "string" || !VALID_PLUGIN_OPERATOR_SCOPES.has(scope),
+  );
+  if (unknownScope) {
+    return { text: "This command has invalid gateway scope configuration." };
+  }
+  if (requiredScopes.length > 0 && params.gatewayClientScopes) {
+    const scopes = new Set(params.gatewayClientScopes || []);
+    const hasAdmin = scopes.has("operator.admin");
+    const missingScope = requiredScopes.find((scope) => !hasAdmin && !scopes.has(scope));
+    if (missingScope) {
+      return { text: `This command requires gateway scope: ${missingScope}.` };
+    }
+  }
+  const state = getPluginCommandRegistryState();
+  state.locked = true;
+  try {
+    return await command.handler({
+      senderId: params.senderId,
+      channel: params.channel,
+      channelId: params.channelId,
+      isAuthorizedSender: params.isAuthorizedSender,
+      ...(params.senderIsOwner === undefined ? {} : { senderIsOwner: params.senderIsOwner }),
+      gatewayClientScopes: params.gatewayClientScopes,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      sessionFile: params.sessionFile,
+      args: sanitizePluginCommandArgs(params.args),
+      commandBody: params.commandBody,
+      config: params.config,
+      from: params.from,
+      to: params.to,
+      accountId: params.accountId,
+      messageThreadId: params.messageThreadId,
+      threadParentId: params.threadParentId,
+      diagnosticsSessions: params.diagnosticsSessions,
+      requestConversationBinding: async () => ({
+        status: "error",
+        message: "This command cannot bind the current conversation.",
+      }),
+      detachConversationBinding: async () => ({ removed: false }),
+      getCurrentConversationBinding: async () => null,
+    });
+  } catch (_err) {
+    return { text: "Command failed. Please try again later." };
+  } finally {
+    state.locked = false;
+  }
+}
+
+function normalizePluginInteractiveNamespace(namespace) {
+  return typeof namespace === "string" ? namespace.trim() : "";
+}
+
+function toPluginInteractiveRegistryKey(channel, namespace) {
+  const normalizedChannel = normalizeLowercaseStringOrEmpty(channel);
+  return `${normalizedChannel}:${normalizePluginInteractiveNamespace(namespace)}`;
+}
+
+function validatePluginInteractiveNamespace(namespace) {
+  const normalized = normalizePluginInteractiveNamespace(namespace);
+  if (!normalized) {
+    return "Interactive handler namespace cannot be empty";
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(normalized)) {
+    return (
+      "Interactive handler namespace must contain only letters, numbers, " +
+      "dots, underscores, and hyphens"
+    );
+  }
+  return null;
+}
+
+function registerPluginInteractiveHandler(pluginId, registration, opts = {}) {
+  const namespace = normalizePluginInteractiveNamespace(registration && registration.namespace);
+  const validationError = validatePluginInteractiveNamespace(namespace);
+  if (validationError) {
+    return { ok: false, error: validationError };
+  }
+  const handlers = getPluginInteractiveRegistryState();
+  const key = toPluginInteractiveRegistryKey(registration && registration.channel, namespace);
+  const existing = handlers.get(key);
+  if (existing) {
+    return {
+      ok: false,
+      error:
+        `Interactive handler namespace "${namespace}" already registered by plugin ` +
+        `"${existing.pluginId}"`,
+    };
+  }
+  handlers.set(key, {
+    ...registration,
+    namespace,
+    channel: normalizeLowercaseStringOrEmpty(registration && registration.channel),
+    pluginId,
+    pluginName: opts.pluginName,
+    pluginRoot: opts.pluginRoot,
+  });
+  return { ok: true };
+}
+
+function clearPluginInteractiveHandlers() {
+  getPluginInteractiveRegistryState().clear();
+  getPluginInteractiveDedupeState().clear();
+}
+
+function clearPluginInteractiveHandlersForPlugin(pluginId) {
+  const handlers = getPluginInteractiveRegistryState();
+  for (const [key, registration] of handlers.entries()) {
+    if (registration.pluginId === pluginId) {
+      handlers.delete(key);
+    }
+  }
+}
+
+function resolvePluginInteractiveNamespaceMatch(channel, data) {
+  const trimmedData = typeof data === "string" ? data.trim() : "";
+  if (!trimmedData) {
+    return null;
+  }
+  const separatorIndex = trimmedData.indexOf(":");
+  const namespace =
+    separatorIndex >= 0
+      ? trimmedData.slice(0, separatorIndex)
+      : normalizePluginInteractiveNamespace(trimmedData);
+  const registration = getPluginInteractiveRegistryState().get(
+    toPluginInteractiveRegistryKey(channel, namespace),
+  );
+  if (!registration) {
+    return null;
+  }
+  return {
+    registration,
+    namespace,
+    payload: separatorIndex >= 0 ? trimmedData.slice(separatorIndex + 1) : "",
+  };
+}
+
+async function dispatchPluginInteractiveHandler(params = {}) {
+  const match = resolvePluginInteractiveNamespaceMatch(params.channel, params.data);
+  if (!match) {
+    return { matched: false, handled: false, duplicate: false };
+  }
+  const dedupeKey = normalizeOptionalString(params.dedupeId);
+  const dedupe = getPluginInteractiveDedupeState();
+  if (dedupeKey && dedupe.has(dedupeKey)) {
+    return { matched: true, handled: true, duplicate: true };
+  }
+  if (dedupeKey) {
+    dedupe.add(dedupeKey);
+  }
+  try {
+    if (typeof params.onMatched === "function") {
+      await params.onMatched();
+    }
+    const resolved =
+      typeof params.invoke === "function" ? await params.invoke(match) : undefined;
+    return {
+      matched: true,
+      handled: resolved && resolved.handled !== undefined ? resolved.handled : true,
+      duplicate: false,
+    };
+  } catch (err) {
+    if (dedupeKey) {
+      dedupe.delete(dedupeKey);
+    }
+    throw err;
+  }
+}
+
+function createInteractiveConversationBindingHelpers(params = {}) {
+  const registration = params.registration || {};
+  return {
+    requestConversationBinding: async () => {
+      if (!registration.pluginRoot) {
+        return {
+          status: "error",
+          message: "This interaction cannot bind the current conversation.",
+        };
+      }
+      return {
+        status: "error",
+        message: "Conversation binding is unavailable in OpenZues plugin runtime.",
+      };
+    },
+    detachConversationBinding: async () => ({ removed: false }),
+    getCurrentConversationBinding: async () => null,
+  };
+}
+
+function getPluginHookRunnerState() {
+  return resolveGlobalSingleton(PLUGIN_HOOK_RUNNER_STATE_KEY, () => ({
+    hookRunner: null,
+    registry: null,
+  }));
+}
+
+function createPluginHookRunner(registry) {
+  return {
+    hasHooks: (hookName) =>
+      Boolean(
+        registry &&
+          Array.isArray(registry.hooks) &&
+          registry.hooks.some((hook) => hook && hook.name === hookName),
+      ),
+    runGatewayStop: async (event, ctx) => {
+      for (const hook of (registry && registry.hooks) || []) {
+        if (hook && hook.name === "gateway_stop" && typeof hook.handler === "function") {
+          await hook.handler(event, ctx);
+        }
+      }
+    },
+  };
+}
+
+function initializeGlobalHookRunner(registry) {
+  const state = getPluginHookRunnerState();
+  state.registry = registry;
+  state.hookRunner = createPluginHookRunner(registry || { hooks: [] });
+}
+
+function getGlobalHookRunner() {
+  return getPluginHookRunnerState().hookRunner;
+}
+
+function getGlobalPluginRegistry() {
+  return getPluginHookRunnerState().registry;
+}
+
+function hasGlobalHooks(hookName) {
+  const runner = getGlobalHookRunner();
+  return runner ? runner.hasHooks(hookName) : false;
+}
+
+async function runGlobalGatewayStopSafely(params = {}) {
+  const runner = getGlobalHookRunner();
+  if (!runner || !runner.hasHooks("gateway_stop")) {
+    return;
+  }
+  try {
+    await runner.runGatewayStop(params.event, params.ctx);
+  } catch (err) {
+    if (typeof params.onError === "function") {
+      params.onError(err);
+    }
+  }
+}
+
+function resetGlobalHookRunner() {
+  const state = getPluginHookRunnerState();
+  state.hookRunner = null;
+  state.registry = null;
+}
+
+function getPluginRuntimeGatewayRequestScopeState() {
+  return resolveGlobalSingleton(PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY, () => ({
+    stack: [],
+  }));
+}
+
+function getPluginRuntimeGatewayRequestScope() {
+  const stack = getPluginRuntimeGatewayRequestScopeState().stack;
+  return stack.length > 0 ? stack[stack.length - 1] : undefined;
+}
+
+function withPluginRuntimeGatewayRequestScope(scope, run) {
+  const state = getPluginRuntimeGatewayRequestScopeState();
+  state.stack.push(scope);
+  try {
+    return run();
+  } finally {
+    state.stack.pop();
+  }
+}
+
+function withPluginRuntimePluginIdScope(pluginId, run) {
+  const current = getPluginRuntimeGatewayRequestScope();
+  const scoped = current
+    ? { ...current, pluginId }
+    : {
+        pluginId,
+        isWebchatConnect: () => false,
+      };
+  return withPluginRuntimeGatewayRequestScope(scoped, run);
+}
+
+const pluginRuntime = {
+  __testing: {
+    isReservedCommandName: isReservedPluginCommandName,
+    listPluginInvocationKeys,
+  },
+  clearPluginCommands,
+  clearPluginCommandsForPlugin,
+  getPluginCommandSpecs,
+  listProviderPluginCommandSpecs,
+  registerPluginCommand,
+  validateCommandName,
+  validatePluginCommandDefinition,
+  matchPluginCommand,
+  executePluginCommand,
+  listPluginCommands,
+  initializeGlobalHookRunner,
+  getGlobalHookRunner,
+  getGlobalPluginRegistry,
+  hasGlobalHooks,
+  runGlobalGatewayStopSafely,
+  resetGlobalHookRunner,
+  normalizePluginHttpPath,
+  registerPluginHttpRoute,
+  createInteractiveConversationBindingHelpers,
+  clearPluginInteractiveHandlers,
+  clearPluginInteractiveHandlersForPlugin,
+  registerPluginInteractiveHandler,
+  dispatchPluginInteractiveHandler,
+  defaultLoadOverrideModule,
+  startLazyPluginServiceModule,
+  getPluginRuntimeGatewayRequestScope,
+  withPluginRuntimeGatewayRequestScope,
+  withPluginRuntimePluginIdScope,
 };
 
 const configMutationRuntime = {
@@ -73161,6 +74202,7 @@ const genericSdk = new Proxy(
     ...providerUsageRuntime,
     ...toolSendRuntime,
     ...webMediaRuntime,
+    ...mediaRuntime,
     ...providerEntryRuntime,
     ...providerEnableConfigRuntime,
     ...providerWebFetchContractRuntime,
@@ -73203,6 +74245,7 @@ const genericSdk = new Proxy(
     ...providerAuthApiKeyRuntime,
     ...providerAuthLoginRuntime,
     ...providerAuthFacadeRuntime,
+    ...pluginRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -73705,6 +74748,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/outbound-media"
   ) {
     return outboundMediaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/media-runtime" ||
+    request === "@openclaw/plugin-sdk/media-runtime"
+  ) {
+    return mediaRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/error-runtime" ||
@@ -74755,6 +75804,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-config-runtime"
   ) {
     return pluginConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-runtime" ||
+    request === "@openclaw/plugin-sdk/plugin-runtime"
+  ) {
+    return pluginRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/plugin-entry" ||

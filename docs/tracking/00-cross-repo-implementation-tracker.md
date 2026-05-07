@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK interactive-runtime facade slice is checkpointed in
-`3781cad9`.
+The imported plugin SDK plugin-runtime facade slice is checkpointed in
+`eb39f899`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Interactive runtime SDK shim checkpointed in `3781cad9` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `infra-runtime` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin runtime SDK shim checkpointed in `eb39f899` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `security-runtime` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -5868,6 +5868,81 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent interactive/outbound payload proof (`3 passed, 1099 deselected`),
     adjacent imported-plugin proof (`290 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00280` Imported infra-runtime compatibility facade shim
+  - Source: `openclaw-main/src/plugin-sdk/infra-runtime.ts`,
+    `openclaw-main/src/infra/retry.ts`,
+    `openclaw-main/src/infra/backoff.ts`,
+    `openclaw-main/src/infra/json-files.ts`,
+    `openclaw-main/src/utils/fetch-timeout.ts`, and
+    `openclaw-main/src/utils/run-with-concurrency.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `infra-runtime` and receive the deprecated compatibility barrel
+    for delivery, diagnostics, retry/backoff, JSON atomic file IO, fetch
+    timeout, async lock, singleton/dedupe, concurrency, outbound, SSRF,
+    system-event, temp-path, and file-lock helpers without importing the
+    TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0ba78971`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused infra-runtime proof (`1 passed`),
+    adjacent infra/runtime proof (`6 passed, 1097 deselected`), adjacent
+    imported-plugin proof (`291 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00281` Imported media-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/media-runtime.ts`,
+    `openclaw-main/src/media/mime.ts`,
+    `openclaw-main/src/media/store.ts`,
+    `openclaw-main/src/media/temp-files.ts`,
+    `openclaw-main/src/polls.ts`, and
+    `openclaw-main/src/channels/plugins/outbound/direct-text-media.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `media-runtime` and receive the public media/payload barrel for
+    byte-limit constants, MIME/path helpers, saved media buffers, outbound
+    local media loading, poll normalization, agent media payloads,
+    media-understanding exports, and direct text/media outbound adapter
+    helpers without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `85e4b720`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused media-runtime proof (`1 passed`),
+    adjacent media/import proof (`7 passed, 1097 deselected`), adjacent
+    imported-plugin proof (`292 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00282` Imported plugin-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/plugin-runtime.ts`,
+    `openclaw-main/src/plugins/commands.ts`,
+    `openclaw-main/src/plugins/hook-runner-global.ts`,
+    `openclaw-main/src/plugins/http-registry.ts`,
+    `openclaw-main/src/plugins/interactive-binding-helpers.ts`,
+    `openclaw-main/src/plugins/interactive.ts`,
+    `openclaw-main/src/plugins/lazy-service-module.ts`, and
+    `openclaw-main/src/plugins/runtime/gateway-request-scope.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `plugin-runtime` and receive the plugin command/hook/HTTP/
+    interactive/runtime-scope barrel for command validation, duplicate
+    detection, native provider specs, matching, safe execution, route
+    conflict handling, lazy service startup, interactive dispatch,
+    conversation-binding unavailable results, and request-scoped plugin
+    identity without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `eb39f899`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-runtime proof (`1 passed`),
+    adjacent plugin-runtime proof (`9 passed, 1096 deselected`), adjacent
+    imported-plugin proof (`293 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
