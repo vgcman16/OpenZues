@@ -39616,6 +39616,7 @@ const pluginSdkEntrypoints = [
   "browser-node-runtime",
   "browser-profiles",
   "browser-setup-tools",
+  "browser-support",
   "browser-trash",
   "boolean-param",
   "channel-contract-testing",
@@ -39801,6 +39802,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-node-runtime",
   "browser-profiles",
   "browser-setup-tools",
+  "browser-support",
   "browser-trash",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
@@ -55511,6 +55513,13 @@ const browserSecurityRuntime = {
   writeFileFromPathWithinRoot,
 };
 
+const browserSupportRuntime = {
+  ...browserConfigRuntimeSdk,
+  ...browserNodeRuntime,
+  ...browserSecurityRuntime,
+  ...browserSetupToolsRuntime,
+};
+
 const secretRefRuntime = {
   coerceSecretRef,
 };
@@ -64594,6 +64603,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-setup-tools"
   ) {
     return browserSetupToolsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-support" ||
+    request === "@openclaw/plugin-sdk/browser-support"
+  ) {
+    return browserSupportRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

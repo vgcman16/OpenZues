@@ -42604,6 +42604,130 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_support_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-support.cjs"
+    runtime_entry.write_text(
+        """
+const support = require("openclaw/plugin-sdk/browser-support");
+const scopedSupport = require("@openclaw/plugin-sdk/browser-support");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_support",
+      description: "Use OpenClaw browser support aggregate helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const timeoutValue = await support.withTimeout(async () => "ok", 50, "quick");
+        return {
+          keys: Object.keys(support).sort(),
+          scopedSame: scopedSupport.resolveConfigPath === support.resolveConfigPath,
+          configPathSuffix: support.resolveConfigPath({
+            OPENCLAW_CONFIG_PATH: "~/openclaw-test.json",
+            HOME: "/home/example"
+          }).replace(/\\\\/g, "/").endsWith("/home/example/openclaw-test.json"),
+          bools: [
+            support.parseBooleanValue("true"),
+            support.parseBooleanValue("off", true)
+          ],
+          timeoutValue,
+          safeJson: support.safeParseJson('{"browser":true}'),
+          tokenLength: support.generateSecureToken(12).length,
+          wrappedHasMarkers: (() => {
+            const wrapped = support.wrapExternalContent("hi");
+            return wrapped.includes("hi") && wrapped.includes("EXTERNAL");
+          })(),
+          sideGrid: support.buildImageResizeSideGrid(900, 1600),
+          mime: await support.detectMime({ headerMime: "application/pdf" }),
+          jsonResult: support.jsonResult({ ok: true }).details
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-support-plugin",
+                    "name": "Runtime Browser Support Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-support.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_support"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_support", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert set(result.pop("keys")) >= {
+        "buildImageResizeSideGrid",
+        "detectMime",
+        "generateSecureToken",
+        "jsonResult",
+        "parseBooleanValue",
+        "resolveConfigPath",
+        "safeParseJson",
+        "withTimeout",
+        "wrapExternalContent",
+    }
+    assert result == {
+        "scopedSame": True,
+        "configPathSuffix": True,
+        "bools": [True, False],
+        "timeoutValue": "ok",
+        "safeJson": {"browser": True},
+        "tokenLength": 16,
+        "wrappedHasMarkers": True,
+        "sideGrid": [900, 800],
+        "mime": "application/pdf",
+        "jsonResult": {"ok": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44807,11 +44931,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 303,
-            "subpaths": 302,
-            "specifiers": 303,
-            "exports": 303,
-            "artifacts": 606,
+            "entrypoints": 304,
+            "subpaths": 303,
+            "specifiers": 304,
+            "exports": 304,
+            "artifacts": 608,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
