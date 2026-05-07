@@ -72319,6 +72319,15 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return commandAuthRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/zalouser" ||
+    request === "@openclaw/plugin-sdk/zalouser"
+  ) {
+    return {
+      resolveSenderCommandAuthorization,
+      resolveSenderCommandAuthorizationWithRuntime,
+    };
+  }
+  if (
     request === "openclaw/plugin-sdk/command-auth-native" ||
     request === "@openclaw/plugin-sdk/command-auth-native"
   ) {

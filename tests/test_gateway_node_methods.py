@@ -10013,6 +10013,148 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_zalouser_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-zalouser.cjs"
+    runtime_entry.write_text(
+        """
+const zalouser = require("openclaw/plugin-sdk/zalouser");
+const scopedZalouser = require("@openclaw/plugin-sdk/zalouser");
+const commandAuth = require("openclaw/plugin-sdk/command-auth");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.zalouser",
+      description: "Use OpenClaw zalouser compatibility SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const result = await zalouser.resolveSenderCommandAuthorization({
+          cfg: { commands: { useAccessGroups: true } },
+          rawBody: "/status",
+          isGroup: true,
+          dmPolicy: "pairing",
+          configuredAllowFrom: ["dm-owner"],
+          configuredGroupAllowFrom: ["group-owner"],
+          senderId: "group-owner",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+          channel: "zalouser",
+          accountId: "default",
+          readAllowFromStore: async () => ["paired-user"],
+          shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+          resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+            useAccessGroups && authorizers.some((entry) => entry.configured && entry.allowed),
+          resolveAccessGroupMembership: async () => []
+        });
+        const runtimeWrapped = await zalouser.resolveSenderCommandAuthorizationWithRuntime({
+          cfg: { commands: { useAccessGroups: true } },
+          rawBody: "/status",
+          isGroup: false,
+          dmPolicy: "pairing",
+          configuredAllowFrom: [],
+          configuredGroupAllowFrom: [],
+          senderId: "paired-user",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId),
+          readAllowFromStore: async () => ["paired-user"],
+          runtime: {
+            shouldComputeCommandAuthorized: (rawBody) => rawBody.startsWith("/"),
+            resolveCommandAuthorizedFromAuthorizers: ({ useAccessGroups, authorizers }) =>
+              useAccessGroups && authorizers.some((entry) => entry.configured && entry.allowed)
+          }
+        });
+        return {
+          keys: Object.keys(zalouser).sort(),
+          scopedType: typeof scopedZalouser.resolveSenderCommandAuthorization,
+          sameFunction:
+            zalouser.resolveSenderCommandAuthorization ===
+            commandAuth.resolveSenderCommandAuthorization,
+          result: {
+            shouldComputeAuth: result.shouldComputeAuth,
+            senderAllowedForCommands: result.senderAllowedForCommands,
+            commandAuthorized: result.commandAuthorized
+          },
+          runtimeWrapped: {
+            shouldComputeAuth: runtimeWrapped.shouldComputeAuth,
+            senderAllowedForCommands: runtimeWrapped.senderAllowedForCommands,
+            commandAuthorized: runtimeWrapped.commandAuthorized
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-zalouser-plugin",
+                    "name": "Runtime Zalouser Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-zalouser-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.zalouser"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.zalouser"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "resolveSenderCommandAuthorization",
+            "resolveSenderCommandAuthorizationWithRuntime",
+        ],
+        "scopedType": "function",
+        "sameFunction": True,
+        "result": {
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+        "runtimeWrapped": {
+            "shouldComputeAuth": True,
+            "senderAllowedForCommands": True,
+            "commandAuthorized": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
     tmp_path,
 ) -> None:
