@@ -39348,6 +39348,223 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_provider_auth_alias_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-provider-auth-alias.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_provider_auth_aliases",
+      description: "Use OpenClaw agent-runtime provider auth alias helpers",
+      parameters: { type: "object" },
+      async execute() {
+        agent.resetProviderAuthAliasMapCacheForTest();
+        const config = {
+          plugins: {
+            allow: ["trusted-workspace"],
+            deny: ["denied-workspace"],
+            entries: {
+              "entry-enabled": { enabled: true },
+              "entry-disabled": { enabled: false }
+            },
+            slots: { contextEngine: "slot-workspace" }
+          }
+        };
+        const snapshot = {
+          plugins: [
+            {
+              id: "workspace-untrusted",
+              origin: "workspace",
+              providerAuthAliases: { "workspace-only": "workspace-provider" }
+            },
+            {
+              id: "denied-workspace",
+              origin: "workspace",
+              providerAuthAliases: { denied: "denied-provider" }
+            },
+            {
+              id: "entry-disabled",
+              origin: "workspace",
+              providerAuthAliases: { disabled: "disabled-provider" }
+            },
+            {
+              id: "global-provider",
+              origin: "global",
+              providerAuthAliases: { fixture: "global-provider", old: "legacy-global" }
+            },
+            {
+              id: "bundled-provider",
+              origin: "bundled",
+              providerAuthAliases: { fixture: "bundled-provider" },
+              providerAuthChoices: [
+                {
+                  provider: "openai-codex",
+                  choiceId: "openai-codex",
+                  deprecatedChoiceIds: ["codex-cli", "openai-codex-import"]
+                }
+              ]
+            },
+            {
+              id: "config-provider",
+              origin: "config",
+              providerAuthAliases: { fixture: "config-provider" }
+            },
+            {
+              id: "trusted-workspace",
+              origin: "workspace",
+              providerAuthAliases: { trusted: "trusted-provider" }
+            },
+            {
+              id: "slot-workspace",
+              origin: "workspace",
+              providerAuthAliases: { slot: "slot-provider" }
+            },
+            {
+              id: "entry-enabled",
+              origin: "workspace",
+              providerAuthAliases: { entry: "entry-provider" }
+            }
+          ]
+        };
+        const params = { config, pluginMetadataSnapshot: snapshot };
+        const withoutUntrusted = agent.resolveProviderAuthAliasMap(params);
+        const withUntrusted = agent.resolveProviderAuthAliasMap({
+          ...params,
+          includeUntrustedWorkspacePlugins: true
+        });
+        const firstCached = agent.resolveProviderAuthAliasMap(params);
+        agent.resetProviderAuthAliasMapCacheForTest();
+        const afterReset = agent.resolveProviderAuthAliasMap({
+          pluginMetadataSnapshot: {
+            plugins: [
+              {
+                id: "fresh",
+                origin: "global",
+                providerAuthAliases: { fixture: "fresh-provider" }
+              }
+            ]
+          }
+        });
+
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "resetProviderAuthAliasMapCacheForTest",
+            "resolveProviderAuthAliasMap",
+            "resolveProviderIdForAuth"
+          ].includes(key)).sort(),
+          withoutUntrusted,
+          withUntrusted,
+          cachedSameObject: firstCached === withoutUntrusted,
+          afterReset,
+          resolved: {
+            deprecated: agent.resolveProviderIdForAuth("codex-cli", params),
+            priority: agent.resolveProviderIdForAuth("fixture", params),
+            normalized: agent.resolveProviderIdForAuth("AWS-Bedrock", params),
+            unknown: agent.resolveProviderIdForAuth("unknown-provider", params)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-provider-auth-alias-plugin",
+                    "name": "Runtime Agent Provider Auth Alias Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-auth-alias.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.agent_provider_auth_aliases"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.agent_provider_auth_aliases"}
+    )
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "resetProviderAuthAliasMapCacheForTest",
+        "resolveProviderAuthAliasMap",
+        "resolveProviderIdForAuth",
+    ]
+    assert result["withoutUntrusted"] == {
+        "codex-cli": "openai-codex",
+        "entry": "entry-provider",
+        "fixture": "config-provider",
+        "old": "legacy-global",
+        "openai-codex-import": "openai-codex",
+        "slot": "slot-provider",
+        "trusted": "trusted-provider",
+    }
+    assert result["withUntrusted"] == {
+        "codex-cli": "openai-codex",
+        "denied": "denied-provider",
+        "disabled": "disabled-provider",
+        "entry": "entry-provider",
+        "fixture": "config-provider",
+        "old": "legacy-global",
+        "openai-codex-import": "openai-codex",
+        "slot": "slot-provider",
+        "trusted": "trusted-provider",
+        "workspace-only": "workspace-provider",
+    }
+    assert result["cachedSameObject"] is True
+    assert result["afterReset"] == {"fixture": "fresh-provider"}
+    assert result["resolved"] == {
+        "deprecated": "openai-codex",
+        "priority": "config-provider",
+        "normalized": "amazon-bedrock",
+        "unknown": "unknown-provider",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

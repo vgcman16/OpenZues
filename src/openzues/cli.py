@@ -22938,8 +22938,216 @@ async function resolveSecretInputModeForEnvSelection(params) {
   return selected === "ref" ? "ref" : "plaintext";
 }
 
-function resolveProviderIdForAuth(provider) {
-  return normalizeOptionalLowercaseString(provider) || String(provider || "");
+const PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY = {
+  config: 0,
+  bundled: 1,
+  global: 2,
+  workspace: 3,
+};
+let providerAuthAliasMapCache = new WeakMap();
+
+function resetProviderAuthAliasMapCacheForTest() {
+  providerAuthAliasMapCache = new WeakMap();
+}
+
+function normalizePluginConfigId(id) {
+  return normalizeOptionalLowercaseString(id) || "";
+}
+
+function hasPluginConfigId(list, pluginId) {
+  return Array.isArray(list) && list.some((entry) => normalizePluginConfigId(entry) === pluginId);
+}
+
+function findPluginConfigEntry(entries, pluginId) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    return undefined;
+  }
+  for (const [key, value] of Object.entries(entries)) {
+    if (normalizePluginConfigId(key) !== pluginId) {
+      continue;
+    }
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+  return undefined;
+}
+
+function isWorkspacePluginAllowedForAuthAliases(plugin, config) {
+  const pluginsConfig = config && config.plugins;
+  if (pluginsConfig && pluginsConfig.enabled === false) {
+    return false;
+  }
+  const pluginId = normalizePluginConfigId(plugin && plugin.id);
+  if (!pluginId || hasPluginConfigId(pluginsConfig && pluginsConfig.deny, pluginId)) {
+    return false;
+  }
+  const entry = findPluginConfigEntry(pluginsConfig && pluginsConfig.entries, pluginId);
+  if (entry && entry.enabled === false) {
+    return false;
+  }
+  if (
+    (entry && entry.enabled === true) ||
+    hasPluginConfigId(pluginsConfig && pluginsConfig.allow, pluginId)
+  ) {
+    return true;
+  }
+  return normalizePluginConfigId(
+    pluginsConfig && pluginsConfig.slots && pluginsConfig.slots.contextEngine,
+  ) === pluginId;
+}
+
+function shouldUsePluginAuthAliases(plugin, params = {}) {
+  if (
+    !plugin ||
+    plugin.origin !== "workspace" ||
+    params.includeUntrustedWorkspacePlugins === true
+  ) {
+    return true;
+  }
+  return isWorkspacePluginAllowedForAuthAliases(plugin, params.config);
+}
+
+function readProviderAuthAliasPlugins(params = {}) {
+  const snapshot =
+    params.pluginMetadataSnapshot ||
+    params.metadataSnapshot ||
+    params.snapshot ||
+    (params.config &&
+      params.config.plugins &&
+      (params.config.plugins.pluginMetadataSnapshot || params.config.plugins.metadataSnapshot));
+  if (snapshot && Array.isArray(snapshot.plugins)) {
+    return snapshot.plugins;
+  }
+  if (Array.isArray(params.plugins)) {
+    return params.plugins;
+  }
+  const pluginsConfig = params.config && params.config.plugins;
+  if (!pluginsConfig || typeof pluginsConfig !== "object") {
+    return [];
+  }
+  for (const key of ["manifests", "plugins", "registry"]) {
+    const candidate = pluginsConfig[key];
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+    if (candidate && Array.isArray(candidate.plugins)) {
+      return candidate.plugins;
+    }
+  }
+  return [];
+}
+
+function providerAuthAliasCacheKey(params = {}, env = process.env) {
+  const plugins = readProviderAuthAliasPlugins(params).map((plugin) => ({
+    id: plugin && plugin.id,
+    origin: plugin && plugin.origin,
+    providerAuthAliases: plugin && plugin.providerAuthAliases,
+    providerAuthChoices: plugin && plugin.providerAuthChoices,
+  }));
+  return JSON.stringify({
+    includeUntrustedWorkspacePlugins: params.includeUntrustedWorkspacePlugins === true,
+    env: {
+      APPDATA: env && env.APPDATA,
+      HOME: env && env.HOME,
+      OPENCLAW_HOME: env && env.OPENCLAW_HOME,
+      OPENZUES_HOME: env && env.OPENZUES_HOME,
+      USERPROFILE: env && env.USERPROFILE,
+    },
+    pluginsConfig: (params.config && params.config.plugins) || null,
+    plugins,
+  });
+}
+
+function providerAuthAliasOriginPriority(origin) {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY, origin)
+    ? PROVIDER_AUTH_ALIAS_ORIGIN_PRIORITY[origin]
+    : Number.MAX_SAFE_INTEGER;
+}
+
+function setPreferredProviderAuthAlias(params) {
+  const normalizedAlias = agentRuntimeNormalizeProviderId(params.alias);
+  const normalizedTarget = agentRuntimeNormalizeProviderId(params.target);
+  if (!normalizedAlias || !normalizedTarget) {
+    return;
+  }
+  const existing = params.aliases.get(normalizedAlias);
+  if (
+    !existing ||
+    providerAuthAliasOriginPriority(params.origin) <
+      providerAuthAliasOriginPriority(existing.origin)
+  ) {
+    params.aliases.set(normalizedAlias, {
+      origin: params.origin,
+      target: normalizedTarget,
+    });
+  }
+}
+
+function resolveProviderAuthAliasMap(params = {}) {
+  const env = params.env || process.env;
+  let envCache = providerAuthAliasMapCache.get(env);
+  if (!envCache) {
+    envCache = new Map();
+    providerAuthAliasMapCache.set(env, envCache);
+  }
+  const cacheKey = providerAuthAliasCacheKey(params, env);
+  const cached = envCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const preferredAliases = new Map();
+  const aliases = Object.create(null);
+  for (const plugin of readProviderAuthAliasPlugins(params)) {
+    if (!shouldUsePluginAuthAliases(plugin, params)) {
+      continue;
+    }
+    const providerAuthAliases =
+      plugin && plugin.providerAuthAliases && typeof plugin.providerAuthAliases === "object"
+        ? plugin.providerAuthAliases
+        : {};
+    for (const [alias, target] of Object.entries(providerAuthAliases).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      setPreferredProviderAuthAlias({
+        aliases: preferredAliases,
+        alias,
+        origin: plugin && plugin.origin,
+        target,
+      });
+    }
+    const choices = Array.isArray(plugin && plugin.providerAuthChoices)
+      ? plugin.providerAuthChoices
+      : [];
+    for (const choice of choices) {
+      const deprecatedChoiceIds = Array.isArray(choice && choice.deprecatedChoiceIds)
+        ? choice.deprecatedChoiceIds
+        : [];
+      for (const deprecatedChoiceId of deprecatedChoiceIds) {
+        setPreferredProviderAuthAlias({
+          aliases: preferredAliases,
+          alias: deprecatedChoiceId,
+          origin: plugin && plugin.origin,
+          target: choice && choice.provider,
+        });
+      }
+    }
+  }
+  for (const [alias, candidate] of preferredAliases) {
+    aliases[alias] = candidate.target;
+  }
+  envCache.set(cacheKey, aliases);
+  return aliases;
+}
+
+function resolveProviderIdForAuth(provider, params = {}) {
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  if (!normalized) {
+    return normalized;
+  }
+  const aliasMap =
+    params && params.aliasMap && typeof params.aliasMap === "object"
+      ? params.aliasMap
+      : resolveProviderAuthAliasMap(params || {});
+  return aliasMap[normalized] || normalized;
 }
 
 function resolveProviderDefaultEnvSecretRef(provider) {
@@ -23371,10 +23579,20 @@ function omitEnvKeysCaseInsensitive(baseEnv, keys) {
 }
 
 function resolveEnvApiKey(provider, env = process.env, options = {}) {
-  const normalized = normalizeOptionalLowercaseString(provider);
-  if (!normalized) {
+  const normalizedProvider = agentRuntimeNormalizeProviderId(provider);
+  if (!normalizedProvider) {
     return null;
   }
+  const normalized =
+    options.aliasMap && typeof options.aliasMap === "object"
+      ? options.aliasMap[normalizedProvider] || normalizedProvider
+      : resolveProviderIdForAuth(provider, {
+          config: options.config,
+          env,
+          pluginMetadataSnapshot: options.pluginMetadataSnapshot,
+          plugins: options.plugins,
+          workspaceDir: options.workspaceDir,
+        });
   const candidateMap = options.candidateMap || PROVIDER_AUTH_ENV_VAR_CANDIDATES;
   const candidates = Object.prototype.hasOwnProperty.call(candidateMap, normalized)
     ? candidateMap[normalized]
@@ -56929,7 +57147,8 @@ const agentRuntime = {
   resolvePersistedModelRef: agentRuntimeResolvePersistedModelRef,
   resolvePersistedOverrideModelRef: agentRuntimeResolvePersistedOverrideModelRef,
   resolvePersistedSelectedModelRef: agentRuntimeResolvePersistedSelectedModelRef,
-  resolveProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  resolveProviderAuthAliasMap,
+  resolveProviderIdForAuth,
   resolvePublicAgentAvatarSource: agentRuntimeResolvePublicAgentAvatarSource,
   resolveReasoningDefault: agentRuntimeResolveReasoningDefault,
   resolveSandboxInputPath: agentRuntimeResolveSandboxInputPath,
@@ -56945,6 +57164,7 @@ const agentRuntime = {
   resolveUsableCustomProviderApiKey: agentRuntimeResolveUsableCustomProviderApiKey,
   resolveUserTimeFormat,
   resolveUserTimezone,
+  resetProviderAuthAliasMapCacheForTest,
   shouldPreferExplicitConfigApiKeyAuth: agentRuntimeShouldPreferExplicitConfigApiKeyAuth,
   stringifyToolPayload,
   optionalStringEnum,
