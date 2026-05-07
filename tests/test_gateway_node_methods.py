@@ -40436,6 +40436,103 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_googlechat_runtime_shared_schema(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-googlechat-runtime-shared.cjs"
+    runtime_entry.write_text(
+        """
+const googlechat = require("openclaw/plugin-sdk/googlechat-runtime-shared");
+const scopedGooglechat = require("@openclaw/plugin-sdk/googlechat-runtime-shared");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.googlechat_shared",
+      description: "Use OpenClaw Google Chat runtime shared schema",
+      parameters: { type: "object" },
+      async execute() {
+        const schema = googlechat.GoogleChatConfigSchema;
+        const valid = schema.safeParse({ accounts: { main: {} } });
+        const invalid = schema.safeParse(null);
+        return {
+          keys: Object.keys(googlechat).sort(),
+          scopedSame: scopedGooglechat.GoogleChatConfigSchema === schema,
+          valid: {
+            success: valid.success,
+            dataKeys: valid.success ? Object.keys(valid.data).sort() : []
+          },
+          invalid: {
+            success: invalid.success,
+            message: invalid.success ? null : invalid.error.issues[0].message
+          },
+          jsonSchema: schema.toJSONSchema()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-googlechat-shared-plugin",
+                    "name": "Runtime Google Chat Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-googlechat-shared.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.googlechat_shared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.googlechat_shared"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["GoogleChatConfigSchema"],
+        "scopedSame": True,
+        "valid": {"success": True, "dataKeys": ["accounts"]},
+        "invalid": {"success": False, "message": "Expected object"},
+        "jsonSchema": {"type": "object", "additionalProperties": True},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

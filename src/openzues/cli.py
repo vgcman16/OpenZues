@@ -49774,6 +49774,10 @@ const bundledChannelConfigSchemaRuntime = {
   WhatsAppConfigSchema: providerChannelConfigSchema,
 };
 
+const googleChatRuntimeShared = {
+  GoogleChatConfigSchema: providerChannelConfigSchema,
+};
+
 function normalizeChannelDmPolicy(value) {
   return value === "pairing" || value === "allowlist" || value === "open" || value === "disabled"
     ? value
@@ -63146,6 +63150,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-config-schema-legacy"
   ) {
     return bundledChannelConfigSchemaRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/googlechat-runtime-shared" ||
+    request === "@openclaw/plugin-sdk/googlechat-runtime-shared"
+  ) {
+    return googleChatRuntimeShared;
   }
   if (
     request === "openclaw/plugin-sdk/channel-config-helpers" ||
