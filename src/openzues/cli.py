@@ -55729,6 +55729,12 @@ const coreRuntime = {
   normalizeOptionalAccountId,
 };
 
+const pluginEntryRuntime = {
+  buildPluginConfigSchema,
+  definePluginEntry,
+  emptyPluginConfigSchema,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -73046,6 +73052,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-config-runtime"
   ) {
     return pluginConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-entry" ||
+    request === "@openclaw/plugin-sdk/plugin-entry"
+  ) {
+    return pluginEntryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||

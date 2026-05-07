@@ -50536,6 +50536,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_entry_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-entry.cjs"
+    runtime_entry.write_text(
+        """
+const pluginEntry = require("openclaw/plugin-sdk/plugin-entry");
+const scopedPluginEntry = require("@openclaw/plugin-sdk/plugin-entry");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_entry",
+      description: "Use OpenClaw plugin-entry SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        let schemaCalls = 0;
+        const schema = { type: "object", properties: { enabled: { type: "boolean" } } };
+        const entry = pluginEntry.definePluginEntry({
+          id: "demo-plugin",
+          name: "Demo Plugin",
+          description: "Demo description",
+          kind: "provider",
+          configSchema: () => {
+            schemaCalls += 1;
+            return schema;
+          },
+          reload: { strategy: "restart" },
+          nodeHostCommands: [{ name: "demo", command: "demo.exe" }],
+          securityAuditCollectors: [{ id: "audit", collect: () => [] }],
+          register: () => "registered"
+        });
+        const firstSchema = entry.configSchema;
+        const secondSchema = entry.configSchema;
+        const defaultEntry = pluginEntry.definePluginEntry({
+          id: "default-plugin",
+          name: "Default Plugin",
+          description: "Default description",
+          register: () => undefined
+        });
+        return {
+          keys: Object.keys(pluginEntry).sort(),
+          scopedSame:
+            scopedPluginEntry.definePluginEntry === pluginEntry.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            kind: entry.kind,
+            reload: entry.reload,
+            nodeHostCommandName: entry.nodeHostCommands[0].name,
+            auditId: entry.securityAuditCollectors[0].id,
+            registerType: typeof entry.register,
+            schemaCalls,
+            sameSchema: firstSchema === secondSchema,
+            schema: firstSchema
+          },
+          defaultEntry: {
+            id: defaultEntry.id,
+            registerType: typeof defaultEntry.register,
+            configSchemaType: typeof defaultEntry.configSchema
+          },
+          configHelpers: {
+            emptyType: typeof pluginEntry.emptyPluginConfigSchema,
+            buildType: typeof pluginEntry.buildPluginConfigSchema
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-entry-plugin",
+                    "name": "Runtime Plugin Entry Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-entry.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_entry"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_entry"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildPluginConfigSchema",
+            "definePluginEntry",
+            "emptyPluginConfigSchema",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "demo-plugin",
+            "name": "Demo Plugin",
+            "description": "Demo description",
+            "kind": "provider",
+            "reload": {"strategy": "restart"},
+            "nodeHostCommandName": "demo",
+            "auditId": "audit",
+            "registerType": "function",
+            "schemaCalls": 1,
+            "sameSchema": True,
+            "schema": {
+                "type": "object",
+                "properties": {"enabled": {"type": "boolean"}},
+            },
+        },
+        "defaultEntry": {
+            "id": "default-plugin",
+            "registerType": "function",
+            "configSchemaType": "object",
+        },
+        "configHelpers": {"emptyType": "function", "buildType": "function"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diffs_helpers(
     tmp_path,
 ) -> None:
