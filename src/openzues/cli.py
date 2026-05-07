@@ -30238,6 +30238,30 @@ function optionalStringEnum(values, options = {}) {
   return stringEnum(values, options);
 }
 
+const CHANNEL_TARGET_DESCRIPTION =
+  "Recipient/channel: E.164 for WhatsApp/Signal, Telegram chat id/@username, " +
+  "Discord/Slack/Mattermost <channelId|user:ID|channel:ID>, or iMessage handle/chat_id";
+
+const CHANNEL_TARGETS_DESCRIPTION =
+  "Recipient/channel targets (same format as --target); accepts ids or names " +
+  "when the directory is available.";
+
+function channelTargetSchema(options = {}) {
+  return {
+    type: "string",
+    description: options.description || CHANNEL_TARGET_DESCRIPTION,
+  };
+}
+
+function channelTargetsSchema(options = {}) {
+  return {
+    type: "array",
+    items: channelTargetSchema({
+      description: options.description || CHANNEL_TARGETS_DESCRIPTION,
+    }),
+  };
+}
+
 function makeSchemaResult(ok, data, message) {
   if (ok) {
     return { success: true, data };
@@ -56735,6 +56759,8 @@ const agentRuntime = {
   buildConfiguredModelCatalog: agentRuntimeBuildConfiguredModelCatalog,
   buildModelAliasIndex: agentRuntimeBuildModelAliasIndex,
   buildToolPlan,
+  channelTargetSchema,
+  channelTargetsSchema,
   createActionGate,
   defineToolDescriptor,
   defineToolDescriptors,
@@ -56835,10 +56861,12 @@ const agentRuntime = {
   resolveUserTimezone,
   shouldPreferExplicitConfigApiKeyAuth: agentRuntimeShouldPreferExplicitConfigApiKeyAuth,
   stringifyToolPayload,
+  optionalStringEnum,
   splitThinkingTaggedText,
   stripDowngradedToolCallText,
   stripMinimaxToolCallXml,
   stripThinkingTagsFromText,
+  stringEnum,
   textResult,
   toToolProtocolDescriptor,
   toToolProtocolDescriptors,

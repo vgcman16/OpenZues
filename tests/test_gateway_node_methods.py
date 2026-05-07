@@ -39019,6 +39019,139 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_schema_typebox_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-schema-typebox.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_schema_typebox",
+      description: "Use OpenClaw agent-runtime schema/typebox helpers",
+      parameters: { type: "object" },
+      execute() {
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "channelTargetSchema",
+            "channelTargetsSchema",
+            "optionalStringEnum",
+            "stringEnum"
+          ].includes(key)).sort(),
+          target: agent.channelTargetSchema(),
+          customTarget: agent.channelTargetSchema({ description: "Custom target" }),
+          targets: agent.channelTargetsSchema(),
+          customTargets: agent.channelTargetsSchema({ description: "Custom targets" }),
+          enumSchema: agent.stringEnum(
+            { danger: "danger", success: "success" },
+            { title: "Tone", default: "success" }
+          ),
+          optionalEnumSchema: agent.optionalStringEnum(["a", "b"], {
+            description: "Letters"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-schema-typebox-plugin",
+                    "name": "Runtime Agent Schema Typebox Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-schema-typebox.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_schema_typebox"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_schema_typebox"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "channelTargetSchema",
+        "channelTargetsSchema",
+        "optionalStringEnum",
+        "stringEnum",
+    ]
+    assert result["target"] == {
+        "type": "string",
+        "description": (
+            "Recipient/channel: E.164 for WhatsApp/Signal, Telegram chat id/@username, "
+            "Discord/Slack/Mattermost <channelId|user:ID|channel:ID>, or iMessage "
+            "handle/chat_id"
+        ),
+    }
+    assert result["customTarget"] == {"type": "string", "description": "Custom target"}
+    assert result["targets"] == {
+        "type": "array",
+        "items": {
+            "type": "string",
+            "description": (
+                "Recipient/channel targets (same format as --target); accepts ids or names "
+                "when the directory is available."
+            ),
+        },
+    }
+    assert result["customTargets"] == {
+        "type": "array",
+        "items": {"type": "string", "description": "Custom targets"},
+    }
+    assert result["enumSchema"] == {
+        "type": "string",
+        "enum": ["danger", "success"],
+        "title": "Tone",
+        "default": "success",
+    }
+    assert result["optionalEnumSchema"] == {
+        "type": "string",
+        "enum": ["a", "b"],
+        "description": "Letters",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
