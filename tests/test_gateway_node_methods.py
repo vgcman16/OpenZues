@@ -28354,6 +28354,262 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_infra_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-infra-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const infra = require("openclaw/plugin-sdk/infra-runtime");
+const scopedInfra = require("@openclaw/plugin-sdk/infra-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.infra_runtime",
+      description: "Use OpenClaw infra-runtime compatibility SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const required = [
+          "computeBackoff",
+          "retryAsync",
+          "resolveRetryConfig",
+          "writeJsonAtomic",
+          "readJsonFile",
+          "readJsonFileSync",
+          "writeTextAtomic",
+          "fetchWithTimeout",
+          "runTasksWithConcurrency",
+          "createAsyncLock",
+          "createScopedExpiringIdCache",
+          "drainPendingDeliveries",
+          "resolveOutboundSendDep",
+          "isDiagnosticsEnabled",
+          "fetchWithRuntimeDispatcher",
+          "isPrivateNetworkOptInEnabled",
+          "createRuntimeOutboundDelegates"
+        ];
+        const selectedTypes = Object.fromEntries(
+          required.map((key) => [key, typeof infra[key]])
+        );
+        const retryEvents = [];
+        let attempts = 0;
+        const retryResult = await infra.retryAsync(
+          async () => {
+            attempts += 1;
+            if (attempts < 2) {
+              throw new Error("timeout once");
+            }
+            return "retried";
+          },
+          {
+            attempts: 2,
+            minDelayMs: 0,
+            maxDelayMs: 0,
+            jitter: 0,
+            label: "infra",
+            onRetry: (info) =>
+              retryEvents.push({
+                attempt: info.attempt,
+                maxAttempts: info.maxAttempts,
+                delayMs: info.delayMs,
+                label: info.label
+              })
+          }
+        );
+        await infra.writeJsonAtomic(args.jsonPath, {
+          from: "infra",
+          nested: { ok: true }
+        }, { trailingNewline: true });
+        await infra.writeTextAtomic(args.textPath, "hello", {
+          appendTrailingNewline: true
+        });
+        const response = await infra.fetchWithTimeout(
+          "data:text/plain,infra-fetch",
+          {},
+          1000
+        );
+        const singleton = infra.resolveGlobalSingleton(
+          "__openzues_test_infra_runtime_singleton",
+          () => ({ count: 0 })
+        );
+        singleton.count += 1;
+        const sameSingleton = scopedInfra.resolveGlobalSingleton(
+          "__openzues_test_infra_runtime_singleton",
+          () => ({ count: 99 })
+        );
+        sameSingleton.count += 1;
+        const cache = infra.createScopedExpiringIdCache({
+          store: new Map(),
+          ttlMs: 500,
+          cleanupThreshold: 1
+        });
+        cache.record("scope", "id-1", 1000);
+        const lock = infra.createAsyncLock();
+        const lockOrder = [];
+        await Promise.all([
+          lock(async () => {
+            lockOrder.push("first-start");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            lockOrder.push("first-end");
+            return "first";
+          }),
+          lock(async () => {
+            lockOrder.push("second");
+            return "second";
+          })
+        ]);
+        const concurrent = await infra.runTasksWithConcurrency({
+          tasks: [async () => 1, async () => 2, async () => 3],
+          limit: 2
+        });
+        return {
+          selectedTypes,
+          scopedSame: scopedInfra.retryAsync === infra.retryAsync,
+          backoff: infra.computeBackoff(
+            { initialMs: 10, maxMs: 100, factor: 2, jitter: 0 },
+            3
+          ),
+          retryConfig: infra.resolveRetryConfig(
+            { attempts: 2, minDelayMs: 1, maxDelayMs: 9, jitter: 0.2 },
+            { attempts: 4, minDelayMs: 0, maxDelayMs: 2, jitter: 1.5 }
+          ),
+          retryResult,
+          attempts,
+          retryEvents,
+          json: await infra.readJsonFile(args.jsonPath),
+          jsonSync: infra.readJsonFileSync(args.jsonPath),
+          jsonMissing: await infra.readJsonFile(args.missingPath),
+          jsonRaw: fs.readFileSync(args.jsonPath, "utf8"),
+          textRaw: fs.readFileSync(args.textPath, "utf8"),
+          fetch: { status: response.status, text: await response.text() },
+          singleton: {
+            same: singleton === sameSingleton,
+            count: sameSingleton.count
+          },
+          cache: {
+            beforeExpiry: cache.has("scope", "id-1", 1200),
+            afterExpiry: cache.has("scope", "id-1", 1601)
+          },
+          lockOrder,
+          concurrent: {
+            results: concurrent.results,
+            hasError: concurrent.hasError,
+            firstError: concurrent.firstError === undefined ? null : String(concurrent.firstError)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-infra-runtime-plugin",
+                    "name": "Runtime Infra Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-infra-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.infra_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.infra_runtime",
+            "args": {
+                "jsonPath": str(tmp_path / "infra" / "state.json"),
+                "textPath": str(tmp_path / "infra" / "note.txt"),
+                "missingPath": str(tmp_path / "infra" / "missing.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "computeBackoff": "function",
+            "retryAsync": "function",
+            "resolveRetryConfig": "function",
+            "writeJsonAtomic": "function",
+            "readJsonFile": "function",
+            "readJsonFileSync": "function",
+            "writeTextAtomic": "function",
+            "fetchWithTimeout": "function",
+            "runTasksWithConcurrency": "function",
+            "createAsyncLock": "function",
+            "createScopedExpiringIdCache": "function",
+            "drainPendingDeliveries": "function",
+            "resolveOutboundSendDep": "function",
+            "isDiagnosticsEnabled": "function",
+            "fetchWithRuntimeDispatcher": "function",
+            "isPrivateNetworkOptInEnabled": "function",
+            "createRuntimeOutboundDelegates": "function",
+        },
+        "scopedSame": True,
+        "backoff": 40,
+        "retryConfig": {
+            "attempts": 4,
+            "minDelayMs": 0,
+            "maxDelayMs": 2,
+            "jitter": 1,
+        },
+        "retryResult": "retried",
+        "attempts": 2,
+        "retryEvents": [
+            {"attempt": 1, "maxAttempts": 2, "delayMs": 0, "label": "infra"}
+        ],
+        "json": {"from": "infra", "nested": {"ok": True}},
+        "jsonSync": {"from": "infra", "nested": {"ok": True}},
+        "jsonMissing": None,
+        "jsonRaw": '{\n  "from": "infra",\n  "nested": {\n    "ok": true\n  }\n}\n',
+        "textRaw": "hello\n",
+        "fetch": {"status": 200, "text": "infra-fetch"},
+        "singleton": {"same": True, "count": 2},
+        "cache": {"beforeExpiry": True, "afterExpiry": False},
+        "lockOrder": ["first-start", "first-end", "second"],
+        "concurrent": {"results": [1, 2, 3], "hasError": False, "firstError": None},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
     tmp_path,
 ) -> None:

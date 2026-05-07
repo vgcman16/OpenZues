@@ -18541,6 +18541,138 @@ async function writeJsonFileAtomically(filePath, value) {
   }
 }
 
+class JsonFileReadError extends Error {
+  constructor(filePath, reason, cause) {
+    super(`Failed to ${reason} JSON file: ${filePath}`);
+    this.name = "JsonFileReadError";
+    this.filePath = filePath;
+    this.reason = reason;
+    if (cause !== undefined) {
+      this.cause = cause;
+    }
+  }
+}
+
+function getFilesystemErrorCode(error) {
+  return error && typeof error === "object" ? error.code : undefined;
+}
+
+async function replaceFileWithWindowsFallback(tempPath, filePath, mode) {
+  try {
+    await fs.promises.rename(tempPath, filePath);
+    return;
+  } catch (error) {
+    const code = getFilesystemErrorCode(error);
+    if (process.platform !== "win32" || (code !== "EPERM" && code !== "EEXIST")) {
+      throw error;
+    }
+  }
+
+  const existing = await fs.promises.lstat(filePath).catch(() => null);
+  if (existing && typeof existing.isSymbolicLink === "function" && existing.isSymbolicLink()) {
+    await fs.promises.rm(filePath, { force: true });
+    await fs.promises.rename(tempPath, filePath);
+    return;
+  }
+
+  await fs.promises.copyFile(tempPath, filePath);
+  try {
+    await fs.promises.chmod(filePath, mode);
+  } catch (_error) {
+    // Best effort on platforms without chmod support.
+  }
+  await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+}
+
+async function readJsonFile(filePath) {
+  try {
+    const raw = await fs.promises.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function readDurableJsonFile(filePath) {
+  let raw;
+  try {
+    raw = await fs.promises.readFile(filePath, "utf8");
+  } catch (error) {
+    if (getFilesystemErrorCode(error) === "ENOENT") {
+      return null;
+    }
+    throw new JsonFileReadError(filePath, "read", error);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new JsonFileReadError(filePath, "parse", error);
+  }
+}
+
+function readJsonFileSync(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function writeTextAtomic(filePath, content, options = {}) {
+  const mode = options.mode ?? 0o600;
+  const payload =
+    options.appendTrailingNewline && !String(content).endsWith("\n")
+      ? `${content}\n`
+      : String(content);
+  const mkdirOptions = { recursive: true };
+  if (typeof options.ensureDirMode === "number") {
+    mkdirOptions.mode = options.ensureDirMode;
+  }
+  await fs.promises.mkdir(path.dirname(filePath), mkdirOptions);
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    const handle = await fs.promises.open(tmpPath, "w", mode);
+    try {
+      await handle.writeFile(payload, { encoding: "utf8" });
+      await handle.sync();
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+    try {
+      await fs.promises.chmod(tmpPath, mode);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    await replaceFileWithWindowsFallback(tmpPath, filePath, mode);
+    try {
+      const dirHandle = await fs.promises.open(path.dirname(filePath), "r");
+      try {
+        await dirHandle.sync();
+      } finally {
+        await dirHandle.close().catch(() => undefined);
+      }
+    } catch (_error) {
+      // Best effort; some filesystems do not support syncing directories.
+    }
+    try {
+      await fs.promises.chmod(filePath, mode);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function writeJsonAtomic(filePath, value, options = {}) {
+  await writeTextAtomic(filePath, JSON.stringify(value, null, 2), {
+    mode: options.mode,
+    ensureDirMode: options.ensureDirMode,
+    appendTrailingNewline: options.trailingNewline,
+  });
+}
+
 const DIAGNOSTICS_ENV = "OPENCLAW_DIAGNOSTICS";
 const DIAGNOSTIC_EVENTS_STATE_KEY = Symbol.for("openclaw.diagnosticEvents.state.v1");
 const DIAGNOSTIC_TRACEPARENT_VERSION = "00";
@@ -19209,6 +19341,41 @@ function bindAbortRelay(controller) {
     } catch (_error) {
       // Foreign AbortController implementations can throw. Preserve fetch behavior.
     }
+  };
+}
+
+function buildTimeoutAbortSignal(params = {}) {
+  const timeoutMs = params.timeoutMs;
+  const sourceSignal = params.signal;
+  if (!timeoutMs && !sourceSignal) {
+    return { signal: undefined, cleanup: () => undefined };
+  }
+  if (!timeoutMs) {
+    return { signal: sourceSignal, cleanup: () => undefined };
+  }
+  const controller = new AbortController();
+  const normalizedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const timeoutId = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  }, normalizedTimeoutMs);
+  const onAbort = bindAbortRelay(controller);
+  if (sourceSignal && typeof sourceSignal.addEventListener === "function") {
+    if (sourceSignal.aborted) {
+      controller.abort();
+    } else {
+      sourceSignal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      if (sourceSignal && typeof sourceSignal.removeEventListener === "function") {
+        sourceSignal.removeEventListener("abort", onAbort);
+      }
+    },
   };
 }
 
@@ -60217,6 +60384,50 @@ const fileLockRuntime = {
   withFileLock,
 };
 
+const infraRuntime = {
+  ...asyncLockRuntime,
+  ...channelActivityRuntime,
+  ...concurrencyRuntime,
+  ...deliveryQueueRuntime,
+  ...diagnosticRuntime,
+  ...errorRuntime,
+  ...fetchRuntime,
+  ...fileLockRuntime,
+  ...globalSingletonRuntime,
+  ...jsonStoreRuntime,
+  ...outboundRuntime,
+  ...outboundSendDepsRuntime,
+  ...requestUrlRuntime,
+  ...runtimeFetchRuntime,
+  ...ssrfPolicyRuntime,
+  ...ssrfRuntime,
+  ...systemEventRuntime,
+  ...tempPathRuntime,
+  ...transportReadyRuntime,
+  JsonFileReadError,
+  bindAbortRelay,
+  buildTimeoutAbortSignal,
+  computeBackoff,
+  fetchWithTimeout,
+  formatDurationPrecise,
+  formatDurationSeconds,
+  generateSecureToken,
+  generateSecureUuid,
+  parseFiniteNumber,
+  pruneMapToMaxSize,
+  readDurableJsonFile,
+  readJsonFile,
+  readJsonFileSync,
+  resolvePreferredOpenClawTmpDir,
+  resolveRequiredHomeDir,
+  resolveUserPath,
+  retryAsync,
+  resolveRetryConfig,
+  sleepWithAbort,
+  writeJsonAtomic,
+  writeTextAtomic,
+};
+
 function parseBrowserHttpUrl(raw, label) {
   const trimmed = String(raw || "").trim();
   const parsed = new URL(trimmed);
@@ -72984,6 +73195,7 @@ const genericSdk = new Proxy(
     ...outboundRuntime,
     ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
+    ...infraRuntime,
     ...migrationRuntime,
     ...migrationHelperRuntime,
     ...providerAuthResultRuntime,
@@ -74064,6 +74276,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/delivery-queue-runtime"
   ) {
     return deliveryQueueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/infra-runtime" ||
+    request === "@openclaw/plugin-sdk/infra-runtime"
+  ) {
+    return infraRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/migration-runtime" ||
