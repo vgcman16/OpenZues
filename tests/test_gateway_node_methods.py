@@ -36282,6 +36282,271 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_skill_commands_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    def write_skill(workspace: Path, slug: str, frontmatter: str) -> None:
+        skill_dir = workspace / "skills" / slug
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\n{frontmatter.strip()}\n---\n\nUse this skill.\n",
+            encoding="utf-8",
+        )
+
+    main_workspace = tmp_path / "main"
+    research_workspace = tmp_path / "research"
+    shared_workspace = tmp_path / "shared"
+    defaults_workspace = tmp_path / "defaults"
+    standalone_workspace = tmp_path / "standalone"
+    missing_workspace = tmp_path / "missing"
+    for workspace in (
+        main_workspace,
+        research_workspace,
+        shared_workspace,
+        defaults_workspace,
+        standalone_workspace,
+    ):
+        workspace.mkdir(parents=True)
+    write_skill(main_workspace, "demo-skill", "name: demo-skill\ndescription: Demo skill")
+    write_skill(
+        research_workspace,
+        "demo-skill",
+        "name: demo-skill\ndescription: Duplicate demo skill",
+    )
+    write_skill(research_workspace, "extra-skill", "name: extra-skill\ndescription: Extra skill")
+    write_skill(shared_workspace, "demo-skill", "name: demo-skill\ndescription: Demo skill")
+    write_skill(shared_workspace, "extra-skill", "name: extra-skill\ndescription: Extra skill")
+    write_skill(defaults_workspace, "alpha-skill", "name: alpha-skill\ndescription: Alpha skill")
+    write_skill(defaults_workspace, "beta-skill", "name: beta-skill\ndescription: Beta skill")
+    write_skill(
+        standalone_workspace,
+        "remote-runner",
+        """
+name: Remote Runner!
+description: Dispatches remote jobs
+command-dispatch: tool
+command-tool: skills.remote
+command-arg-mode: raw
+""",
+    )
+
+    runtime_entry = tmp_path / "runtime-plugin-skill-commands-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const skillCommands = require("openclaw/plugin-sdk/skill-commands-runtime");
+const scopedSkillCommands = require("@openclaw/plugin-sdk/skill-commands-runtime");
+
+function project(command) {
+  return {
+    name: command.name,
+    skillName: command.skillName,
+    description: command.description,
+    dispatch: command.dispatch || null
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.skill_commands",
+      description: "Use OpenClaw skill-commands-runtime SDK shim",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const agentsCfg = {
+          agents: {
+            list: [
+              { id: "main", workspace: args.mainWorkspace },
+              { id: "research", workspace: args.researchWorkspace },
+              { id: "missing", workspace: args.missingWorkspace }
+            ]
+          }
+        };
+        const all = skillCommands.listSkillCommandsForAgents({
+          cfg: agentsCfg,
+          agentIds: ["main", "research", "missing"]
+        }).map(project);
+        const shared = skillCommands.listSkillCommandsForAgents({
+          cfg: {
+            agents: {
+              list: [
+                { id: "a", workspace: args.sharedWorkspace, skills: ["extra-skill"] },
+                { id: "b", workspace: args.sharedWorkspace, skills: ["demo-skill"] }
+              ]
+            }
+          },
+          agentIds: ["a", "b"]
+        }).map(project);
+        const defaults = scopedSkillCommands.listSkillCommandsForWorkspace({
+          workspaceDir: args.defaultsWorkspace,
+          cfg: {
+            agents: {
+              defaults: { skills: ["alpha-skill"] },
+              list: [{ id: "alpha", workspace: args.defaultsWorkspace }]
+            }
+          },
+          agentId: "alpha"
+        }).map(project);
+        const explicitEmpty = skillCommands.listSkillCommandsForAgents({
+          cfg: {
+            agents: {
+              defaults: { skills: ["alpha-skill", "beta-skill"] },
+              list: [
+                { id: "empty", workspace: args.defaultsWorkspace, skills: [] },
+                { id: "beta", workspace: args.defaultsWorkspace, skills: ["beta-skill"] }
+              ]
+            }
+          },
+          agentIds: ["empty", "beta"]
+        }).map(project);
+        const standalone = skillCommands.listSkillCommandsForWorkspace({
+          workspaceDir: args.standaloneWorkspace,
+          cfg: {},
+          skillFilter: ["Remote Runner!"]
+        }).map(project);
+
+        return {
+          keys: Object.keys(skillCommands).sort(),
+          scopedType: typeof scopedSkillCommands.listSkillCommandsForAgents,
+          all,
+          shared,
+          defaults,
+          explicitEmpty,
+          standalone
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-skill-commands-plugin",
+                    "name": "Runtime Skill Commands Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-skill-commands-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.skill_commands"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.skill_commands",
+            "args": {
+                "mainWorkspace": str(main_workspace),
+                "researchWorkspace": str(research_workspace),
+                "sharedWorkspace": str(shared_workspace),
+                "defaultsWorkspace": str(defaults_workspace),
+                "standaloneWorkspace": str(standalone_workspace),
+                "missingWorkspace": str(missing_workspace),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "listSkillCommandsForAgents",
+            "listSkillCommandsForWorkspace",
+        ],
+        "scopedType": "function",
+        "all": [
+            {
+                "name": "demo_skill",
+                "skillName": "demo-skill",
+                "description": "Demo skill",
+                "dispatch": None,
+            },
+            {
+                "name": "extra_skill",
+                "skillName": "extra-skill",
+                "description": "Extra skill",
+                "dispatch": None,
+            },
+        ],
+        "shared": [
+            {
+                "name": "demo_skill",
+                "skillName": "demo-skill",
+                "description": "Demo skill",
+                "dispatch": None,
+            },
+            {
+                "name": "extra_skill",
+                "skillName": "extra-skill",
+                "description": "Extra skill",
+                "dispatch": None,
+            },
+        ],
+        "defaults": [
+            {
+                "name": "alpha_skill",
+                "skillName": "alpha-skill",
+                "description": "Alpha skill",
+                "dispatch": None,
+            }
+        ],
+        "explicitEmpty": [
+            {
+                "name": "beta_skill",
+                "skillName": "beta-skill",
+                "description": "Beta skill",
+                "dispatch": None,
+            }
+        ],
+        "standalone": [
+            {
+                "name": "remote_runner",
+                "skillName": "Remote Runner!",
+                "description": "Dispatches remote jobs",
+                "dispatch": {
+                    "kind": "tool",
+                    "toolName": "skills.remote",
+                    "argMode": "raw",
+                },
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

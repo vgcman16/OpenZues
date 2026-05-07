@@ -24886,6 +24886,405 @@ async function resolveModelsCommandReply(params) {
   return { text: lines.join("\n") };
 }
 
+const SKILL_COMMAND_MAX_LENGTH = 32;
+const SKILL_COMMAND_FALLBACK = "skill";
+const SKILL_COMMAND_DESCRIPTION_MAX_LENGTH = 100;
+
+function sanitizeSkillCommandName(raw) {
+  const normalized = normalizeLowercaseStringOrEmpty(raw)
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const trimmed = normalized.slice(0, SKILL_COMMAND_MAX_LENGTH);
+  return trimmed || SKILL_COMMAND_FALLBACK;
+}
+
+function resolveUniqueSkillCommandName(base, used) {
+  const normalizedBase = normalizeLowercaseStringOrEmpty(base);
+  if (!used.has(normalizedBase)) {
+    return base;
+  }
+  for (let index = 2; index < 1000; index += 1) {
+    const suffix = `_${index}`;
+    const maxBaseLength = Math.max(1, SKILL_COMMAND_MAX_LENGTH - suffix.length);
+    const trimmedBase = base.slice(0, maxBaseLength);
+    const candidate = `${trimmedBase}${suffix}`;
+    const candidateKey = normalizeLowercaseStringOrEmpty(candidate);
+    if (!used.has(candidateKey)) {
+      return candidate;
+    }
+  }
+  return `${base.slice(0, Math.max(1, SKILL_COMMAND_MAX_LENGTH - 2))}_x`;
+}
+
+function parseSkillCommandFrontmatter(markdown) {
+  const match = String(markdown || "").match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) {
+    return {};
+  }
+  const frontmatter = {};
+  for (const rawLine of match[1].split(/\r?\n/g)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const colonIndex = line.indexOf(":");
+    if (colonIndex <= 0) {
+      continue;
+    }
+    const key = line.slice(0, colonIndex).trim();
+    let value = line.slice(colonIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    frontmatter[key] = value;
+  }
+  return frontmatter;
+}
+
+function resolveSkillCommandBoolean(value, defaultValue = true) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  if (!normalized) {
+    return defaultValue;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  return defaultValue;
+}
+
+function readSkillCommandEntryFromMarkdown(filePath, fallbackName) {
+  let markdown;
+  try {
+    markdown = fs.readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+  const frontmatter = parseSkillCommandFrontmatter(markdown);
+  const rawName = normalizeOptionalString(frontmatter.name) || fallbackName;
+  if (!rawName) {
+    return null;
+  }
+  const userInvocable = resolveSkillCommandBoolean(
+    frontmatter["user-invocable"] ?? frontmatter.userInvocable,
+    true,
+  );
+  if (!userInvocable) {
+    return null;
+  }
+  return {
+    skill: {
+      name: rawName,
+      description: normalizeOptionalString(frontmatter.description) || rawName,
+    },
+    frontmatter,
+  };
+}
+
+function listSkillCommandWorkspaceRoots(workspaceDir) {
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  if (typeof host.listWorkspaceSkillRoots === "function") {
+    return host.listWorkspaceSkillRoots(workspaceDir);
+  }
+  return [
+    path.join(workspaceDir, "skills"),
+    path.join(workspaceDir, ".openclaw", "skills"),
+    path.join(workspaceDir, ".codex", "skills"),
+  ];
+}
+
+function loadSkillCommandWorkspaceEntries(workspaceDir) {
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  if (typeof host.loadWorkspaceSkillEntries === "function") {
+    return host.loadWorkspaceSkillEntries(workspaceDir) || [];
+  }
+  const entries = [];
+  const seenSkillDirs = new Set();
+  for (const root of listSkillCommandWorkspaceRoots(workspaceDir)) {
+    let children = [];
+    try {
+      children = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const child of children.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!child.isDirectory()) {
+        continue;
+      }
+      const skillDir = path.join(root, child.name);
+      const realKey = (() => {
+        try {
+          return fs.realpathSync(skillDir);
+        } catch {
+          return skillDir;
+        }
+      })();
+      if (seenSkillDirs.has(realKey)) {
+        continue;
+      }
+      seenSkillDirs.add(realKey);
+      for (const filename of ["SKILL.md", "skill.md"]) {
+        const entry = readSkillCommandEntryFromMarkdown(path.join(skillDir, filename), child.name);
+        if (entry) {
+          entries.push(entry);
+          break;
+        }
+      }
+    }
+  }
+  return entries;
+}
+
+function normalizeSkillCommandFilter(value) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.map((entry) => normalizeOptionalString(entry)).filter(Boolean);
+}
+
+function skillCommandMatchesFilter(entry, filter) {
+  if (filter === undefined) {
+    return true;
+  }
+  if (filter.length === 0) {
+    return false;
+  }
+  const skillName = normalizeLowercaseStringOrEmpty(entry.skill && entry.skill.name);
+  return filter.some((candidate) => normalizeLowercaseStringOrEmpty(candidate) === skillName);
+}
+
+function resolveSkillCommandDispatch(entry, commandName) {
+  const frontmatter = entry.frontmatter || {};
+  const kindRaw = normalizeLowercaseStringOrEmpty(
+    frontmatter["command-dispatch"] ?? frontmatter.command_dispatch ?? "",
+  );
+  if (kindRaw !== "tool") {
+    return undefined;
+  }
+  const toolName = normalizeOptionalString(
+    frontmatter["command-tool"] ?? frontmatter.command_tool,
+  );
+  if (!toolName) {
+    return undefined;
+  }
+  const argModeRaw = normalizeLowercaseStringOrEmpty(
+    frontmatter["command-arg-mode"] ?? frontmatter.command_arg_mode ?? "",
+  );
+  const argMode = !argModeRaw || argModeRaw === "raw" ? "raw" : "raw";
+  return { kind: "tool", toolName, argMode };
+}
+
+function buildWorkspaceSkillCommandSpecsNative(workspaceDir, opts = {}) {
+  const filter = normalizeSkillCommandFilter(opts.skillFilter);
+  const used = opts.reservedNames instanceof Set ? opts.reservedNames : new Set();
+  const entries = loadSkillCommandWorkspaceEntries(workspaceDir).filter((entry) =>
+    skillCommandMatchesFilter(entry, filter),
+  );
+  const specs = [];
+  for (const entry of entries) {
+    const rawName = entry.skill.name;
+    const base = sanitizeSkillCommandName(rawName);
+    const unique = resolveUniqueSkillCommandName(base, used);
+    used.add(normalizeLowercaseStringOrEmpty(unique));
+    const rawDescription = normalizeOptionalString(entry.skill.description) || rawName;
+    const description =
+      rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+        ? `${rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1)}\u2026`
+        : rawDescription;
+    const dispatch = resolveSkillCommandDispatch(entry, unique);
+    specs.push({
+      name: unique,
+      skillName: rawName,
+      description,
+      ...(dispatch ? { dispatch } : {}),
+    });
+  }
+  const host = globalThis.__openzuesSkillCommandsRuntime || {};
+  const bundleCommands =
+    typeof host.loadEnabledClaudeBundleCommands === "function"
+      ? host.loadEnabledClaudeBundleCommands({ workspaceDir, cfg: opts.config }) || []
+      : [];
+  for (const entry of bundleCommands) {
+    const rawName = normalizeOptionalString(entry.rawName || entry.skillName || entry.name);
+    if (!rawName) {
+      continue;
+    }
+    const base = sanitizeSkillCommandName(rawName);
+    const unique = resolveUniqueSkillCommandName(base, used);
+    used.add(normalizeLowercaseStringOrEmpty(unique));
+    const rawDescription = normalizeOptionalString(entry.description) || rawName;
+    specs.push({
+      name: unique,
+      skillName: rawName,
+      description:
+        rawDescription.length > SKILL_COMMAND_DESCRIPTION_MAX_LENGTH
+          ? `${rawDescription.slice(0, SKILL_COMMAND_DESCRIPTION_MAX_LENGTH - 1)}\u2026`
+          : rawDescription,
+      ...(entry.promptTemplate ? { promptTemplate: entry.promptTemplate } : {}),
+      ...(entry.sourceFilePath ? { sourceFilePath: entry.sourceFilePath } : {}),
+    });
+  }
+  return specs;
+}
+
+function listReservedSkillCommandNames(extraNames = []) {
+  const reserved = new Set([
+    "help",
+    "info",
+    "model",
+    "models",
+    "settings",
+    "status",
+    "stop",
+    "tools",
+  ]);
+  for (const name of extraNames) {
+    const trimmed = normalizeOptionalLowercaseString(name);
+    if (trimmed) {
+      reserved.add(trimmed);
+    }
+  }
+  return reserved;
+}
+
+function findSkillCommandAgentConfig(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  if (!agents || typeof agents !== "object") {
+    return undefined;
+  }
+  if (Array.isArray(agents.list)) {
+    return agents.list.find((entry) => entry && entry.id === agentId);
+  }
+  const entry = agents[agentId];
+  return entry && typeof entry === "object" ? entry : undefined;
+}
+
+function listSkillCommandAgentIds(cfg) {
+  const agents = cfg && cfg.agents;
+  if (!agents || typeof agents !== "object") {
+    return ["main"];
+  }
+  if (Array.isArray(agents.list)) {
+    return agents.list
+      .map((entry) => normalizeOptionalString(entry && entry.id))
+      .filter(Boolean);
+  }
+  const ids = Object.keys(agents).filter((key) => key !== "defaults");
+  return ids.length > 0 ? ids : ["main"];
+}
+
+function resolveSkillCommandAgentWorkspace(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const defaults = (agents && agents.defaults) || {};
+  const agentConfig = findSkillCommandAgentConfig(cfg, agentId) || {};
+  const workspace =
+    normalizeOptionalString(
+      agentConfig.workspace ||
+        agentConfig.workspaceDir ||
+        agentConfig.cwd ||
+        agentConfig.dir ||
+        defaults.workspace ||
+        defaults.workspaceDir,
+    ) || process.cwd();
+  return path.resolve(workspace);
+}
+
+function resolveSkillCommandAgentFilter(cfg, agentId) {
+  const agents = cfg && cfg.agents;
+  const defaults = (agents && agents.defaults) || {};
+  const agentConfig = findSkillCommandAgentConfig(cfg, agentId);
+  if (agentConfig && Object.prototype.hasOwnProperty.call(agentConfig, "skills")) {
+    return normalizeSkillCommandFilter(agentConfig.skills) || [];
+  }
+  return normalizeSkillCommandFilter(defaults.skills);
+}
+
+function mergeSkillCommandFilters(existing, incoming) {
+  if (existing === undefined || incoming === undefined) {
+    return undefined;
+  }
+  if (existing.length === 0) {
+    return Array.from(new Set(incoming));
+  }
+  if (incoming.length === 0) {
+    return Array.from(new Set(existing));
+  }
+  return Array.from(new Set([...existing, ...incoming]));
+}
+
+function dedupeSkillCommandsBySkillName(commands) {
+  const seen = new Set();
+  const out = [];
+  for (const command of commands) {
+    const key = normalizeOptionalLowercaseString(command.skillName);
+    if (key && seen.has(key)) {
+      continue;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    out.push(command);
+  }
+  return out;
+}
+
+function listSkillCommandsForWorkspace(params) {
+  return buildWorkspaceSkillCommandSpecsNative(params.workspaceDir, {
+    config: params.cfg,
+    agentId: params.agentId,
+    skillFilter:
+      params.skillFilter !== undefined
+        ? params.skillFilter
+        : resolveSkillCommandAgentFilter(params.cfg, params.agentId),
+    reservedNames: listReservedSkillCommandNames(),
+  });
+}
+
+function listSkillCommandsForAgents(params) {
+  const cfg = params.cfg || {};
+  const agentIds = params.agentIds || listSkillCommandAgentIds(cfg);
+  const used = listReservedSkillCommandNames();
+  const workspaceFilters = new Map();
+  for (const agentId of agentIds) {
+    const workspaceDir = resolveSkillCommandAgentWorkspace(cfg, agentId);
+    if (!fs.existsSync(workspaceDir)) {
+      continue;
+    }
+    let canonicalDir;
+    try {
+      canonicalDir = fs.realpathSync(workspaceDir);
+    } catch {
+      continue;
+    }
+    const skillFilter = resolveSkillCommandAgentFilter(cfg, agentId);
+    const existing = workspaceFilters.get(canonicalDir);
+    if (existing) {
+      existing.skillFilter = mergeSkillCommandFilters(existing.skillFilter, skillFilter);
+      continue;
+    }
+    workspaceFilters.set(canonicalDir, { workspaceDir, skillFilter });
+  }
+  const entries = [];
+  for (const { workspaceDir, skillFilter } of workspaceFilters.values()) {
+    const commands = buildWorkspaceSkillCommandSpecsNative(workspaceDir, {
+      config: cfg,
+      skillFilter,
+      reservedNames: used,
+    });
+    for (const command of commands) {
+      used.add(normalizeLowercaseStringOrEmpty(command.name));
+      entries.push(command);
+    }
+  }
+  return dedupeSkillCommandsBySkillName(entries);
+}
+
 function getQaRunnerRuntimeHost() {
   return globalThis.__openzuesQaRunnerRuntime || {};
 }
@@ -50764,6 +51163,11 @@ const modelsProviderRuntime = {
   resolveModelsCommandReply,
 };
 
+const skillCommandsRuntime = {
+  listSkillCommandsForAgents,
+  listSkillCommandsForWorkspace,
+};
+
 const qaRunnerRuntime = {
   isQaRuntimeAvailable,
   listQaRunnerCliContributions,
@@ -57849,6 +58253,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/models-provider-runtime"
   ) {
     return modelsProviderRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/skill-commands-runtime" ||
+    request === "@openclaw/plugin-sdk/skill-commands-runtime"
+  ) {
+    return skillCommandsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
