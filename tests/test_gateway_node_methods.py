@@ -14773,6 +14773,199 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_realtime_transcription_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-realtime-transcription.cjs"
+    runtime_entry.write_text(
+        """
+const realtime = require("openclaw/plugin-sdk/realtime-transcription");
+const scopedRealtime = require("@openclaw/plugin-sdk/realtime-transcription");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.realtime_transcription",
+      description: "Use OpenClaw realtime-transcription SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const providers = [
+          {
+            id: "openai-realtime",
+            aliases: ["OpenAI", "whisper-live"],
+            label: "OpenAI Realtime"
+          },
+          {
+            id: "local-stream",
+            aliases: ["LOCAL"]
+          }
+        ];
+        const cfg = { realtimeTranscriptionProviders: providers };
+        const events = [];
+        const sentAudio = [];
+        const session = realtime.createRealtimeTranscriptionWebSocketSession({
+          providerId: "openai-realtime",
+          callbacks: {
+            onError(error) {
+              events.push(`error:${error.message}`);
+            }
+          },
+          url: () => "ws://example.test/realtime",
+          onOpen(transport) {
+            events.push(`open:${transport.isReady()}`);
+            transport.sendJson({ type: "session.update" });
+            transport.markReady();
+          },
+          sendAudio(audio, transport) {
+            sentAudio.push(audio.toString("utf8"));
+            events.push(`send:${transport.isReady()}`);
+            transport.sendBinary(audio);
+          }
+        });
+        session.sendAudio(Buffer.from("queued"));
+        await session.connect();
+        session.sendAudio(Buffer.from("after"));
+        const connected = session.isConnected();
+        session.close();
+
+        const failed = realtime.createRealtimeTranscriptionWebSocketSession({
+          providerId: "broken",
+          callbacks: {
+            onError(error) {
+              events.push(`fail:${error.message}`);
+            }
+          },
+          url: "ws://example.test/broken",
+          onOpen(transport) {
+            transport.failConnect(new Error("nope"));
+          },
+          sendAudio() {}
+        });
+        let failMessage = "";
+        try {
+          await failed.connect();
+        } catch (err) {
+          failMessage = String(err && err.message ? err.message : err);
+        }
+
+        return {
+          keys: Object.keys(realtime).sort(),
+          scopedKeys: Object.keys(scopedRealtime).sort(),
+          normalized: [
+            realtime.normalizeRealtimeTranscriptionProviderId(" OpenAI "),
+            realtime.normalizeRealtimeTranscriptionProviderId("  ")
+          ],
+          providers: realtime.listRealtimeTranscriptionProviders(cfg).map((entry) => entry.id),
+          disabledProviders: realtime.listRealtimeTranscriptionProviders({
+            plugins: { enabled: false },
+            realtimeTranscriptionProviders: providers
+          }).length,
+          getByAlias: realtime.getRealtimeTranscriptionProvider("whisper-live", cfg).id,
+          canonical: realtime.canonicalizeRealtimeTranscriptionProviderId("LOCAL", cfg),
+          canonicalMissing: realtime.canonicalizeRealtimeTranscriptionProviderId("missing", cfg),
+          session: {
+            sentAudio,
+            events,
+            connected,
+            afterClose: session.isConnected(),
+            failMessage,
+            failedConnected: failed.isConnected()
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "realtime-transcription-plugin",
+                    "name": "Realtime Transcription Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-realtime-transcription.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.realtime_transcription"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.realtime_transcription"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "canonicalizeRealtimeTranscriptionProviderId",
+            "createRealtimeTranscriptionWebSocketSession",
+            "getRealtimeTranscriptionProvider",
+            "listRealtimeTranscriptionProviders",
+            "normalizeRealtimeTranscriptionProviderId",
+        ],
+        "scopedKeys": [
+            "canonicalizeRealtimeTranscriptionProviderId",
+            "createRealtimeTranscriptionWebSocketSession",
+            "getRealtimeTranscriptionProvider",
+            "listRealtimeTranscriptionProviders",
+            "normalizeRealtimeTranscriptionProviderId",
+        ],
+        "normalized": ["openai", None],
+        "providers": ["openai-realtime", "local-stream"],
+        "disabledProviders": 0,
+        "getByAlias": "openai-realtime",
+        "canonical": "local-stream",
+        "canonicalMissing": "missing",
+        "session": {
+            "sentAudio": ["queued", "after"],
+            "events": [
+                "open:false",
+                "send:true",
+                "send:true",
+                "fail:nope",
+            ],
+            "connected": True,
+            "afterClose": False,
+            "failMessage": "nope",
+            "failedConnected": False,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:

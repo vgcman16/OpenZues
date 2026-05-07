@@ -41733,6 +41733,271 @@ const videoGenerationRuntime = {
   listRuntimeVideoGenerationProviders,
 };
 
+function normalizeCapabilityProviderId(providerId) {
+  return normalizeOptionalLowercaseString(providerId);
+}
+
+function resolvePluginCapabilityProviders(params = {}) {
+  const cfg = params.cfg || {};
+  const key = params.key;
+  if (cfg.plugins && cfg.plugins.enabled === false && key !== "speechProviders") {
+    return [];
+  }
+  const candidates = [
+    cfg[key],
+    cfg.capabilityProviders && cfg.capabilityProviders[key],
+    cfg.plugins && cfg.plugins.capabilityProviders && cfg.plugins.capabilityProviders[key],
+    cfg.plugins && cfg.plugins[key],
+  ];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) {
+      continue;
+    }
+    return candidate.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return [];
+      }
+      return [entry.provider && typeof entry.provider === "object" ? entry.provider : entry];
+    });
+  }
+  return [];
+}
+
+function buildCapabilityProviderMaps(providers = [], normalizeId = normalizeCapabilityProviderId) {
+  const canonical = new Map();
+  const aliases = new Map();
+  for (const provider of providers) {
+    const id = normalizeId(provider && provider.id);
+    if (!id) {
+      continue;
+    }
+    canonical.set(id, provider);
+    aliases.set(id, provider);
+    if (Array.isArray(provider.aliases)) {
+      for (const alias of provider.aliases) {
+        const normalizedAlias = normalizeId(alias);
+        if (normalizedAlias) {
+          aliases.set(normalizedAlias, provider);
+        }
+      }
+    }
+  }
+  return { canonical, aliases };
+}
+
+function normalizeRealtimeTranscriptionProviderId(providerId) {
+  return normalizeCapabilityProviderId(providerId);
+}
+
+function listRealtimeTranscriptionProviders(cfg) {
+  return [
+    ...buildCapabilityProviderMaps(
+      resolvePluginCapabilityProviders({
+        key: "realtimeTranscriptionProviders",
+        cfg,
+      }),
+      normalizeRealtimeTranscriptionProviderId,
+    ).canonical.values(),
+  ];
+}
+
+function getRealtimeTranscriptionProvider(providerId, cfg) {
+  const normalized = normalizeRealtimeTranscriptionProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return buildCapabilityProviderMaps(
+    listRealtimeTranscriptionProviders(cfg),
+    normalizeRealtimeTranscriptionProviderId,
+  ).aliases.get(normalized);
+}
+
+function canonicalizeRealtimeTranscriptionProviderId(providerId, cfg) {
+  const normalized = normalizeRealtimeTranscriptionProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getRealtimeTranscriptionProvider(normalized, cfg);
+  return (provider && provider.id) || normalized;
+}
+
+function createRealtimeTranscriptionWebSocketSession(options = {}) {
+  const callbacks = options.callbacks || {};
+  let closed = false;
+  let connected = false;
+  let ready = false;
+  let queuedAudio = [];
+  let queuedBytes = 0;
+  let connectTimer;
+  let connectResolve;
+  let connectReject;
+
+  const connectTimeoutMs =
+    typeof options.connectTimeoutMs === "number" && Number.isFinite(options.connectTimeoutMs)
+      ? options.connectTimeoutMs
+      : 10000;
+  const maxQueuedBytes =
+    typeof options.maxQueuedBytes === "number" && Number.isFinite(options.maxQueuedBytes)
+      ? options.maxQueuedBytes
+      : 2 * 1024 * 1024;
+
+  const clearConnectTimer = () => {
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = undefined;
+    }
+  };
+
+  const normalizeError = (error) => (error instanceof Error ? error : new Error(String(error)));
+
+  const emitError = (error) => {
+    if (callbacks && typeof callbacks.onError === "function") {
+      callbacks.onError(normalizeError(error));
+    }
+  };
+
+  const flushQueuedAudio = () => {
+    const pending = queuedAudio;
+    queuedAudio = [];
+    queuedBytes = 0;
+    for (const audio of pending) {
+      options.sendAudio(audio, transport);
+    }
+  };
+
+  const settleConnected = () => {
+    clearConnectTimer();
+    if (typeof connectResolve === "function") {
+      const resolve = connectResolve;
+      connectResolve = undefined;
+      connectReject = undefined;
+      resolve();
+    }
+  };
+
+  const transport = {
+    callbacks,
+    closeNow() {
+      closed = true;
+      connected = false;
+      ready = false;
+      queuedAudio = [];
+      queuedBytes = 0;
+      clearConnectTimer();
+    },
+    failConnect(error) {
+      const normalized = normalizeError(error);
+      closed = true;
+      connected = false;
+      ready = false;
+      queuedAudio = [];
+      queuedBytes = 0;
+      clearConnectTimer();
+      emitError(normalized);
+      if (typeof connectReject === "function") {
+        const reject = connectReject;
+        connectResolve = undefined;
+        connectReject = undefined;
+        reject(normalized);
+      }
+    },
+    isOpen() {
+      return connected && !closed;
+    },
+    isReady() {
+      return ready;
+    },
+    markReady() {
+      if (closed) {
+        return;
+      }
+      ready = true;
+      flushQueuedAudio();
+      settleConnected();
+    },
+    sendBinary(payload) {
+      return Boolean(payload) && connected && !closed;
+    },
+    sendJson(payload) {
+      JSON.stringify(payload);
+      return connected && !closed;
+    },
+  };
+
+  const queueAudio = (audio) => {
+    const copy = Buffer.from(audio);
+    queuedAudio.push(copy);
+    queuedBytes += copy.byteLength;
+    while (queuedBytes > maxQueuedBytes && queuedAudio.length > 0) {
+      const dropped = queuedAudio.shift();
+      queuedBytes -= dropped ? dropped.byteLength : 0;
+    }
+  };
+
+  return {
+    async connect() {
+      closed = false;
+      connected = true;
+      ready = false;
+      return await new Promise((resolve, reject) => {
+        connectResolve = resolve;
+        connectReject = reject;
+        connectTimer = setTimeout(() => {
+          transport.failConnect(
+            new Error(
+              options.connectTimeoutMessage ||
+                `${options.providerId} realtime transcription connection timeout`,
+            ),
+          );
+        }, connectTimeoutMs);
+        try {
+          if (typeof options.onOpen === "function") {
+            options.onOpen(transport);
+          }
+          if (options.readyOnOpen) {
+            transport.markReady();
+          } else if (ready) {
+            settleConnected();
+          }
+        } catch (error) {
+          transport.failConnect(error);
+        }
+      });
+    },
+    sendAudio(audio) {
+      if (closed || !audio || audio.byteLength === 0) {
+        return;
+      }
+      if (connected && ready) {
+        options.sendAudio(audio, transport);
+        return;
+      }
+      queueAudio(audio);
+    },
+    close() {
+      if (connected && !closed && typeof options.onClose === "function") {
+        try {
+          options.onClose(transport);
+        } catch (error) {
+          emitError(error);
+        }
+      }
+      transport.closeNow();
+    },
+    isConnected() {
+      return connected && ready && !closed;
+    },
+  };
+}
+
+const realtimeTranscriptionRuntime = {
+  canonicalizeRealtimeTranscriptionProviderId,
+  createRealtimeTranscriptionWebSocketSession,
+  getRealtimeTranscriptionProvider,
+  listRealtimeTranscriptionProviders,
+  normalizeRealtimeTranscriptionProviderId,
+};
+
 const videoGenerationCoreRuntime = {
   buildNoCapabilityModelConfiguredMessage,
   createSubsystemLogger,
@@ -54503,6 +54768,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/video-generation-runtime"
   ) {
     return videoGenerationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/realtime-transcription" ||
+    request === "@openclaw/plugin-sdk/realtime-transcription"
+  ) {
+    return realtimeTranscriptionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/music-generation-core" ||
