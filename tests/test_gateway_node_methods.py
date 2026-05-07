@@ -10155,6 +10155,222 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_zod_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-zod.cjs"
+    runtime_entry.write_text(
+        """
+const zod = require("openclaw/plugin-sdk/zod");
+const scopedZod = require("@openclaw/plugin-sdk/zod");
+const { z } = zod;
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.zod",
+      description: "Use OpenClaw zod SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const schema = z.strictObject({
+          name: z.string({ error: "name must be a string" })
+            .trim()
+            .min(2, { error: "name too short" })
+            .describe("display name"),
+          mode: z.enum(["on", "off"]).optional().default("off"),
+          count: z.number().int().min(1).max(5).default(2),
+          tags: z.array(z.union([z.string(), z.number()])).optional(),
+          routes: z.record(
+            z.string(),
+            z.object({ enabled: z.boolean().optional() })
+          ).optional(),
+          literal: z.union([
+            z.literal("allowall").transform(() => "open"),
+            z.enum(["open", "closed"])
+          ]),
+          metadata: z.unknown().optional()
+        }).superRefine((value, ctx) => {
+          if (value.mode === "on" && !value.routes) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["routes"],
+              message: "routes required when on"
+            });
+          }
+        });
+        const parsed = schema.parse({
+          name: " Alice ",
+          mode: "on",
+          count: 3,
+          tags: ["a", 4],
+          routes: { main: { enabled: true } },
+          literal: "allowall",
+          metadata: { source: "test" }
+        });
+        const defaulted = schema.parse({ name: "Bo", literal: "closed" });
+        const superIssue = schema.safeParse({
+          name: "Alice",
+          mode: "on",
+          literal: "open"
+        });
+        const strictIssue = z.strictObject({ a: z.string() }).safeParse({
+          a: "x",
+          b: "extra"
+        });
+        const invalid = schema.safeParse({ name: " A ", literal: "bad" });
+        return {
+          hasZ: zod.z === z,
+          scopedType: typeof scopedZod.z.object,
+          exportTypes: {
+            object: typeof zod.object,
+            strictObject: typeof zod.strictObject,
+            error: typeof zod.ZodError,
+            issueCode: zod.ZodIssueCode.custom
+          },
+          parsed,
+          defaulted,
+          superIssue: {
+            success: superIssue.success,
+            issues: superIssue.error.issues.map((issue) => ({
+              code: issue.code,
+              path: issue.path.join("."),
+              message: issue.message
+            }))
+          },
+          strictIssue: {
+            success: strictIssue.success,
+            issues: strictIssue.error.issues.map((issue) => ({
+              code: issue.code,
+              path: issue.path.join("."),
+              message: issue.message
+            }))
+          },
+          invalid: {
+            success: invalid.success,
+            issues: invalid.error.issues.map((issue) => ({
+              code: issue.code,
+              path: issue.path.join("."),
+              message: issue.message
+            }))
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-zod-plugin",
+                    "name": "Runtime Zod Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-zod-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.zod"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.zod"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "hasZ": True,
+        "scopedType": "function",
+        "exportTypes": {
+            "object": "function",
+            "strictObject": "function",
+            "error": "function",
+            "issueCode": "custom",
+        },
+        "parsed": {
+            "name": "Alice",
+            "mode": "on",
+            "count": 3,
+            "tags": ["a", 4],
+            "routes": {"main": {"enabled": True}},
+            "literal": "open",
+            "metadata": {"source": "test"},
+        },
+        "defaulted": {
+            "name": "Bo",
+            "mode": "off",
+            "count": 2,
+            "literal": "closed",
+        },
+        "superIssue": {
+            "success": False,
+            "issues": [
+                {
+                    "code": "custom",
+                    "path": "routes",
+                    "message": "routes required when on",
+                }
+            ],
+        },
+        "strictIssue": {
+            "success": False,
+            "issues": [
+                {
+                    "code": "unrecognized_keys",
+                    "path": "b",
+                    "message": "Unrecognized key: b",
+                }
+            ],
+        },
+        "invalid": {
+            "success": False,
+            "issues": [
+                {
+                    "code": "too_small",
+                    "path": "name",
+                    "message": "name too short",
+                },
+                {
+                    "code": "invalid_union",
+                    "path": "literal",
+                    "message": "Invalid input",
+                },
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
     tmp_path,
 ) -> None:

@@ -40358,6 +40358,529 @@ const typeOnlyPluginSdkRequests = new Set([
   "@openclaw/plugin-sdk/tts-runtime.types",
 ]);
 
+const ZodIssueCode = Object.freeze({
+  custom: "custom",
+  invalid_enum_value: "invalid_enum_value",
+  invalid_literal: "invalid_literal",
+  invalid_string: "invalid_string",
+  invalid_type: "invalid_type",
+  invalid_union: "invalid_union",
+  too_big: "too_big",
+  too_small: "too_small",
+  unrecognized_keys: "unrecognized_keys",
+});
+
+class ZodError extends Error {
+  constructor(issues) {
+    super(JSON.stringify(issues || []));
+    this.name = "ZodError";
+    this.issues = issues || [];
+    this.errors = this.issues;
+  }
+}
+
+function zodErrorMessage(options, fallback) {
+  if (typeof options === "string") {
+    return options;
+  }
+  if (options && typeof options.error === "string") {
+    return options.error;
+  }
+  if (options && typeof options.message === "string") {
+    return options.message;
+  }
+  return fallback;
+}
+
+function zodIssue(path, code, message) {
+  return { code, path: Array.isArray(path) ? path : [], message };
+}
+
+function zodOk(value) {
+  return { ok: true, value };
+}
+
+function zodFail(path, code, message) {
+  return { ok: false, issues: [zodIssue(path, code, message)] };
+}
+
+class MiniZodType {
+  parse(value) {
+    const parsed = this._parse(value, []);
+    if (parsed.ok) {
+      return parsed.value;
+    }
+    throw new ZodError(parsed.issues);
+  }
+
+  safeParse(value) {
+    const parsed = this._parse(value, []);
+    if (parsed.ok) {
+      return { success: true, data: parsed.value };
+    }
+    return { success: false, error: new ZodError(parsed.issues) };
+  }
+
+  optional() {
+    return new MiniZodOptional(this);
+  }
+
+  default(value) {
+    return new MiniZodDefault(this, value);
+  }
+
+  describe(description) {
+    this.description = description;
+    return this;
+  }
+
+  transform(transformer) {
+    return new MiniZodTransform(this, transformer);
+  }
+}
+
+class MiniZodOptional extends MiniZodType {
+  constructor(inner) {
+    super();
+    this.inner = inner;
+  }
+
+  _parse(value, path) {
+    if (value === undefined) {
+      return zodOk(undefined);
+    }
+    return this.inner._parse(value, path);
+  }
+}
+
+class MiniZodDefault extends MiniZodType {
+  constructor(inner, defaultValue) {
+    super();
+    this.inner = inner;
+    this.defaultValue = defaultValue;
+  }
+
+  _parse(value, path) {
+    const next =
+      value === undefined
+        ? typeof this.defaultValue === "function"
+          ? this.defaultValue()
+          : this.defaultValue
+        : value;
+    return this.inner._parse(next, path);
+  }
+}
+
+class MiniZodTransform extends MiniZodType {
+  constructor(inner, transformer) {
+    super();
+    this.inner = inner;
+    this.transformer = transformer;
+  }
+
+  _parse(value, path) {
+    const parsed = this.inner._parse(value, path);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    return zodOk(this.transformer(parsed.value));
+  }
+}
+
+class MiniZodString extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+    this.steps = [];
+  }
+
+  trim() {
+    this.steps.push({ kind: "trim" });
+    return this;
+  }
+
+  min(length, options) {
+    this.steps.push({ kind: "min", length, options });
+    return this;
+  }
+
+  url(options) {
+    this.steps.push({ kind: "url", options });
+    return this;
+  }
+
+  startsWith(prefix, options) {
+    this.steps.push({ kind: "startsWith", prefix, options });
+    return this;
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "string") {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected string"),
+      );
+    }
+    let next = value;
+    const issues = [];
+    for (const step of this.steps) {
+      if (step.kind === "trim") {
+        next = next.trim();
+      } else if (step.kind === "min" && next.length < step.length) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, `String must contain at least ${step.length}`),
+          ),
+        );
+      } else if (step.kind === "url") {
+        try {
+          new URL(next);
+        } catch {
+          issues.push(
+            zodIssue(
+              path,
+              ZodIssueCode.invalid_string,
+              zodErrorMessage(step.options, "Invalid url"),
+            ),
+          );
+        }
+      } else if (step.kind === "startsWith" && !next.startsWith(step.prefix)) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.invalid_string,
+            zodErrorMessage(step.options, `String must start with ${step.prefix}`),
+          ),
+        );
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(next);
+  }
+}
+
+class MiniZodNumber extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+    this.steps = [];
+  }
+
+  int(options) {
+    this.steps.push({ kind: "int", options });
+    return this;
+  }
+
+  min(value, options) {
+    this.steps.push({ kind: "min", value, options });
+    return this;
+  }
+
+  max(value, options) {
+    this.steps.push({ kind: "max", value, options });
+    return this;
+  }
+
+  positive(options) {
+    this.steps.push({ kind: "positive", options });
+    return this;
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected number"),
+      );
+    }
+    const issues = [];
+    for (const step of this.steps) {
+      if (step.kind === "int" && !Number.isInteger(value)) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.invalid_type,
+            zodErrorMessage(step.options, "Expected integer"),
+          ),
+        );
+      } else if (step.kind === "min" && value < step.value) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, `Number must be >= ${step.value}`),
+          ),
+        );
+      } else if (step.kind === "max" && value > step.value) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_big,
+            zodErrorMessage(step.options, `Number must be <= ${step.value}`),
+          ),
+        );
+      } else if (step.kind === "positive" && value <= 0) {
+        issues.push(
+          zodIssue(
+            path,
+            ZodIssueCode.too_small,
+            zodErrorMessage(step.options, "Number must be > 0"),
+          ),
+        );
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(value);
+  }
+}
+
+class MiniZodBoolean extends MiniZodType {
+  constructor(options) {
+    super();
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (typeof value !== "boolean") {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected boolean"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodUnknown extends MiniZodType {
+  _parse(value, _path) {
+    return zodOk(value);
+  }
+}
+
+class MiniZodEnum extends MiniZodType {
+  constructor(values, options) {
+    super();
+    this.values = Array.isArray(values) ? [...values] : [];
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!this.values.includes(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_enum_value,
+        zodErrorMessage(this.options, "Invalid enum value"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodLiteral extends MiniZodType {
+  constructor(expected, options) {
+    super();
+    this.expected = expected;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (value !== this.expected) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_literal,
+        zodErrorMessage(this.options, "Invalid literal value"),
+      );
+    }
+    return zodOk(value);
+  }
+}
+
+class MiniZodUnion extends MiniZodType {
+  constructor(options, config) {
+    super();
+    this.options = Array.isArray(options) ? options : [];
+    this.config = config || {};
+  }
+
+  _parse(value, path) {
+    for (const option of this.options) {
+      const parsed = option._parse(value, path);
+      if (parsed.ok) {
+        return parsed;
+      }
+    }
+    return zodFail(
+      path,
+      ZodIssueCode.invalid_union,
+      zodErrorMessage(this.config, "Invalid input"),
+    );
+  }
+}
+
+class MiniZodArray extends MiniZodType {
+  constructor(inner, options) {
+    super();
+    this.inner = inner;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected array"),
+      );
+    }
+    const result = [];
+    const issues = [];
+    value.forEach((entry, index) => {
+      const parsed = this.inner._parse(entry, [...path, index]);
+      if (parsed.ok) {
+        result[index] = parsed.value;
+      } else {
+        issues.push(...parsed.issues);
+      }
+    });
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+class MiniZodRecord extends MiniZodType {
+  constructor(keySchema, valueSchema, options) {
+    super();
+    this.keySchema = valueSchema ? keySchema : new MiniZodString();
+    this.valueSchema = valueSchema || keySchema;
+    this.options = options || {};
+  }
+
+  _parse(value, path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected object"),
+      );
+    }
+    const result = {};
+    const issues = [];
+    for (const [key, entry] of Object.entries(value)) {
+      const keyParsed = this.keySchema._parse(key, [...path, key]);
+      if (!keyParsed.ok) {
+        issues.push(...keyParsed.issues);
+        continue;
+      }
+      const parsed = this.valueSchema._parse(entry, [...path, key]);
+      if (parsed.ok) {
+        result[key] = parsed.value;
+      } else {
+        issues.push(...parsed.issues);
+      }
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+class MiniZodObject extends MiniZodType {
+  constructor(shape, options) {
+    super();
+    this.shape = shape || {};
+    this.options = options || {};
+    this.strictMode = false;
+    this.refiners = [];
+  }
+
+  strict() {
+    this.strictMode = true;
+    return this;
+  }
+
+  superRefine(refiner) {
+    if (typeof refiner === "function") {
+      this.refiners.push(refiner);
+    }
+    return this;
+  }
+
+  _parse(value, path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return zodFail(
+        path,
+        ZodIssueCode.invalid_type,
+        zodErrorMessage(this.options, "Expected object"),
+      );
+    }
+    const result = {};
+    const issues = [];
+    for (const [key, schema] of Object.entries(this.shape)) {
+      const parsed = schema._parse(value[key], [...path, key]);
+      if (parsed.ok) {
+        if (parsed.value !== undefined || Object.hasOwn(value, key)) {
+          result[key] = parsed.value;
+        }
+      } else {
+        issues.push(...parsed.issues);
+      }
+    }
+    if (this.strictMode) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(this.shape, key)) {
+          issues.push(
+            zodIssue(
+              [...path, key],
+              ZodIssueCode.unrecognized_keys,
+              `Unrecognized key: ${key}`,
+            ),
+          );
+        }
+      }
+    }
+    if (issues.length > 0) {
+      return { ok: false, issues };
+    }
+    const context = {
+      addIssue(issue) {
+        issues.push({
+          code: issue.code || ZodIssueCode.custom,
+          path: Array.isArray(issue.path) ? issue.path : [],
+          message: issue.message || "Invalid input",
+        });
+      },
+    };
+    for (const refiner of this.refiners) {
+      refiner(result, context);
+    }
+    return issues.length > 0 ? { ok: false, issues } : zodOk(result);
+  }
+}
+
+const z = {
+  ZodError,
+  ZodIssueCode,
+  any: () => new MiniZodUnknown(),
+  array: (schema, options) => new MiniZodArray(schema, options),
+  boolean: (options) => new MiniZodBoolean(options),
+  enum: (values, options) => new MiniZodEnum(values, options),
+  literal: (value, options) => new MiniZodLiteral(value, options),
+  number: (options) => new MiniZodNumber(options),
+  object: (shape, options) => new MiniZodObject(shape, options),
+  record: (keySchema, valueSchema, options) =>
+    new MiniZodRecord(keySchema, valueSchema, options),
+  strictObject: (shape, options) => new MiniZodObject(shape, options).strict(),
+  string: (options) => new MiniZodString(options),
+  union: (options, config) => new MiniZodUnion(options, config),
+  unknown: () => new MiniZodUnknown(),
+};
+
+const zodRuntime = {
+  ...z,
+  default: z,
+  z,
+};
+
 const commandPrimitivesRuntime = {
   isAbortRequestText,
   isBtwRequestText,
@@ -72326,6 +72849,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
       resolveSenderCommandAuthorization,
       resolveSenderCommandAuthorizationWithRuntime,
     };
+  }
+  if (
+    request === "openclaw/plugin-sdk/zod" ||
+    request === "@openclaw/plugin-sdk/zod"
+  ) {
+    return zodRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/command-auth-native" ||
