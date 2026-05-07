@@ -46808,6 +46808,11 @@ const outboundRuntime = {
   summarizeOutboundPayloadForTransport,
 };
 
+const outboundSendDepsRuntime = {
+  resolveLegacyOutboundSendDepKeys,
+  resolveOutboundSendDep,
+};
+
 async function drainPendingDeliveries(opts = {}) {
   const deliver =
     opts.deliver ||
@@ -72183,6 +72188,7 @@ const genericSdk = new Proxy(
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
     ...outboundRuntime,
+    ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
     ...migrationRuntime,
     ...migrationHelperRuntime,
@@ -73252,6 +73258,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/outbound-runtime"
   ) {
     return outboundRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/outbound-send-deps" ||
+    request === "@openclaw/plugin-sdk/outbound-send-deps"
+  ) {
+    return outboundSendDepsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/delivery-queue-runtime" ||

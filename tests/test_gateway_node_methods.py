@@ -24609,6 +24609,113 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_outbound_send_deps_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-outbound-send-deps.cjs"
+    runtime_entry.write_text(
+        """
+const sendDeps = require("openclaw/plugin-sdk/outbound-send-deps");
+const scopedSendDeps = require("@openclaw/plugin-sdk/outbound-send-deps");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.outbound_send_deps",
+      description: "Use OpenClaw outbound send dependency SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          keys: Object.keys(sendDeps).sort(),
+          scopedSame:
+            scopedSendDeps.resolveOutboundSendDep ===
+            sendDeps.resolveOutboundSendDep,
+          legacy: {
+            empty: sendDeps.resolveLegacyOutboundSendDepKeys("!!!"),
+            slack: sendDeps.resolveLegacyOutboundSendDepKeys("slack"),
+            msTeams: sendDeps.resolveLegacyOutboundSendDepKeys("ms-teams")
+          },
+          resolved: [
+            sendDeps.resolveOutboundSendDep({ slack: "direct" }, "slack"),
+            sendDeps.resolveOutboundSendDep({ sendMSteams: "teams" }, "ms-teams"),
+            sendDeps.resolveOutboundSendDep(
+              { customLegacy: "fallback" },
+              "custom",
+              { legacyKeys: ["customLegacy"] }
+            ),
+            sendDeps.resolveOutboundSendDep(
+              { discord: "modern", sendDiscord: "legacy" },
+              "discord"
+            )
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "outbound-send-deps-plugin",
+                    "name": "Outbound Send Deps Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-outbound-send-deps.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.outbound_send_deps"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.outbound_send_deps"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveLegacyOutboundSendDepKeys", "resolveOutboundSendDep"],
+        "scopedSame": True,
+        "legacy": {
+            "empty": [],
+            "slack": ["sendSlack"],
+            "msTeams": ["sendMsteams", "sendMSteams"],
+        },
+        "resolved": ["direct", "teams", "fallback", "modern"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_delivery_queue_runtime_helpers(
     tmp_path,
 ) -> None:
