@@ -118,8 +118,12 @@ imported `browser-config` facade coverage from
 `extensions/browser/src/browser/control-auth.ts` is verified in `d1d7b371`,
 and imported `browser-profiles` exact helper coverage from
 `src/plugin-sdk/browser-profiles.ts` plus
-`extensions/browser/browser-profiles.ts` is verified in `73d20703`. All are
-counted with the plugin/extension system row above.
+`extensions/browser/browser-profiles.ts` is verified in `73d20703`, and
+imported `browser-config-runtime` helper coverage from
+`src/plugin-sdk/browser-config-runtime.ts`, `src/config/config.ts`,
+`src/config/paths.ts`, `src/plugins/config-state.ts`, and
+`src/utils/boolean.ts` is verified in `7a4ef6f0`. All are counted with the
+plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
