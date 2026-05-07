@@ -35740,6 +35740,436 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_stream_shared_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-stream-shared.cjs"
+    runtime_entry.write_text(
+        """
+const shared = require("openclaw/plugin-sdk/provider-stream-shared");
+const scopedShared = require("@openclaw/plugin-sdk/provider-stream-shared");
+
+function makeStream(events, resultMessage) {
+  return {
+    async result() {
+      return resultMessage;
+    },
+    [Symbol.asyncIterator]() {
+      let index = 0;
+      return {
+        async next() {
+          if (index >= events.length) {
+            return { done: true, value: undefined };
+          }
+          const value = events[index];
+          index += 1;
+          return { done: false, value };
+        },
+        async return() {
+          return { done: true, value: undefined };
+        }
+      };
+    }
+  };
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerStreamShared",
+      description: "Use OpenClaw provider-stream-shared SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const order = [];
+        const baseStreamFn = (model, _context, options) => {
+          order.push("base");
+          const payload = {
+            model: model.id,
+            messages: [
+              { role: "user", content: "Return JSON." },
+              { role: "assistant", content: "{" }
+            ]
+          };
+          if (typeof options?.onPayload === "function") {
+            options.onPayload(payload, model);
+          }
+          return makeStream([], { ok: true });
+        };
+        const wrap = (label) => (streamFn) => (model, context, options) => {
+          order.push(`${label}:before`);
+          const result = streamFn(model, context, options);
+          order.push(`${label}:after`);
+          return result;
+        };
+        const composed = shared.composeProviderStreamWrappers(
+          baseStreamFn,
+          wrap("a"),
+          undefined,
+          wrap("b")
+        );
+        composed({ id: "model" }, {}, {});
+        const composedOrder = [...order];
+
+        let patchedPayload = null;
+        const patched = shared.createPayloadPatchStreamWrapper(
+          baseStreamFn,
+          ({ payload, options }) => {
+            payload.reasoning = options.reasoning;
+            patchedPayload = payload;
+          }
+        );
+        patched({ id: "patch-model" }, {}, { reasoning: "medium" });
+
+        const resultMessage = {
+          content: [
+            {
+              type: "toolCall",
+              arguments: { command: "echo &quot;ok&quot; &amp;&amp; true" }
+            }
+          ]
+        };
+        const streamEvent = {
+          partial: {
+            content: [
+              {
+                type: "toolCall",
+                arguments: { path: "&lt;stream&gt;", nested: { quote: "&#39;x&#39;" } }
+              }
+            ]
+          }
+        };
+        const htmlStream = shared.createHtmlEntityToolCallArgumentDecodingWrapper(
+          () => makeStream([streamEvent], resultMessage)
+        )({}, {}, {});
+        const htmlResult = await htmlStream.result();
+        const htmlEvent = await htmlStream[Symbol.asyncIterator]().next();
+
+        const strippedPayload = {
+          thinking: { type: "enabled" },
+          messages: [
+            { role: "user", content: "Return JSON." },
+            { role: "assistant", content: "{" },
+            { role: "assistant", content: '"status"' }
+          ]
+        };
+        const stripped = shared.stripTrailingAnthropicAssistantPrefillWhenThinking(
+          strippedPayload
+        );
+        const toolUsePayload = {
+          thinking: { type: "adaptive" },
+          messages: [
+            { role: "assistant", content: [{ type: "toolCall", id: "call_1" }] }
+          ]
+        };
+        const toolUseStripped = shared.stripTrailingAnthropicAssistantPrefillWhenThinking(
+          toolUsePayload
+        );
+
+        let anthropicStripped = 0;
+        let anthropicPayload = null;
+        const anthropicBase = (model, _context, options) => {
+          const payload = {
+            thinking: { type: "enabled" },
+            messages: [
+              { role: "user", content: "Return JSON." },
+              { role: "assistant", content: "{" }
+            ]
+          };
+          options.onPayload(payload, model);
+          anthropicPayload = payload;
+          return makeStream([], { ok: true });
+        };
+        shared.createAnthropicThinkingPrefillPayloadWrapper(
+          anthropicBase,
+          (count) => {
+            anthropicStripped = count;
+          },
+          { shouldPatch: ({ model }) => model.api === "anthropic-messages" }
+        )({ api: "anthropic-messages", id: "anthropic" }, {}, {});
+
+        let deepSeekPayload = null;
+        const deepSeekBase = (model, _context, options) => {
+          const payload = {
+            messages: [
+              { role: "user", content: "read file" },
+              { role: "assistant", content: "done" },
+              { role: "assistant", content: "kept", reasoning_content: "native" }
+            ]
+          };
+          options.onPayload(payload, model);
+          deepSeekPayload = payload;
+          return makeStream([], { ok: true });
+        };
+        shared.createDeepSeekV4OpenAICompatibleThinkingWrapper({
+          baseStreamFn: deepSeekBase,
+          thinkingLevel: "high",
+          shouldPatchModel: () => true
+        })({ id: "deepseek-v4" }, {}, {});
+
+        const googlePayloads = {
+          required: { config: { thinkingConfig: { thinkingBudget: 0 } } },
+          gemma: { config: { thinkingConfig: { thinkingBudget: 0 } } },
+          adaptive: { config: { thinkingConfig: { thinkingBudget: 123, thinkingLevel: "LOW" } } }
+        };
+        shared.sanitizeGoogleThinkingPayload({
+          payload: googlePayloads.required,
+          modelId: "gemini-2.5-pro-preview"
+        });
+        shared.sanitizeGoogleThinkingPayload({
+          payload: googlePayloads.gemma,
+          modelId: "gemma-4-27b",
+          thinkingLevel: "low"
+        });
+        shared.sanitizeGoogleThinkingPayload({
+          payload: googlePayloads.adaptive,
+          modelId: "gemini-2.5-flash",
+          thinkingLevel: "adaptive"
+        });
+
+        return {
+          keys: Object.keys(shared).filter((key) => [
+            "composeProviderStreamWrappers",
+            "createAnthropicThinkingPrefillPayloadWrapper",
+            "createDeepSeekV4OpenAICompatibleThinkingWrapper",
+            "createGoogleThinkingPayloadWrapper",
+            "createHtmlEntityToolCallArgumentDecodingWrapper",
+            "createPayloadPatchStreamWrapper",
+            "decodeHtmlEntitiesInObject",
+            "defaultToolStreamExtraParams",
+            "isGoogleGemini25ThinkingBudgetModel",
+            "isGoogleGemini3FlashModel",
+            "isGoogleGemini3ProModel",
+            "isGoogleGemini3ThinkingLevelModel",
+            "isGoogleThinkingRequiredModel",
+            "isOpenAICompatibleThinkingEnabled",
+            "resolveGoogleGemini3ThinkingLevel",
+            "sanitizeGoogleThinkingPayload",
+            "stripInvalidGoogleThinkingBudget",
+            "stripTrailingAnthropicAssistantPrefillWhenThinking",
+            "stripTrailingAssistantPrefillMessages"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedShared.defaultToolStreamExtraParams,
+          defaults: [
+            shared.defaultToolStreamExtraParams(),
+            shared.defaultToolStreamExtraParams({ fastMode: true }),
+            shared.defaultToolStreamExtraParams({ fastMode: true, tool_stream: false })
+          ],
+          decoded: shared.decodeHtmlEntitiesInObject({
+            command: "cd ~/dev &amp;&amp; echo &quot;ok&quot;",
+            args: ["&lt;input&gt;", "&#x27;quoted&#x27;"]
+          }),
+          order: composedOrder,
+          patchedPayload,
+          htmlResult,
+          htmlEvent: htmlEvent.value,
+          thinkingEnabled: [
+            shared.isOpenAICompatibleThinkingEnabled({
+              thinkingLevel: "high",
+              options: { reasoning: "none" }
+            }),
+            shared.isOpenAICompatibleThinkingEnabled({
+              thinkingLevel: "off",
+              options: { reasoningEffort: "medium" }
+            }),
+            shared.isOpenAICompatibleThinkingEnabled({ thinkingLevel: "off", options: {} }),
+            shared.isOpenAICompatibleThinkingEnabled({
+              thinkingLevel: "off",
+              options: { reasoning: { effort: "off" } }
+            })
+          ],
+          stripped,
+          strippedPayload,
+          toolUseStripped,
+          anthropicStripped,
+          anthropicPayload,
+          deepSeekPayload,
+          googlePayloads,
+          googleModels: {
+            required: shared.isGoogleThinkingRequiredModel("models/gemini-2.5-pro-preview"),
+            budget: shared.isGoogleGemini25ThinkingBudgetModel("models/gemini-2.5-flash"),
+            pro: shared.isGoogleGemini3ProModel("models/gemini-3.1-pro-preview"),
+            flash: shared.isGoogleGemini3FlashModel("gemini-flash-latest"),
+            thinking: shared.isGoogleGemini3ThinkingLevelModel("models/gemini-3.1-flash")
+          },
+          levels: [
+            shared.resolveGoogleGemini3ThinkingLevel({
+              modelId: "gemini-3.1-pro-preview",
+              thinkingLevel: "minimal"
+            }),
+            shared.resolveGoogleGemini3ThinkingLevel({
+              modelId: "gemini-3.1-flash-preview",
+              thinkingBudget: 4096
+            }),
+            shared.resolveGoogleGemini3ThinkingLevel({
+              modelId: "other-model",
+              thinkingLevel: "high"
+            }) ?? null
+          ],
+          stripInvalid: shared.stripInvalidGoogleThinkingBudget({
+            thinkingConfig: { thinkingBudget: 0 },
+            modelId: "gemini-2.5-pro"
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-stream-shared-plugin",
+                    "name": "Runtime Provider Stream Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-stream-shared.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerStreamShared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerStreamShared"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "composeProviderStreamWrappers",
+        "createAnthropicThinkingPrefillPayloadWrapper",
+        "createDeepSeekV4OpenAICompatibleThinkingWrapper",
+        "createGoogleThinkingPayloadWrapper",
+        "createHtmlEntityToolCallArgumentDecodingWrapper",
+        "createPayloadPatchStreamWrapper",
+        "decodeHtmlEntitiesInObject",
+        "defaultToolStreamExtraParams",
+        "isGoogleGemini25ThinkingBudgetModel",
+        "isGoogleGemini3FlashModel",
+        "isGoogleGemini3ProModel",
+        "isGoogleGemini3ThinkingLevelModel",
+        "isGoogleThinkingRequiredModel",
+        "isOpenAICompatibleThinkingEnabled",
+        "resolveGoogleGemini3ThinkingLevel",
+        "sanitizeGoogleThinkingPayload",
+        "stripInvalidGoogleThinkingBudget",
+        "stripTrailingAnthropicAssistantPrefillWhenThinking",
+        "stripTrailingAssistantPrefillMessages",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["defaults"] == [
+        {"tool_stream": True},
+        {"fastMode": True, "tool_stream": True},
+        {"fastMode": True, "tool_stream": False},
+    ]
+    assert payload["result"]["decoded"] == {
+        "command": 'cd ~/dev && echo "ok"',
+        "args": ["<input>", "'quoted'"],
+    }
+    assert payload["result"]["order"] == [
+        "b:before",
+        "a:before",
+        "base",
+        "a:after",
+        "b:after",
+    ]
+    assert payload["result"]["patchedPayload"] == {
+        "model": "patch-model",
+        "messages": [
+            {"role": "user", "content": "Return JSON."},
+            {"role": "assistant", "content": "{"},
+        ],
+        "reasoning": "medium",
+    }
+    assert payload["result"]["htmlResult"] == {
+        "content": [
+            {
+                "type": "toolCall",
+                "arguments": {"command": 'echo "ok" && true'},
+            }
+        ]
+    }
+    assert payload["result"]["htmlEvent"] == {
+        "partial": {
+            "content": [
+                {
+                    "type": "toolCall",
+                    "arguments": {"path": "<stream>", "nested": {"quote": "'x'"}},
+                }
+            ]
+        }
+    }
+    assert payload["result"]["thinkingEnabled"] == [False, True, False, True]
+    assert payload["result"]["stripped"] == 2
+    assert payload["result"]["strippedPayload"] == {
+        "thinking": {"type": "enabled"},
+        "messages": [{"role": "user", "content": "Return JSON."}],
+    }
+    assert payload["result"]["toolUseStripped"] == 0
+    assert payload["result"]["anthropicStripped"] == 1
+    assert payload["result"]["anthropicPayload"] == {
+        "thinking": {"type": "enabled"},
+        "messages": [{"role": "user", "content": "Return JSON."}],
+    }
+    assert payload["result"]["deepSeekPayload"] == {
+        "messages": [
+            {"role": "user", "content": "read file"},
+            {"role": "assistant", "content": "done", "reasoning_content": ""},
+            {
+                "role": "assistant",
+                "content": "kept",
+                "reasoning_content": "native",
+            },
+        ],
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "high",
+    }
+    assert payload["result"]["googlePayloads"] == {
+        "required": {"config": {}},
+        "gemma": {"config": {"thinkingConfig": {"thinkingLevel": "MINIMAL"}}},
+        "adaptive": {"config": {"thinkingConfig": {"thinkingBudget": -1}}},
+    }
+    assert payload["result"]["googleModels"] == {
+        "required": True,
+        "budget": True,
+        "pro": True,
+        "flash": True,
+        "thinking": True,
+    }
+    assert payload["result"]["levels"] == ["LOW", "MEDIUM", None]
+    assert payload["result"]["stripInvalid"] is True
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
