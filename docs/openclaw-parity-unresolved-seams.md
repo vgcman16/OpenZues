@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~92.9% overall, with a reasonable
-  band of ~80-93%.
+- Repo-wide OpenClaw parity is estimated at ~93.0% overall, with a reasonable
+  band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -8997,8 +8997,18 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   approval-handler-adapter-runtime/approval-handler-runtime/approval-runtime/
   channel-entry-contract/
   channel-config-primitives/channel-config-schema/runtime-env/
-  channel-config-helpers/channel-config-writes/channel-lifecycle path,
-  continuing with `models-provider-runtime`.
+  channel-config-helpers/channel-config-writes/channel-lifecycle path, plus
+  models-provider-runtime provider menu/list helpers, continuing with
+  `skill-commands-runtime`.
+- Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
+  now exposes the upstream `buildModelsProviderData`,
+  `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
+  scoped and unscoped native runtime imports. The native shim preserves
+  provider/model Map+Set data, model names, hidden legacy runtime providers,
+  OpenClaw Pi runtime choices, `/models` provider menus, paginated/all
+  provider lists, auth labels, unknown-provider and out-of-range responses,
+  `/models add` deprecation text, and non-`/models` null returns. Source/test
+  checkpointed in `695de78b`.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
