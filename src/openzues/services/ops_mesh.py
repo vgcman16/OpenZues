@@ -387,6 +387,7 @@ PROBEABLE_NATIVE_PROVIDER_ROUTE_KINDS = {
     "slack",
     "telegram",
     "discord",
+    "googlechat",
     "line",
     "matrix",
     "msteams",
@@ -3483,6 +3484,17 @@ def _googlechat_direct_message_endpoint(target: str | None, *, user_name: str) -
     endpoint = f"{_googlechat_api_base(target).rstrip('/')}/spaces:findDirectMessage"
     separator = "&" if "?" in endpoint else "?"
     return f"{endpoint}{separator}{urlencode({'name': user_name})}"
+
+
+def _googlechat_probe_endpoint(target: str | None) -> str:
+    endpoint_base = _googlechat_api_base(target).rstrip("/")
+    spaces_index = endpoint_base.lower().find("/spaces")
+    if spaces_index >= 0:
+        endpoint_base = endpoint_base[:spaces_index].rstrip("/")
+    endpoint = f"{endpoint_base}/spaces"
+    if _normalized_http_webhook_url(endpoint) is None:
+        raise RuntimeError("Google Chat route target must be an http(s) Chat API base URL.")
+    return f"{endpoint}?{urlencode({'pageSize': '1'})}"
 
 
 def _googlechat_upload_endpoint(*, space: str) -> str:
@@ -14553,6 +14565,24 @@ class OpsMeshService:
                     "error": str(exc).strip() or type(exc).__name__,
                     "timeoutMs": timeout_ms,
                 }
+        if route_kind == "googlechat":
+            try:
+                return await asyncio.to_thread(
+                    self._probe_googlechat_provider_route,
+                    route,
+                    secret_token,
+                    timeout_ms,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "status": "error",
+                    "provider": route_kind,
+                    "runtime": "native-provider-backed",
+                    "accountId": normalized_account_id,
+                    "error": str(exc).strip() or type(exc).__name__,
+                    "timeoutMs": timeout_ms,
+                }
         if route_kind == "line":
             try:
                 return await asyncio.to_thread(
@@ -15432,6 +15462,35 @@ class OpsMeshService:
                 application["intents"] = _discord_privileged_intents_from_flags(flags)
             payload["application"] = application
         return payload
+
+    def _probe_googlechat_provider_route(
+        self,
+        route: dict[str, Any],
+        secret_token: str,
+        timeout_ms: int,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(float(timeout_ms) / 1000.0, 0.001)
+        result = self._get_json_provider_url(
+            _googlechat_probe_endpoint(str(route.get("target") or "")),
+            secret_header_name="Authorization",
+            secret_token=_googlechat_bearer_token(secret_token),
+            timeout_seconds=timeout_seconds,
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Google Chat API returned a non-JSON spaces response.")
+        route_target = _normalize_conversation_target(route.get("conversation_target"))
+        account_id = (
+            normalize_optional_account_id(str((route_target or {}).get("account_id") or ""))
+            or DEFAULT_ACCOUNT_ID
+        )
+        return {
+            "ok": True,
+            "status": "ok",
+            "provider": "googlechat",
+            "runtime": "native-provider-backed",
+            "accountId": account_id,
+            "timeoutMs": timeout_ms,
+        }
 
     def _probe_matrix_provider_route(
         self,

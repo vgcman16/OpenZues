@@ -1447,6 +1447,87 @@ def test_channels_status_json_uses_route_backed_line_probe(tmp_path, monkeypatch
     ]
 
 
+def test_channels_status_json_uses_route_backed_googlechat_probe(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    _bootstrap_cli_workspace(tmp_path, monkeypatch, task_name="CLI Google Chat Probe")
+
+    database = Database(data_dir / "openzues.db")
+    asyncio.run(database.initialize())
+    asyncio.run(
+        database.create_notification_route(
+            name="Google Chat Native Probe Route",
+            kind="googlechat",
+            target="https://chat.googleapis.com/v1",
+            events=["gateway/send"],
+            conversation_target={
+                "channel": "googlechat",
+                "account_id": "workspace",
+                "peer_kind": "channel",
+                "peer_id": "googlechat:spaces/AAAAAAA",
+                "summary": "googlechat workspace space AAAAAAA",
+            },
+            enabled=True,
+            secret_header_name=None,
+            secret_token="google-chat-access-token",
+            vault_secret_id=None,
+        )
+    )
+    googlechat_gets: list[tuple[str, str | None, str | None, float]] = []
+
+    def fake_get_json_provider_url(
+        self: object,
+        target: str,
+        *,
+        secret_header_name: str | None = None,
+        secret_token: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, object]:
+        del self
+        googlechat_gets.append((target, secret_header_name, secret_token, timeout_seconds))
+        return {"spaces": [{"name": "spaces/AAAAAAA", "displayName": "Operations"}]}
+
+    monkeypatch.setattr(
+        "openzues.services.ops_mesh.OpsMeshService._get_json_provider_url",
+        fake_get_json_provider_url,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "channels",
+            "status",
+            "--probe",
+            "--timeout",
+            "2500",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["probeStatus"] == {"status": "ok", "timeoutMs": 2500}
+    assert payload["channelAccounts"]["googlechat"][0]["probe"] == {
+        "ok": True,
+        "status": "ok",
+        "provider": "googlechat",
+        "runtime": "native-provider-backed",
+        "accountId": "workspace",
+        "timeoutMs": 2500,
+    }
+    assert googlechat_gets == [
+        (
+            "https://chat.googleapis.com/v1/spaces?pageSize=1",
+            "Authorization",
+            "Bearer google-chat-access-token",
+            2.5,
+        )
+    ]
+
+
 def test_channels_status_json_keeps_whatsapp_no_hook_probe_non_degraded(
     tmp_path,
     monkeypatch,
