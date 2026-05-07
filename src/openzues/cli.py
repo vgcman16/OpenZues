@@ -23000,6 +23000,46 @@ function wrapWebContent(content, source = "web_search") {
   return wrapExternalContent(content, { source, includeWarning: source === "web_fetch" });
 }
 
+const CHANNEL_METADATA_DEFAULT_MAX_CHARS = 800;
+const CHANNEL_METADATA_DEFAULT_MAX_ENTRY_CHARS = 400;
+
+function normalizeChannelMetadataEntry(entry) {
+  return entry.replace(/\s+/g, " ").trim();
+}
+
+function truncateSecurityText(value, maxChars) {
+  if (maxChars <= 0) {
+    return "";
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  const trimmed = value.slice(0, Math.max(0, maxChars - 3)).trimEnd();
+  return `${trimmed}...`;
+}
+
+function buildUntrustedChannelMetadata(params = {}) {
+  const cleaned = (Array.isArray(params.entries) ? params.entries : [])
+    .map((entry) => (typeof entry === "string" ? normalizeChannelMetadataEntry(entry) : ""))
+    .filter(Boolean)
+    .map((entry) => truncateSecurityText(entry, CHANNEL_METADATA_DEFAULT_MAX_ENTRY_CHARS));
+  const deduped = cleaned.filter((entry, index, list) => list.indexOf(entry) === index);
+  if (deduped.length === 0) {
+    return undefined;
+  }
+  const body = deduped.join("\n");
+  const header = `UNTRUSTED channel metadata (${params.source})`;
+  const labeled = `${params.label}:\n${body}`;
+  const truncated = truncateSecurityText(
+    `${header}\n${labeled}`,
+    params.maxChars || CHANNEL_METADATA_DEFAULT_MAX_CHARS,
+  );
+  return wrapExternalContent(truncated, {
+    source: "channel_metadata",
+    includeWarning: false,
+  });
+}
+
 function formatCliCommand(parts) {
   return (parts || []).map((part) => String(part)).join(" ");
 }
@@ -29032,6 +29072,72 @@ function collectSecretInputAssignment(params) {
   });
 }
 
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseEnvValue(raw) {
+  const trimmed = String(raw || "").trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function normalizePositiveInt(value, fallback) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(1, Math.floor(value));
+  }
+  return Math.max(1, Math.floor(fallback));
+}
+
+function parseDotPath(pathname) {
+  return String(pathname || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function toDotPath(segments) {
+  return (Array.isArray(segments) ? segments : []).join(".");
+}
+
+function ensureDirForFile(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+}
+
+function writeJsonFileSecure(pathname, value) {
+  ensureDirForFile(pathname);
+  fs.writeFileSync(pathname, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  try {
+    fs.chmodSync(pathname, 0o600);
+  } catch (_error) {
+    // Windows may ignore POSIX-style modes.
+  }
+}
+
+function readTextFileIfExists(pathname) {
+  if (!fs.existsSync(pathname)) {
+    return null;
+  }
+  return fs.readFileSync(pathname, "utf8");
+}
+
+function writeTextFileAtomic(pathname, value, mode = 0o600) {
+  ensureDirForFile(pathname);
+  const tempPath = `${pathname}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, value, "utf8");
+  try {
+    fs.chmodSync(tempPath, mode);
+  } catch (_error) {
+    // Best effort on Windows.
+  }
+  fs.renameSync(tempPath, pathname);
+}
+
 function secretRuntimeRefKey(ref) {
   return `${ref.source}:${ref.provider}:${ref.id}`;
 }
@@ -34132,6 +34238,28 @@ function resolveEffectiveAllowFromLists(params) {
   };
 }
 
+function resolvePinnedMainDmOwnerFromAllowlist(params) {
+  if ((params.dmScope || "main") !== "main") {
+    return null;
+  }
+  const rawAllowFrom = Array.isArray(params.allowFrom) ? params.allowFrom : [];
+  if (rawAllowFrom.some((entry) => String(entry).trim() === "*")) {
+    return null;
+  }
+  const normalizeEntry =
+    typeof params.normalizeEntry === "function"
+      ? params.normalizeEntry
+      : (entry) => normalizeOptionalString(entry);
+  const normalizedOwners = Array.from(
+    new Set(
+      rawAllowFrom
+        .map((entry) => normalizeEntry(String(entry)))
+        .filter((entry) => typeof entry === "string" && entry.trim().length > 0),
+    ),
+  );
+  return normalizedOwners.length === 1 ? normalizedOwners[0] : null;
+}
+
 const DM_GROUP_ACCESS_REASON = {
   GROUP_POLICY_ALLOWED: "group_policy_allowed",
   GROUP_POLICY_DISABLED: "group_policy_disabled",
@@ -34361,6 +34489,37 @@ function resolveDmGroupAccessWithCommandGate(params) {
     ...access,
     commandAuthorized: commandGate.commandAuthorized,
     shouldBlockControlCommand: Boolean(params.isGroup && commandGate.shouldBlock),
+  };
+}
+
+async function resolveDmAllowState(params) {
+  const configAllowFrom = normalizeStringEntries(
+    Array.isArray(params.allowFrom) ? params.allowFrom : undefined,
+  );
+  const hasWildcard = configAllowFrom.includes("*");
+  const storeAllowFrom = await readStoreAllowFromForDmPolicy({
+    provider: params.provider,
+    accountId: params.accountId,
+    dmPolicy: params.dmPolicy,
+    readStore: params.readStore,
+  });
+  const normalizeEntry =
+    typeof params.normalizeEntry === "function" ? params.normalizeEntry : (value) => value;
+  const normalizedCfg = configAllowFrom
+    .filter((value) => value !== "*")
+    .map((value) => normalizeEntry(value))
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const normalizedStore = storeAllowFrom
+    .map((value) => normalizeEntry(value))
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const allowCount = new Set([...normalizedCfg, ...normalizedStore]).size;
+  return {
+    configAllowFrom,
+    hasWildcard,
+    allowCount,
+    isMultiUserDm: hasWildcard || allowCount > 1,
   };
 }
 
@@ -56876,6 +57035,858 @@ const channelContractTestingRuntime = {
   primeChannelOutboundSendMock,
 };
 
+function assertCommonResolveTargetErrorCase(result, label) {
+  assertChannelContract(
+    result && result.ok === false,
+    `expected ${label} resolveTarget result to fail`,
+  );
+  assertChannelContract(
+    result && result.error !== undefined && result.error !== null,
+    `expected ${label} resolveTarget result to include an error`,
+  );
+}
+
+function installCommonResolveTargetErrorCases(params = {}) {
+  assertChannelContract(
+    typeof params.resolveTarget === "function",
+    "resolveTarget is required",
+  );
+  const implicitAllowFrom = Array.isArray(params.implicitAllowFrom)
+    ? params.implicitAllowFrom
+    : [];
+  const cases = [
+    {
+      name: "should error on normalization failure with allowlist (implicit mode)",
+      input: {
+        to: "invalid-target",
+        mode: "implicit",
+        allowFrom: implicitAllowFrom,
+      },
+    },
+    {
+      name: "should error when no target provided with allowlist",
+      input: {
+        to: undefined,
+        mode: "implicit",
+        allowFrom: implicitAllowFrom,
+      },
+    },
+    {
+      name: "should error when no target and no allowlist",
+      input: {
+        to: undefined,
+        mode: "explicit",
+        allowFrom: [],
+      },
+    },
+    {
+      name: "should handle whitespace-only target",
+      input: {
+        to: "   ",
+        mode: "explicit",
+        allowFrom: [],
+      },
+    },
+  ];
+  const registerTest =
+    typeof globalThis !== "undefined" && typeof globalThis.it === "function"
+      ? globalThis.it
+      : null;
+  for (const testCase of cases) {
+    const runCase = () => {
+      const result = params.resolveTarget({ ...testCase.input });
+      assertCommonResolveTargetErrorCase(result, testCase.name);
+    };
+    if (registerTest) {
+      registerTest.call(globalThis, testCase.name, runCase);
+    } else {
+      runCase();
+    }
+  }
+}
+
+const channelTargetTestingRuntime = {
+  installCommonResolveTargetErrorCases,
+};
+
+function createChannelTestMockFn(implementation = () => undefined) {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return implementation(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  return fn;
+}
+
+function runOrRegisterChannelTestCase(name, runCase) {
+  const registerTest =
+    typeof globalThis !== "undefined" && typeof globalThis.it === "function"
+      ? globalThis.it
+      : null;
+  if (registerTest) {
+    return registerTest.call(globalThis, name, runCase);
+  }
+  return runCase();
+}
+
+function createDirectoryTestRuntime() {
+  return {
+    log: () => {},
+    error: () => {},
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  };
+}
+
+function expectDirectorySurface(directory) {
+  assertChannelContract(Boolean(directory) && typeof directory === "object", "expected directory");
+  assertChannelContract(typeof directory.listPeers === "function", "expected listPeers");
+  assertChannelContract(typeof directory.listGroups === "function", "expected listGroups");
+  return {
+    listPeers: directory.listPeers,
+    listGroups: directory.listGroups,
+  };
+}
+
+function sortDirectoryIds(values) {
+  return [...values].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+async function expectDirectoryIds(listFn, cfg, expected, options = {}) {
+  const entries = await listFn({
+    cfg,
+    accountId: "default",
+    query: null,
+    limit: null,
+  });
+  const ids = entries.map((entry) => entry.id);
+  const actualIds = options.sorted ? sortDirectoryIds(ids) : ids;
+  const expectedIds = options.sorted ? sortDirectoryIds(expected) : expected;
+  assertChannelContract(
+    JSON.stringify(actualIds) === JSON.stringify(expectedIds),
+    `expected directory ids ${JSON.stringify(expectedIds)}; got ${JSON.stringify(actualIds)}`,
+  );
+}
+
+function createEmptyPluginRegistry() {
+  return {
+    plugins: [],
+    tools: [],
+    hooks: [],
+    typedHooks: [],
+    channels: [],
+    channelSetups: [],
+    providers: [],
+    cliBackends: [],
+    textTransforms: [],
+    speechProviders: [],
+    realtimeTranscriptionProviders: [],
+    realtimeVoiceProviders: [],
+    mediaUnderstandingProviders: [],
+    imageGenerationProviders: [],
+    videoGenerationProviders: [],
+    musicGenerationProviders: [],
+    webFetchProviders: [],
+    webSearchProviders: [],
+    migrationProviders: [],
+    codexAppServerExtensionFactories: [],
+    agentToolResultMiddlewares: [],
+    memoryEmbeddingProviders: [],
+    agentHarnesses: [],
+    gatewayHandlers: {},
+    coreGatewayMethodNames: [],
+    gatewayMethodScopes: {},
+    httpRoutes: [],
+    cliRegistrars: [],
+    reloads: [],
+    nodeHostCommands: [],
+    nodeInvokePolicies: [],
+    securityAuditCollectors: [],
+    services: [],
+    gatewayDiscoveryServices: [],
+    commands: [],
+    sessionExtensions: [],
+    trustedToolPolicies: [],
+    toolMetadata: [],
+    controlUiDescriptors: [],
+    runtimeLifecycles: [],
+    agentEventSubscriptions: [],
+    sessionSchedulerJobs: [],
+    conversationBindingResolvedHandlers: [],
+    diagnostics: [],
+  };
+}
+
+function createTestRegistry(channels = []) {
+  const registry = createEmptyPluginRegistry();
+  registry.channels = channels;
+  registry.channelSetups = channels.map((entry) => ({
+    pluginId: entry.pluginId,
+    plugin: entry.plugin,
+    source: entry.source,
+    enabled: true,
+  }));
+  return registry;
+}
+
+function createChannelTestPluginBase(params = {}) {
+  return {
+    id: params.id,
+    meta: {
+      id: params.id,
+      label: params.label || String(params.id),
+      selectionLabel: params.label || String(params.id),
+      docsPath: params.docsPath || `/channels/${params.id}`,
+      blurb: "test stub.",
+      ...(params.markdownCapable !== undefined
+        ? { markdownCapable: params.markdownCapable }
+        : {}),
+    },
+    capabilities: params.capabilities || { chatTypes: ["direct"] },
+    config: {
+      listAccountIds: () => ["default"],
+      resolveAccount: () => ({}),
+      ...(params.config || {}),
+    },
+  };
+}
+
+function createOutboundTestPlugin(params = {}) {
+  return {
+    ...createChannelTestPluginBase({
+      id: params.id,
+      label: params.label,
+      docsPath: params.docsPath,
+      capabilities: params.capabilities,
+      config: { listAccountIds: () => [] },
+    }),
+    outbound: params.outbound,
+    ...(params.messaging ? { messaging: params.messaging } : {}),
+  };
+}
+
+function expectChannelPluginContract(plugin) {
+  assertChannelContract(typeof plugin.id === "string" && plugin.id.trim(), "expected plugin id");
+  assertChannelContract(plugin.meta && plugin.meta.id === plugin.id, "expected matching meta id");
+  assertChannelContract(
+    Boolean(plugin.meta.label && plugin.meta.label.trim()),
+    "expected plugin meta label",
+  );
+  assertChannelContract(
+    Boolean(plugin.meta.selectionLabel && plugin.meta.selectionLabel.trim()),
+    "expected plugin meta selection label",
+  );
+  assertChannelContract(
+    /^\/channels\//u.test(plugin.meta.docsPath || ""),
+    "expected channel docs path",
+  );
+  assertChannelContract(
+    Boolean(plugin.meta.blurb && plugin.meta.blurb.trim()),
+    "expected plugin meta blurb",
+  );
+  assertChannelContract(
+    Array.isArray(plugin.capabilities.chatTypes) && plugin.capabilities.chatTypes.length > 0,
+    "expected channel chat type capabilities",
+  );
+  assertChannelContract(
+    typeof plugin.config.listAccountIds === "function",
+    "expected listAccountIds",
+  );
+  assertChannelContract(
+    typeof plugin.config.resolveAccount === "function",
+    "expected resolveAccount",
+  );
+}
+
+function installChannelPluginContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base channel plugin contract", () => {
+    expectChannelPluginContract(params.plugin);
+  });
+}
+
+function resolveContractMessageDiscovery(params = {}) {
+  const actions = params.plugin && params.plugin.actions;
+  if (!actions || typeof actions.describeMessageTool !== "function") {
+    return { actions: [], capabilities: [] };
+  }
+  const discovery = actions.describeMessageTool({ cfg: params.cfg }) || null;
+  return {
+    actions: Array.isArray(discovery && discovery.actions) ? [...discovery.actions] : [],
+    capabilities: Array.isArray(discovery && discovery.capabilities)
+      ? [...discovery.capabilities]
+      : [],
+  };
+}
+
+function sortChannelTestStrings(values) {
+  return [...(values || [])].sort((left, right) => String(left).localeCompare(String(right)));
+}
+
+function installChannelActionsContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base message actions contract", () => {
+    assertChannelContract(Boolean(params.plugin.actions), "expected channel actions");
+    assertChannelContract(
+      typeof params.plugin.actions.describeMessageTool === "function",
+      "expected describeMessageTool",
+    );
+  });
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`actions contract: ${testCase.name}`, () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const discovery = resolveContractMessageDiscovery({
+        plugin: params.plugin,
+        cfg: testCase.cfg,
+      });
+      assertChannelContract(
+        JSON.stringify([...new Set(discovery.actions)]) === JSON.stringify(discovery.actions),
+        "expected unique actions",
+      );
+      assertChannelContract(
+        JSON.stringify([...new Set(discovery.capabilities)]) ===
+          JSON.stringify(discovery.capabilities),
+        "expected unique capabilities",
+      );
+      assertChannelContract(
+        JSON.stringify(sortChannelTestStrings(discovery.actions)) ===
+          JSON.stringify(sortChannelTestStrings(testCase.expectedActions || [])),
+        "expected action discovery to match",
+      );
+      assertChannelContract(
+        JSON.stringify(sortChannelTestStrings(discovery.capabilities)) ===
+          JSON.stringify(sortChannelTestStrings(testCase.expectedCapabilities || [])),
+        "expected capability discovery to match",
+      );
+    });
+  }
+}
+
+function installChannelSetupContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base setup contract", () => {
+    assertChannelContract(Boolean(params.plugin.setup), "expected channel setup");
+    assertChannelContract(
+      typeof params.plugin.setup.applyAccountConfig === "function",
+      "expected applyAccountConfig",
+    );
+  });
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`setup contract: ${testCase.name}`, () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const resolvedAccountId =
+        (params.plugin.setup.resolveAccountId &&
+          params.plugin.setup.resolveAccountId({
+            cfg: testCase.cfg,
+            accountId: testCase.accountId,
+            input: testCase.input,
+          })) ||
+        testCase.accountId ||
+        "default";
+      assertChannelContract(
+        resolvedAccountId === (testCase.expectedAccountId || resolvedAccountId),
+        "expected setup account id",
+      );
+      const validation =
+        (params.plugin.setup.validateInput &&
+          params.plugin.setup.validateInput({
+            cfg: testCase.cfg,
+            accountId: resolvedAccountId,
+            input: testCase.input,
+          })) ||
+        null;
+      assertChannelContract(
+        validation === (testCase.expectedValidation || null),
+        "expected setup validation result",
+      );
+      const nextCfg = params.plugin.setup.applyAccountConfig({
+        cfg: testCase.cfg,
+        accountId: resolvedAccountId,
+        input: testCase.input,
+      });
+      assertChannelContract(nextCfg !== undefined, "expected patched setup config");
+      const account = params.plugin.config.resolveAccount(nextCfg, resolvedAccountId);
+      if (typeof testCase.assertPatchedConfig === "function") {
+        testCase.assertPatchedConfig(nextCfg);
+      }
+      if (typeof testCase.assertResolvedAccount === "function") {
+        testCase.assertResolvedAccount(account, nextCfg);
+      }
+    });
+  }
+}
+
+function installChannelStatusContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base status contract", () => {
+    assertChannelContract(Boolean(params.plugin.status), "expected channel status");
+    assertChannelContract(
+      typeof params.plugin.status.buildAccountSnapshot === "function",
+      "expected buildAccountSnapshot",
+    );
+  });
+  if (params.plugin.status && params.plugin.status.defaultRuntime) {
+    runOrRegisterChannelTestCase(
+      "status contract: default runtime is shaped like an account snapshot",
+      () => {
+        assertChannelContract(
+          typeof params.plugin.status.defaultRuntime.accountId === "string",
+          "expected default runtime account id",
+        );
+      },
+    );
+  }
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`status contract: ${testCase.name}`, async () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const account = params.plugin.config.resolveAccount(testCase.cfg, testCase.accountId);
+      const snapshot = await params.plugin.status.buildAccountSnapshot({
+        account,
+        cfg: testCase.cfg,
+        runtime: testCase.runtime,
+        probe: testCase.probe,
+      });
+      assertChannelContract(
+        typeof snapshot.accountId === "string" && snapshot.accountId.trim(),
+        "expected status snapshot account id",
+      );
+      if (typeof testCase.assertSnapshot === "function") {
+        testCase.assertSnapshot(snapshot);
+      }
+    });
+  }
+}
+
+function addTestHook(params = {}) {
+  params.registry.typedHooks.push({
+    pluginId: params.pluginId,
+    hookName: params.hookName,
+    handler: params.handler,
+    priority: params.priority || 0,
+    ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+    source: "test",
+  });
+}
+
+function getPluginRegistryTestState() {
+  return resolveGlobalSingleton("openzues.channelTestHelpers.registry", () => ({
+    activeRegistry: null,
+    channelRegistry: null,
+    channelPinned: false,
+  }));
+}
+
+function setActivePluginRegistry(registry) {
+  const state = getPluginRegistryTestState();
+  state.activeRegistry = registry;
+  if (!state.channelPinned) {
+    state.channelRegistry = registry;
+  }
+}
+
+function releasePinnedPluginChannelRegistry(registry) {
+  const state = getPluginRegistryTestState();
+  if (registry && state.channelRegistry !== registry) {
+    return;
+  }
+  state.channelPinned = false;
+  state.channelRegistry = state.activeRegistry;
+}
+
+function createSendCfgThreadingRuntime(params = {}) {
+  return {
+    config: {
+      loadConfig: params.loadConfig,
+    },
+    channel: {
+      text: {
+        resolveMarkdownTableMode: params.resolveMarkdownTableMode,
+        convertMarkdownTables: params.convertMarkdownTables,
+      },
+      activity: {
+        record: params.record,
+      },
+    },
+  };
+}
+
+function mockCallList(fn) {
+  if (fn && fn.mock && Array.isArray(fn.mock.calls)) {
+    return fn.mock.calls;
+  }
+  if (fn && Array.isArray(fn.calls)) {
+    return fn.calls;
+  }
+  return [];
+}
+
+function assertMockCalledWith(fn, expected) {
+  const expectedJson = JSON.stringify(expected);
+  assertChannelContract(
+    mockCallList(fn).some((call) => JSON.stringify(call[0]) === expectedJson),
+    `expected mock to be called with ${expectedJson}`,
+  );
+}
+
+function expectProvidedCfgSkipsRuntimeLoad(params = {}) {
+  assertChannelContract(mockCallList(params.loadConfig).length === 0, "expected no config load");
+  assertMockCalledWith(params.resolveAccount, {
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+}
+
+function expectRuntimeCfgFallback(params = {}) {
+  assertChannelContract(mockCallList(params.loadConfig).length === 1, "expected one config load");
+  assertMockCalledWith(params.resolveAccount, {
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+}
+
+function createStartAccountContext(params = {}) {
+  const snapshot = {
+    accountId: params.account.accountId,
+    configured: true,
+    enabled: true,
+    running: false,
+  };
+  return {
+    accountId: params.account.accountId,
+    account: params.account,
+    cfg: params.cfg || {},
+    runtime: params.runtime || createPluginRuntimeMock(),
+    abortSignal:
+      params.abortSignal || (typeof AbortController !== "undefined"
+        ? new AbortController().signal
+        : undefined),
+    log: {
+      info: createChannelTestMockFn(),
+      warn: createChannelTestMockFn(),
+      error: createChannelTestMockFn(),
+      debug: createChannelTestMockFn(),
+    },
+    getStatus: () => snapshot,
+    setStatus: (next) => {
+      Object.assign(snapshot, next);
+      if (typeof params.statusPatchSink === "function") {
+        params.statusPatchSink(snapshot);
+      }
+    },
+  };
+}
+
+function startAccountAndTrackLifecycle(params = {}) {
+  const patches = [];
+  const abort = new AbortController();
+  let settled = false;
+  const task = Promise.resolve(
+    params.startAccount(
+      createStartAccountContext({
+        account: params.account,
+        abortSignal: abort.signal,
+        statusPatchSink: (next) => patches.push({ ...next }),
+      }),
+    ),
+  ).finally(() => {
+    settled = true;
+  });
+  return {
+    abort,
+    patches,
+    task,
+    isSettled: () => settled,
+  };
+}
+
+async function abortStartedAccount(params = {}) {
+  params.abort.abort();
+  await params.task;
+}
+
+function waitForStartedMocks(...mocks) {
+  return async () => {
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      if (mocks.every((mock) => mockCallList(mock).length > 0)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("expected started mocks to be called");
+  };
+}
+
+function matchesPartialObject(actual, expected) {
+  return Object.entries(expected || {}).every(([key, value]) => actual && actual[key] === value);
+}
+
+function expectLifecyclePatch(patches, expected) {
+  assertChannelContract(
+    (patches || []).some((patch) => matchesPartialObject(patch, expected)),
+    `expected lifecycle patch ${JSON.stringify(expected)}`,
+  );
+}
+
+async function expectPendingUntilAbort(params = {}) {
+  await params.waitForStarted();
+  assertChannelContract(params.isSettled() === false, "expected task to remain pending");
+  if (typeof params.assertBeforeAbort === "function") {
+    params.assertBeforeAbort();
+  }
+  await abortStartedAccount({ abort: params.abort, task: params.task });
+  if (typeof params.assertAfterAbort === "function") {
+    params.assertAfterAbort();
+  }
+}
+
+async function expectStopPendingUntilAbort(params = {}) {
+  await expectPendingUntilAbort({
+    waitForStarted: params.waitForStarted,
+    isSettled: params.isSettled,
+    abort: params.abort,
+    task: params.task,
+    assertBeforeAbort: () => {
+      assertChannelContract(mockCallList(params.stop).length === 0, "expected stop not called");
+    },
+    assertAfterAbort: () => {
+      assertChannelContract(mockCallList(params.stop).length === 1, "expected stop called once");
+    },
+  });
+}
+
+function expectOpenDmPolicyConfigIssue(params = {}) {
+  const issues = params.collectIssues([params.account]);
+  assertChannelContract(Array.isArray(issues) && issues.length === 1, "expected one issue");
+  assertChannelContract(issues[0] && issues[0].kind === "config", "expected config issue");
+}
+
+function registerHookHandlersForTest(params = {}) {
+  const handlers = new Map();
+  const api = {
+    config: params.config || {},
+    on: (hookName, handler) => {
+      handlers.set(hookName, handler);
+    },
+  };
+  params.register(api);
+  return handlers;
+}
+
+function getRequiredHookHandler(handlers, hookName) {
+  const handler = handlers.get(hookName);
+  assertChannelContract(Boolean(handler), `expected ${hookName} hook handler`);
+  return handler;
+}
+
+function assertBundledChannelEntries(params = {}) {
+  runOrRegisterChannelTestCase(
+    params.channelMessage || "declares the channel plugin without importing the broad api barrel",
+    () => {
+      assertChannelContract(
+        params.entry.kind === "bundled-channel-entry",
+        "expected bundled channel entry",
+      );
+      assertChannelContract(params.entry.id === params.expectedId, "expected channel entry id");
+      assertChannelContract(
+        params.entry.name === params.expectedName,
+        "expected channel entry name",
+      );
+    },
+  );
+  runOrRegisterChannelTestCase(
+    params.setupMessage || "declares the setup plugin without importing the broad api barrel",
+    () => {
+      assertChannelContract(
+        params.setupEntry.kind === "bundled-channel-setup-entry",
+        "expected bundled channel setup entry",
+      );
+      assertChannelContract(
+        typeof params.setupEntry.loadSetupPlugin === "function",
+        "expected setup plugin loader",
+      );
+    },
+  );
+}
+
+function formatEnvelopeTimestamp(date, zone = "utc") {
+  const trimmedZone = String(zone || "utc").trim();
+  const normalized = trimmedZone.toLowerCase();
+  let weekday;
+  try {
+    const weekdayOptions =
+      normalized === "utc" || normalized === "gmt"
+        ? { timeZone: "UTC", weekday: "short" }
+        : normalized === "local" || normalized === "host"
+          ? { weekday: "short" }
+          : { timeZone: trimmedZone, weekday: "short" };
+    weekday = new Intl.DateTimeFormat("en-US", weekdayOptions).format(date);
+  } catch (_error) {
+    weekday = undefined;
+  }
+  if (normalized === "utc" || normalized === "gmt") {
+    const ts = formatUtcTimestamp(date);
+    return weekday ? `${weekday} ${ts}` : ts;
+  }
+  if (normalized === "local" || normalized === "host") {
+    const ts = formatZonedTimestamp(date) || formatUtcTimestamp(date);
+    return weekday ? `${weekday} ${ts}` : ts;
+  }
+  const ts = formatZonedTimestamp(date, { timeZone: trimmedZone }) || formatUtcTimestamp(date);
+  return weekday ? `${weekday} ${ts}` : ts;
+}
+
+function formatLocalEnvelopeTimestamp(date) {
+  return formatEnvelopeTimestamp(date, "local");
+}
+
+function extractPairingCode(text) {
+  const match = String(text).match(/Pairing code:\s*```[\r\n]+([A-Z2-9]{6,})/u);
+  assertChannelContract(Boolean(match), "expected pairing code");
+  return match ? match[1] : "";
+}
+
+function expectPairingReplyText(text, params = {}) {
+  const code = params.code || extractPairingCode(text);
+  assertChannelContract(text.includes("OpenClaw: access not configured."), "expected pairing text");
+  assertChannelContract(text.includes(params.idLine), "expected pairing id line");
+  assertChannelContract(text.includes("Pairing code:"), "expected pairing code label");
+  assertChannelContract(text.includes(`\n\`\`\`\n${code}\n\`\`\`\n`), "expected code fence");
+  assertChannelContract(
+    text.includes(`pairing approve ${params.channel} ${code}`),
+    "expected pairing approve command",
+  );
+  return code;
+}
+
+function createTaskFlowSessionMock() {
+  return {
+    sessionKey: "agent:main:main",
+    createManaged: createChannelTestMockFn(),
+    get: createChannelTestMockFn(),
+    list: createChannelTestMockFn(() => []),
+    findLatest: createChannelTestMockFn(),
+    resolve: createChannelTestMockFn(),
+    getTaskSummary: createChannelTestMockFn(),
+    setWaiting: createChannelTestMockFn(),
+    resume: createChannelTestMockFn(),
+    finish: createChannelTestMockFn(),
+    fail: createChannelTestMockFn(),
+    requestCancel: createChannelTestMockFn(),
+    cancel: createChannelTestMockFn(),
+    runTask: createChannelTestMockFn(),
+  };
+}
+
+function createDeprecatedRuntimeConfigError(name) {
+  return new Error(
+    `Plugin runtime config.${name}() is deprecated in tests; ` +
+      "pass cfg/current() or use mutateConfigFile()/replaceConfigFile().",
+  );
+}
+
+function isPlainChannelTestObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeChannelTestDeep(base, overrides = {}) {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides || {})) {
+    if (value === undefined) {
+      continue;
+    }
+    if (isPlainChannelTestObject(result[key]) && isPlainChannelTestObject(value)) {
+      result[key] = mergeChannelTestDeep(result[key], value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function createPluginRuntimeMock(overrides = {}) {
+  const runtime = {
+    config: {
+      current: () => ({}),
+      loadConfig: () => {
+        throw createDeprecatedRuntimeConfigError("loadConfig");
+      },
+      writeConfigFile: () => {
+        throw createDeprecatedRuntimeConfigError("writeConfigFile");
+      },
+      mutateConfigFile: createChannelTestMockFn(),
+      replaceConfigFile: createChannelTestMockFn(),
+    },
+    channel: {
+      text: {
+        resolveMarkdownTableMode: createChannelTestMockFn(() => undefined),
+        convertMarkdownTables: createChannelTestMockFn((text) => text),
+      },
+      activity: {
+        record: createChannelTestMockFn(),
+      },
+      turn: {
+        runPrepared: createChannelTestMockFn(async (params) => ({
+          admission: params && params.admission ? params.admission : { kind: "dispatch" },
+          dispatched: true,
+          dispatchResult: { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } },
+        })),
+      },
+    },
+    tasks: {
+      managedFlows: {
+        bindSession: createChannelTestMockFn(createTaskFlowSessionMock),
+        fromToolContext: createChannelTestMockFn(createTaskFlowSessionMock),
+      },
+    },
+    hooks: {
+      initializeGlobalHookRunner,
+      resetGlobalHookRunner,
+    },
+  };
+  return mergeChannelTestDeep(runtime, overrides);
+}
+
+const channelTestHelpersRuntime = {
+  abortStartedAccount,
+  addTestHook,
+  assertBundledChannelEntries,
+  createDirectoryTestRuntime,
+  createEmptyPluginRegistry,
+  createOutboundTestPlugin,
+  createPluginRuntimeMock,
+  createSendCfgThreadingRuntime,
+  createStartAccountContext,
+  createTestRegistry,
+  deliverOutboundPayloads,
+  escapeRegExp,
+  expectChannelPluginContract,
+  expectDirectoryIds,
+  expectDirectorySurface,
+  expectLifecyclePatch,
+  expectOpenDmPolicyConfigIssue,
+  expectPairingReplyText,
+  expectPendingUntilAbort,
+  expectProvidedCfgSkipsRuntimeLoad,
+  expectRuntimeCfgFallback,
+  expectStopPendingUntilAbort,
+  extractPairingCode,
+  formatEnvelopeTimestamp,
+  formatLocalEnvelopeTimestamp,
+  getRequiredHookHandler,
+  initializeGlobalHookRunner,
+  registerHookHandlersForTest,
+  releasePinnedPluginChannelRegistry,
+  resetGlobalHookRunner,
+  setActivePluginRegistry,
+  startAccountAndTrackLifecycle,
+  waitForStartedMocks,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -61997,6 +63008,307 @@ async function withAbortableTimeout(work, timeoutMs, label) {
   }
 }
 
+function createConnectedChannelStatusPatch(at = Date.now()) {
+  return {
+    connected: true,
+    lastConnectedAt: at,
+    lastEventAt: at,
+  };
+}
+
+function createTransportActivityStatusPatch(at = Date.now()) {
+  return {
+    lastTransportActivityAt: at,
+  };
+}
+
+const GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15000;
+const GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS = 250;
+const GATEWAY_CLOSE_CODE_HINTS = {
+  1000: "normal closure",
+  1006: "abnormal closure (no close frame)",
+  1008: "policy violation",
+  1012: "service restart",
+  1013: "try again later",
+};
+
+function describeGatewayCloseCode(code) {
+  return GATEWAY_CLOSE_CODE_HINTS[code];
+}
+
+function normalizePositiveGatewayTimeoutMs(timeoutMs) {
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : undefined;
+}
+
+function getGatewayPreauthHandshakeTimeoutMsFromEnv(env = process.env) {
+  const configuredTimeout =
+    env.OPENCLAW_HANDSHAKE_TIMEOUT_MS ||
+    (env.VITEST ? env.OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS : undefined);
+  if (configuredTimeout) {
+    const parsed = Number(configuredTimeout);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS;
+}
+
+function resolveGatewayPreauthHandshakeTimeoutMs(params = {}) {
+  const env = params.env || process.env;
+  const configuredTimeout =
+    env.OPENCLAW_HANDSHAKE_TIMEOUT_MS ||
+    (env.VITEST ? env.OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS : undefined);
+  if (configuredTimeout) {
+    const parsed = Number(configuredTimeout);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  const configured = normalizePositiveGatewayTimeoutMs(params.configuredTimeoutMs);
+  if (configured !== undefined) {
+    return configured;
+  }
+  return getGatewayPreauthHandshakeTimeoutMsFromEnv(env);
+}
+
+function getGatewayConnectChallengeTimeoutMsFromEnv(env = process.env) {
+  const raw = env.OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function clampGatewayConnectChallengeTimeoutMs(timeoutMs, maxTimeoutMs) {
+  const resolvedMax = Math.max(
+    GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS,
+    maxTimeoutMs || GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS,
+  );
+  return Math.max(
+    GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS,
+    Math.min(resolvedMax, timeoutMs),
+  );
+}
+
+function resolveGatewayConnectChallengeTimeoutMs(timeoutMs, params = {}) {
+  const configuredPreauthTimeoutMs = resolveGatewayPreauthHandshakeTimeoutMs({
+    env: params.env,
+    configuredTimeoutMs: params.configuredTimeoutMs,
+  });
+  const maxTimeoutMs = Math.max(
+    GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS,
+    configuredPreauthTimeoutMs,
+  );
+  if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs)) {
+    return clampGatewayConnectChallengeTimeoutMs(timeoutMs, maxTimeoutMs);
+  }
+  const envOverride = getGatewayConnectChallengeTimeoutMsFromEnv(params.env);
+  if (envOverride !== undefined) {
+    return clampGatewayConnectChallengeTimeoutMs(envOverride, Math.max(maxTimeoutMs, envOverride));
+  }
+  return clampGatewayConnectChallengeTimeoutMs(configuredPreauthTimeoutMs, maxTimeoutMs);
+}
+
+function readGatewayClientConnectChallengeTimeoutOverride(opts = {}) {
+  if (
+    typeof opts.connectChallengeTimeoutMs === "number" &&
+    Number.isFinite(opts.connectChallengeTimeoutMs)
+  ) {
+    return opts.connectChallengeTimeoutMs;
+  }
+  if (typeof opts.connectDelayMs === "number" && Number.isFinite(opts.connectDelayMs)) {
+    return opts.connectDelayMs;
+  }
+  return undefined;
+}
+
+function resolveGatewayClientConnectChallengeTimeoutMs(opts = {}) {
+  return resolveGatewayConnectChallengeTimeoutMs(
+    readGatewayClientConnectChallengeTimeoutOverride(opts),
+    { configuredTimeoutMs: opts.preauthHandshakeTimeoutMs },
+  );
+}
+
+function resolveGatewayClientStartReadinessTimeoutMs(options = {}) {
+  if (typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs)) {
+    return options.timeoutMs;
+  }
+  const clientOptions = options.clientOptions || {};
+  return resolveGatewayClientConnectChallengeTimeoutMs(clientOptions);
+}
+
+async function waitForOpenZuesGatewayEventLoopReady(options = {}) {
+  const signal = options.signal;
+  const startedAt = Date.now();
+  if (signal && signal.aborted) {
+    return {
+      ready: false,
+      elapsedMs: 0,
+      maxDriftMs: 0,
+      checks: 0,
+      aborted: true,
+    };
+  }
+  const maxWaitMs = Math.max(1, Math.floor(resolveGatewayClientStartReadinessTimeoutMs(options)));
+  await new Promise((resolve) => setTimeout(resolve, Math.min(1, maxWaitMs)));
+  if (signal && signal.aborted) {
+    return {
+      ready: false,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      maxDriftMs: 0,
+      checks: 1,
+      aborted: true,
+    };
+  }
+  return {
+    ready: true,
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    maxDriftMs: 0,
+    checks: 1,
+    aborted: false,
+  };
+}
+
+function formatGatewayClientRequestErrorMessage(error = {}) {
+  if (typeof error.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  if (error.details !== undefined) {
+    try {
+      return JSON.stringify(error.details);
+    } catch {
+      return String(error.details);
+    }
+  }
+  return "gateway request failed";
+}
+
+class GatewayClientRequestError extends Error {
+  constructor(error = {}) {
+    super(formatGatewayClientRequestErrorMessage(error));
+    this.name = "GatewayClientRequestError";
+    this.gatewayCode = error.code || ErrorCodes.UNAVAILABLE;
+    this.details = error.details;
+    this.retryable = error.retryable === true;
+    this.retryAfterMs = error.retryAfterMs;
+  }
+}
+
+class GatewayClient {
+  constructor(options = {}) {
+    this.options = { ...options };
+    this.opts = this.options;
+    this.started = false;
+    this.stopped = false;
+    this.requests = [];
+    this._helloDelivered = false;
+  }
+
+  start() {
+    this.started = true;
+    this.stopped = false;
+    if (!this._helloDelivered && typeof this.options.onHelloOk === "function") {
+      this._helloDelivered = true;
+      this.options.onHelloOk({
+        ok: true,
+        protocolVersion: 1,
+      });
+    }
+  }
+
+  stop() {
+    this.started = false;
+    this.stopped = true;
+  }
+
+  async stopAndWait() {
+    this.stop();
+  }
+
+  async request(method, params = {}, options = {}) {
+    this.requests.push({ method, params, options });
+    throw new GatewayClientRequestError({
+      code: ErrorCodes.UNAVAILABLE,
+      message: "gateway client request unavailable in OpenZues plugin runtime",
+      retryable: true,
+    });
+  }
+
+  notifyEvent(event) {
+    if (typeof this.options.onEvent === "function") {
+      this.options.onEvent(event);
+    }
+  }
+}
+
+async function startGatewayClientWhenEventLoopReady(client, options = {}) {
+  const readiness = await waitForOpenZuesGatewayEventLoopReady(options);
+  if (readiness.ready && !readiness.aborted && !(options.signal && options.signal.aborted)) {
+    if (client && typeof client.start === "function") {
+      client.start();
+    }
+  }
+  return readiness;
+}
+
+function readGatewayConfig(params = {}) {
+  const config = params.config || {};
+  return config.gateway && typeof config.gateway === "object" ? config.gateway : {};
+}
+
+async function createOperatorApprovalsGatewayClient(params = {}) {
+  const gatewayConfig = readGatewayConfig(params);
+  const url =
+    normalizeOptionalString(params.gatewayUrl) ||
+    normalizeOptionalString(gatewayConfig.url) ||
+    "ws://127.0.0.1:18789";
+  return new GatewayClient({
+    url,
+    token: normalizeOptionalString(gatewayConfig.token),
+    password: normalizeOptionalString(gatewayConfig.password),
+    preauthHandshakeTimeoutMs: normalizePositiveGatewayTimeoutMs(
+      gatewayConfig.handshakeTimeoutMs,
+    ),
+    clientName: "gateway-client",
+    clientDisplayName: params.clientDisplayName,
+    mode: "backend",
+    scopes: ["operator.approvals"],
+    onEvent: params.onEvent,
+    onHelloOk: params.onHelloOk,
+    onConnectError: params.onConnectError,
+    onReconnectPaused: params.onReconnectPaused,
+    onClose: params.onClose,
+  });
+}
+
+async function withOperatorApprovalsGatewayClient(params = {}, run) {
+  const gatewayClient = await createOperatorApprovalsGatewayClient(params);
+  try {
+    const readiness = await startGatewayClientWhenEventLoopReady(gatewayClient, {
+      clientOptions: {
+        preauthHandshakeTimeoutMs: readGatewayConfig(params).handshakeTimeoutMs,
+      },
+    });
+    if (!readiness.ready) {
+      throw new Error("gateway event loop readiness timeout");
+    }
+    return await run(gatewayClient);
+  } finally {
+    if (gatewayClient && typeof gatewayClient.stopAndWait === "function") {
+      try {
+        await gatewayClient.stopAndWait();
+      } catch {
+        gatewayClient.stop();
+      }
+    }
+  }
+}
+
 const browserNodeRuntime = {
   ErrorCodes,
   addGatewayClientOptions,
@@ -62015,6 +63327,20 @@ const browserNodeRuntime = {
   safeParseJson,
   startLazyPluginServiceModule,
   withTimeout: withAbortableTimeout,
+};
+
+const gatewayRuntime = {
+  ...browserNodeRuntime,
+  GATEWAY_CLOSE_CODE_HINTS,
+  GatewayClient,
+  GatewayClientRequestError,
+  createConnectedChannelStatusPatch,
+  createOperatorApprovalsGatewayClient,
+  createTransportActivityStatusPatch,
+  describeGatewayCloseCode,
+  resolveGatewayClientConnectChallengeTimeoutMs,
+  startGatewayClientWhenEventLoopReady,
+  withOperatorApprovalsGatewayClient,
 };
 
 const IMAGE_REDUCE_QUALITY_STEPS = [85, 75, 65, 55, 45, 35];
@@ -62260,6 +63586,77 @@ async function runBrowserProxyCommand(paramsJSON) {
 const browserNodeHostRuntime = {
   runBrowserProxyCommand,
 };
+
+const SAFE_REGEX_CACHE_MAX = 256;
+const SAFE_REGEX_TEST_WINDOW = 2048;
+const safeRegexCompileCache = new Map();
+
+function testRegexFromStart(regex, value) {
+  regex.lastIndex = 0;
+  return regex.test(value);
+}
+
+function testRegexWithBoundedInput(regex, input, maxWindow = SAFE_REGEX_TEST_WINDOW) {
+  if (maxWindow <= 0) {
+    return false;
+  }
+  const value = String(input || "");
+  if (value.length <= maxWindow) {
+    return testRegexFromStart(regex, value);
+  }
+  const head = value.slice(0, maxWindow);
+  if (testRegexFromStart(regex, head)) {
+    return true;
+  }
+  return testRegexFromStart(regex, value.slice(-maxWindow));
+}
+
+function hasNestedRepetition(source) {
+  const cleaned = String(source || "")
+    .replace(/\\./g, "")
+    .replace(/\[[^\]]*\]/g, "");
+  return /\((?:[^()]|\([^)]*\))*[+*{][^)]*\)\s*[+*{]/.test(cleaned);
+}
+
+function compileSafeRegexDetailed(source, flags = "") {
+  const trimmed = String(source || "").trim();
+  if (!trimmed) {
+    return { regex: null, source: trimmed, flags, reason: "empty" };
+  }
+  const cacheKey = `${flags}::${trimmed}`;
+  if (safeRegexCompileCache.has(cacheKey)) {
+    return (
+      safeRegexCompileCache.get(cacheKey) || {
+        regex: null,
+        source: trimmed,
+        flags,
+        reason: "invalid-regex",
+      }
+    );
+  }
+  let result;
+  if (hasNestedRepetition(trimmed)) {
+    result = { regex: null, source: trimmed, flags, reason: "unsafe-nested-repetition" };
+  } else {
+    try {
+      result = { regex: new RegExp(trimmed, flags), source: trimmed, flags, reason: null };
+    } catch (_error) {
+      result = { regex: null, source: trimmed, flags, reason: "invalid-regex" };
+    }
+  }
+  safeRegexCompileCache.set(cacheKey, result);
+  if (safeRegexCompileCache.size > SAFE_REGEX_CACHE_MAX) {
+    const oldestKey = safeRegexCompileCache.keys().next().value;
+    if (oldestKey) {
+      safeRegexCompileCache.delete(oldestKey);
+    }
+  }
+  return result;
+}
+
+function compileSafeRegex(source, flags = "") {
+  return compileSafeRegexDetailed(source, flags).regex;
+}
 
 const browserSecurityRuntime = {
   SafeOpenError,
@@ -66612,6 +68009,415 @@ const agentHarnessRuntime = {
   createOpenClawCodingTools,
   formatToolProgressOutput,
   inferToolMetaFromArgs,
+};
+
+const AUTH_PROFILE_RUNTIME_CONTRACT = {
+  sessionId: "session-auth-contract",
+  sessionKey: "agent:main:auth-contract",
+  runId: "run-auth-contract",
+  workspacePrompt: "continue with the bound Codex profile",
+  openAiProvider: "openai",
+  openAiCodexProvider: "openai-codex",
+  codexCliProvider: "codex-cli",
+  codexHarnessProvider: "codex",
+  claudeCliProvider: "claude-cli",
+  openAiProfileId: "openai:work",
+  openAiCodexProfileId: "openai-codex:work",
+  anthropicProfileId: "anthropic:work",
+};
+
+const DELIVERY_NO_REPLY_RUNTIME_CONTRACT = {
+  sessionId: "session-delivery-contract",
+  sessionKey: "agent:main:delivery-contract",
+  runId: "run-delivery-contract",
+  prompt: "deliver the follow-up contract turn",
+  originChannel: "discord",
+  originTo: "channel:C1",
+  dispatcherText: "visible dispatcher fallback",
+  visibleText: "visible follow-up",
+  silentText: "NO_REPLY",
+  jsonSilentText: '{"action":"NO_REPLY"}',
+};
+
+const OUTCOME_FALLBACK_RUNTIME_CONTRACT = {
+  primaryProvider: "openai-codex",
+  primaryModel: "gpt-5.4",
+  fallbackProvider: "anthropic",
+  fallbackModel: "claude-haiku-3-5",
+  sessionId: "session-outcome-contract",
+  sessionKey: "agent:main:outcome-contract",
+  runId: "run-outcome-contract",
+  prompt: "finish the contract turn",
+  reasoningOnlyText: "I need to reason about this before answering.",
+  planningOnlyText: "Inspect state, then decide the next step.",
+};
+
+const GPT5_CONTRACT_MODEL_ID = "gpt-5.4";
+const GPT5_PREFIXED_CONTRACT_MODEL_ID = "openai/gpt-5.4";
+const NON_GPT5_CONTRACT_MODEL_ID = "gpt-4.1";
+const OPENAI_CONTRACT_PROVIDER_ID = "openai";
+const OPENAI_CODEX_CONTRACT_PROVIDER_ID = "openai-codex";
+const CODEX_CONTRACT_PROVIDER_ID = "codex";
+const NON_OPENAI_CONTRACT_PROVIDER_ID = "openrouter";
+const QUEUED_USER_MESSAGE_MARKER =
+  "[Queued user message that arrived while the previous turn was still active]";
+
+function createAuthAliasManifestRegistry() {
+  return {
+    plugins: [
+      {
+        id: "openai",
+        origin: "bundled",
+        channels: [],
+        providers: [],
+        cliBackends: [],
+        skills: [],
+        hooks: [],
+        rootDir: "/tmp/openclaw-auth-contract-plugin",
+        source: "test",
+        manifestPath: "/tmp/openclaw-auth-contract-plugin/plugin.json",
+        providerAuthChoices: [
+          {
+            provider: AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+            method: "oauth",
+            choiceId: AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+            deprecatedChoiceIds: [AUTH_PROFILE_RUNTIME_CONTRACT.codexCliProvider],
+          },
+        ],
+      },
+    ],
+    diagnostics: [],
+  };
+}
+
+function expectedForwardedAuthProfile(params = {}) {
+  const aliasLookupParams = { ...(params.aliasLookupParams || {}) };
+  if (aliasLookupParams.manifestRegistry && !aliasLookupParams.pluginMetadataSnapshot) {
+    aliasLookupParams.pluginMetadataSnapshot = aliasLookupParams.manifestRegistry;
+  }
+  return resolveProviderIdForAuth(params.provider, aliasLookupParams) ===
+    resolveProviderIdForAuth(params.authProfileProvider, aliasLookupParams)
+    ? params.sessionAuthProfileId
+    : undefined;
+}
+
+function textToolResult(text, details = {}) {
+  return {
+    content: [{ type: "text", text }],
+    details,
+  };
+}
+
+function mediaToolResult(text, mediaUrl, audioAsVoice = false) {
+  return textToolResult(text, {
+    media: {
+      mediaUrl,
+      ...(audioAsVoice ? { audioAsVoice } : {}),
+    },
+  });
+}
+
+function createRuntimeContractMockFn(implementation) {
+  const fn = async (...args) => {
+    fn.calls.push(args);
+    return await implementation(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  return fn;
+}
+
+function installOpenClawOwnedToolHooks(params = {}) {
+  const beforeToolCall = createRuntimeContractMockFn(async () => {
+    if (params.blockReason) {
+      return {
+        block: true,
+        blockReason: params.blockReason,
+      };
+    }
+    return params.adjustedParams ? { params: params.adjustedParams } : {};
+  });
+  const afterToolCall = createRuntimeContractMockFn(async () => {});
+  initializeGlobalHookRunner({
+    hooks: [
+      { name: "before_tool_call", handler: beforeToolCall },
+      { name: "after_tool_call", handler: afterToolCall },
+    ],
+  });
+  return { beforeToolCall, afterToolCall };
+}
+
+function installCodexToolResultMiddleware(handler) {
+  const middleware = createRuntimeContractMockFn(async (event) => ({
+    result: handler(event),
+  }));
+  return { middleware };
+}
+
+function resetOpenClawOwnedToolHooks() {
+  resetGlobalHookRunner();
+}
+
+function createContractRunResult(overrides = {}) {
+  const { meta, ...rest } = overrides;
+  return {
+    payloads: [],
+    didSendViaMessagingTool: false,
+    messagingToolSentTexts: [],
+    messagingToolSentMediaUrls: [],
+    messagingToolSentTargets: [],
+    successfulCronAdds: 0,
+    ...rest,
+    meta: {
+      durationMs: 1,
+      ...(meta || {}),
+    },
+  };
+}
+
+function createContractFallbackConfig() {
+  const primaryModel =
+    `${OUTCOME_FALLBACK_RUNTIME_CONTRACT.primaryProvider}/` +
+    OUTCOME_FALLBACK_RUNTIME_CONTRACT.primaryModel;
+  const fallbackModel =
+    `${OUTCOME_FALLBACK_RUNTIME_CONTRACT.fallbackProvider}/` +
+    OUTCOME_FALLBACK_RUNTIME_CONTRACT.fallbackModel;
+  return {
+    agents: {
+      defaults: {
+        model: {
+          primary: primaryModel,
+          fallbacks: [fallbackModel],
+        },
+      },
+    },
+  };
+}
+
+function openAiPluginPersonalityConfig(personality) {
+  return {
+    plugins: {
+      entries: {
+        openai: {
+          config: { personality },
+        },
+      },
+    },
+  };
+}
+
+function sharedGpt5PersonalityConfig(personality) {
+  return {
+    agents: {
+      defaults: {
+        promptOverlays: {
+          gpt5: { personality },
+        },
+      },
+    },
+  };
+}
+
+function codexPromptOverlayContext(params = {}) {
+  return {
+    provider: CODEX_CONTRACT_PROVIDER_ID,
+    modelId: params.modelId || GPT5_CONTRACT_MODEL_ID,
+    promptMode: "full",
+    agentDir: "/tmp/openclaw-codex-prompt-contract-agent",
+    workspaceDir: "/tmp/openclaw-codex-prompt-contract-workspace",
+    ...(params.config ? { config: params.config } : {}),
+  };
+}
+
+function createParameterFreeTool(name = "ping") {
+  return {
+    name,
+    description: "Parameter-free test tool",
+    parameters: {},
+  };
+}
+
+function createStrictCompatibleTool(name = "lookup") {
+  return {
+    name,
+    description: "Strict-compatible test tool",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    },
+  };
+}
+
+function createPermissiveTool(name = "schedule") {
+  return {
+    name,
+    description: "Permissive test tool",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string" },
+        cron: { type: "string" },
+      },
+      required: ["action"],
+      additionalProperties: true,
+    },
+  };
+}
+
+function createNativeOpenAIResponsesModel() {
+  return {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 8192,
+  };
+}
+
+function createNativeOpenAICodexResponsesModel() {
+  return {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 8192,
+  };
+}
+
+function createProxyOpenAIResponsesModel() {
+  return {
+    id: "custom-gpt",
+    name: "Custom GPT",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "https://proxy.example.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 200000,
+    maxTokens: 8192,
+  };
+}
+
+function normalizedParameterFreeSchema() {
+  return {
+    type: "object",
+    properties: {},
+    required: [],
+    additionalProperties: false,
+  };
+}
+
+function textOrphanLeaf(text = "older active-turn message") {
+  return { content: text };
+}
+
+function structuredOrphanLeaf() {
+  return {
+    content: [
+      { type: "text", text: "please inspect this" },
+      { type: "image_url", image_url: { url: "https://example.test/cat.png" } },
+      { type: "input_audio", audio_url: "https://example.test/cat.wav" },
+    ],
+  };
+}
+
+function inlineDataUriOrphanLeaf() {
+  return {
+    content: [
+      { type: "text", text: "please inspect this inline image" },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${"a".repeat(4096)}` } },
+    ],
+  };
+}
+
+function mediaOnlyHistoryMessage() {
+  return {
+    role: "user",
+    content: [{ type: "image", data: "b".repeat(2048), mimeType: "image/png" }],
+    timestamp: 1,
+  };
+}
+
+function structuredHistoryMessage() {
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: "older structured context" },
+      { type: "image", data: "c".repeat(64), mimeType: "image/png" },
+    ],
+    timestamp: 1,
+  };
+}
+
+function currentPromptHistoryMessage(prompt) {
+  return {
+    role: "user",
+    content: [{ type: "text", text: prompt }],
+    timestamp: 2,
+  };
+}
+
+function assistantHistoryMessage(text = "ack") {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    timestamp: 2,
+  };
+}
+
+const agentRuntimeTestContracts = {
+  AUTH_PROFILE_RUNTIME_CONTRACT,
+  CODEX_CONTRACT_PROVIDER_ID,
+  DELIVERY_NO_REPLY_RUNTIME_CONTRACT,
+  GPT5_CONTRACT_MODEL_ID,
+  GPT5_PREFIXED_CONTRACT_MODEL_ID,
+  NON_GPT5_CONTRACT_MODEL_ID,
+  NON_OPENAI_CONTRACT_PROVIDER_ID,
+  OPENAI_CODEX_CONTRACT_PROVIDER_ID,
+  OPENAI_CONTRACT_PROVIDER_ID,
+  OUTCOME_FALLBACK_RUNTIME_CONTRACT,
+  QUEUED_USER_MESSAGE_MARKER,
+  assistantHistoryMessage,
+  codexPromptOverlayContext,
+  createAuthAliasManifestRegistry,
+  createContractFallbackConfig,
+  createContractRunResult,
+  createNativeOpenAICodexResponsesModel,
+  createNativeOpenAIResponsesModel,
+  createParameterFreeTool,
+  createPermissiveTool,
+  createProxyOpenAIResponsesModel,
+  createStrictCompatibleTool,
+  currentPromptHistoryMessage,
+  expectedForwardedAuthProfile,
+  inlineDataUriOrphanLeaf,
+  installCodexToolResultMiddleware,
+  installOpenClawOwnedToolHooks,
+  mediaOnlyHistoryMessage,
+  mediaToolResult,
+  normalizedParameterFreeSchema,
+  openAiPluginPersonalityConfig,
+  resetOpenClawOwnedToolHooks,
+  sharedGpt5PersonalityConfig,
+  structuredHistoryMessage,
+  structuredOrphanLeaf,
+  textOrphanLeaf,
+  textToolResult,
 };
 
 function resolveMemorySearchConfig(cfg = {}, agentId) {
@@ -71360,6 +73166,19 @@ const runtimeSecretResolutionRuntime = {
   resolveSecretRefValues,
 };
 
+const secretSharedRuntime = {
+  ensureDirForFile,
+  isNonEmptyString,
+  isRecord,
+  normalizePositiveInt,
+  parseDotPath,
+  parseEnvValue,
+  readTextFileIfExists,
+  toDotPath,
+  writeJsonFileSecure,
+  writeTextFileAtomic,
+};
+
 const channelSecretTtsRuntime = {
   collectNestedChannelTtsAssignments,
 };
@@ -71386,6 +73205,35 @@ const channelSecretBasicRuntime = {
 const channelSecretRuntime = {
   ...channelSecretBasicRuntime,
   ...channelSecretTtsRuntime,
+};
+
+const safeRegexRuntime = {
+  compileSafeRegex,
+  compileSafeRegexDetailed,
+  hasNestedRepetition,
+  testRegexWithBoundedInput,
+};
+
+const securityRuntime = {
+  ...channelSecretRuntime,
+  ...runtimeSecretResolutionRuntime,
+  ...secretSharedRuntime,
+  ...accessGroupsRuntime,
+  ...browserSecurityRuntime,
+  ...safeRegexRuntime,
+  DM_GROUP_ACCESS_REASON,
+  buildUntrustedChannelMetadata,
+  evaluateSupplementalContextVisibility,
+  filterSupplementalContextItems,
+  readStoreAllowFromForDmPolicy,
+  resolveDmAllowState,
+  resolveDmGroupAccessDecision,
+  resolveDmGroupAccessWithCommandGate,
+  resolveDmGroupAccessWithLists,
+  resolveEffectiveAllowFromLists,
+  resolveOpenDmAllowlistAccess,
+  resolvePinnedMainDmOwnerFromAllowlist,
+  shouldIncludeSupplementalContext,
 };
 
 const talkConfigRuntime = {
@@ -71771,9 +73619,15 @@ const PLUGIN_COMMAND_REGISTRY_KEY = Symbol.for("openclaw.pluginCommands");
 const PLUGIN_INTERACTIVE_REGISTRY_KEY = Symbol.for("openclaw.pluginInteractiveHandlers");
 const PLUGIN_INTERACTIVE_DEDUPE_KEY = Symbol.for("openclaw.pluginInteractiveDedupe");
 const PLUGIN_HOOK_RUNNER_STATE_KEY = Symbol.for("openclaw.plugins.hook-runner-global-state");
+const FIRE_AND_FORGET_HOOK_STATE_KEY = Symbol.for("openclaw.fireAndForgetHookState");
+const INTERNAL_HOOK_STATE_KEY = Symbol.for("openclaw.internalHooksState");
 const PLUGIN_RUNTIME_GATEWAY_REQUEST_SCOPE_KEY = Symbol.for(
   "openclaw.pluginRuntimeGatewayRequestScope",
 );
+const DEFAULT_MAX_CONCURRENT_FIRE_AND_FORGET_HOOKS = 16;
+const DEFAULT_MAX_QUEUED_FIRE_AND_FORGET_HOOKS = 256;
+const DEFAULT_FIRE_AND_FORGET_HOOK_TIMEOUT_MS = 2000;
+const MAX_HOOK_LOG_MESSAGE_LENGTH = 500;
 const RESERVED_PLUGIN_COMMAND_NAMES = new Set([
   "help",
   "commands",
@@ -72311,6 +74165,610 @@ function createInteractiveConversationBindingHelpers(params = {}) {
   };
 }
 
+function getFireAndForgetHookState() {
+  return resolveGlobalSingleton(FIRE_AND_FORGET_HOOK_STATE_KEY, () => ({
+    active: 0,
+    queue: [],
+  }));
+}
+
+function positiveHookIntegerOrDefault(value, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : fallback;
+}
+
+function replaceHookLogControlCharacters(value) {
+  let result = "";
+  for (const char of String(value || "")) {
+    const codePoint = char.codePointAt(0);
+    if (
+      codePoint === undefined ||
+      codePoint <= 0x1f ||
+      codePoint === 0x7f ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029
+    ) {
+      result += " ";
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
+function formatHookErrorForLog(err) {
+  const formatted = replaceHookLogControlCharacters(formatErrorMessage(err))
+    .replace(/\s+/g, " ")
+    .trim();
+  return (formatted || "unknown error").slice(0, MAX_HOOK_LOG_MESSAGE_LENGTH);
+}
+
+function fireAndForgetHook(task, label, logger = () => {}) {
+  void Promise.resolve(task).catch((err) => {
+    logger(`${label}: ${formatHookErrorForLog(err)}`);
+  });
+}
+
+function runFireAndForgetHookJob(state, job, limits) {
+  state.active += 1;
+  let didLogTimeout = false;
+  const timeout =
+    job.timeoutMs > 0
+      ? setTimeout(() => {
+          didLogTimeout = true;
+          job.logger(`${job.label}: timed out after ${job.timeoutMs}ms`);
+        }, job.timeoutMs)
+      : undefined;
+  void Promise.resolve()
+    .then(job.task)
+    .catch((err) => {
+      if (!didLogTimeout) {
+        job.logger(`${job.label}: ${formatHookErrorForLog(err)}`);
+      }
+    })
+    .finally(() => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      state.active -= 1;
+      drainFireAndForgetHookQueue(state, limits);
+    });
+}
+
+function drainFireAndForgetHookQueue(state, limits) {
+  while (state.active < limits.maxConcurrency) {
+    const next = state.queue.shift();
+    if (!next) {
+      return;
+    }
+    runFireAndForgetHookJob(state, next, limits);
+  }
+}
+
+function fireAndForgetBoundedHook(task, label, logger = () => {}, options = {}) {
+  const state = getFireAndForgetHookState();
+  const maxConcurrency = positiveHookIntegerOrDefault(
+    options.maxConcurrency,
+    DEFAULT_MAX_CONCURRENT_FIRE_AND_FORGET_HOOKS,
+  );
+  const maxQueue = positiveHookIntegerOrDefault(
+    options.maxQueue,
+    DEFAULT_MAX_QUEUED_FIRE_AND_FORGET_HOOKS,
+  );
+  const timeoutMs = positiveHookIntegerOrDefault(
+    options.timeoutMs,
+    DEFAULT_FIRE_AND_FORGET_HOOK_TIMEOUT_MS,
+  );
+  if (state.active >= maxConcurrency && state.queue.length >= maxQueue) {
+    logger(`${label}: queue full; dropping hook`);
+    return;
+  }
+  state.queue.push({ task, label, logger, timeoutMs });
+  drainFireAndForgetHookQueue(state, { maxConcurrency });
+}
+
+function getInternalHookState() {
+  return resolveGlobalSingleton(INTERNAL_HOOK_STATE_KEY, () => ({
+    handlers: new Map(),
+    enabled: true,
+  }));
+}
+
+function registerInternalHook(eventKey, handler) {
+  const normalizedKey = String(eventKey || "");
+  if (!normalizedKey || typeof handler !== "function") {
+    return;
+  }
+  const state = getInternalHookState();
+  if (!state.handlers.has(normalizedKey)) {
+    state.handlers.set(normalizedKey, []);
+  }
+  state.handlers.get(normalizedKey).push(handler);
+}
+
+function unregisterInternalHook(eventKey, handler) {
+  const state = getInternalHookState();
+  const eventHandlers = state.handlers.get(String(eventKey || ""));
+  if (!eventHandlers) {
+    return;
+  }
+  const index = eventHandlers.indexOf(handler);
+  if (index !== -1) {
+    eventHandlers.splice(index, 1);
+  }
+  if (eventHandlers.length === 0) {
+    state.handlers.delete(String(eventKey || ""));
+  }
+}
+
+function clearInternalHooks() {
+  getInternalHookState().handlers.clear();
+}
+
+function setInternalHooksEnabled(enabled) {
+  getInternalHookState().enabled = Boolean(enabled);
+}
+
+function getRegisteredEventKeys() {
+  return Array.from(getInternalHookState().handlers.keys());
+}
+
+function hasInternalHookListeners(type, action) {
+  const state = getInternalHookState();
+  return (
+    (state.handlers.get(type) || []).length > 0 ||
+    (state.handlers.get(`${type}:${action}`) || []).length > 0
+  );
+}
+
+async function triggerInternalHook(event) {
+  const state = getInternalHookState();
+  if (!state.enabled || !hasInternalHookListeners(event.type, event.action)) {
+    return;
+  }
+  const typeHandlers = state.handlers.get(event.type) || [];
+  const specificHandlers = state.handlers.get(`${event.type}:${event.action}`) || [];
+  for (const handler of [...typeHandlers, ...specificHandlers]) {
+    try {
+      await handler(event);
+    } catch {
+      // OpenClaw hook dispatch swallows individual hook failures.
+    }
+  }
+}
+
+function createInternalHookEvent(type, action, sessionKey, context = {}) {
+  return {
+    type,
+    action,
+    sessionKey,
+    context,
+    timestamp: new Date(),
+    messages: [],
+  };
+}
+
+function isHookEventTypeAndAction(event, type, action) {
+  return Boolean(event && event.type === type && event.action === action);
+}
+
+function getHookContext(event) {
+  const context = event && event.context;
+  return context && typeof context === "object" ? context : null;
+}
+
+function hasStringContextField(context, key) {
+  return typeof context[key] === "string";
+}
+
+function hasBooleanContextField(context, key) {
+  return typeof context[key] === "boolean";
+}
+
+function isAgentBootstrapEvent(event) {
+  if (!isHookEventTypeAndAction(event, "agent", "bootstrap")) {
+    return false;
+  }
+  const context = getHookContext(event);
+  return Boolean(
+    context &&
+      hasStringContextField(context, "workspaceDir") &&
+      Array.isArray(context.bootstrapFiles),
+  );
+}
+
+function isGatewayStartupEvent(event) {
+  return isHookEventTypeAndAction(event, "gateway", "startup") && Boolean(getHookContext(event));
+}
+
+function isMessageReceivedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "received") &&
+      context &&
+      hasStringContextField(context, "from") &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isMessageSentEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "sent") &&
+      context &&
+      hasStringContextField(context, "to") &&
+      hasStringContextField(context, "channelId") &&
+      hasBooleanContextField(context, "success"),
+  );
+}
+
+function isMessageTranscribedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "transcribed") &&
+      context &&
+      hasStringContextField(context, "transcript") &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isMessagePreprocessedEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "message", "preprocessed") &&
+      context &&
+      hasStringContextField(context, "channelId"),
+  );
+}
+
+function isSessionPatchEvent(event) {
+  const context = getHookContext(event);
+  return Boolean(
+    isHookEventTypeAndAction(event, "session", "patch") &&
+      context &&
+      typeof context.patch === "object" &&
+      context.patch !== null &&
+      typeof context.cfg === "object" &&
+      context.cfg !== null &&
+      typeof context.sessionEntry === "object" &&
+      context.sessionEntry !== null,
+  );
+}
+
+function readHookNonBlankString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function compactHookStringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((entry) => typeof entry === "string" && entry.length > 0)
+    : undefined;
+}
+
+function deriveInboundMessageHookContext(ctx = {}, overrides = {}) {
+  const content =
+    overrides.content ??
+    readHookNonBlankString(ctx.BodyForCommands) ??
+    readHookNonBlankString(ctx.RawBody) ??
+    readHookNonBlankString(ctx.Body) ??
+    "";
+  const channelId = normalizeLowercaseStringOrEmpty(
+    ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "",
+  );
+  const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
+  const mediaPaths = compactHookStringArray(ctx.MediaPaths);
+  const mediaTypes = compactHookStringArray(ctx.MediaTypes);
+  const mediaUrls = compactHookStringArray(ctx.MediaUrls);
+  const isGroup = Boolean(ctx.GroupSubject || ctx.GroupChannel);
+  return {
+    from: ctx.From ?? "",
+    to: ctx.To,
+    content,
+    body: ctx.Body,
+    bodyForAgent: ctx.BodyForAgent,
+    transcript: ctx.Transcript,
+    timestamp:
+      typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp)
+        ? ctx.Timestamp
+        : undefined,
+    channelId,
+    accountId: ctx.AccountId,
+    conversationId,
+    sessionKey: ctx.SessionKey,
+    runId: ctx.RunId,
+    messageId:
+      overrides.messageId ??
+      ctx.MessageSidFull ??
+      ctx.MessageSid ??
+      ctx.MessageSidFirst ??
+      ctx.MessageSidLast,
+    senderId: ctx.SenderId,
+    senderName: ctx.SenderName,
+    senderUsername: ctx.SenderUsername,
+    senderE164: ctx.SenderE164,
+    provider: ctx.Provider,
+    surface: ctx.Surface,
+    threadId: ctx.MessageThreadId,
+    mediaPath: ctx.MediaPath ?? (mediaPaths ? mediaPaths[0] : undefined),
+    mediaUrl: ctx.MediaUrl ?? (mediaUrls ? mediaUrls[0] : undefined),
+    mediaType: ctx.MediaType ?? (mediaTypes ? mediaTypes[0] : undefined),
+    mediaPaths,
+    mediaUrls,
+    mediaTypes,
+    originatingChannel: ctx.OriginatingChannel,
+    originatingTo: ctx.OriginatingTo,
+    guildId: ctx.GroupSpace,
+    channelName: ctx.GroupChannel,
+    isGroup,
+    groupId: isGroup ? conversationId : undefined,
+    topicName: ctx.TopicName,
+    trace: ctx.Trace,
+    callDepth: ctx.CallDepth,
+  };
+}
+
+function assignDefinedHookField(target, key, value) {
+  if (value !== undefined) {
+    target[key] = value;
+  }
+}
+
+function assignHookTraceFields(target, trace) {
+  if (!trace || typeof trace !== "object") {
+    return;
+  }
+  const safeTrace = { ...trace };
+  target.trace = safeTrace;
+  assignDefinedHookField(target, "traceId", safeTrace.traceId);
+  assignDefinedHookField(target, "spanId", safeTrace.spanId);
+  assignDefinedHookField(target, "parentSpanId", safeTrace.parentSpanId);
+}
+
+function toPluginMessageContext(canonical = {}) {
+  const context = {
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+  };
+  assignDefinedHookField(context, "sessionKey", canonical.sessionKey);
+  assignDefinedHookField(context, "runId", canonical.runId);
+  assignDefinedHookField(context, "messageId", canonical.messageId);
+  assignDefinedHookField(context, "senderId", canonical.senderId);
+  assignHookTraceFields(context, canonical.trace);
+  assignDefinedHookField(context, "callDepth", canonical.callDepth);
+  return context;
+}
+
+function stripHookChannelPrefix(value, channelId) {
+  if (!value) {
+    return undefined;
+  }
+  const text = String(value);
+  for (const prefix of ["channel:", "chat:", "user:"]) {
+    if (text.startsWith(prefix)) {
+      return text.slice(prefix.length);
+    }
+  }
+  const channelPrefix = `${channelId}:`;
+  return text.startsWith(channelPrefix) ? text.slice(channelPrefix.length) : text;
+}
+
+function resolveInboundHookConversation(canonical = {}) {
+  return {
+    conversationId: stripHookChannelPrefix(
+      canonical.to ?? canonical.originatingTo ?? canonical.conversationId,
+      canonical.channelId,
+    ),
+  };
+}
+
+function toPluginInboundClaimContext(canonical = {}) {
+  const conversation = resolveInboundHookConversation(canonical);
+  const context = {
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: conversation.conversationId,
+    sessionKey: canonical.sessionKey,
+    parentConversationId: conversation.parentConversationId,
+    senderId: canonical.senderId,
+    messageId: canonical.messageId,
+    runId: canonical.runId,
+    callDepth: canonical.callDepth,
+  };
+  assignHookTraceFields(context, canonical.trace);
+  return context;
+}
+
+function toPluginInboundClaimEvent(canonical = {}, extras = {}) {
+  const context = toPluginInboundClaimContext(canonical);
+  const event = {
+    content: canonical.content,
+    body: canonical.body,
+    bodyForAgent: canonical.bodyForAgent,
+    transcript: canonical.transcript,
+    timestamp: canonical.timestamp,
+    channel: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: context.conversationId,
+    parentConversationId: context.parentConversationId,
+    senderId: canonical.senderId,
+    senderName: canonical.senderName,
+    senderUsername: canonical.senderUsername,
+    threadId: canonical.threadId,
+    messageId: canonical.messageId,
+    sessionKey: canonical.sessionKey,
+    runId: canonical.runId,
+    isGroup: canonical.isGroup,
+    commandAuthorized: extras.commandAuthorized,
+    wasMentioned: extras.wasMentioned,
+    metadata: {
+      from: canonical.from,
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      originatingChannel: canonical.originatingChannel,
+      originatingTo: canonical.originatingTo,
+      senderE164: canonical.senderE164,
+      mediaPath: canonical.mediaPath,
+      mediaUrl: canonical.mediaUrl,
+      mediaType: canonical.mediaType,
+      mediaPaths: canonical.mediaPaths,
+      mediaUrls: canonical.mediaUrls,
+      mediaTypes: canonical.mediaTypes,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      groupId: canonical.groupId,
+      topicName: canonical.topicName,
+    },
+  };
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toPluginMessageReceivedEvent(canonical = {}) {
+  const event = {
+    from: canonical.from,
+    content: canonical.content,
+    timestamp: canonical.timestamp,
+    threadId: canonical.threadId,
+    messageId: canonical.messageId,
+    senderId: canonical.senderId,
+    sessionKey: canonical.sessionKey,
+    runId: canonical.runId,
+    metadata: {
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      threadId: canonical.threadId,
+      originatingChannel: canonical.originatingChannel,
+      originatingTo: canonical.originatingTo,
+      messageId: canonical.messageId,
+      senderId: canonical.senderId,
+      senderName: canonical.senderName,
+      senderUsername: canonical.senderUsername,
+      senderE164: canonical.senderE164,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      topicName: canonical.topicName,
+    },
+  };
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toInternalMessageReceivedContext(canonical = {}) {
+  return {
+    from: canonical.from,
+    content: canonical.content,
+    timestamp: canonical.timestamp,
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+    metadata: {
+      to: canonical.to,
+      provider: canonical.provider,
+      surface: canonical.surface,
+      threadId: canonical.threadId,
+      senderId: canonical.senderId,
+      senderName: canonical.senderName,
+      senderUsername: canonical.senderUsername,
+      senderE164: canonical.senderE164,
+      guildId: canonical.guildId,
+      channelName: canonical.channelName,
+      topicName: canonical.topicName,
+    },
+  };
+}
+
+function toInternalInboundMessageHookContextBase(canonical = {}) {
+  return {
+    from: canonical.from,
+    to: canonical.to,
+    body: canonical.body,
+    bodyForAgent: canonical.bodyForAgent,
+    timestamp: canonical.timestamp,
+    channelId: canonical.channelId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+    senderId: canonical.senderId,
+    senderName: canonical.senderName,
+    senderUsername: canonical.senderUsername,
+    provider: canonical.provider,
+    surface: canonical.surface,
+    mediaPath: canonical.mediaPath,
+    mediaType: canonical.mediaType,
+  };
+}
+
+function toInternalMessageTranscribedContext(canonical = {}, cfg = {}) {
+  return {
+    ...toInternalInboundMessageHookContextBase(canonical),
+    transcript: canonical.transcript ?? "",
+    cfg,
+  };
+}
+
+function toInternalMessagePreprocessedContext(canonical = {}, cfg = {}) {
+  return {
+    ...toInternalInboundMessageHookContextBase(canonical),
+    transcript: canonical.transcript,
+    isGroup: canonical.isGroup,
+    groupId: canonical.groupId,
+    cfg,
+  };
+}
+
+function buildCanonicalSentMessageHookContext(params = {}) {
+  return {
+    to: params.to,
+    content: params.content,
+    success: params.success,
+    error: params.error,
+    channelId: params.channelId,
+    accountId: params.accountId,
+    conversationId: params.conversationId ?? params.to,
+    sessionKey: params.sessionKey,
+    runId: params.runId,
+    messageId: params.messageId,
+    trace: params.trace,
+    callDepth: params.callDepth,
+    isGroup: params.isGroup,
+    groupId: params.groupId,
+  };
+}
+
+function toPluginMessageSentEvent(canonical = {}) {
+  const event = {
+    to: canonical.to,
+    content: canonical.content,
+    success: canonical.success,
+  };
+  assignDefinedHookField(event, "messageId", canonical.messageId);
+  assignDefinedHookField(event, "sessionKey", canonical.sessionKey);
+  assignDefinedHookField(event, "runId", canonical.runId);
+  assignDefinedHookField(event, "error", canonical.error);
+  assignHookTraceFields(event, canonical.trace);
+  return event;
+}
+
+function toInternalMessageSentContext(canonical = {}) {
+  const context = {
+    to: canonical.to,
+    content: canonical.content,
+    success: canonical.success,
+    channelId: canonical.channelId,
+    accountId: canonical.accountId,
+    conversationId: canonical.conversationId,
+    messageId: canonical.messageId,
+  };
+  assignDefinedHookField(context, "error", canonical.error);
+  assignDefinedHookField(context, "isGroup", canonical.isGroup);
+  assignDefinedHookField(context, "groupId", canonical.groupId);
+  return context;
+}
+
 function getPluginHookRunnerState() {
   return resolveGlobalSingleton(PLUGIN_HOOK_RUNNER_STATE_KEY, () => ({
     hookRunner: null,
@@ -72440,6 +74898,40 @@ const pluginRuntime = {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeGatewayRequestScope,
   withPluginRuntimePluginIdScope,
+};
+
+const hookRuntime = {
+  fireAndForgetHook,
+  fireAndForgetBoundedHook,
+  formatHookErrorForLog,
+  registerInternalHook,
+  unregisterInternalHook,
+  clearInternalHooks,
+  setInternalHooksEnabled,
+  getRegisteredEventKeys,
+  hasInternalHookListeners,
+  triggerInternalHook,
+  createInternalHookEvent,
+  isAgentBootstrapEvent,
+  isGatewayStartupEvent,
+  isMessageReceivedEvent,
+  isMessageSentEvent,
+  isMessageTranscribedEvent,
+  isMessagePreprocessedEvent,
+  isSessionPatchEvent,
+  deriveInboundMessageHookContext,
+  buildCanonicalSentMessageHookContext,
+  toPluginMessageContext,
+  toPluginInboundClaimContext,
+  toPluginInboundClaimEvent,
+  toPluginMessageReceivedEvent,
+  toPluginMessageSentEvent,
+  toInternalMessageReceivedContext,
+  toInternalMessageTranscribedContext,
+  toInternalMessagePreprocessedContext,
+  toInternalMessageSentContext,
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
 };
 
 const configMutationRuntime = {
@@ -74159,6 +76651,8 @@ const genericSdk = new Proxy(
     ...channelLifecycleRuntime,
     ...channelCoreRuntime,
     ...channelContractTestingRuntime,
+    ...channelTargetTestingRuntime,
+    ...channelTestHelpersRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -74222,6 +76716,8 @@ const genericSdk = new Proxy(
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
     ...channelSecretRuntime,
+    ...securityRuntime,
+    ...gatewayRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
@@ -74246,6 +76742,7 @@ const genericSdk = new Proxy(
     ...providerAuthLoginRuntime,
     ...providerAuthFacadeRuntime,
     ...pluginRuntime,
+    ...hookRuntime,
     appendMatchMetadata,
     asString,
     buildRandomTempFilePath,
@@ -75543,6 +78040,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return agentRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/agent-runtime-test-contracts" ||
+    request === "@openclaw/plugin-sdk/agent-runtime-test-contracts"
+  ) {
+    return agentRuntimeTestContracts;
+  }
+  if (
     request === "openclaw/plugin-sdk/agent-harness-runtime" ||
     request === "@openclaw/plugin-sdk/agent-harness-runtime" ||
     request === "openclaw/plugin-sdk/agent-harness" ||
@@ -75812,6 +78315,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return pluginRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/hook-runtime" ||
+    request === "@openclaw/plugin-sdk/hook-runtime"
+  ) {
+    return hookRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/plugin-entry" ||
     request === "@openclaw/plugin-sdk/plugin-entry"
   ) {
@@ -76042,6 +78551,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return browserNodeRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/gateway-runtime" ||
+    request === "@openclaw/plugin-sdk/gateway-runtime"
+  ) {
+    return gatewayRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/browser-setup-tools" ||
     request === "@openclaw/plugin-sdk/browser-setup-tools"
   ) {
@@ -76088,6 +78603,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-secret-runtime"
   ) {
     return channelSecretRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/security-runtime" ||
+    request === "@openclaw/plugin-sdk/security-runtime"
+  ) {
+    return securityRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/talk-config-runtime" ||
@@ -76170,6 +78691,18 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-contract-testing"
   ) {
     return channelContractTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-target-testing" ||
+    request === "@openclaw/plugin-sdk/channel-target-testing"
+  ) {
+    return channelTargetTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-test-helpers" ||
+    request === "@openclaw/plugin-sdk/channel-test-helpers"
+  ) {
+    return channelTestHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

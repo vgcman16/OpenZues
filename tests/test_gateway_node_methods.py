@@ -31155,6 +31155,533 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_target_testing_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-target-testing.cjs"
+    runtime_entry.write_text(
+        """
+const targetTesting = require("openclaw/plugin-sdk/channel-target-testing");
+const scopedTargetTesting = require("@openclaw/plugin-sdk/channel-target-testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_target_testing",
+      description: "Use OpenClaw channel target testing SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const registered = [];
+        const previousIt = globalThis.it;
+        globalThis.it = (name, callback) => {
+          const entry = { name, calls: [] };
+          registered.push(entry);
+          callback();
+        };
+        try {
+          targetTesting.installCommonResolveTargetErrorCases({
+            implicitAllowFrom: ["channel:C123"],
+            resolveTarget: (params) => {
+              const ok =
+                params.to &&
+                params.to.trim() &&
+                params.to !== "invalid-target";
+              registered[registered.length - 1]?.calls.push(params);
+              return ok
+                ? { ok: true, to: params.to.trim() }
+                : { ok: false, error: new Error(`bad:${params.mode}`) };
+            }
+          });
+        } finally {
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+        const directCalls = [];
+        targetTesting.installCommonResolveTargetErrorCases({
+          implicitAllowFrom: ["chat:ops"],
+          resolveTarget: (params) => {
+            directCalls.push(params);
+            return { ok: false, error: { code: `bad-${params.mode}` } };
+          }
+        });
+        return {
+          keys: Object.keys(targetTesting).sort(),
+          scopedSame:
+            scopedTargetTesting.installCommonResolveTargetErrorCases ===
+            targetTesting.installCommonResolveTargetErrorCases,
+          registeredNames: registered.map((entry) => entry.name),
+          registeredCalls: registered.flatMap((entry) => entry.calls),
+          directCalls
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-target-testing-plugin",
+                    "name": "Runtime Channel Target Testing Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-target-testing.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_target_testing"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_target_testing"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["installCommonResolveTargetErrorCases"],
+        "scopedSame": True,
+        "registeredNames": [
+            "should error on normalization failure with allowlist (implicit mode)",
+            "should error when no target provided with allowlist",
+            "should error when no target and no allowlist",
+            "should handle whitespace-only target",
+        ],
+        "registeredCalls": [
+            {
+                "to": "invalid-target",
+                "mode": "implicit",
+                "allowFrom": ["channel:C123"],
+            },
+            {
+                "mode": "implicit",
+                "allowFrom": ["channel:C123"],
+            },
+            {"mode": "explicit", "allowFrom": []},
+            {"to": "   ", "mode": "explicit", "allowFrom": []},
+        ],
+        "directCalls": [
+            {"to": "invalid-target", "mode": "implicit", "allowFrom": ["chat:ops"]},
+            {"mode": "implicit", "allowFrom": ["chat:ops"]},
+            {"mode": "explicit", "allowFrom": []},
+            {"to": "   ", "mode": "explicit", "allowFrom": []},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_test_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-test-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const helpers = require("openclaw/plugin-sdk/channel-test-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/channel-test-helpers");
+
+function mockFn(impl = () => undefined) {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return impl(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  return fn;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_test_helpers",
+      description: "Use OpenClaw channel test helpers SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registered = [];
+        const previousIt = globalThis.it;
+        globalThis.it = (name, callback) => {
+          registered.push(name);
+          callback();
+        };
+        try {
+          helpers.assertBundledChannelEntries({
+            entry: { kind: "bundled-channel-entry", id: "demo", name: "Demo" },
+            expectedId: "demo",
+            expectedName: "Demo",
+            setupEntry: {
+              kind: "bundled-channel-setup-entry",
+              loadSetupPlugin: () => ({})
+            }
+          });
+        } finally {
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+
+        const directoryRuntime = helpers.createDirectoryTestRuntime();
+        let exitError = "";
+        try {
+          directoryRuntime.exit(7);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const directory = {
+          listPeers: async () => [{ id: "peer-a" }],
+          listGroups: async () => [{ id: "group-a" }]
+        };
+        const surface = helpers.expectDirectorySurface(directory);
+        await helpers.expectDirectoryIds(
+          async () => [{ id: "b" }, { id: "a" }],
+          {},
+          ["a", "b"],
+          { sorted: true }
+        );
+
+        const outbound = { sendMessage: async () => ({ messageId: "m1" }) };
+        const plugin = helpers.createOutboundTestPlugin({
+          id: "demo",
+          outbound,
+          label: "Demo Channel",
+          docsPath: "/channels/demo",
+          capabilities: { chatTypes: ["direct", "group"] }
+        });
+        helpers.expectChannelPluginContract(plugin);
+        const registry = helpers.createTestRegistry([
+          { pluginId: "demo", plugin, source: "test" }
+        ]);
+        helpers.addTestHook({
+          registry,
+          pluginId: "demo",
+          hookName: "message_received",
+          handler: () => "handled",
+          priority: 3,
+          timeoutMs: 99
+        });
+        helpers.setActivePluginRegistry(registry);
+        helpers.releasePinnedPluginChannelRegistry(registry);
+
+        const hooks = helpers.registerHookHandlersForTest({
+          config: { enabled: true },
+          register(api) {
+            api.on("message_received", (event, ctx) => ({ event, ctx, cfg: api.config }));
+          }
+        });
+        const hookResult = helpers.getRequiredHookHandler(
+          hooks,
+          "message_received"
+        )("event", "ctx");
+
+        const statusPatches = [];
+        const ctx = helpers.createStartAccountContext({
+          account: { accountId: "default", token: "t" },
+          statusPatchSink: (next) => statusPatches.push({ ...next })
+        });
+        ctx.setStatus({ running: true, message: "started" });
+        helpers.expectLifecyclePatch(statusPatches, { running: true });
+
+        const loadConfig = mockFn(() => ({ cfg: true }));
+        const resolveAccount = mockFn(() => ({ accountId: "default" }));
+        const cfg = { channels: { demo: {} } };
+        loadConfig();
+        resolveAccount({ cfg, accountId: "default" });
+        helpers.expectRuntimeCfgFallback({
+          loadConfig,
+          resolveAccount,
+          cfg,
+          accountId: "default"
+        });
+        const loadConfigProvided = mockFn();
+        const resolveProvided = mockFn();
+        resolveProvided({ cfg, accountId: "default" });
+        helpers.expectProvidedCfgSkipsRuntimeLoad({
+          loadConfig: loadConfigProvided,
+          resolveAccount: resolveProvided,
+          cfg,
+          accountId: "default"
+        });
+        const sendRuntime = helpers.createSendCfgThreadingRuntime({
+          loadConfig,
+          resolveMarkdownTableMode: mockFn(() => "preserve"),
+          convertMarkdownTables: mockFn((text) => text),
+          record: mockFn()
+        });
+
+        helpers.expectOpenDmPolicyConfigIssue({
+          collectIssues: () => [{ kind: "config" }],
+          account: { accountId: "default" }
+        });
+
+        const started = helpers.startAccountAndTrackLifecycle({
+          account: { accountId: "default" },
+          startAccount: async (startCtx) => {
+            startCtx.setStatus({ running: true });
+            await new Promise((resolve) =>
+              startCtx.abortSignal.addEventListener("abort", resolve, { once: true })
+            );
+            startCtx.setStatus({ running: false });
+          }
+        });
+        await helpers.abortStartedAccount({
+          abort: started.abort,
+          task: started.task
+        });
+
+        const runtimeMock = helpers.createPluginRuntimeMock({
+          config: { current: () => ({ mocked: true }) }
+        });
+        let deprecatedError = "";
+        try {
+          runtimeMock.config.loadConfig();
+        } catch (error) {
+          deprecatedError = error.message;
+        }
+
+        const timestamp = helpers.formatEnvelopeTimestamp(
+          new Date("2026-05-07T12:34:00.000Z"),
+          "utc"
+        );
+        const localTimestamp = helpers.formatLocalEnvelopeTimestamp(
+          new Date("2026-05-07T12:34:00.000Z")
+        );
+        const pairingText =
+          "OpenClaw: access not configured.\\nUser: Ada\\n" +
+          "Pairing code:\\n```\\nABC234\\n```\\n" +
+          "Run pairing approve demo ABC234";
+        const pairingCode = helpers.expectPairingReplyText(pairingText, {
+          channel: "demo",
+          idLine: "User: Ada"
+        });
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          scopedSame:
+            scopedHelpers.createTestRegistry === helpers.createTestRegistry,
+          directory: {
+            logType: typeof directoryRuntime.log,
+            errorType: typeof directoryRuntime.error,
+            exitError,
+            peersType: typeof surface.listPeers,
+            groupsType: typeof surface.listGroups
+          },
+          plugin: {
+            id: plugin.id,
+            label: plugin.meta.label,
+            docsPath: plugin.meta.docsPath,
+            chatTypes: plugin.capabilities.chatTypes,
+            outboundSame: plugin.outbound === outbound
+          },
+          registry: {
+            channels: registry.channels.length,
+            setups: registry.channelSetups.length,
+            hook: registry.typedHooks[0]
+          },
+          hookResult,
+          statusPatches,
+          sendRuntime: {
+            hasConfig: typeof sendRuntime.config.loadConfig,
+            mode: sendRuntime.channel.text.resolveMarkdownTableMode(),
+            providedCalls: resolveProvided.calls.length
+          },
+          lifecycle: {
+            patches: started.patches,
+            settled: started.isSettled()
+          },
+          runtimeMock: {
+            current: runtimeMock.config.current(),
+            deprecatedError,
+            bindSessionType: typeof runtimeMock.tasks.managedFlows.bindSession
+          },
+          registered,
+          timestamp,
+          localTimestampType: typeof localTimestamp,
+          escape: helpers.escapeRegExp("a+b?"),
+          pairingCode
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-test-helpers-plugin",
+                    "name": "Runtime Channel Test Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-test-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_test_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_test_helpers"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "abortStartedAccount",
+        "addTestHook",
+        "assertBundledChannelEntries",
+        "createDirectoryTestRuntime",
+        "createEmptyPluginRegistry",
+        "createOutboundTestPlugin",
+        "createPluginRuntimeMock",
+        "createSendCfgThreadingRuntime",
+        "createStartAccountContext",
+        "createTestRegistry",
+        "deliverOutboundPayloads",
+        "escapeRegExp",
+        "expectChannelPluginContract",
+        "expectDirectoryIds",
+        "expectDirectorySurface",
+        "expectLifecyclePatch",
+        "expectOpenDmPolicyConfigIssue",
+        "expectPairingReplyText",
+        "expectPendingUntilAbort",
+        "expectProvidedCfgSkipsRuntimeLoad",
+        "expectRuntimeCfgFallback",
+        "expectStopPendingUntilAbort",
+        "extractPairingCode",
+        "formatEnvelopeTimestamp",
+        "formatLocalEnvelopeTimestamp",
+        "getRequiredHookHandler",
+        "initializeGlobalHookRunner",
+        "registerHookHandlersForTest",
+        "releasePinnedPluginChannelRegistry",
+        "resetGlobalHookRunner",
+        "setActivePluginRegistry",
+        "startAccountAndTrackLifecycle",
+        "waitForStartedMocks",
+    ]
+    assert result["scopedSame"] is True
+    assert result["directory"] == {
+        "logType": "function",
+        "errorType": "function",
+        "exitError": "exit 7",
+        "peersType": "function",
+        "groupsType": "function",
+    }
+    assert result["plugin"] == {
+        "id": "demo",
+        "label": "Demo Channel",
+        "docsPath": "/channels/demo",
+        "chatTypes": ["direct", "group"],
+        "outboundSame": True,
+    }
+    assert result["registry"]["channels"] == 1
+    assert result["registry"]["setups"] == 1
+    assert result["registry"]["hook"] == {
+        "pluginId": "demo",
+        "hookName": "message_received",
+        "priority": 3,
+        "timeoutMs": 99,
+        "source": "test",
+    }
+    assert result["hookResult"] == {
+        "event": "event",
+        "ctx": "ctx",
+        "cfg": {"enabled": True},
+    }
+    assert result["statusPatches"][0]["running"] is True
+    assert result["sendRuntime"] == {
+        "hasConfig": "function",
+        "mode": "preserve",
+        "providedCalls": 1,
+    }
+    assert result["lifecycle"]["patches"][0]["running"] is True
+    assert result["lifecycle"]["patches"][-1]["running"] is False
+    assert result["lifecycle"]["settled"] is True
+    assert result["runtimeMock"] == {
+        "current": {"mocked": True},
+        "deprecatedError": (
+            "Plugin runtime config.loadConfig() is deprecated in tests; "
+            "pass cfg/current() or use mutateConfigFile()/replaceConfigFile()."
+        ),
+        "bindSessionType": "function",
+    }
+    assert result["registered"] == [
+        "declares the channel plugin without importing the broad api barrel",
+        "declares the setup plugin without importing the broad api barrel",
+    ]
+    assert result["timestamp"] == "Thu 2026-05-07T12:34Z"
+    assert result["localTimestampType"] == "string"
+    assert result["escape"] == "a\\+b\\?"
+    assert result["pairingCode"] == "ABC234"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
@@ -48115,6 +48642,415 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_test_contracts(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/agent-runtime-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/agent-runtime-test-contracts");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_runtime_test_contracts",
+      description: "Use OpenClaw agent-runtime test contract helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const registry = contracts.createAuthAliasManifestRegistry();
+        const forwarded = contracts.expectedForwardedAuthProfile({
+          provider: contracts.AUTH_PROFILE_RUNTIME_CONTRACT.codexCliProvider,
+          authProfileProvider:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+          aliasLookupParams: { manifestRegistry: registry },
+          sessionAuthProfileId:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProfileId
+        });
+        const notForwarded = contracts.expectedForwardedAuthProfile({
+          provider: contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiProvider,
+          authProfileProvider:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProvider,
+          aliasLookupParams: { manifestRegistry: registry },
+          sessionAuthProfileId:
+            contracts.AUTH_PROFILE_RUNTIME_CONTRACT.openAiCodexProfileId
+        });
+        const text = contracts.textToolResult("hello", { ok: true });
+        const media = contracts.mediaToolResult(
+          "photo",
+          "https://media.example/photo.png",
+          true
+        );
+        const installedHooks = contracts.installOpenClawOwnedToolHooks({
+          adjustedParams: { path: "/tmp/demo" }
+        });
+        const beforeResult = await installedHooks.beforeToolCall({
+          toolCallId: "tool-1"
+        });
+        await installedHooks.afterToolCall({ toolCallId: "tool-1" });
+        const blockedHooks = contracts.installOpenClawOwnedToolHooks({
+          blockReason: "owner only"
+        });
+        const blockedResult = await blockedHooks.beforeToolCall({
+          toolCallId: "tool-2"
+        });
+        const middlewareHandle = contracts.installCodexToolResultMiddleware(
+          (event) => contracts.textToolResult(`handled:${event.toolCallId}`)
+        );
+        const middlewareResult = await middlewareHandle.middleware({
+          toolCallId: "tool-3"
+        });
+        contracts.resetOpenClawOwnedToolHooks();
+        const runResult = contracts.createContractRunResult({
+          didSendViaMessagingTool: true,
+          messagingToolSentTexts: ["sent"],
+          meta: { durationMs: 9, provider: "openai" }
+        });
+        return {
+          selectedTypes: {
+            createAuthAliasManifestRegistry:
+              typeof contracts.createAuthAliasManifestRegistry,
+            expectedForwardedAuthProfile:
+              typeof contracts.expectedForwardedAuthProfile,
+            installOpenClawOwnedToolHooks:
+              typeof contracts.installOpenClawOwnedToolHooks,
+            createContractRunResult: typeof contracts.createContractRunResult,
+            createParameterFreeTool: typeof contracts.createParameterFreeTool,
+            textOrphanLeaf: typeof contracts.textOrphanLeaf
+          },
+          scopedSame:
+            scopedContracts.textToolResult === contracts.textToolResult,
+          auth: {
+            contract: contracts.AUTH_PROFILE_RUNTIME_CONTRACT,
+            registryPluginId: registry.plugins[0].id,
+            forwarded,
+            notForwarded: notForwarded || null
+          },
+          delivery: contracts.DELIVERY_NO_REPLY_RUNTIME_CONTRACT,
+          tools: {
+            text,
+            media,
+            beforeResult,
+            beforeCalls: installedHooks.beforeToolCall.calls.length,
+            afterCalls: installedHooks.afterToolCall.calls.length,
+            blockedResult,
+            middlewareResult,
+            middlewareCalls: middlewareHandle.middleware.calls.length
+          },
+          fallback: {
+            config: contracts.createContractFallbackConfig(),
+            runResult
+          },
+          prompt: {
+            constants: [
+              contracts.GPT5_CONTRACT_MODEL_ID,
+              contracts.GPT5_PREFIXED_CONTRACT_MODEL_ID,
+              contracts.NON_GPT5_CONTRACT_MODEL_ID,
+              contracts.OPENAI_CONTRACT_PROVIDER_ID,
+              contracts.OPENAI_CODEX_CONTRACT_PROVIDER_ID,
+              contracts.CODEX_CONTRACT_PROVIDER_ID,
+              contracts.NON_OPENAI_CONTRACT_PROVIDER_ID
+            ],
+            openAiConfig: contracts.openAiPluginPersonalityConfig("friendly"),
+            sharedConfig: contracts.sharedGpt5PersonalityConfig("off"),
+            context: contracts.codexPromptOverlayContext({
+              modelId: contracts.GPT5_PREFIXED_CONTRACT_MODEL_ID,
+              config: { marker: "cfg" }
+            })
+          },
+          schema: {
+            parameterFree: contracts.createParameterFreeTool("ping"),
+            strict: contracts.createStrictCompatibleTool("lookup"),
+            permissive: contracts.createPermissiveTool("schedule"),
+            nativeOpenAI: contracts.createNativeOpenAIResponsesModel(),
+            nativeCodex: contracts.createNativeOpenAICodexResponsesModel(),
+            proxy: contracts.createProxyOpenAIResponsesModel(),
+            normalized: contracts.normalizedParameterFreeSchema()
+          },
+          transcript: {
+            marker: contracts.QUEUED_USER_MESSAGE_MARKER,
+            textOrphan: contracts.textOrphanLeaf("older"),
+            structuredOrphan: contracts.structuredOrphanLeaf(),
+            inlineDataUriLength:
+              contracts.inlineDataUriOrphanLeaf().content[1].image_url.url.length,
+            mediaOnly: contracts.mediaOnlyHistoryMessage(),
+            structuredHistory: contracts.structuredHistoryMessage(),
+            currentPrompt: contracts.currentPromptHistoryMessage("now"),
+            assistant: contracts.assistantHistoryMessage("done")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-runtime-test-contracts-plugin",
+                    "name": "Runtime Agent Runtime Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(
+        tmp_path / "gateway-tools-invoke-agent-runtime-test-contracts-plugin.db"
+    )
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.agent_runtime_test_contracts"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.agent_runtime_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["selectedTypes"] == {
+        "createAuthAliasManifestRegistry": "function",
+        "expectedForwardedAuthProfile": "function",
+        "installOpenClawOwnedToolHooks": "function",
+        "createContractRunResult": "function",
+        "createParameterFreeTool": "function",
+        "textOrphanLeaf": "function",
+    }
+    assert result["scopedSame"] is True
+    assert result["auth"] == {
+        "contract": {
+            "sessionId": "session-auth-contract",
+            "sessionKey": "agent:main:auth-contract",
+            "runId": "run-auth-contract",
+            "workspacePrompt": "continue with the bound Codex profile",
+            "openAiProvider": "openai",
+            "openAiCodexProvider": "openai-codex",
+            "codexCliProvider": "codex-cli",
+            "codexHarnessProvider": "codex",
+            "claudeCliProvider": "claude-cli",
+            "openAiProfileId": "openai:work",
+            "openAiCodexProfileId": "openai-codex:work",
+            "anthropicProfileId": "anthropic:work",
+        },
+        "registryPluginId": "openai",
+        "forwarded": "openai-codex:work",
+        "notForwarded": None,
+    }
+    assert result["delivery"] == {
+        "sessionId": "session-delivery-contract",
+        "sessionKey": "agent:main:delivery-contract",
+        "runId": "run-delivery-contract",
+        "prompt": "deliver the follow-up contract turn",
+        "originChannel": "discord",
+        "originTo": "channel:C1",
+        "dispatcherText": "visible dispatcher fallback",
+        "visibleText": "visible follow-up",
+        "silentText": "NO_REPLY",
+        "jsonSilentText": '{"action":"NO_REPLY"}',
+    }
+    assert result["tools"] == {
+        "text": {"content": [{"type": "text", "text": "hello"}], "details": {"ok": True}},
+        "media": {
+            "content": [{"type": "text", "text": "photo"}],
+            "details": {
+                "media": {
+                    "mediaUrl": "https://media.example/photo.png",
+                    "audioAsVoice": True,
+                }
+            },
+        },
+        "beforeResult": {"params": {"path": "/tmp/demo"}},
+        "beforeCalls": 1,
+        "afterCalls": 1,
+        "blockedResult": {"block": True, "blockReason": "owner only"},
+        "middlewareResult": {
+            "result": {
+                "content": [{"type": "text", "text": "handled:tool-3"}],
+                "details": {},
+            }
+        },
+        "middlewareCalls": 1,
+    }
+    assert result["fallback"] == {
+        "config": {
+            "agents": {
+                "defaults": {
+                    "model": {
+                        "primary": "openai-codex/gpt-5.4",
+                        "fallbacks": ["anthropic/claude-haiku-3-5"],
+                    }
+                }
+            }
+        },
+        "runResult": {
+            "payloads": [],
+            "didSendViaMessagingTool": True,
+            "messagingToolSentTexts": ["sent"],
+            "messagingToolSentMediaUrls": [],
+            "messagingToolSentTargets": [],
+            "successfulCronAdds": 0,
+            "meta": {"durationMs": 9, "provider": "openai"},
+        },
+    }
+    assert result["prompt"]["constants"] == [
+        "gpt-5.4",
+        "openai/gpt-5.4",
+        "gpt-4.1",
+        "openai",
+        "openai-codex",
+        "codex",
+        "openrouter",
+    ]
+    assert result["prompt"]["openAiConfig"] == {
+        "plugins": {"entries": {"openai": {"config": {"personality": "friendly"}}}}
+    }
+    assert result["prompt"]["sharedConfig"] == {
+        "agents": {"defaults": {"promptOverlays": {"gpt5": {"personality": "off"}}}}
+    }
+    assert result["prompt"]["context"] == {
+        "provider": "codex",
+        "modelId": "openai/gpt-5.4",
+        "promptMode": "full",
+        "agentDir": "/tmp/openclaw-codex-prompt-contract-agent",
+        "workspaceDir": "/tmp/openclaw-codex-prompt-contract-workspace",
+        "config": {"marker": "cfg"},
+    }
+    assert result["schema"] == {
+        "parameterFree": {
+            "name": "ping",
+            "description": "Parameter-free test tool",
+            "parameters": {},
+        },
+        "strict": {
+            "name": "lookup",
+            "description": "Strict-compatible test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        },
+        "permissive": {
+            "name": "schedule",
+            "description": "Permissive test tool",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "cron": {"type": "string"},
+                },
+                "required": ["action"],
+                "additionalProperties": True,
+            },
+        },
+        "nativeOpenAI": {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "api": "openai-responses",
+            "provider": "openai",
+            "baseUrl": "https://api.openai.com/v1",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "nativeCodex": {
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "api": "openai-codex-responses",
+            "provider": "openai-codex",
+            "baseUrl": "https://chatgpt.com/backend-api",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "proxy": {
+            "id": "custom-gpt",
+            "name": "Custom GPT",
+            "api": "openai-responses",
+            "provider": "openai",
+            "baseUrl": "https://proxy.example.com/v1",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+        },
+        "normalized": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
+    assert result["transcript"]["marker"] == (
+        "[Queued user message that arrived while the previous turn was still active]"
+    )
+    assert result["transcript"]["textOrphan"] == {"content": "older"}
+    assert result["transcript"]["structuredOrphan"]["content"][0] == {
+        "type": "text",
+        "text": "please inspect this",
+    }
+    assert result["transcript"]["inlineDataUriLength"] > 4096
+    assert result["transcript"]["mediaOnly"] == {
+        "role": "user",
+        "content": [{"type": "image", "data": "b" * 2048, "mimeType": "image/png"}],
+        "timestamp": 1,
+    }
+    assert result["transcript"]["structuredHistory"]["content"][0] == {
+        "type": "text",
+        "text": "older structured context",
+    }
+    assert result["transcript"]["currentPrompt"] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "now"}],
+        "timestamp": 2,
+    }
+    assert result["transcript"]["assistant"] == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "done"}],
+        "timestamp": 2,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_file_lock_helpers(
     tmp_path,
 ) -> None:
@@ -50347,6 +51283,269 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_gateway_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-gateway-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/gateway-runtime");
+const scopedGateway = require("@openclaw/plugin-sdk/gateway-runtime");
+
+function clientOptions(client) {
+  return client.options || client.opts || {};
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.gateway_runtime",
+      description: "Use OpenClaw gateway-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const events = [];
+        const client = new gateway.GatewayClient({
+          url: "ws://127.0.0.1:18789",
+          requestTimeoutMs: 5,
+          onEvent: (evt) => events.push(evt)
+        });
+        const readiness = await gateway.startGatewayClientWhenEventLoopReady(client, {
+          timeoutMs: 5,
+          clientOptions: { connectChallengeTimeoutMs: 999 }
+        });
+        if (typeof client.notifyEvent === "function") {
+          client.notifyEvent({ type: "demo", seq: 1 });
+        }
+        const startedAfterReadiness = client.started === true;
+        const requestError = new gateway.GatewayClientRequestError({
+          code: "BAD_GATEWAY",
+          message: "bad gateway",
+          details: { why: "test" },
+          retryable: true,
+          retryAfterMs: 12
+        });
+        const unavailable = await (async () => {
+          try {
+            await client.request("demo.method", { ok: true });
+            return null;
+          } catch (error) {
+            return {
+              name: error.name,
+              gatewayCode: error.gatewayCode,
+              retryable: error.retryable,
+              message: String(error && error.message ? error.message : error)
+            };
+          }
+        })();
+        await client.stopAndWait({ timeoutMs: 1 });
+        const approvalsClient = await gateway.createOperatorApprovalsGatewayClient({
+          config: { gateway: { url: "ws://127.0.0.1:18789", handshakeTimeoutMs: 900 } },
+          clientDisplayName: "Approvals"
+        });
+        const approvalsOptions = clientOptions(approvalsClient);
+        let withClientStopped = null;
+        const withResult = await gateway.withOperatorApprovalsGatewayClient({
+          config: { gateway: { url: "ws://127.0.0.1:18789", handshakeTimeoutMs: 900 } },
+          clientDisplayName: "Approvals"
+        }, async (inner) => {
+          const opts = clientOptions(inner);
+          withClientStopped = inner.stopped === true;
+          return {
+            started: inner.started === true,
+            scopes: opts.scopes,
+            clientName: opts.clientName,
+            display: opts.clientDisplayName,
+            mode: opts.mode
+          };
+        });
+        let cliUnavailable = null;
+        try {
+          await gateway.callGatewayFromCli();
+        } catch (error) {
+          cliUnavailable = String(error && error.message ? error.message : error);
+        }
+        return {
+          selectedTypes: {
+            GatewayClient: typeof gateway.GatewayClient,
+            GatewayClientRequestError: typeof gateway.GatewayClientRequestError,
+            createConnectedChannelStatusPatch:
+              typeof gateway.createConnectedChannelStatusPatch,
+            startGatewayClientWhenEventLoopReady:
+              typeof gateway.startGatewayClientWhenEventLoopReady,
+            createOperatorApprovalsGatewayClient:
+              typeof gateway.createOperatorApprovalsGatewayClient
+          },
+          scopedSame: scopedGateway.GatewayClient === gateway.GatewayClient,
+          patches: [
+            gateway.createConnectedChannelStatusPatch(123),
+            gateway.createTransportActivityStatusPatch(456)
+          ],
+          readiness: {
+            ready: readiness.ready,
+            aborted: readiness.aborted,
+            elapsedType: typeof readiness.elapsedMs,
+            checksType: typeof readiness.checks,
+            maxDriftType: typeof readiness.maxDriftMs
+          },
+          client: {
+            startedAfterReadiness,
+            stoppedAfterStopAndWait: client.stopped === true,
+            eventCount: events.length
+          },
+          requestError: {
+            name: requestError.name,
+            gatewayCode: requestError.gatewayCode,
+            message: requestError.message,
+            details: requestError.details,
+            retryable: requestError.retryable,
+            retryAfterMs: requestError.retryAfterMs
+          },
+          unavailable,
+          closeHints: [
+            gateway.describeGatewayCloseCode(1000),
+            gateway.describeGatewayCloseCode(1008),
+            gateway.describeGatewayCloseCode(9999) || null
+          ],
+          timeouts: [
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              connectChallengeTimeoutMs: 42,
+              preauthHandshakeTimeoutMs: 5000
+            }),
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              connectDelayMs: 999
+            }),
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              preauthHandshakeTimeoutMs: 20000
+            })
+          ],
+          approvals: {
+            scopes: approvalsOptions.scopes,
+            clientName: approvalsOptions.clientName,
+            display: approvalsOptions.clientDisplayName,
+            mode: approvalsOptions.mode
+          },
+          withResult,
+          withClientStopped,
+          cliUnavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-gateway-runtime-plugin",
+                    "name": "Runtime Gateway Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-gateway-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.gateway_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.gateway_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "GatewayClient": "function",
+            "GatewayClientRequestError": "function",
+            "createConnectedChannelStatusPatch": "function",
+            "startGatewayClientWhenEventLoopReady": "function",
+            "createOperatorApprovalsGatewayClient": "function",
+        },
+        "scopedSame": True,
+        "patches": [
+            {"connected": True, "lastConnectedAt": 123, "lastEventAt": 123},
+            {"lastTransportActivityAt": 456},
+        ],
+        "readiness": {
+            "ready": True,
+            "aborted": False,
+            "elapsedType": "number",
+            "checksType": "number",
+            "maxDriftType": "number",
+        },
+        "client": {
+            "startedAfterReadiness": True,
+            "stoppedAfterStopAndWait": True,
+            "eventCount": 1,
+        },
+        "requestError": {
+            "name": "GatewayClientRequestError",
+            "gatewayCode": "BAD_GATEWAY",
+            "message": "bad gateway",
+            "details": {"why": "test"},
+            "retryable": True,
+            "retryAfterMs": 12,
+        },
+        "unavailable": {
+            "name": "GatewayClientRequestError",
+            "gatewayCode": "UNAVAILABLE",
+            "retryable": True,
+            "message": "gateway client request unavailable in OpenZues plugin runtime",
+        },
+        "closeHints": ["normal closure", "policy violation", None],
+        "timeouts": [250, 999, 20000],
+        "approvals": {
+            "scopes": ["operator.approvals"],
+            "clientName": "gateway-client",
+            "display": "Approvals",
+            "mode": "backend",
+        },
+        "withResult": {
+            "started": True,
+            "scopes": ["operator.approvals"],
+            "clientName": "gateway-client",
+            "display": "Approvals",
+            "mode": "backend",
+        },
+        "withClientStopped": False,
+        "cliUnavailable": "UNAVAILABLE: gateway RPC unavailable in OpenZues plugin runtime",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_browser_setup_tools_helpers(
     tmp_path,
 ) -> None:
@@ -52209,6 +53408,343 @@ module.exports = {
             "wrappedIncludes": True,
             "safeOpenName": "SafeOpenError",
             "ssrfBlockedName": "SsrFBlockedError",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_security_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-security-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const security = require("openclaw/plugin-sdk/security-runtime");
+const scopedSecurity = require("@openclaw/plugin-sdk/security-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.security_runtime",
+      description: "Use OpenClaw security-runtime SDK shim",
+      parameters: {
+        type: "object",
+        properties: {
+          rootDir: { type: "string" },
+          sourcePath: { type: "string" },
+          textPath: { type: "string" },
+          jsonPath: { type: "string" }
+        }
+      },
+      async execute(_toolCallId, args) {
+        fs.mkdirSync(args.rootDir, { recursive: true });
+        fs.writeFileSync(args.sourcePath, "secure copy", "utf8");
+        security.writeTextFileAtomic(args.textPath, "' quoted value '");
+        security.writeJsonFileSecure(args.jsonPath, { ok: true });
+        let applied = null;
+        const resolverContext = security.createResolverContext({
+          sourceConfig: { assistantName: "OpenZues" },
+          env: { OPENAI_API_KEY: "unused" }
+        });
+        security.collectSecretInputAssignment({
+          value: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+          path: "providers.openai.apiKey",
+          expected: "string",
+          defaults: undefined,
+          context: resolverContext,
+          apply: (value) => { applied = value; }
+        });
+        security.applyResolvedAssignments({
+          assignments: resolverContext.assignments,
+          resolved: new Map([["env:default:OPENAI_API_KEY", "resolved-secret"]])
+        });
+        const metadata = security.buildUntrustedChannelMetadata({
+          source: "slack",
+          label: "Sender",
+          entries: [" A    B ", "A B", null, "C"],
+          maxChars: 300
+        });
+        const visibilityBlocked = security.evaluateSupplementalContextVisibility({
+          mode: "allowlist",
+          kind: "history",
+          senderAllowed: false
+        });
+        const visibilityQuote = security.evaluateSupplementalContextVisibility({
+          mode: "allowlist_quote",
+          kind: "quote",
+          senderAllowed: false
+        });
+        const filtered = security.filterSupplementalContextItems({
+          items: [
+            { id: "a", allowed: true },
+            { id: "b", allowed: false }
+          ],
+          mode: "allowlist",
+          kind: "history",
+          isSenderAllowed: (item) => item.allowed
+        });
+        const matches = await security.resolveAccessGroupAllowFromMatches({
+          cfg: {
+            accessGroups: {
+              admins: {
+                type: "message.senders",
+                members: { "*": ["alice"], telegram: ["bob"] }
+              }
+            }
+          },
+          allowFrom: ["accessGroup:admins", "plain"],
+          channel: "telegram",
+          accountId: "main",
+          senderId: "bob",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+        });
+        const expanded = await security.expandAllowFromWithAccessGroups({
+          cfg: {
+            accessGroups: {
+              admins: {
+                type: "message.senders",
+                members: { telegram: ["bob"] }
+              }
+            }
+          },
+          allowFrom: ["accessGroup:admins", "plain"],
+          channel: "telegram",
+          accountId: "main",
+          senderId: "bob",
+          senderAllowEntry: "sender:bob",
+          isSenderAllowed: (senderId, allowFrom) => allowFrom.includes(senderId)
+        });
+        const regex = security.compileSafeRegex("hello.*", "i");
+        const nested = security.compileSafeRegexDetailed("(a+)+$");
+        const invalid = security.compileSafeRegexDetailed("[");
+        const empty = security.compileSafeRegexDetailed("   ");
+        await security.writeFileFromPathWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "copied.txt",
+          sourcePath: args.sourcePath
+        });
+        const opened = await scopedSecurity.openFileWithinRoot({
+          rootDir: args.rootDir,
+          relativePath: "copied.txt",
+          rejectHardlinks: false
+        });
+        const copied = fs.readFileSync(opened.realPath, "utf8");
+        await opened.handle.close();
+        return {
+          selectedTypes: {
+            buildUntrustedChannelMetadata:
+              typeof security.buildUntrustedChannelMetadata,
+            createResolverContext: typeof security.createResolverContext,
+            compileSafeRegexDetailed: typeof security.compileSafeRegexDetailed,
+            expandAllowFromWithAccessGroups:
+              typeof security.expandAllowFromWithAccessGroups,
+            safeEqualSecret: typeof security.safeEqualSecret,
+            openFileWithinRoot: typeof security.openFileWithinRoot
+          },
+          scopedSame:
+            scopedSecurity.safeEqualSecret === security.safeEqualSecret,
+          secrets: {
+            parsed: security.parseEnvValue("' quoted value '"),
+            positive: security.normalizePositiveInt(2.9, 1),
+            fallbackPositive: security.normalizePositiveInt("bad", 4),
+            dotPath: security.parseDotPath(" a..b.c "),
+            dotBack: security.toDotPath(["a", "b", "c"]),
+            readText: security.readTextFileIfExists(args.textPath),
+            readMissing: security.readTextFileIfExists(path.join(args.rootDir, "missing")),
+            readJson: JSON.parse(fs.readFileSync(args.jsonPath, "utf8")),
+            applied,
+            assignments: resolverContext.assignments.length,
+            warnings: resolverContext.warnings.length,
+            isNonEmptyString: security.isNonEmptyString(" value ")
+          },
+          metadata: {
+            hasHeader: metadata.includes("UNTRUSTED channel metadata (slack)"),
+            hasDedupedBody: metadata.includes("A B\\nC"),
+            wrapped: metadata.includes("EXTERNAL_UNTRUSTED_CONTENT")
+          },
+          visibility: {
+            blocked: visibilityBlocked,
+            quote: visibilityQuote,
+            filteredIds: filtered.items.map((item) => item.id),
+            omitted: filtered.omitted
+          },
+          accessGroups: {
+            prefix: security.ACCESS_GROUP_ALLOW_FROM_PREFIX,
+            parsed: [
+              security.parseAccessGroupAllowFromEntry(" accessGroup: admins "),
+              security.parseAccessGroupAllowFromEntry("plain")
+            ],
+            matches,
+            expanded
+          },
+          dmPolicy: {
+            pinned: security.resolvePinnedMainDmOwnerFromAllowlist({
+              dmScope: "main",
+              allowFrom: [" Alice "],
+              normalizeEntry: (entry) => entry.trim().toLowerCase()
+            }),
+            open: security.resolveOpenDmAllowlistAccess({
+              effectiveAllowFrom: ["*"],
+              isSenderAllowed: () => false
+            }),
+            group: security.resolveDmGroupAccessWithLists({
+              isGroup: true,
+              groupPolicy: "allowlist",
+              groupAllowFrom: ["bob"],
+              isSenderAllowed: (allowFrom) => allowFrom.includes("bob")
+            })
+          },
+          regex: {
+            match: regex.test("HELLO world"),
+            boundedTail: security.testRegexWithBoundedInput(
+              /tail$/,
+              `${"a".repeat(3000)}tail`,
+              32
+            ),
+            nestedReason: nested.reason,
+            invalidReason: invalid.reason,
+            emptyReason: empty.reason,
+            nestedBool: security.hasNestedRepetition("(a+)+$")
+          },
+          file: {
+            copied,
+            inside: security.isPathInside(args.rootDir, opened.realPath)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-security-runtime-plugin",
+                    "name": "Runtime Security Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-security-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.security_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.security_runtime",
+            "args": {
+                "rootDir": str(tmp_path / "security-runtime-root"),
+                "sourcePath": str(tmp_path / "security-runtime-source.txt"),
+                "textPath": str(tmp_path / "security-runtime" / "secret.txt"),
+                "jsonPath": str(tmp_path / "security-runtime" / "secure.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "buildUntrustedChannelMetadata": "function",
+            "createResolverContext": "function",
+            "compileSafeRegexDetailed": "function",
+            "expandAllowFromWithAccessGroups": "function",
+            "safeEqualSecret": "function",
+            "openFileWithinRoot": "function",
+        },
+        "scopedSame": True,
+        "secrets": {
+            "parsed": " quoted value ",
+            "positive": 2,
+            "fallbackPositive": 4,
+            "dotPath": ["a", "b", "c"],
+            "dotBack": "a.b.c",
+            "readText": "' quoted value '",
+            "readMissing": None,
+            "readJson": {"ok": True},
+            "applied": "resolved-secret",
+            "assignments": 1,
+            "warnings": 0,
+            "isNonEmptyString": True,
+        },
+        "metadata": {
+            "hasHeader": True,
+            "hasDedupedBody": True,
+            "wrapped": True,
+        },
+        "visibility": {
+            "blocked": {"include": False, "reason": "blocked"},
+            "quote": {"include": True, "reason": "quote_override"},
+            "filteredIds": ["a"],
+            "omitted": 1,
+        },
+        "accessGroups": {
+            "prefix": "accessGroup:",
+            "parsed": ["admins", None],
+            "matches": ["accessGroup:admins"],
+            "expanded": ["accessGroup:admins", "plain", "sender:bob"],
+        },
+        "dmPolicy": {
+            "pinned": "alice",
+            "open": {
+                "decision": "allow",
+                "reasonCode": "dm_policy_open",
+                "reason": "dmPolicy=open",
+            },
+            "group": {
+                "decision": "allow",
+                "reasonCode": "group_policy_allowed",
+                "reason": "groupPolicy=allowlist",
+                "effectiveAllowFrom": [],
+                "effectiveGroupAllowFrom": ["bob"],
+            },
+        },
+        "regex": {
+            "match": True,
+            "boundedTail": True,
+            "nestedReason": "unsafe-nested-repetition",
+            "invalidReason": "invalid-regex",
+            "emptyReason": "empty",
+            "nestedBool": True,
+        },
+        "file": {
+            "copied": "secure copy",
+            "inside": True,
         },
     }
 
@@ -61345,6 +62881,445 @@ module.exports = {
                 "matched": False,
                 "handled": False,
                 "duplicate": False,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_hook_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-hook-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const hook = require("openclaw/plugin-sdk/hook-runtime");
+const scopedHook = require("@openclaw/plugin-sdk/hook-runtime");
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.hook_runtime",
+      description: "Use OpenClaw hook-runtime SDK barrel",
+      parameters: { type: "object" },
+      async execute() {
+        const looseLogs = [];
+        hook.fireAndForgetHook(
+          Promise.reject(new Error("loose\\nbad")),
+          "loose",
+          (message) => looseLogs.push(message)
+        );
+        const boundedLogs = [];
+        const boundedOrder = [];
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("first-start");
+            await wait(5);
+            boundedOrder.push("first-end");
+          },
+          "first",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("second");
+          },
+          "second",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        hook.fireAndForgetBoundedHook(
+          async () => {
+            boundedOrder.push("third");
+          },
+          "third",
+          (message) => boundedLogs.push(message),
+          { maxConcurrency: 1, maxQueue: 1, timeoutMs: 50 }
+        );
+        await wait(20);
+
+        hook.clearInternalHooks();
+        hook.setInternalHooksEnabled(true);
+        const seen = [];
+        const allHandler = async (event) => {
+          seen.push(`all:${event.action}:${event.context.from}`);
+          event.messages.push("all");
+        };
+        const specificHandler = (event) => {
+          seen.push(`specific:${event.action}:${event.context.channelId}`);
+          event.messages.push("specific");
+        };
+        hook.registerInternalHook("message", allHandler);
+        hook.registerInternalHook("message:received", specificHandler);
+        const event = hook.createInternalHookEvent("message", "received", "agent:main", {
+          from: "sender",
+          channelId: "telegram"
+        });
+        await hook.triggerInternalHook(event);
+        const registeredBefore = hook.getRegisteredEventKeys().sort();
+        const hasBefore = hook.hasInternalHookListeners("message", "received");
+        hook.unregisterInternalHook("message", allHandler);
+        const eventAfterUnregister = hook.createInternalHookEvent(
+          "message",
+          "received",
+          "agent:main",
+          { from: "sender2", channelId: "telegram" }
+        );
+        await hook.triggerInternalHook(eventAfterUnregister);
+        hook.setInternalHooksEnabled(false);
+        await hook.triggerInternalHook(
+          hook.createInternalHookEvent("message", "received", "agent:main", {
+            from: "disabled",
+            channelId: "telegram"
+          })
+        );
+        hook.setInternalHooksEnabled(true);
+        const guards = {
+          agentBootstrap: hook.isAgentBootstrapEvent(
+            hook.createInternalHookEvent("agent", "bootstrap", "agent:main", {
+              workspaceDir: "C:/work",
+              bootstrapFiles: []
+            })
+          ),
+          gatewayStartup: hook.isGatewayStartupEvent(
+            hook.createInternalHookEvent("gateway", "startup", "agent:main", {
+              workspaceDir: "C:/work"
+            })
+          ),
+          messageReceived: hook.isMessageReceivedEvent(event),
+          messageSent: hook.isMessageSentEvent(
+            hook.createInternalHookEvent("message", "sent", "agent:main", {
+              to: "dest",
+              channelId: "telegram",
+              success: true
+            })
+          ),
+          messageTranscribed: hook.isMessageTranscribedEvent(
+            hook.createInternalHookEvent("message", "transcribed", "agent:main", {
+              transcript: "hello",
+              channelId: "telegram"
+            })
+          ),
+          messagePreprocessed: hook.isMessagePreprocessedEvent(
+            hook.createInternalHookEvent("message", "preprocessed", "agent:main", {
+              channelId: "telegram"
+            })
+          ),
+          sessionPatch: hook.isSessionPatchEvent(
+            hook.createInternalHookEvent("session", "patch", "agent:main", {
+              sessionEntry: { key: "agent:main" },
+              patch: { title: "Demo" },
+              cfg: {}
+            })
+          )
+        };
+        hook.clearInternalHooks();
+
+        const canonical = hook.deriveInboundMessageHookContext({
+          From: "sender",
+          To: "telegram:chat-1",
+          BodyForCommands: "/demo",
+          RawBody: "raw",
+          Body: "body",
+          Transcript: "voice text",
+          AccountId: "bot",
+          OriginatingChannel: "telegram",
+          Provider: "telegram",
+          Surface: "telegram",
+          MessageSid: "msg-1",
+          SenderId: "sender-1",
+          SenderName: "Alice",
+          SenderUsername: "alice",
+          MediaPaths: ["C:/media/a.png"],
+          MediaUrls: ["https://media.example/a.png"],
+          MediaTypes: ["image/png"],
+          GroupSubject: "Group",
+          GroupChannel: "general",
+          MessageThreadId: 7,
+          SessionKey: "agent:main"
+        });
+        const pluginMessageContext = hook.toPluginMessageContext(canonical);
+        const inboundClaimContext = hook.toPluginInboundClaimContext(canonical);
+        const inboundClaimEvent = hook.toPluginInboundClaimEvent(canonical, {
+          commandAuthorized: true,
+          wasMentioned: false
+        });
+        const receivedEvent = hook.toPluginMessageReceivedEvent(canonical);
+        const internalReceived = hook.toInternalMessageReceivedContext(canonical);
+        const transcribed = hook.toInternalMessageTranscribedContext(
+          canonical,
+          { assistantName: "OpenZues" }
+        );
+        const preprocessed = hook.toInternalMessagePreprocessedContext(
+          canonical,
+          { assistantName: "OpenZues" }
+        );
+        const sentCanonical = hook.buildCanonicalSentMessageHookContext({
+          to: "telegram:chat-2",
+          content: "sent",
+          success: false,
+          error: "failed",
+          channelId: "telegram",
+          accountId: "bot",
+          conversationId: "telegram:chat-2",
+          sessionKey: "agent:main",
+          messageId: "out-1",
+          isGroup: true,
+          groupId: "chat-2"
+        });
+        const pluginSent = hook.toPluginMessageSentEvent(sentCanonical);
+        const internalSent = hook.toInternalMessageSentContext(sentCanonical);
+
+        hook.initializeGlobalHookRunner({ hooks: [] });
+        hook.resetGlobalHookRunner();
+
+        return {
+          selectedTypes: {
+            fireAndForgetHook: typeof hook.fireAndForgetHook,
+            fireAndForgetBoundedHook: typeof hook.fireAndForgetBoundedHook,
+            registerInternalHook: typeof hook.registerInternalHook,
+            triggerInternalHook: typeof hook.triggerInternalHook,
+            deriveInboundMessageHookContext:
+              typeof hook.deriveInboundMessageHookContext,
+            toPluginInboundClaimEvent: typeof hook.toPluginInboundClaimEvent,
+            initializeGlobalHookRunner:
+              typeof hook.initializeGlobalHookRunner,
+            resetGlobalHookRunner: typeof hook.resetGlobalHookRunner
+          },
+          scopedSame: scopedHook.triggerInternalHook === hook.triggerInternalHook,
+          fireAndForget: {
+            formatted: hook.formatHookErrorForLog(new Error("boom\\nbad\\u0000tail")),
+            looseLogs,
+            boundedLogs,
+            boundedOrder
+          },
+          internal: {
+            seen,
+            eventMessages: event.messages,
+            registeredBefore,
+            hasBefore,
+            registeredAfterClear: hook.getRegisteredEventKeys()
+          },
+          guards,
+          canonical: {
+            content: canonical.content,
+            channelId: canonical.channelId,
+            conversationId: canonical.conversationId,
+            messageId: canonical.messageId,
+            isGroup: canonical.isGroup,
+            groupId: canonical.groupId
+          },
+          pluginMessageContext,
+          inboundClaimContext,
+          inboundClaimEvent: {
+            content: inboundClaimEvent.content,
+            channel: inboundClaimEvent.channel,
+            conversationId: inboundClaimEvent.conversationId,
+            commandAuthorized: inboundClaimEvent.commandAuthorized,
+            wasMentioned: inboundClaimEvent.wasMentioned,
+            mediaPath: inboundClaimEvent.metadata.mediaPath,
+            mediaUrl: inboundClaimEvent.metadata.mediaUrl
+          },
+          receivedEvent: {
+            from: receivedEvent.from,
+            content: receivedEvent.content,
+            messageId: receivedEvent.messageId,
+            senderName: receivedEvent.metadata.senderName
+          },
+          internalReceived,
+          transcribed: {
+            transcript: transcribed.transcript,
+            cfgName: transcribed.cfg.assistantName
+          },
+          preprocessed: {
+            transcript: preprocessed.transcript,
+            isGroup: preprocessed.isGroup,
+            cfgName: preprocessed.cfg.assistantName
+          },
+          sent: {
+            pluginSent,
+            internalSent
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-hook-runtime-plugin",
+                    "name": "Runtime Hook Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-hook-runtime-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.hook_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.hook_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "fireAndForgetHook": "function",
+            "fireAndForgetBoundedHook": "function",
+            "registerInternalHook": "function",
+            "triggerInternalHook": "function",
+            "deriveInboundMessageHookContext": "function",
+            "toPluginInboundClaimEvent": "function",
+            "initializeGlobalHookRunner": "function",
+            "resetGlobalHookRunner": "function",
+        },
+        "scopedSame": True,
+        "fireAndForget": {
+            "formatted": "boom bad tail",
+            "looseLogs": ["loose: loose bad"],
+            "boundedLogs": ["third: queue full; dropping hook"],
+            "boundedOrder": ["first-start", "first-end", "second"],
+        },
+        "internal": {
+            "seen": [
+                "all:received:sender",
+                "specific:received:telegram",
+                "specific:received:telegram",
+            ],
+            "eventMessages": ["all", "specific"],
+            "registeredBefore": ["message", "message:received"],
+            "hasBefore": True,
+            "registeredAfterClear": [],
+        },
+        "guards": {
+            "agentBootstrap": True,
+            "gatewayStartup": True,
+            "messageReceived": True,
+            "messageSent": True,
+            "messageTranscribed": True,
+            "messagePreprocessed": True,
+            "sessionPatch": True,
+        },
+        "canonical": {
+            "content": "/demo",
+            "channelId": "telegram",
+            "conversationId": "telegram:chat-1",
+            "messageId": "msg-1",
+            "isGroup": True,
+            "groupId": "telegram:chat-1",
+        },
+        "pluginMessageContext": {
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "telegram:chat-1",
+            "sessionKey": "agent:main",
+            "messageId": "msg-1",
+            "senderId": "sender-1",
+        },
+        "inboundClaimContext": {
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "chat-1",
+            "sessionKey": "agent:main",
+            "senderId": "sender-1",
+            "messageId": "msg-1",
+        },
+        "inboundClaimEvent": {
+            "content": "/demo",
+            "channel": "telegram",
+            "conversationId": "chat-1",
+            "commandAuthorized": True,
+            "wasMentioned": False,
+            "mediaPath": "C:/media/a.png",
+            "mediaUrl": "https://media.example/a.png",
+        },
+        "receivedEvent": {
+            "from": "sender",
+            "content": "/demo",
+            "messageId": "msg-1",
+            "senderName": "Alice",
+        },
+        "internalReceived": {
+            "from": "sender",
+            "content": "/demo",
+            "channelId": "telegram",
+            "accountId": "bot",
+            "conversationId": "telegram:chat-1",
+            "messageId": "msg-1",
+            "metadata": {
+                "to": "telegram:chat-1",
+                "provider": "telegram",
+                "surface": "telegram",
+                "threadId": 7,
+                "senderId": "sender-1",
+                "senderName": "Alice",
+                "senderUsername": "alice",
+                "channelName": "general",
+            },
+        },
+        "transcribed": {"transcript": "voice text", "cfgName": "OpenZues"},
+        "preprocessed": {
+            "transcript": "voice text",
+            "isGroup": True,
+            "cfgName": "OpenZues",
+        },
+        "sent": {
+            "pluginSent": {
+                "to": "telegram:chat-2",
+                "content": "sent",
+                "success": False,
+                "messageId": "out-1",
+                "sessionKey": "agent:main",
+                "error": "failed",
+            },
+            "internalSent": {
+                "to": "telegram:chat-2",
+                "content": "sent",
+                "success": False,
+                "error": "failed",
+                "channelId": "telegram",
+                "accountId": "bot",
+                "conversationId": "telegram:chat-2",
+                "messageId": "out-1",
+                "isGroup": True,
+                "groupId": "chat-2",
             },
         },
     }

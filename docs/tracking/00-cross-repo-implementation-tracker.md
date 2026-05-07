@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK plugin-runtime facade slice is checkpointed in
-`eb39f899`.
+The imported plugin SDK channel-target-testing facade slice is checkpointed in
+`e6307d8a`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Plugin runtime SDK shim checkpointed in `eb39f899` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `security-runtime` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel target testing SDK shim checkpointed in `e6307d8a` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-test-helpers` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -5943,6 +5943,141 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent plugin-runtime proof (`9 passed, 1096 deselected`), adjacent
     imported-plugin proof (`293 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00283` Imported security-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/security-runtime.ts`,
+    `openclaw-main/src/secrets/channel-secret-collector-runtime.ts`,
+    `openclaw-main/src/secrets/runtime-shared.ts`,
+    `openclaw-main/src/secrets/shared.ts`,
+    `openclaw-main/src/security/channel-metadata.ts`,
+    `openclaw-main/src/security/context-visibility.ts`,
+    `openclaw-main/src/security/dm-policy-shared.ts`,
+    `openclaw-main/src/security/safe-regex.ts`,
+    `openclaw-main/src/security/secret-equal.ts`, and
+    `openclaw-main/src/plugin-sdk/access-groups.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `security-runtime` and receive the public security/policy barrel
+    for channel-secret collection, secret shared file helpers, channel
+    metadata wrapping, supplemental context visibility, DM/access-group policy
+    helpers, safe regex guards, safe file/port/SSRF/proxy helpers, redaction,
+    secure tokens, and constant-time secret comparison without importing the
+    TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `16f5ab50`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused security-runtime proof (`1 passed`),
+    adjacent security/import proof (`5 passed, 1101 deselected`), adjacent
+    imported-plugin proof (`294 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00284` Imported gateway-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/gateway-runtime.ts`,
+    `openclaw-main/src/gateway/channel-status-patches.ts`,
+    `openclaw-main/src/cli/gateway-rpc.ts`,
+    `openclaw-main/src/gateway/net.ts`,
+    `openclaw-main/src/gateway/node-command-policy.ts`,
+    `openclaw-main/src/gateway/server-methods/nodes.helpers.ts`,
+    `openclaw-main/src/gateway/startup-auth.ts`,
+    `openclaw-main/src/gateway/auth.ts`,
+    `openclaw-main/src/infra/ws.ts`,
+    `openclaw-main/src/gateway/client.ts`,
+    `openclaw-main/src/gateway/client-start-readiness.ts`,
+    `openclaw-main/src/gateway/operator-approvals-client.ts`, and
+    `openclaw-main/src/gateway/protocol/index.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `gateway-runtime` and receive the public gateway/client barrel for
+    channel status patches, gateway RPC unavailable projection, loopback and
+    node command helpers, auth/startup helpers, raw data coercion,
+    OpenClaw-shaped gateway request errors, close-code hints,
+    connect-challenge timeout clamping, event-loop-ready client startup,
+    lightweight lifecycle-safe `GatewayClient` methods, and
+    operator-approval client helpers without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `dc028590`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused gateway-runtime proof (`1 passed`),
+    adjacent gateway/import proof (`3 passed, 1104 deselected`), adjacent
+    imported-plugin proof (`295 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00285` Imported hook-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/hook-runtime.ts`,
+    `openclaw-main/src/hooks/fire-and-forget.ts`,
+    `openclaw-main/src/hooks/internal-hooks.ts`,
+    `openclaw-main/src/hooks/internal-hook-types.ts`,
+    `openclaw-main/src/hooks/message-hook-mappers.ts`, and
+    `openclaw-main/src/plugins/hook-runner-global.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `hook-runtime` and receive the public hook pipeline barrel for
+    fire-and-forget hook dispatch, bounded concurrency/drop behavior, hook
+    error formatting, internal hook registration/triggering, event guards,
+    canonical inbound/sent message hook mappers, plugin hook event/context
+    projection, and global hook-runner initialize/reset helpers without
+    importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `89db1c12`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused hook-runtime proof (`1 passed`),
+    adjacent hook/plugin-runtime proof (`3 passed, 1105 deselected`),
+    adjacent imported-plugin proof (`296 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00286` Imported agent-runtime-test-contracts facade shim
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime-test-contracts.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/auth-profile-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/delivery-no-reply-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/openclaw-owned-tool-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/outcome-fallback-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/prompt-overlay-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/schema-normalization-runtime-contract.ts`,
+    and
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/transcript-repair-runtime-contract.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `agent-runtime-test-contracts` and receive source-backed
+    contract fixtures for auth-profile alias forwarding, delivery/no-reply
+    payloads, OpenClaw-owned tool hook installation/reset, Codex tool-result
+    middleware, fallback model config, prompt overlay contexts, strict schema
+    normalization models, queued-message transcript fixtures, and text/media
+    tool results without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0db396fe`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime-test-contracts proof
+    (`1 passed`), adjacent agent-runtime proof (`14 passed, 1095 deselected`),
+    adjacent imported-plugin proof (`297 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00287` Imported channel-target-testing facade shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-target-testing.ts` and
+    `openclaw-main/src/test-helpers/resolve-target-error-cases.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `channel-target-testing` and receive the public
+    `installCommonResolveTargetErrorCases` helper for the four upstream target
+    normalization/no-target/whitespace error cases, with fakeable test
+    registration through `globalThis.it` and immediate assertion execution when
+    no test hook is present.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e6307d8a`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused channel-target-testing proof
+    (`1 passed`), adjacent channel target proof (`3 passed, 1107 deselected`),
+    adjacent imported-plugin proof (`298 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,

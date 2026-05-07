@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.97%.
+  band of ~80-99.998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1830,6 +1830,39 @@ flag, sleep/timeout/retry, truthy env parsing, duration/backoff, abort waiter,
 handler registration, subsystem logging, undici bootstrap, and WSL posture
 helpers. Remaining plugin SDK queue heads should continue with exact public
 barrels that still require fallback/passthrough behavior to execute.
+Imported plugin SDK `gateway-runtime` is now also no longer an unresolved queue
+head: the exact scoped and unscoped subpath resolves to native OpenZues gateway
+runtime shims for channel status patches, gateway RPC unavailable projection,
+auth/node helpers, raw WebSocket data coercion, `GatewayClient` request errors,
+close-code hints, connect-timeout clamping, event-loop readiness startup, and
+operator-approval client lifecycle helpers. Remaining plugin SDK queue heads
+should continue with exact public test/contract barrels that still require
+source-backed native shims.
+Imported plugin SDK `hook-runtime` is now also no longer an unresolved queue
+head: the exact scoped and unscoped subpath resolves to native OpenZues hook
+runtime shims for fire-and-forget dispatch, internal hook registry/trigger
+semantics, event guards, canonical message hook mappers, plugin hook event
+projection, and global hook-runner initialize/reset helpers. Remaining plugin
+SDK queue heads should continue with exact `agent-runtime-test-contracts` and
+other public test/contract barrels that still require source-backed native
+shims.
+Imported plugin SDK `agent-runtime-test-contracts` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues agent runtime contract fixtures for auth-profile forwarding, delivery
+no-reply behavior, OpenClaw-owned tool hooks, Codex tool-result middleware,
+outcome fallback config, prompt overlays, strict schema/model helpers, and
+queued-message transcript fixtures. Remaining plugin SDK queue heads should
+continue with exact `channel-target-testing`, `channel-test-helpers`, and
+other public test/contract barrels that still require source-backed native
+shims.
+Imported plugin SDK `channel-target-testing` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues target-resolution error-case helpers, preserving the four upstream
+common error cases and supporting both fakeable test registration and immediate
+assertion execution. Remaining plugin SDK queue heads should continue with
+exact `channel-test-helpers`, `plugin-test-api`, `plugin-test-contracts`, and
+other public test/contract barrels that still require source-backed native
+shims.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
@@ -9502,8 +9535,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   conversation-binding unavailable results, and request-scoped plugin identity.
   Source/test checkpointed in `eb39f899`; repo-wide parity remains estimated at
   ~99.9%, with the evidence band tightened to ~80-99.98%.
+- Current queue-head adjustment: imported plugin SDK `security-runtime` now
+  exposes the source-backed security/policy aggregate for scoped and unscoped
+  imports, including channel-secret collection helpers, secret shared file
+  helpers, untrusted channel metadata, supplemental context visibility,
+  DM/access-group policy helpers, safe regex guards, safe file/port/SSRF/proxy
+  helpers, redaction, secure token generation, and constant-time secret
+  comparison. Source/test checkpointed in `16f5ab50`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `security-runtime` facade, broader runtime/client
+  especially the exact `gateway-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency

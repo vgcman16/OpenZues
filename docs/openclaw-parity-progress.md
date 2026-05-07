@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.97%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17644,6 +17644,106 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `eb39f899`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `security-runtime` facade from `src/plugin-sdk/security-runtime.ts`: scoped
+  and unscoped native runtime entries aggregate channel secret collection,
+  secret shared file/path helpers, channel metadata wrappers, supplemental
+  context visibility, DM/access-group policy helpers, safe regex guards,
+  safe file/port/SSRF/proxy helpers, secure tokens, redaction, and
+  constant-time secret comparison without importing the TypeScript runtime.
+  This closes `OZ-PLUGIN-00283`; repo-wide parity remains estimated at
+  ~99.9%, with the evidence band tightened to ~80-99.99%.
+- Verified the security-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_security_runtime_helpers -q`
+  (`1 passed`), adjacent security/import proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "security_runtime or browser_security_runtime or fetch_ssrf_helpers or channel_secret_runtime or access_group"`
+  (`5 passed, 1101 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`294 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `16f5ab50`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `gateway-runtime` facade from `src/plugin-sdk/gateway-runtime.ts`: scoped
+  and unscoped native runtime entries aggregate channel status patches,
+  gateway CLI/auth/node helper exports, raw WebSocket data coercion,
+  OpenClaw-shaped gateway request errors, close-code hints, connect-challenge
+  timeout clamping, event-loop readiness startup, lightweight `GatewayClient`
+  lifecycle methods, and operator-approval gateway-client helpers without
+  importing the TypeScript runtime. This closes `OZ-PLUGIN-00284`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.995%.
+- Verified the gateway-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_gateway_runtime_helpers -q`
+  (`1 passed`), adjacent gateway/import proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "gateway_runtime or browser_node_runtime"`
+  (`3 passed, 1104 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`295 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `dc028590`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `hook-runtime` facade from `src/plugin-sdk/hook-runtime.ts`: scoped and
+  unscoped native runtime entries aggregate bounded fire-and-forget hook
+  dispatch, hook error log formatting, internal hook registration/triggering
+  and event guards, canonical inbound/sent message hook mappers, plugin hook
+  event/context projection, and global hook-runner initialize/reset helpers
+  without importing the TypeScript runtime. This closes `OZ-PLUGIN-00285`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.996%.
+- Verified the hook-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_hook_runtime_helpers -q`
+  (`1 passed`), adjacent hook/plugin-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "hook_runtime or plugin_runtime"`
+  (`3 passed, 1105 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`296 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `89db1c12`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `agent-runtime-test-contracts` facade from
+  `src/plugin-sdk/agent-runtime-test-contracts.ts` and adjacent
+  `src/plugin-sdk/test-helpers/agents/*` runtime contract fixtures: scoped and
+  unscoped native runtime entries aggregate auth-profile aliasing,
+  delivery/no-reply fixtures, OpenClaw-owned tool hook installation/reset,
+  Codex tool-result middleware, outcome fallback config, prompt overlay
+  contexts, schema/model normalization fixtures, queued-message transcript
+  repair fixtures, and text/media tool result constructors without importing
+  the TypeScript runtime. This closes `OZ-PLUGIN-00286`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.997%.
+- Verified the agent-runtime-test-contracts slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_agent_runtime_test_contracts -q`
+  (`1 passed`), adjacent agent-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_runtime_test_contracts or agent_runtime"`
+  (`14 passed, 1095 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`297 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `0db396fe`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `channel-target-testing` facade from
+  `src/plugin-sdk/channel-target-testing.ts` and
+  `src/test-helpers/resolve-target-error-cases.ts`: scoped and unscoped
+  native runtime entries expose `installCommonResolveTargetErrorCases` with
+  the four upstream target-resolution error cases, fakeable test registration
+  through `globalThis.it`, and direct immediate assertion behavior when no test
+  runner hook is present. This closes `OZ-PLUGIN-00287`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.998%.
+- Verified the channel-target-testing slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_target_testing_helpers -q`
+  (`1 passed`), adjacent channel target proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channel_target_testing or channel_targets or channel_contract_testing"`
+  (`3 passed, 1107 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`298 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `e6307d8a`.
 
 ## References
 
