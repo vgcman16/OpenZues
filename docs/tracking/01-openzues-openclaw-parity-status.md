@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~94.4% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~94.5% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2811,6 +2811,21 @@ may lag behind this tracker.
     adjacent SDK helper proof (`13 passed, 1034 deselected`), adjacent
     imported-plugin proof (`235 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime command entrypoint shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/agent-command.ts`,
+    `openclaw-main/src/agents/agent-runtime-config.ts`,
+    `openclaw-main/src/agents/command/types.ts`,
+    `openclaw-main/src/commands/agent.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `9e6496fb`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime command entrypoint proof
+    (`1 passed`), adjacent SDK helper proof (`14 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`236 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,

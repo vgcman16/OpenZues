@@ -91,6 +91,11 @@ The imported `agent-runtime` TTS helper coverage from
 `src/plugin-sdk/agent-runtime.ts`, `src/tts/tts.ts`,
 `src/plugin-sdk/tts-runtime.ts`, and `extensions/speech-core/src/tts.ts` is
 verified in `9b328bbd` and counted with the plugin/extension system row above.
+The imported `agent-runtime` agent-command entrypoint coverage from
+`src/plugin-sdk/agent-runtime.ts`, `src/agents/agent-command.ts`,
+`src/agents/agent-runtime-config.ts`, `src/agents/command/types.ts`, and
+`src/commands/agent.ts` is verified in `9e6496fb` and counted with the
+plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
