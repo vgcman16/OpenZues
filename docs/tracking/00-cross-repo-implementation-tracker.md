@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK gateway-runtime facade slice is checkpointed in
-`dc028590`.
+The imported plugin SDK hook-runtime facade slice is checkpointed in
+`89db1c12`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Gateway runtime SDK shim checkpointed in `dc028590` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `hook-runtime` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Hook runtime SDK shim checkpointed in `89db1c12` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `agent-runtime-test-contracts` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -6005,6 +6005,31 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent gateway/import proof (`3 passed, 1104 deselected`), adjacent
     imported-plugin proof (`295 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00285` Imported hook-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/hook-runtime.ts`,
+    `openclaw-main/src/hooks/fire-and-forget.ts`,
+    `openclaw-main/src/hooks/internal-hooks.ts`,
+    `openclaw-main/src/hooks/internal-hook-types.ts`,
+    `openclaw-main/src/hooks/message-hook-mappers.ts`, and
+    `openclaw-main/src/plugins/hook-runner-global.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `hook-runtime` and receive the public hook pipeline barrel for
+    fire-and-forget hook dispatch, bounded concurrency/drop behavior, hook
+    error formatting, internal hook registration/triggering, event guards,
+    canonical inbound/sent message hook mappers, plugin hook event/context
+    projection, and global hook-runner initialize/reset helpers without
+    importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `89db1c12`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused hook-runtime proof (`1 passed`),
+    adjacent hook/plugin-runtime proof (`3 passed, 1105 deselected`),
+    adjacent imported-plugin proof (`296 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,

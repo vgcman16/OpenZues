@@ -2580,6 +2580,19 @@ may lag behind this tracker.
     imported-plugin proof (`295 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
 
+- [x] Imported plugin SDK hook-runtime facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/hook-runtime.ts` and adjacent
+    `openclaw-main/src/hooks/*` plus
+    `openclaw-main/src/plugins/hook-runner-global.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `89db1c12`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused hook-runtime proof (`1 passed`),
+    adjacent hook/plugin-runtime proof (`3 passed, 1105 deselected`),
+    adjacent imported-plugin proof (`296 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,

@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.995%.
+  band of ~80-99.996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1836,8 +1836,16 @@ runtime shims for channel status patches, gateway RPC unavailable projection,
 auth/node helpers, raw WebSocket data coercion, `GatewayClient` request errors,
 close-code hints, connect-timeout clamping, event-loop readiness startup, and
 operator-approval client lifecycle helpers. Remaining plugin SDK queue heads
-should continue with exact `hook-runtime` and public test/contract barrels that
-still require source-backed native shims.
+should continue with exact public test/contract barrels that still require
+source-backed native shims.
+Imported plugin SDK `hook-runtime` is now also no longer an unresolved queue
+head: the exact scoped and unscoped subpath resolves to native OpenZues hook
+runtime shims for fire-and-forget dispatch, internal hook registry/trigger
+semantics, event guards, canonical message hook mappers, plugin hook event
+projection, and global hook-runner initialize/reset helpers. Remaining plugin
+SDK queue heads should continue with exact `agent-runtime-test-contracts` and
+other public test/contract barrels that still require source-backed native
+shims.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
