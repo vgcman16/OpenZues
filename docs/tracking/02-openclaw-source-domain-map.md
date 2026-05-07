@@ -46,6 +46,11 @@ The imported `video-generation-core` SDK helper coverage from
 helpers, failover helpers, model input helpers, logging, and provider env-var
 helpers is verified in `f85c7465` and is counted with the
 plugin/extension system row above.
+The imported `image-generation-core` SDK helper coverage from
+`src/plugin-sdk/image-generation-core.ts`, adjacent image/media generation
+helpers, Gemini auth, Google model id helpers, failover helpers, model input
+helpers, logging, auth-runtime, and provider env-var helpers is verified in
+`1a128fa5` and is counted with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -155,6 +160,10 @@ helpers, and `src/agents/provider-http-errors.ts` is checkpointed in
 `video-generation-core` from `src/plugin-sdk/video-generation-core.ts`,
 adjacent video/media generation helpers, failover helpers, model input
 helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
+`image-generation-core` from `src/plugin-sdk/image-generation-core.ts`,
+adjacent image/media generation helpers, Gemini auth, Google model id helpers,
+failover helpers, model input helpers, logging, auth-runtime, and provider
+env-var helpers is checkpointed in `1a128fa5`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
