@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.2% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK migration-runtime facade slice is checkpointed in
-`7a9c8208`.
+The imported plugin SDK interactive-runtime facade slice is checkpointed in
+`3781cad9`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Migration runtime facade SDK shim checkpointed in `7a9c8208` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue sibling `migration` SDK helper breadth |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Interactive runtime SDK shim checkpointed in `3781cad9` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `infra-runtime` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -5726,6 +5726,148 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     adjacent runtime proof (`3 passed, 1092 deselected`), adjacent
     imported-plugin proof (`283 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00273` Imported migration helper facade shim
+  - Source: `openclaw-main/src/plugin-sdk/migration.ts` and
+    `openclaw-main/src/plugins/types.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `migration` and receive item constructors, status markers,
+    summary counts, config path/merge/conflict helpers, config patch/manual
+    item creation, config patch/manual application, and redaction helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `d4a72ad9`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused migration helper proof (`1 passed`),
+    adjacent migration/runtime proof (`3 passed, 1093 deselected`), adjacent
+    imported-plugin proof (`284 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00274` Imported outbound-send-deps facade shim
+  - Source: `openclaw-main/src/plugin-sdk/outbound-send-deps.ts` and
+    `openclaw-main/src/infra/outbound/send-deps.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `outbound-send-deps` and receive only the two upstream dependency
+    resolver exports, preserving dynamic channel-key precedence and legacy
+    `sendPascal` / `sendMS...` fallback key behavior.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `90665ba5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused outbound-send-deps proof (`1 passed`),
+    adjacent outbound/runtime proof (`3 passed, 1094 deselected`), adjacent
+    imported-plugin proof (`285 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00275` Imported command-status-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/command-status-runtime.ts` and
+    `openclaw-main/src/plugin-sdk/command-status.runtime.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `command-status-runtime` and receive the lazy
+    `resolveDirectStatusReplyForSession` facade with blank session-key early
+    return, fakeable native session-status delegation, and precise unavailable
+    error projection when no host runtime is wired.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `b0242a2c`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused command-status-runtime proof
+    (`1 passed`), adjacent command status proof (`2 passed, 1096 deselected`),
+    adjacent imported-plugin proof (`286 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00276` Imported reply-runtime aggregate facade shim
+  - Source: `openclaw-main/src/plugin-sdk/reply-runtime.ts` and adjacent
+    `openclaw-main/src/auto-reply/*` helper modules
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `reply-runtime` and receive the aggregate reply chunking,
+    heartbeat, silent-token, group activation, inbound finalization, dedupe,
+    reply-reference, dispatch, reply-generation, and conversation-label
+    helpers; heavy dispatch/model calls delegate to a fakeable native host
+    runtime and return precise unavailable errors when unwired.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `32213a5c`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused reply-runtime proof (`1 passed`),
+    adjacent reply facade proof (`6 passed, 1093 deselected`), adjacent
+    imported-plugin proof (`287 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00277` Imported reply-dispatch-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/reply-dispatch-runtime.ts`,
+    `openclaw-main/src/auto-reply/chunk.ts`,
+    `openclaw-main/src/auto-reply/reply/conversation-label-generator.ts`,
+    `openclaw-main/src/auto-reply/reply/inbound-context.ts`, and
+    `openclaw-main/src/auto-reply/reply/provider-dispatcher.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `reply-dispatch-runtime` and receive the exact five-export
+    dispatch facade for chunk-mode resolution, inbound context finalization,
+    conversation label generation, buffered block dispatch, and direct
+    dispatcher calls; heavy runtime calls delegate to the fakeable native host
+    runtime and return precise unavailable errors when unwired.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `c587ef3e`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused reply-dispatch-runtime proof
+    (`1 passed`), adjacent reply dispatch proof (`4 passed, 1096 deselected`),
+    adjacent imported-plugin proof (`288 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00278` Imported inbound-reply-dispatch facade shim
+  - Source: `openclaw-main/src/plugin-sdk/inbound-reply-dispatch.ts`,
+    `openclaw-main/src/channels/turn/kernel.ts`,
+    `openclaw-main/src/channels/turn/dispatch-result.ts`,
+    `openclaw-main/src/auto-reply/dispatch.ts`, and
+    `openclaw-main/src/auto-reply/reply/dispatch-from-config.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `inbound-reply-dispatch` and receive the exact channel-turn
+    orchestration facade for prepared/full inbound turns, dispatch-count
+    helpers, settled dispatch-from-config callbacks, dispatch-base assembly,
+    record then dispatch ordering, native reply dispatch delegation, and
+    normalized outbound delivery.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `25231852`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused inbound-reply-dispatch proof
+    (`1 passed`), adjacent inbound/reply dispatch proof (`4 passed, 1097
+    deselected`), adjacent imported-plugin proof (`289 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00279` Imported interactive-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/interactive-runtime.ts`,
+    `openclaw-main/src/interactive/payload.ts`, and
+    `openclaw-main/src/channels/plugins/outbound/interactive.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `interactive-runtime` and receive the exact interactive payload
+    facade for interactive reply normalization, message presentation
+    normalization, presentation/interactive conversion, fallback rendering,
+    reply content/channel-data predicates, text fallback extraction, and block
+    reduction.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `3781cad9`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused interactive-runtime proof (`1 passed`),
+    adjacent interactive/outbound payload proof (`3 passed, 1099 deselected`),
+    adjacent imported-plugin proof (`290 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,

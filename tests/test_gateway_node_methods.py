@@ -24609,6 +24609,113 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_outbound_send_deps_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-outbound-send-deps.cjs"
+    runtime_entry.write_text(
+        """
+const sendDeps = require("openclaw/plugin-sdk/outbound-send-deps");
+const scopedSendDeps = require("@openclaw/plugin-sdk/outbound-send-deps");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.outbound_send_deps",
+      description: "Use OpenClaw outbound send dependency SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        return {
+          keys: Object.keys(sendDeps).sort(),
+          scopedSame:
+            scopedSendDeps.resolveOutboundSendDep ===
+            sendDeps.resolveOutboundSendDep,
+          legacy: {
+            empty: sendDeps.resolveLegacyOutboundSendDepKeys("!!!"),
+            slack: sendDeps.resolveLegacyOutboundSendDepKeys("slack"),
+            msTeams: sendDeps.resolveLegacyOutboundSendDepKeys("ms-teams")
+          },
+          resolved: [
+            sendDeps.resolveOutboundSendDep({ slack: "direct" }, "slack"),
+            sendDeps.resolveOutboundSendDep({ sendMSteams: "teams" }, "ms-teams"),
+            sendDeps.resolveOutboundSendDep(
+              { customLegacy: "fallback" },
+              "custom",
+              { legacyKeys: ["customLegacy"] }
+            ),
+            sendDeps.resolveOutboundSendDep(
+              { discord: "modern", sendDiscord: "legacy" },
+              "discord"
+            )
+          ]
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "outbound-send-deps-plugin",
+                    "name": "Outbound Send Deps Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-outbound-send-deps.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.outbound_send_deps"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.outbound_send_deps"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveLegacyOutboundSendDepKeys", "resolveOutboundSendDep"],
+        "scopedSame": True,
+        "legacy": {
+            "empty": [],
+            "slack": ["sendSlack"],
+            "msTeams": ["sendMsteams", "sendMSteams"],
+        },
+        "resolved": ["direct", "teams", "fallback", "modern"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_delivery_queue_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -26534,6 +26641,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_command_status_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-command-status-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const statusRuntime = require("openclaw/plugin-sdk/command-status-runtime");
+const scopedStatusRuntime = require("@openclaw/plugin-sdk/command-status-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.command_status_runtime",
+      description: "Use OpenClaw command status runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const empty = await statusRuntime.resolveDirectStatusReplyForSession({
+          cfg: {},
+          sessionKey: "   ",
+          channel: "slack",
+          senderIsOwner: false,
+          isAuthorizedSender: false,
+          isGroup: false,
+          defaultGroupActivation: () => "always"
+        });
+        globalThis.__openzuesCommandStatusRuntime = {
+          async resolveDirectStatusReplyForSession(params) {
+            calls.push({
+              sessionKey: params.sessionKey,
+              channel: params.channel,
+              senderIsOwner: params.senderIsOwner,
+              isAuthorizedSender: params.isAuthorizedSender,
+              defaultGroupActivation: params.defaultGroupActivation()
+            });
+            return {
+              text: `status:${params.sessionKey.trim()}`,
+              resolvedReasoningLevel: params.isAuthorizedSender ? "stream" : "off"
+            };
+          }
+        };
+        const delegated = await scopedStatusRuntime.resolveDirectStatusReplyForSession({
+          cfg: { agents: { defaults: { reasoningDefault: "stream" } } },
+          sessionKey: " main ",
+          channel: "telegram",
+          senderIsOwner: false,
+          isAuthorizedSender: true,
+          isGroup: false,
+          defaultGroupActivation: () => "mention"
+        });
+        delete globalThis.__openzuesCommandStatusRuntime;
+        let noRuntimeError = "";
+        try {
+          await statusRuntime.resolveDirectStatusReplyForSession({
+            cfg: {},
+            sessionKey: "main",
+            channel: "slack",
+            senderIsOwner: false,
+            isAuthorizedSender: false,
+            isGroup: false,
+            defaultGroupActivation: () => "always"
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        return {
+          keys: Object.keys(statusRuntime).sort(),
+          scopedSame:
+            scopedStatusRuntime.resolveDirectStatusReplyForSession ===
+            statusRuntime.resolveDirectStatusReplyForSession,
+          emptyType: typeof empty,
+          calls,
+          delegated,
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-command-status-runtime-plugin",
+                    "name": "Runtime Command Status Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-command-status-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.command_status_runtime"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.command_status_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["resolveDirectStatusReplyForSession"],
+        "scopedSame": True,
+        "emptyType": "undefined",
+        "calls": [
+            {
+                "sessionKey": " main ",
+                "channel": "telegram",
+                "senderIsOwner": False,
+                "isAuthorizedSender": True,
+                "defaultGroupActivation": "mention",
+            }
+        ],
+        "delegated": {"text": "status:main", "resolvedReasoningLevel": "stream"},
+        "noRuntimeError": (
+            "command status runtime is unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_command_status_helpers(
     tmp_path,
 ) -> None:
@@ -27318,6 +27579,1315 @@ module.exports = {
         "cleared": [0, 3, 0],
         "eviction": ["b", "c"],
         "genericContext": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_dispatch_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-dispatch-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const dispatchRuntime = require("openclaw/plugin-sdk/reply-dispatch-runtime");
+const scopedDispatchRuntime = require("@openclaw/plugin-sdk/reply-dispatch-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_dispatch_runtime",
+      description: "Use OpenClaw reply-dispatch-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        globalThis.__openzuesReplyRuntime = {
+          async dispatchReplyWithDispatcher(params) {
+            calls.push({
+              method: "dispatchReplyWithDispatcher",
+              body: params.ctx.Body,
+              target: params.dispatcherOptions.target
+            });
+            return { queuedFinal: false, counts: { tool: 0, block: 1, final: 0 } };
+          },
+          async generateConversationLabel(params) {
+            calls.push({
+              method: "generateConversationLabel",
+              userMessage: params.userMessage
+            });
+            return params.userMessage.toUpperCase();
+          }
+        };
+        const dispatched = await scopedDispatchRuntime.dispatchReplyWithDispatcher({
+          ctx: { Body: "dispatch me" },
+          cfg: {},
+          dispatcherOptions: { target: "C2" }
+        });
+        const label = await dispatchRuntime.generateConversationLabel({
+          userMessage: "label",
+          prompt: "Summarize",
+          cfg: {}
+        });
+        delete globalThis.__openzuesReplyRuntime;
+        let noRuntimeError = "";
+        try {
+          await dispatchRuntime.dispatchReplyWithBufferedBlockDispatcher({
+            ctx: { Body: "missing" },
+            cfg: {},
+            dispatcherOptions: {}
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        const finalized = dispatchRuntime.finalizeInboundContext({
+          Body: "Hi\\r\\nthere",
+          ChatType: "group",
+          GroupSubject: "Team"
+        });
+        return {
+          keys: Object.keys(dispatchRuntime).sort(),
+          scopedSame:
+            scopedDispatchRuntime.dispatchReplyWithDispatcher ===
+            dispatchRuntime.dispatchReplyWithDispatcher,
+          mode: dispatchRuntime.resolveChunkMode(
+            { channels: { telegram: { chunkMode: "newline" } } },
+            "telegram"
+          ),
+          finalized: {
+            Body: finalized.Body,
+            BodyForAgent: finalized.BodyForAgent,
+            ChatType: finalized.ChatType,
+            ConversationLabel: finalized.ConversationLabel
+          },
+          delegated: { calls, dispatched, label },
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-dispatch-runtime-plugin",
+                    "name": "Runtime Reply Dispatch Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-reply-dispatch-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.reply_dispatch_runtime"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.reply_dispatch_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "dispatchReplyWithBufferedBlockDispatcher",
+            "dispatchReplyWithDispatcher",
+            "finalizeInboundContext",
+            "generateConversationLabel",
+            "resolveChunkMode",
+        ],
+        "scopedSame": True,
+        "mode": "newline",
+        "finalized": {
+            "Body": "Hi\nthere",
+            "BodyForAgent": "Hi\nthere",
+            "ChatType": "group",
+            "ConversationLabel": "Team",
+        },
+        "delegated": {
+            "calls": [
+                {
+                    "method": "dispatchReplyWithDispatcher",
+                    "body": "dispatch me",
+                    "target": "C2",
+                },
+                {"method": "generateConversationLabel", "userMessage": "label"},
+            ],
+            "dispatched": {
+                "queuedFinal": False,
+                "counts": {"tool": 0, "block": 1, "final": 0},
+            },
+            "label": "LABEL",
+        },
+        "noRuntimeError": (
+            "dispatchReplyWithBufferedBlockDispatcher is unavailable in "
+            "OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_inbound_reply_dispatch_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-inbound-reply-dispatch.cjs"
+    runtime_entry.write_text(
+        """
+const inboundDispatch = require("openclaw/plugin-sdk/inbound-reply-dispatch");
+const scopedInboundDispatch =
+  require("@openclaw/plugin-sdk/inbound-reply-dispatch");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.inbound_reply_dispatch",
+      description: "Use OpenClaw inbound-reply-dispatch SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const recordCalls = [];
+        const dispatchCalls = [];
+        const deliverCalls = [];
+        const turnEvents = [];
+        const settled = [];
+        const recordInboundSession = async (params) => {
+          recordCalls.push({
+            storePath: params.storePath,
+            sessionKey: params.sessionKey,
+            ctxBody: params.ctx.Body,
+            hasOnRecordError: typeof params.onRecordError === "function"
+          });
+        };
+        const dispatchReplyWithBufferedBlockDispatcher = async (params) => {
+          dispatchCalls.push({
+            ctxBody: params.ctx.Body,
+            replyRequest: params.replyOptions.requestId,
+            hasModelSelected:
+              typeof params.replyOptions.onModelSelected === "function",
+            hasDeliver: typeof params.dispatcherOptions.deliver === "function"
+          });
+          await params.dispatcherOptions.deliver({
+            text: "hello",
+            mediaUrls: ["https://example.com/a.png"]
+          }, { kind: "final" });
+          return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+        };
+        const ctxPayload = {
+          Body: "body",
+          RawBody: "body",
+          CommandBody: "body",
+          SessionKey: "agent:main:test:peer"
+        };
+        const base = inboundDispatch.buildInboundReplyDispatchBase({
+          cfg: { messages: { responsePrefix: "prefix" } },
+          channel: "test",
+          accountId: "acct",
+          route: { agentId: "main", sessionKey: "agent:main:test:peer" },
+          storePath: "sessions.json",
+          ctxPayload,
+          core: {
+            channel: {
+              session: { recordInboundSession },
+              reply: { dispatchReplyWithBufferedBlockDispatcher }
+            }
+          }
+        });
+        await scopedInboundDispatch.recordInboundSessionAndDispatchReply({
+          ...base,
+          deliver: async (payload) => {
+            deliverCalls.push(payload);
+          },
+          onRecordError: () => {
+            throw new Error("record should not fail");
+          },
+          onDispatchError: () => {
+            throw new Error("dispatch should not fail");
+          },
+          replyOptions: { requestId: "r1" }
+        });
+        const prepared = await inboundDispatch.runPreparedInboundReplyTurn({
+          channel: "test",
+          accountId: "acct",
+          routeSessionKey: "agent:main:test:prepared",
+          storePath: "sessions.json",
+          ctxPayload: {
+            Body: "prepared",
+            SessionKey: "agent:main:test:prepared"
+          },
+          recordInboundSession,
+          runDispatch: async () => ({
+            queuedFinal: false,
+            counts: { tool: 1, block: 0, final: 0 }
+          })
+        });
+        const turn = await inboundDispatch.runInboundReplyTurn({
+          channel: "test",
+          accountId: "acct",
+          raw: { id: "raw1" },
+          adapter: {
+            ingest: async (raw) => ({ id: raw.id, body: "ingested" }),
+            resolveTurn: async (input) => ({
+              channel: "test",
+              accountId: "acct",
+              routeSessionKey: "agent:main:test:turn",
+              storePath: "sessions.json",
+              ctxPayload: {
+                Body: input.body,
+                SessionKey: "agent:main:test:turn"
+              },
+              recordInboundSession,
+              runDispatch: async () => ({
+                queuedFinal: false,
+                counts: { tool: 0, block: 1, final: 0 }
+              })
+            }),
+            onFinalize: async (result) => {
+              turnEvents.push({
+                dispatched: result.dispatched,
+                sessionKey: result.routeSessionKey
+              });
+            }
+          }
+        });
+        globalThis.__openzuesReplyRuntime = {
+          async dispatchReplyFromConfig(params) {
+            return {
+              queuedFinal: false,
+              counts: { tool: 0, block: 1, final: 0 },
+              ctxBody: params.ctx.Body,
+              hasDispatcher: Boolean(params.dispatcher),
+              configOverrideName: params.configOverride.name
+            };
+          }
+        };
+        const settledResult =
+          await inboundDispatch.dispatchReplyFromConfigWithSettledDispatcher({
+            cfg: {},
+            ctxPayload: { Body: "settled" },
+            dispatcher: {},
+            onSettled: () => settled.push("done"),
+            configOverride: { name: "override" }
+          });
+        delete globalThis.__openzuesReplyRuntime;
+        const visibleResult = {
+          queuedFinal: false,
+          counts: { tool: 0, block: 1, final: 0 }
+        };
+        return {
+          keys: Object.keys(inboundDispatch).sort(),
+          scopedSame:
+            scopedInboundDispatch.recordInboundSessionAndDispatchReply ===
+            inboundDispatch.recordInboundSessionAndDispatchReply,
+          base: {
+            channel: base.channel,
+            accountId: base.accountId,
+            agentId: base.agentId,
+            routeSessionKey: base.routeSessionKey,
+            sameRecord: base.recordInboundSession === recordInboundSession,
+            sameDispatch:
+              base.dispatchReplyWithBufferedBlockDispatcher ===
+              dispatchReplyWithBufferedBlockDispatcher
+          },
+          helpers: {
+            defaultCounts: inboundDispatch.resolveInboundReplyDispatchCounts(
+              undefined
+            ),
+            visible: inboundDispatch.hasVisibleInboundReplyDispatch(
+              visibleResult
+            ),
+            finalFromVisible:
+              inboundDispatch.hasFinalInboundReplyDispatch(visibleResult),
+            finalFromSignal:
+              inboundDispatch.hasFinalInboundReplyDispatch(undefined, {
+                fallbackDelivered: true
+              })
+          },
+          recordCalls,
+          dispatchCalls,
+          deliverCalls,
+          prepared: {
+            dispatched: prepared.dispatched,
+            sessionKey: prepared.routeSessionKey,
+            toolCount: prepared.dispatchResult.counts.tool
+          },
+          turn: {
+            dispatched: turn.dispatched,
+            sessionKey: turn.routeSessionKey,
+            blockCount: turn.dispatchResult.counts.block
+          },
+          turnEvents,
+          settled,
+          settledResult
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-inbound-reply-dispatch-plugin",
+                    "name": "Runtime Inbound Reply Dispatch Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-inbound-reply-dispatch.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.inbound_reply_dispatch"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.inbound_reply_dispatch"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildInboundReplyDispatchBase",
+            "dispatchInboundReplyWithBase",
+            "dispatchReplyFromConfigWithSettledDispatcher",
+            "hasFinalInboundReplyDispatch",
+            "hasVisibleInboundReplyDispatch",
+            "recordInboundSessionAndDispatchReply",
+            "resolveInboundReplyDispatchCounts",
+            "runInboundReplyTurn",
+            "runPreparedInboundReplyTurn",
+        ],
+        "scopedSame": True,
+        "base": {
+            "channel": "test",
+            "accountId": "acct",
+            "agentId": "main",
+            "routeSessionKey": "agent:main:test:peer",
+            "sameRecord": True,
+            "sameDispatch": True,
+        },
+        "helpers": {
+            "defaultCounts": {"tool": 0, "block": 0, "final": 0},
+            "visible": True,
+            "finalFromVisible": False,
+            "finalFromSignal": True,
+        },
+        "recordCalls": [
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:peer",
+                "ctxBody": "body",
+                "hasOnRecordError": True,
+            },
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:prepared",
+                "ctxBody": "prepared",
+                "hasOnRecordError": False,
+            },
+            {
+                "storePath": "sessions.json",
+                "sessionKey": "agent:main:test:turn",
+                "ctxBody": "ingested",
+                "hasOnRecordError": False,
+            },
+        ],
+        "dispatchCalls": [
+            {
+                "ctxBody": "body",
+                "replyRequest": "r1",
+                "hasModelSelected": True,
+                "hasDeliver": True,
+            }
+        ],
+        "deliverCalls": [
+            {"text": "hello", "mediaUrls": ["https://example.com/a.png"]}
+        ],
+        "prepared": {
+            "dispatched": True,
+            "sessionKey": "agent:main:test:prepared",
+            "toolCount": 1,
+        },
+        "turn": {
+            "dispatched": True,
+            "sessionKey": "agent:main:test:turn",
+            "blockCount": 1,
+        },
+        "turnEvents": [{"dispatched": True, "sessionKey": "agent:main:test:turn"}],
+        "settled": ["done"],
+        "settledResult": {
+            "queuedFinal": False,
+            "counts": {"tool": 0, "block": 1, "final": 0},
+            "ctxBody": "settled",
+            "hasDispatcher": True,
+            "configOverrideName": "override",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_interactive_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-interactive-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const interactive = require("openclaw/plugin-sdk/interactive-runtime");
+const scopedInteractive = require("@openclaw/plugin-sdk/interactive-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.interactive_runtime",
+      description: "Use OpenClaw interactive-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const interactiveReply = interactive.normalizeInteractiveReply({
+          blocks: [
+            { type: "text", text: "First" },
+            {
+              type: "buttons",
+              buttons: [
+                { text: "Retry", callback_data: "retry", style: "SUCCESS" },
+                { label: "Docs", url: "https://example.com/docs", style: "secondary" },
+                { label: "Ignored" }
+              ]
+            },
+            {
+              type: "select",
+              placeholder: "Pick",
+              options: [
+                { text: "One", value: "1" },
+                { label: "Ignored" }
+              ]
+            },
+            { type: "unknown", text: "ignored" }
+          ]
+        });
+        const presentation = interactive.normalizeMessagePresentation({
+          title: "Title",
+          tone: "WARNING",
+          blocks: [
+            { type: "context", text: "Context" },
+            { type: "divider" },
+            {
+              type: "buttons",
+              buttons: [{ label: "Docs", url: "https://example.com/docs" }]
+            },
+            {
+              type: "select",
+              placeholder: "Pick",
+              options: [{ label: "One", value: "1" }]
+            }
+          ]
+        });
+        const reduced = interactive.reduceInteractiveReply(
+          interactiveReply,
+          { text: 0, buttons: 0, select: 0 },
+          (state, block) => ({
+            ...state,
+            [block.type]: state[block.type] + 1
+          })
+        );
+        return {
+          keys: Object.keys(interactive).sort(),
+          scopedSame:
+            scopedInteractive.normalizeInteractiveReply ===
+            interactive.normalizeInteractiveReply,
+          interactiveReply,
+          presentation,
+          presentationToInteractive:
+            interactive.presentationToInteractiveReply(presentation),
+          interactiveToPresentation:
+            interactive.interactiveReplyToPresentation(interactiveReply),
+          fallbackText: interactive.renderMessagePresentationFallbackText({
+            text: "Lead",
+            presentation
+          }),
+          interactiveFallback: interactive.resolveInteractiveTextFallback({
+            interactive: interactiveReply
+          }),
+          has: {
+            interactiveBlocks:
+              interactive.hasInteractiveReplyBlocks(interactiveReply),
+            presentationBlocks:
+              interactive.hasMessagePresentationBlocks(presentation),
+            channelData: interactive.hasReplyChannelData({ slack: { blocks: [] } }),
+            emptyChannelData: interactive.hasReplyChannelData({}),
+            emptyContent: interactive.hasReplyContent({
+              text: "   ",
+              mediaUrls: ["", "   "],
+              interactive: { blocks: [] },
+              hasChannelData: false
+            }),
+            interactiveContent:
+              interactive.hasReplyContent({ interactive: interactiveReply })
+          },
+          reduced
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-interactive-runtime-plugin",
+                    "name": "Runtime Interactive Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-interactive-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.interactive_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.interactive_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hasInteractiveReplyBlocks",
+            "hasMessagePresentationBlocks",
+            "hasReplyChannelData",
+            "hasReplyContent",
+            "interactiveReplyToPresentation",
+            "normalizeInteractiveReply",
+            "normalizeMessagePresentation",
+            "presentationToInteractiveReply",
+            "reduceInteractiveReply",
+            "renderMessagePresentationFallbackText",
+            "resolveInteractiveTextFallback",
+        ],
+        "scopedSame": True,
+        "interactiveReply": {
+            "blocks": [
+                {"type": "text", "text": "First"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Retry", "value": "retry", "style": "success"},
+                        {
+                            "label": "Docs",
+                            "url": "https://example.com/docs",
+                            "style": "secondary",
+                        },
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "presentation": {
+            "title": "Title",
+            "tone": "warning",
+            "blocks": [
+                {"type": "context", "text": "Context"},
+                {"type": "divider"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Docs", "url": "https://example.com/docs"}
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ],
+        },
+        "presentationToInteractive": {
+            "blocks": [
+                {"type": "text", "text": "Title"},
+                {"type": "text", "text": "Context"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Docs", "url": "https://example.com/docs"}
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "interactiveToPresentation": {
+            "blocks": [
+                {"type": "text", "text": "First"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Retry", "value": "retry", "style": "success"},
+                        {
+                            "label": "Docs",
+                            "url": "https://example.com/docs",
+                            "style": "secondary",
+                        },
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "fallbackText": (
+            "Lead\n\nTitle\n\nContext\n\n- Docs: https://example.com/docs\n\n"
+            "Pick:\n- One"
+        ),
+        "interactiveFallback": "First",
+        "has": {
+            "interactiveBlocks": True,
+            "presentationBlocks": True,
+            "channelData": True,
+            "emptyChannelData": False,
+            "emptyContent": False,
+            "interactiveContent": True,
+        },
+        "reduced": {"text": 1, "buttons": 1, "select": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_infra_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-infra-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const infra = require("openclaw/plugin-sdk/infra-runtime");
+const scopedInfra = require("@openclaw/plugin-sdk/infra-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.infra_runtime",
+      description: "Use OpenClaw infra-runtime compatibility SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const required = [
+          "computeBackoff",
+          "retryAsync",
+          "resolveRetryConfig",
+          "writeJsonAtomic",
+          "readJsonFile",
+          "readJsonFileSync",
+          "writeTextAtomic",
+          "fetchWithTimeout",
+          "runTasksWithConcurrency",
+          "createAsyncLock",
+          "createScopedExpiringIdCache",
+          "drainPendingDeliveries",
+          "resolveOutboundSendDep",
+          "isDiagnosticsEnabled",
+          "fetchWithRuntimeDispatcher",
+          "isPrivateNetworkOptInEnabled",
+          "createRuntimeOutboundDelegates"
+        ];
+        const selectedTypes = Object.fromEntries(
+          required.map((key) => [key, typeof infra[key]])
+        );
+        const retryEvents = [];
+        let attempts = 0;
+        const retryResult = await infra.retryAsync(
+          async () => {
+            attempts += 1;
+            if (attempts < 2) {
+              throw new Error("timeout once");
+            }
+            return "retried";
+          },
+          {
+            attempts: 2,
+            minDelayMs: 0,
+            maxDelayMs: 0,
+            jitter: 0,
+            label: "infra",
+            onRetry: (info) =>
+              retryEvents.push({
+                attempt: info.attempt,
+                maxAttempts: info.maxAttempts,
+                delayMs: info.delayMs,
+                label: info.label
+              })
+          }
+        );
+        await infra.writeJsonAtomic(args.jsonPath, {
+          from: "infra",
+          nested: { ok: true }
+        }, { trailingNewline: true });
+        await infra.writeTextAtomic(args.textPath, "hello", {
+          appendTrailingNewline: true
+        });
+        const response = await infra.fetchWithTimeout(
+          "data:text/plain,infra-fetch",
+          {},
+          1000
+        );
+        const singleton = infra.resolveGlobalSingleton(
+          "__openzues_test_infra_runtime_singleton",
+          () => ({ count: 0 })
+        );
+        singleton.count += 1;
+        const sameSingleton = scopedInfra.resolveGlobalSingleton(
+          "__openzues_test_infra_runtime_singleton",
+          () => ({ count: 99 })
+        );
+        sameSingleton.count += 1;
+        const cache = infra.createScopedExpiringIdCache({
+          store: new Map(),
+          ttlMs: 500,
+          cleanupThreshold: 1
+        });
+        cache.record("scope", "id-1", 1000);
+        const lock = infra.createAsyncLock();
+        const lockOrder = [];
+        await Promise.all([
+          lock(async () => {
+            lockOrder.push("first-start");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            lockOrder.push("first-end");
+            return "first";
+          }),
+          lock(async () => {
+            lockOrder.push("second");
+            return "second";
+          })
+        ]);
+        const concurrent = await infra.runTasksWithConcurrency({
+          tasks: [async () => 1, async () => 2, async () => 3],
+          limit: 2
+        });
+        return {
+          selectedTypes,
+          scopedSame: scopedInfra.retryAsync === infra.retryAsync,
+          backoff: infra.computeBackoff(
+            { initialMs: 10, maxMs: 100, factor: 2, jitter: 0 },
+            3
+          ),
+          retryConfig: infra.resolveRetryConfig(
+            { attempts: 2, minDelayMs: 1, maxDelayMs: 9, jitter: 0.2 },
+            { attempts: 4, minDelayMs: 0, maxDelayMs: 2, jitter: 1.5 }
+          ),
+          retryResult,
+          attempts,
+          retryEvents,
+          json: await infra.readJsonFile(args.jsonPath),
+          jsonSync: infra.readJsonFileSync(args.jsonPath),
+          jsonMissing: await infra.readJsonFile(args.missingPath),
+          jsonRaw: fs.readFileSync(args.jsonPath, "utf8"),
+          textRaw: fs.readFileSync(args.textPath, "utf8"),
+          fetch: { status: response.status, text: await response.text() },
+          singleton: {
+            same: singleton === sameSingleton,
+            count: sameSingleton.count
+          },
+          cache: {
+            beforeExpiry: cache.has("scope", "id-1", 1200),
+            afterExpiry: cache.has("scope", "id-1", 1601)
+          },
+          lockOrder,
+          concurrent: {
+            results: concurrent.results,
+            hasError: concurrent.hasError,
+            firstError: concurrent.firstError === undefined ? null : String(concurrent.firstError)
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-infra-runtime-plugin",
+                    "name": "Runtime Infra Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-infra-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.infra_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.infra_runtime",
+            "args": {
+                "jsonPath": str(tmp_path / "infra" / "state.json"),
+                "textPath": str(tmp_path / "infra" / "note.txt"),
+                "missingPath": str(tmp_path / "infra" / "missing.json"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "computeBackoff": "function",
+            "retryAsync": "function",
+            "resolveRetryConfig": "function",
+            "writeJsonAtomic": "function",
+            "readJsonFile": "function",
+            "readJsonFileSync": "function",
+            "writeTextAtomic": "function",
+            "fetchWithTimeout": "function",
+            "runTasksWithConcurrency": "function",
+            "createAsyncLock": "function",
+            "createScopedExpiringIdCache": "function",
+            "drainPendingDeliveries": "function",
+            "resolveOutboundSendDep": "function",
+            "isDiagnosticsEnabled": "function",
+            "fetchWithRuntimeDispatcher": "function",
+            "isPrivateNetworkOptInEnabled": "function",
+            "createRuntimeOutboundDelegates": "function",
+        },
+        "scopedSame": True,
+        "backoff": 40,
+        "retryConfig": {
+            "attempts": 4,
+            "minDelayMs": 0,
+            "maxDelayMs": 2,
+            "jitter": 1,
+        },
+        "retryResult": "retried",
+        "attempts": 2,
+        "retryEvents": [
+            {"attempt": 1, "maxAttempts": 2, "delayMs": 0, "label": "infra"}
+        ],
+        "json": {"from": "infra", "nested": {"ok": True}},
+        "jsonSync": {"from": "infra", "nested": {"ok": True}},
+        "jsonMissing": None,
+        "jsonRaw": '{\n  "from": "infra",\n  "nested": {\n    "ok": true\n  }\n}\n',
+        "textRaw": "hello\n",
+        "fetch": {"status": 200, "text": "infra-fetch"},
+        "singleton": {"same": True, "count": 2},
+        "cache": {"beforeExpiry": True, "afterExpiry": False},
+        "lockOrder": ["first-start", "first-end", "second"],
+        "concurrent": {"results": [1, 2, 3], "hasError": False, "firstError": None},
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-reply-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const replyRuntime = require("openclaw/plugin-sdk/reply-runtime");
+const scopedReplyRuntime = require("@openclaw/plugin-sdk/reply-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.reply_runtime",
+      description: "Use OpenClaw reply-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        globalThis.__openzuesReplyRuntime = {
+          createReplyDispatcher(opts) {
+            calls.push({ method: "createReplyDispatcher", target: opts.target });
+            return { kind: "dispatcher", target: opts.target };
+          },
+          async dispatchInboundMessage(params) {
+            calls.push({
+              method: "dispatchInboundMessage",
+              body: params.ctx.Body,
+              target: params.dispatcher.target
+            });
+            return { queuedFinal: true, counts: { tool: 0, block: 0, final: 1 } };
+          },
+          async getReplyFromConfig(ctx, opts, cfg) {
+            calls.push({
+              method: "getReplyFromConfig",
+              body: ctx.Body,
+              timeout: opts.timeoutOverrideSeconds,
+              marker: cfg.marker
+            });
+            return { text: "delegated reply" };
+          },
+          async generateConversationLabel(params) {
+            calls.push({
+              method: "generateConversationLabel",
+              prompt: params.prompt,
+              userMessage: params.userMessage
+            });
+            return `${params.userMessage}:${params.prompt}`.slice(0, params.maxLength);
+          }
+        };
+        const dispatcher = replyRuntime.createReplyDispatcher({ target: "C1" });
+        const dispatched = await replyRuntime.dispatchInboundMessage({
+          ctx: { Body: "hello" },
+          cfg: {},
+          dispatcher
+        });
+        const reply = await scopedReplyRuntime.getReplyFromConfig(
+          { Body: "question" },
+          { timeoutOverrideSeconds: 7 },
+          { marker: "cfg" }
+        );
+        const label = await replyRuntime.generateConversationLabel({
+          userMessage: "hello world",
+          prompt: "Summarize",
+          cfg: {},
+          maxLength: 12
+        });
+        delete globalThis.__openzuesReplyRuntime;
+        let noRuntimeError = "";
+        try {
+          await replyRuntime.dispatchReplyWithDispatcher({
+            ctx: { Body: "hello" },
+            cfg: {},
+            dispatcherOptions: {}
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        const finalized = replyRuntime.finalizeInboundContext({
+          Body: "Hi\\r\\nthere",
+          RawBody: "Raw\\r\\nLine",
+          ChatType: "DIRECT",
+          From: "Alice",
+          MediaPaths: ["one.png"],
+          CommandAuthorized: "yes"
+        });
+        return {
+          keys: Object.keys(replyRuntime).sort(),
+          scopedSame:
+            scopedReplyRuntime.dispatchInboundMessage ===
+            replyRuntime.dispatchInboundMessage,
+          constants: [
+            replyRuntime.HEARTBEAT_TOKEN,
+            replyRuntime.SILENT_REPLY_TOKEN,
+            replyRuntime.DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+            replyRuntime.HEARTBEAT_PROMPT.includes("HEARTBEAT.md")
+          ],
+          chunking: {
+            text: replyRuntime.chunkText("one two three", 7),
+            markdown: replyRuntime.chunkMarkdownText("alpha beta", 5),
+            mode: replyRuntime.resolveChunkMode(
+              { channels: { slack: { chunkMode: "newline" } } },
+              "slack"
+            )
+          },
+          commands: [
+            replyRuntime.normalizeGroupActivation("mention"),
+            replyRuntime.parseActivationCommand("/activation always").mode,
+            replyRuntime.isAbortRequestText("/stop"),
+            replyRuntime.isBtwRequestText("/btw note"),
+            replyRuntime.isSilentReplyText(" NO_REPLY ")
+          ],
+          heartbeat: {
+            prompt: replyRuntime.resolveHeartbeatPrompt("  ping  "),
+            stripped: replyRuntime.stripHeartbeatToken("**HEARTBEAT_OK**", {
+              mode: "heartbeat"
+            }),
+            payload: replyRuntime.resolveHeartbeatReplyPayload([
+              { text: "" },
+              { text: "done" }
+            ])
+          },
+          finalized: {
+            Body: finalized.Body,
+            RawBody: finalized.RawBody,
+            BodyForAgent: finalized.BodyForAgent,
+            BodyForCommands: finalized.BodyForCommands,
+            ChatType: finalized.ChatType,
+            ConversationLabel: finalized.ConversationLabel,
+            CommandAuthorized: finalized.CommandAuthorized,
+            MediaType: finalized.MediaType,
+            MediaTypes: finalized.MediaTypes
+          },
+          delegated: { calls, dispatched, reply, label },
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-reply-runtime-plugin",
+                    "name": "Runtime Reply Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-reply-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.reply_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.reply_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_HEARTBEAT_ACK_MAX_CHARS",
+            "HEARTBEAT_PROMPT",
+            "HEARTBEAT_TOKEN",
+            "SILENT_REPLY_TOKEN",
+            "chunkMarkdownText",
+            "chunkMarkdownTextWithMode",
+            "chunkText",
+            "chunkTextWithMode",
+            "createInboundDebouncer",
+            "createReplyDispatcher",
+            "createReplyDispatcherWithTyping",
+            "createReplyReferencePlanner",
+            "dispatchInboundMessage",
+            "dispatchInboundMessageWithBufferedDispatcher",
+            "dispatchInboundMessageWithDispatcher",
+            "dispatchReplyWithBufferedBlockDispatcher",
+            "dispatchReplyWithDispatcher",
+            "finalizeInboundContext",
+            "generateConversationLabel",
+            "getReplyFromConfig",
+            "isAbortRequestText",
+            "isBtwRequestText",
+            "isSilentReplyText",
+            "normalizeGroupActivation",
+            "parseActivationCommand",
+            "resetInboundDedupe",
+            "resolveChunkMode",
+            "resolveHeartbeatPrompt",
+            "resolveHeartbeatReplyPayload",
+            "resolveInboundDebounceMs",
+            "resolveTextChunkLimit",
+            "settleReplyDispatcher",
+            "stripHeartbeatToken",
+        ],
+        "scopedSame": True,
+        "constants": ["HEARTBEAT_OK", "NO_REPLY", 300, True],
+        "chunking": {
+            "text": ["one", "two", "three"],
+            "markdown": ["alpha", "beta"],
+            "mode": "newline",
+        },
+        "commands": ["mention", "always", True, True, True],
+        "heartbeat": {
+            "prompt": "ping",
+            "stripped": {"shouldSkip": True, "text": "", "didStrip": True},
+            "payload": {"text": "done"},
+        },
+        "finalized": {
+            "Body": "Hi\nthere",
+            "RawBody": "Raw\nLine",
+            "BodyForAgent": "Raw\nLine",
+            "BodyForCommands": "Raw\nLine",
+            "ChatType": "direct",
+            "ConversationLabel": "Alice",
+            "CommandAuthorized": False,
+            "MediaType": "application/octet-stream",
+            "MediaTypes": ["application/octet-stream"],
+        },
+        "delegated": {
+            "calls": [
+                {"method": "createReplyDispatcher", "target": "C1"},
+                {
+                    "method": "dispatchInboundMessage",
+                    "body": "hello",
+                    "target": "C1",
+                },
+                {
+                    "method": "getReplyFromConfig",
+                    "body": "question",
+                    "timeout": 7,
+                    "marker": "cfg",
+                },
+                {
+                    "method": "generateConversationLabel",
+                    "prompt": "Summarize",
+                    "userMessage": "hello world",
+                },
+            ],
+            "dispatched": {
+                "queuedFinal": True,
+                "counts": {"tool": 0, "block": 0, "final": 1},
+            },
+            "reply": {"text": "delegated reply"},
+            "label": "hello world:",
+        },
+        "noRuntimeError": (
+            "dispatchReplyWithDispatcher is unavailable in OpenZues plugin runtime."
+        ),
     }
 
 

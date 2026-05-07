@@ -18541,6 +18541,138 @@ async function writeJsonFileAtomically(filePath, value) {
   }
 }
 
+class JsonFileReadError extends Error {
+  constructor(filePath, reason, cause) {
+    super(`Failed to ${reason} JSON file: ${filePath}`);
+    this.name = "JsonFileReadError";
+    this.filePath = filePath;
+    this.reason = reason;
+    if (cause !== undefined) {
+      this.cause = cause;
+    }
+  }
+}
+
+function getFilesystemErrorCode(error) {
+  return error && typeof error === "object" ? error.code : undefined;
+}
+
+async function replaceFileWithWindowsFallback(tempPath, filePath, mode) {
+  try {
+    await fs.promises.rename(tempPath, filePath);
+    return;
+  } catch (error) {
+    const code = getFilesystemErrorCode(error);
+    if (process.platform !== "win32" || (code !== "EPERM" && code !== "EEXIST")) {
+      throw error;
+    }
+  }
+
+  const existing = await fs.promises.lstat(filePath).catch(() => null);
+  if (existing && typeof existing.isSymbolicLink === "function" && existing.isSymbolicLink()) {
+    await fs.promises.rm(filePath, { force: true });
+    await fs.promises.rename(tempPath, filePath);
+    return;
+  }
+
+  await fs.promises.copyFile(tempPath, filePath);
+  try {
+    await fs.promises.chmod(filePath, mode);
+  } catch (_error) {
+    // Best effort on platforms without chmod support.
+  }
+  await fs.promises.rm(tempPath, { force: true }).catch(() => undefined);
+}
+
+async function readJsonFile(filePath) {
+  try {
+    const raw = await fs.promises.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function readDurableJsonFile(filePath) {
+  let raw;
+  try {
+    raw = await fs.promises.readFile(filePath, "utf8");
+  } catch (error) {
+    if (getFilesystemErrorCode(error) === "ENOENT") {
+      return null;
+    }
+    throw new JsonFileReadError(filePath, "read", error);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new JsonFileReadError(filePath, "parse", error);
+  }
+}
+
+function readJsonFileSync(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function writeTextAtomic(filePath, content, options = {}) {
+  const mode = options.mode ?? 0o600;
+  const payload =
+    options.appendTrailingNewline && !String(content).endsWith("\n")
+      ? `${content}\n`
+      : String(content);
+  const mkdirOptions = { recursive: true };
+  if (typeof options.ensureDirMode === "number") {
+    mkdirOptions.mode = options.ensureDirMode;
+  }
+  await fs.promises.mkdir(path.dirname(filePath), mkdirOptions);
+  const tmpPath = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    const handle = await fs.promises.open(tmpPath, "w", mode);
+    try {
+      await handle.writeFile(payload, { encoding: "utf8" });
+      await handle.sync();
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+    try {
+      await fs.promises.chmod(tmpPath, mode);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+    await replaceFileWithWindowsFallback(tmpPath, filePath, mode);
+    try {
+      const dirHandle = await fs.promises.open(path.dirname(filePath), "r");
+      try {
+        await dirHandle.sync();
+      } finally {
+        await dirHandle.close().catch(() => undefined);
+      }
+    } catch (_error) {
+      // Best effort; some filesystems do not support syncing directories.
+    }
+    try {
+      await fs.promises.chmod(filePath, mode);
+    } catch (_error) {
+      // Best effort on platforms without chmod support.
+    }
+  } finally {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function writeJsonAtomic(filePath, value, options = {}) {
+  await writeTextAtomic(filePath, JSON.stringify(value, null, 2), {
+    mode: options.mode,
+    ensureDirMode: options.ensureDirMode,
+    appendTrailingNewline: options.trailingNewline,
+  });
+}
+
 const DIAGNOSTICS_ENV = "OPENCLAW_DIAGNOSTICS";
 const DIAGNOSTIC_EVENTS_STATE_KEY = Symbol.for("openclaw.diagnosticEvents.state.v1");
 const DIAGNOSTIC_TRACEPARENT_VERSION = "00";
@@ -19209,6 +19341,41 @@ function bindAbortRelay(controller) {
     } catch (_error) {
       // Foreign AbortController implementations can throw. Preserve fetch behavior.
     }
+  };
+}
+
+function buildTimeoutAbortSignal(params = {}) {
+  const timeoutMs = params.timeoutMs;
+  const sourceSignal = params.signal;
+  if (!timeoutMs && !sourceSignal) {
+    return { signal: undefined, cleanup: () => undefined };
+  }
+  if (!timeoutMs) {
+    return { signal: sourceSignal, cleanup: () => undefined };
+  }
+  const controller = new AbortController();
+  const normalizedTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const timeoutId = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  }, normalizedTimeoutMs);
+  const onAbort = bindAbortRelay(controller);
+  if (sourceSignal && typeof sourceSignal.addEventListener === "function") {
+    if (sourceSignal.aborted) {
+      controller.abort();
+    } else {
+      sourceSignal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      if (sourceSignal && typeof sourceSignal.removeEventListener === "function") {
+        sourceSignal.removeEventListener("abort", onAbort);
+      }
+    },
   };
 }
 
@@ -37223,7 +37390,14 @@ function resolveAgentRoute(input) {
 
 const DEFAULT_CHUNK_LIMIT = 4000;
 const DEFAULT_CHUNK_MODE = "length";
+const HEARTBEAT_TOKEN = "HEARTBEAT_OK";
+const HEARTBEAT_PROMPT =
+  "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. " +
+  "Do not infer or repeat old tasks from prior chats. If nothing needs attention, " +
+  "reply HEARTBEAT_OK.";
+const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
 const SILENT_REPLY_TOKEN = "NO_REPLY";
+const DEFAULT_INBOUND_MEDIA_TYPE = "application/octet-stream";
 
 function chunkTextByBreakResolver(text, limit, resolveBreakIndex) {
   if (!text) {
@@ -37345,6 +37519,10 @@ function chunkTextWithMode(text, limit, mode) {
 
 function chunkMarkdownTextWithMode(text, limit, mode) {
   return chunkTextWithMode(text, limit, mode);
+}
+
+function chunkMarkdownText(text, limit) {
+  return chunkMarkdownTextWithMode(text, limit, DEFAULT_CHUNK_MODE);
 }
 
 function resolveProviderChunkConfig(cfg, provider) {
@@ -37551,6 +37729,200 @@ function isSilentReplyPayloadText(text, token = SILENT_REPLY_TOKEN) {
   return isSilentReplyText(text, token) || isSilentReplyEnvelopeText(text, token);
 }
 
+function resolveHeartbeatPrompt(raw) {
+  const trimmed = normalizeOptionalString(raw) || "";
+  return trimmed || HEARTBEAT_PROMPT;
+}
+
+function stripHeartbeatToken(raw, opts = {}) {
+  if (!raw) {
+    return { shouldSkip: true, text: "", didStrip: false };
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return { shouldSkip: true, text: "", didStrip: false };
+  }
+  const stripMarkup = (text) =>
+    String(text)
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/^[*`~_]+/, "")
+      .replace(/[*`~_]+$/, "")
+      .trim();
+  const normalized = stripMarkup(trimmed);
+  if (!trimmed.includes(HEARTBEAT_TOKEN) && !normalized.includes(HEARTBEAT_TOKEN)) {
+    return { shouldSkip: false, text: trimmed, didStrip: false };
+  }
+  const stripToken = (text) =>
+    String(text)
+      .replace(new RegExp(`^\\s*${HEARTBEAT_TOKEN}\\s*`, "i"), "")
+      .replace(new RegExp(`\\s*${HEARTBEAT_TOKEN}[^\\w]{0,4}\\s*$`, "i"), "")
+      .trim()
+      .replace(/\s+/g, " ");
+  const stripped = stripToken(trimmed) || stripToken(normalized);
+  if (!stripped) {
+    return { shouldSkip: true, text: "", didStrip: true };
+  }
+  const maxAckCharsRaw = opts.maxAckChars;
+  const maxAckChars =
+    typeof maxAckCharsRaw === "number" && Number.isFinite(maxAckCharsRaw)
+      ? Math.max(0, Math.trunc(maxAckCharsRaw))
+      : DEFAULT_HEARTBEAT_ACK_MAX_CHARS;
+  if ((opts.mode || "message") === "heartbeat" && stripped.length <= maxAckChars) {
+    return { shouldSkip: true, text: "", didStrip: true };
+  }
+  return { shouldSkip: false, text: stripped, didStrip: true };
+}
+
+function resolveHeartbeatReplyPayload(replyResult) {
+  if (!replyResult) {
+    return undefined;
+  }
+  if (!Array.isArray(replyResult)) {
+    return replyResult;
+  }
+  for (let idx = replyResult.length - 1; idx >= 0; idx -= 1) {
+    const payload = replyResult[idx];
+    if (payload && hasOutboundReplyContent(payload)) {
+      return payload;
+    }
+  }
+  return undefined;
+}
+
+function normalizeInboundTextField(value, fallback = undefined) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/<\/?system[^>]*>/gi, "")
+    .trim();
+}
+
+function countInboundMediaEntries(ctx) {
+  const pathCount = Array.isArray(ctx.MediaPaths) ? ctx.MediaPaths.length : 0;
+  const urlCount = Array.isArray(ctx.MediaUrls) ? ctx.MediaUrls.length : 0;
+  const single = ctx.MediaPath || ctx.MediaUrl ? 1 : 0;
+  return Math.max(pathCount, urlCount, single);
+}
+
+function finalizeInboundContext(ctx = {}, opts = {}) {
+  const normalized = { ...(ctx && typeof ctx === "object" ? ctx : {}) };
+  normalized.Body = normalizeInboundTextField(normalized.Body, "") || "";
+  normalized.RawBody = normalizeInboundTextField(normalized.RawBody);
+  normalized.CommandBody = normalizeInboundTextField(normalized.CommandBody);
+  normalized.Transcript = normalizeInboundTextField(normalized.Transcript);
+  normalized.ThreadStarterBody = normalizeInboundTextField(normalized.ThreadStarterBody);
+  normalized.ThreadHistoryBody = normalizeInboundTextField(normalized.ThreadHistoryBody);
+  if (Array.isArray(normalized.UntrustedContext)) {
+    normalized.UntrustedContext = normalized.UntrustedContext
+      .map((entry) => normalizeInboundTextField(entry, ""))
+      .filter(Boolean);
+  }
+  const chatType = normalizeChatType(normalized.ChatType);
+  if (chatType && (opts.forceChatType || normalized.ChatType !== chatType)) {
+    normalized.ChatType = chatType;
+  }
+  const bodyForAgentSource = opts.forceBodyForAgent
+    ? normalized.Body
+    : normalized.BodyForAgent ??
+      normalized.CommandBody ??
+      normalized.RawBody ??
+      normalized.Body;
+  normalized.BodyForAgent = normalizeInboundTextField(bodyForAgentSource, "") || "";
+  const bodyForCommandsSource = opts.forceBodyForCommands
+    ? normalized.CommandBody ?? normalized.RawBody ?? normalized.Body
+    : normalized.BodyForCommands ??
+      normalized.CommandBody ??
+      normalized.RawBody ??
+      normalized.Body;
+  normalized.BodyForCommands = normalizeInboundTextField(bodyForCommandsSource, "") || "";
+  const explicitLabel = normalizeOptionalString(normalized.ConversationLabel);
+  if (opts.forceConversationLabel || !explicitLabel) {
+    const resolved = normalizeOptionalString(resolveConversationLabel(normalized));
+    if (resolved) {
+      normalized.ConversationLabel = resolved;
+    }
+  } else {
+    normalized.ConversationLabel = explicitLabel;
+  }
+  normalized.CommandAuthorized = normalized.CommandAuthorized === true;
+  const mediaCount = countInboundMediaEntries(normalized);
+  if (mediaCount > 0) {
+    const mediaType = normalizeOptionalString(normalized.MediaType);
+    const rawMediaTypes = Array.isArray(normalized.MediaTypes)
+      ? normalized.MediaTypes.map((entry) => normalizeOptionalString(entry))
+      : undefined;
+    let mediaTypes = [];
+    if (rawMediaTypes && rawMediaTypes.length > 0) {
+      mediaTypes = rawMediaTypes.slice();
+      while (mediaTypes.length < mediaCount) {
+        mediaTypes.push(undefined);
+      }
+      mediaTypes = mediaTypes.map((entry) => entry || DEFAULT_INBOUND_MEDIA_TYPE);
+    } else if (mediaType) {
+      mediaTypes = Array.from({ length: mediaCount }, (_value, idx) =>
+        idx === 0 ? mediaType : DEFAULT_INBOUND_MEDIA_TYPE,
+      );
+    } else {
+      mediaTypes = Array.from({ length: mediaCount }, () => DEFAULT_INBOUND_MEDIA_TYPE);
+    }
+    normalized.MediaTypes = mediaTypes;
+    normalized.MediaType = mediaType || mediaTypes[0] || DEFAULT_INBOUND_MEDIA_TYPE;
+  }
+  return normalized;
+}
+
+function resolveReplyRuntimeMethod(name) {
+  const runtime = globalThis.__openzuesReplyRuntime;
+  if (runtime && typeof runtime[name] === "function") {
+    return runtime[name].bind(runtime);
+  }
+  throw new Error(`${name} is unavailable in OpenZues plugin runtime.`);
+}
+
+async function getReplyFromConfig(ctx, opts, configOverride) {
+  return await resolveReplyRuntimeMethod("getReplyFromConfig")(ctx, opts, configOverride);
+}
+
+async function dispatchInboundMessage(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessage")(params);
+}
+
+async function dispatchInboundMessageWithBufferedDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessageWithBufferedDispatcher")(params);
+}
+
+async function dispatchInboundMessageWithDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchInboundMessageWithDispatcher")(params);
+}
+
+async function settleReplyDispatcher(dispatcher) {
+  return await resolveReplyRuntimeMethod("settleReplyDispatcher")(dispatcher);
+}
+
+async function dispatchReplyWithBufferedBlockDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchReplyWithBufferedBlockDispatcher")(params);
+}
+
+async function dispatchReplyWithDispatcher(params) {
+  return await resolveReplyRuntimeMethod("dispatchReplyWithDispatcher")(params);
+}
+
+function createReplyDispatcher(options) {
+  return resolveReplyRuntimeMethod("createReplyDispatcher")(options);
+}
+
+function createReplyDispatcherWithTyping(options) {
+  return resolveReplyRuntimeMethod("createReplyDispatcherWithTyping")(options);
+}
+
+async function generateConversationLabel(params) {
+  return await resolveReplyRuntimeMethod("generateConversationLabel")(params);
+}
+
 const REASONING_PREFIX = "reasoning:";
 
 function trimLeadingMarkdownQuoteMarkers(text) {
@@ -37598,6 +37970,207 @@ function createNormalizedOutboundDeliverer(handler) {
       payload && typeof payload === "object" ? normalizeOutboundReplyPayload(payload) : {};
     await handler(normalized);
   };
+}
+
+function resolvePreparedChannelTurnAdmission(value) {
+  if (
+    value &&
+    typeof value === "object" &&
+    ["dispatch", "observeOnly"].includes(value.kind)
+  ) {
+    return value;
+  }
+  return { kind: "dispatch" };
+}
+
+function normalizeInboundReplyPreflight(value) {
+  if (!value) {
+    return {};
+  }
+  if (value && typeof value === "object" && typeof value.kind === "string") {
+    return { admission: value };
+  }
+  return value;
+}
+
+async function runPreparedInboundReplyTurn(params = {}) {
+  const admission = resolvePreparedChannelTurnAdmission(params.admission);
+  const ctxPayload = params.ctxPayload || {};
+  if (typeof params.recordInboundSession !== "function") {
+    throw new Error("inbound reply dispatch requires recordInboundSession");
+  }
+  await params.recordInboundSession({
+    storePath: params.storePath,
+    sessionKey: ctxPayload.SessionKey || params.routeSessionKey,
+    ctx: ctxPayload,
+    groupResolution: params.record && params.record.groupResolution,
+    createIfMissing: params.record && params.record.createIfMissing,
+    updateLastRoute: params.record && params.record.updateLastRoute,
+    onRecordError: params.record && params.record.onRecordError,
+    trackSessionMetaTask: params.record && params.record.trackSessionMetaTask,
+  });
+  let dispatchResult;
+  if (admission.kind === "observeOnly") {
+    dispatchResult =
+      params.observeOnlyDispatchResult ||
+      { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } };
+  } else {
+    if (typeof params.runDispatch !== "function") {
+      throw new Error("inbound reply dispatch requires prepared runDispatch");
+    }
+    dispatchResult = await params.runDispatch();
+  }
+  return {
+    admission,
+    dispatched: true,
+    ctxPayload,
+    routeSessionKey: params.routeSessionKey,
+    dispatchResult,
+  };
+}
+
+async function runInboundReplyTurn(params = {}) {
+  const adapter = params.adapter || {};
+  const input = typeof adapter.ingest === "function"
+    ? await adapter.ingest(params.raw)
+    : params.raw;
+  if (!input) {
+    return { admission: { kind: "drop", reason: "ingest-null" }, dispatched: false };
+  }
+  const eventClass = typeof adapter.classify === "function"
+    ? await adapter.classify(input)
+    : { kind: "message", canStartAgentTurn: true };
+  if (eventClass && eventClass.canStartAgentTurn === false) {
+    return {
+      admission: { kind: "handled", reason: `event:${eventClass.kind || "message"}` },
+      dispatched: false,
+    };
+  }
+  const preflight = normalizeInboundReplyPreflight(
+    typeof adapter.preflight === "function"
+      ? await adapter.preflight(input, eventClass)
+      : undefined,
+  );
+  const preflightAdmission = preflight.admission;
+  if (
+    preflightAdmission &&
+    preflightAdmission.kind !== "dispatch" &&
+    preflightAdmission.kind !== "observeOnly"
+  ) {
+    return { admission: preflightAdmission, dispatched: false };
+  }
+  if (typeof adapter.resolveTurn !== "function") {
+    throw new Error("inbound reply dispatch requires resolveTurn");
+  }
+  const resolved = await adapter.resolveTurn(input, eventClass, preflight);
+  const admission = resolvePreparedChannelTurnAdmission(
+    (resolved && resolved.admission) || preflightAdmission,
+  );
+  const result = await runPreparedInboundReplyTurn({
+    ...(resolved || {}),
+    admission,
+  });
+  if (typeof adapter.onFinalize === "function") {
+    await adapter.onFinalize(result);
+  }
+  return result;
+}
+
+const resolveInboundReplyDispatchCounts = resolveChannelTurnDispatchCountsForContract;
+const hasVisibleInboundReplyDispatch = hasVisibleChannelTurnDispatchForContract;
+const hasFinalInboundReplyDispatch = hasFinalChannelTurnDispatchForContract;
+
+async function withReplyDispatcher(params = {}) {
+  try {
+    return await params.run();
+  } finally {
+    if (typeof params.onSettled === "function") {
+      await params.onSettled();
+    }
+  }
+}
+
+async function dispatchReplyFromConfigWithSettledDispatcher(params = {}) {
+  return await withReplyDispatcher({
+    dispatcher: params.dispatcher,
+    onSettled: params.onSettled,
+    run: () =>
+      resolveReplyRuntimeMethod("dispatchReplyFromConfig")({
+        ctx: params.ctxPayload,
+        cfg: params.cfg,
+        dispatcher: params.dispatcher,
+        replyOptions: params.replyOptions,
+        configOverride: params.configOverride,
+      }),
+  });
+}
+
+function buildInboundReplyDispatchBase(params = {}) {
+  return {
+    cfg: params.cfg,
+    channel: params.channel,
+    accountId: params.accountId,
+    agentId: params.route && params.route.agentId,
+    routeSessionKey: params.route && params.route.sessionKey,
+    storePath: params.storePath,
+    ctxPayload: params.ctxPayload,
+    recordInboundSession:
+      params.core &&
+      params.core.channel &&
+      params.core.channel.session &&
+      params.core.channel.session.recordInboundSession,
+    dispatchReplyWithBufferedBlockDispatcher:
+      params.core &&
+      params.core.channel &&
+      params.core.channel.reply &&
+      params.core.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
+  };
+}
+
+async function recordInboundSessionAndDispatchReply(params = {}) {
+  const { onModelSelected, ...replyPipeline } = createChannelReplyPipeline({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    channel: params.channel,
+    accountId: params.accountId,
+  });
+  const deliver = createNormalizedOutboundDeliverer(params.deliver);
+  await runPreparedInboundReplyTurn({
+    channel: params.channel,
+    accountId: params.accountId,
+    routeSessionKey: params.routeSessionKey,
+    storePath: params.storePath,
+    ctxPayload: params.ctxPayload,
+    recordInboundSession: params.recordInboundSession,
+    record: {
+      onRecordError: params.onRecordError,
+    },
+    runDispatch: async () =>
+      await params.dispatchReplyWithBufferedBlockDispatcher({
+        ctx: params.ctxPayload,
+        cfg: params.cfg,
+        dispatcherOptions: {
+          ...replyPipeline,
+          deliver,
+          onError: params.onDispatchError,
+        },
+        replyOptions: {
+          ...(params.replyOptions || {}),
+          onModelSelected,
+        },
+      }),
+  });
+}
+
+async function dispatchInboundReplyWithBase(params = {}) {
+  const dispatchBase = buildInboundReplyDispatchBase(params);
+  await recordInboundSessionAndDispatchReply({
+    ...dispatchBase,
+    deliver: params.deliver,
+    onRecordError: params.onRecordError,
+    onDispatchError: params.onDispatchError,
+    replyOptions: params.replyOptions,
+  });
 }
 
 function resolveOutboundMediaUrls(payload) {
@@ -46616,6 +47189,303 @@ function hasPresentationBlocks(value) {
   return hasObjectContent(value) || (Array.isArray(value) && value.length > 0);
 }
 
+function normalizeInteractiveButtonStyle(value) {
+  const style = normalizeOptionalLowercaseString(value);
+  return ["primary", "secondary", "success", "danger"].includes(style)
+    ? style
+    : undefined;
+}
+
+function normalizeMessagePresentationTone(value) {
+  const tone = normalizeOptionalLowercaseString(value);
+  return ["info", "success", "warning", "danger", "neutral"].includes(tone)
+    ? tone
+    : undefined;
+}
+
+function toInteractiveRecord(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
+function normalizeInteractiveButton(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const label = normalizeOptionalString(record.label) || normalizeOptionalString(record.text);
+  const value =
+    normalizeOptionalString(record.value) ||
+    normalizeOptionalString(record.callbackData) ||
+    normalizeOptionalString(record.callback_data);
+  const url = normalizeOptionalString(record.url);
+  if (!label || (!value && !url)) {
+    return undefined;
+  }
+  const style = normalizeInteractiveButtonStyle(record.style);
+  return {
+    label,
+    ...(value ? { value } : {}),
+    ...(url ? { url } : {}),
+    ...(style ? { style } : {}),
+  };
+}
+
+function normalizeInteractiveOption(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const label = normalizeOptionalString(record.label) || normalizeOptionalString(record.text);
+  const value = normalizeOptionalString(record.value);
+  if (!label || !value) {
+    return undefined;
+  }
+  return { label, value };
+}
+
+function normalizeInteractiveList(value, normalizeEntry) {
+  return Array.isArray(value)
+    ? value.map((entry) => normalizeEntry(entry)).filter(Boolean)
+    : [];
+}
+
+function normalizeInteractiveReplyBlock(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const type = normalizeOptionalLowercaseString(record.type);
+  if (type === "text") {
+    const text = normalizeOptionalString(record.text);
+    return text ? { type: "text", text } : undefined;
+  }
+  if (type === "buttons") {
+    const buttons = normalizeInteractiveList(record.buttons, normalizeInteractiveButton);
+    return buttons.length > 0 ? { type: "buttons", buttons } : undefined;
+  }
+  if (type === "select") {
+    const options = normalizeInteractiveList(record.options, normalizeInteractiveOption);
+    if (options.length === 0) {
+      return undefined;
+    }
+    const placeholder = normalizeOptionalString(record.placeholder);
+    return {
+      type: "select",
+      ...(placeholder ? { placeholder } : {}),
+      options,
+    };
+  }
+  return undefined;
+}
+
+function normalizeInteractiveReply(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const blocks = normalizeInteractiveList(record.blocks, normalizeInteractiveReplyBlock);
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function normalizeMessagePresentationBlock(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const type = normalizeOptionalLowercaseString(record.type);
+  if (type === "text" || type === "context") {
+    const text = normalizeOptionalString(record.text);
+    return text ? { type, text } : undefined;
+  }
+  if (type === "divider") {
+    return { type: "divider" };
+  }
+  if (type === "buttons") {
+    const buttons = normalizeInteractiveList(record.buttons, normalizeInteractiveButton);
+    return buttons.length > 0 ? { type: "buttons", buttons } : undefined;
+  }
+  if (type === "select") {
+    const options = normalizeInteractiveList(record.options, normalizeInteractiveOption);
+    if (options.length === 0) {
+      return undefined;
+    }
+    const placeholder = normalizeOptionalString(record.placeholder);
+    return {
+      type: "select",
+      ...(placeholder ? { placeholder } : {}),
+      options,
+    };
+  }
+  return undefined;
+}
+
+function normalizeMessagePresentation(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const blocks = normalizeInteractiveList(record.blocks, normalizeMessagePresentationBlock);
+  const title = normalizeOptionalString(record.title);
+  if (!title && blocks.length === 0) {
+    return undefined;
+  }
+  const tone = normalizeMessagePresentationTone(record.tone);
+  return {
+    ...(title ? { title } : {}),
+    ...(tone ? { tone } : {}),
+    blocks,
+  };
+}
+
+function hasInteractiveReplyBlocks(value) {
+  return Boolean(normalizeInteractiveReply(value));
+}
+
+function hasMessagePresentationBlocks(value) {
+  return Boolean(normalizeMessagePresentation(value));
+}
+
+function presentationToInteractiveReply(presentation = {}) {
+  const blocks = [];
+  if (presentation.title) {
+    blocks.push({ type: "text", text: presentation.title });
+  }
+  for (const block of Array.isArray(presentation.blocks) ? presentation.blocks : []) {
+    if (block.type === "text" || block.type === "context") {
+      blocks.push({ type: "text", text: block.text });
+      continue;
+    }
+    if (block.type === "buttons") {
+      const buttons = (Array.isArray(block.buttons) ? block.buttons : [])
+        .filter((button) => button && (button.value || button.url))
+        .map((button) => ({
+          label: button.label,
+          ...(button.value ? { value: button.value } : {}),
+          ...(button.url ? { url: button.url } : {}),
+          ...(button.style ? { style: button.style } : {}),
+        }));
+      if (buttons.length > 0) {
+        blocks.push({ type: "buttons", buttons });
+      }
+      continue;
+    }
+    if (block.type === "select") {
+      blocks.push({
+        type: "select",
+        ...(block.placeholder ? { placeholder: block.placeholder } : {}),
+        options: block.options,
+      });
+    }
+  }
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function interactiveReplyToPresentation(interactive = {}) {
+  const blocks = (Array.isArray(interactive.blocks) ? interactive.blocks : []).map((block) => {
+    if (block.type === "text") {
+      return { type: "text", text: block.text };
+    }
+    if (block.type === "buttons") {
+      return { type: "buttons", buttons: block.buttons };
+    }
+    return {
+      type: "select",
+      ...(block.placeholder ? { placeholder: block.placeholder } : {}),
+      options: block.options,
+    };
+  });
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function renderMessagePresentationFallbackText(params = {}) {
+  const lines = [];
+  const text = normalizeOptionalString(params.text);
+  if (text) {
+    lines.push(text);
+  }
+  const presentation = params.presentation;
+  if (!presentation) {
+    return lines.join("\n\n");
+  }
+  if (presentation.title) {
+    lines.push(presentation.title);
+  }
+  for (const block of Array.isArray(presentation.blocks) ? presentation.blocks : []) {
+    if (block.type === "text" || block.type === "context") {
+      lines.push(block.text);
+      continue;
+    }
+    if (block.type === "buttons") {
+      const labels = (Array.isArray(block.buttons) ? block.buttons : [])
+        .map((button) => (button.url ? `${button.label}: ${button.url}` : button.label))
+        .filter(Boolean);
+      if (labels.length > 0) {
+        lines.push(labels.map((label) => `- ${label}`).join("\n"));
+      }
+      continue;
+    }
+    if (block.type === "select") {
+      const labels = (Array.isArray(block.options) ? block.options : [])
+        .map((option) => option.label)
+        .filter(Boolean);
+      if (labels.length > 0) {
+        const heading = block.placeholder ? `${block.placeholder}:` : "Options:";
+        lines.push(`${heading}\n${labels.map((label) => `- ${label}`).join("\n")}`);
+      }
+    }
+  }
+  return lines.join("\n\n");
+}
+
+function hasReplyChannelData(value) {
+  return Boolean(
+    value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0,
+  );
+}
+
+function hasReplyContent(params = {}) {
+  const text = normalizeOptionalString(params.text);
+  const mediaUrl = normalizeOptionalString(params.mediaUrl);
+  const hasMediaUrls =
+    Array.isArray(params.mediaUrls) &&
+    params.mediaUrls.some((entry) => Boolean(normalizeOptionalString(entry)));
+  return Boolean(
+    text ||
+    mediaUrl ||
+    hasMediaUrls ||
+    hasMessagePresentationBlocks(params.presentation) ||
+    hasInteractiveReplyBlocks(params.interactive) ||
+    params.hasChannelData ||
+    params.extraContent,
+  );
+}
+
+function resolveInteractiveTextFallback(params = {}) {
+  const text = normalizeOptionalString(params.text);
+  if (text) {
+    return params.text;
+  }
+  const interactive = params.interactive || {};
+  const interactiveText = (Array.isArray(interactive.blocks) ? interactive.blocks : [])
+    .filter((block) => block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return interactiveText || params.text;
+}
+
+function reduceInteractiveReply(interactive, initialState, reduce) {
+  let state = initialState;
+  const blocks = interactive && Array.isArray(interactive.blocks) ? interactive.blocks : [];
+  for (const [index, block] of blocks.entries()) {
+    state = reduce(state, block, index);
+  }
+  return state;
+}
+
 function createOutboundPayloadPlan(payloads, context = {}) {
   const prepared = [];
   for (const entry of Array.isArray(payloads) ? payloads : []) {
@@ -46806,6 +47676,25 @@ const outboundRuntime = {
   sanitizeForPlainText,
   stripInternalRuntimeScaffolding,
   summarizeOutboundPayloadForTransport,
+};
+
+const interactiveRuntime = {
+  hasInteractiveReplyBlocks,
+  hasMessagePresentationBlocks,
+  hasReplyChannelData,
+  hasReplyContent,
+  interactiveReplyToPresentation,
+  normalizeInteractiveReply,
+  normalizeMessagePresentation,
+  presentationToInteractiveReply,
+  reduceInteractiveReply,
+  renderMessagePresentationFallbackText,
+  resolveInteractiveTextFallback,
+};
+
+const outboundSendDepsRuntime = {
+  resolveLegacyOutboundSendDepKeys,
+  resolveOutboundSendDep,
 };
 
 async function drainPendingDeliveries(opts = {}) {
@@ -56851,6 +57740,22 @@ const commandStatusRuntime = {
   buildHelpMessage,
 };
 
+async function resolveDirectStatusReplyForSession(params = {}) {
+  const requestedSessionKey = normalizeOptionalString(params.sessionKey);
+  if (!requestedSessionKey) {
+    return undefined;
+  }
+  const runtime = globalThis.__openzuesCommandStatusRuntime;
+  if (runtime && typeof runtime.resolveDirectStatusReplyForSession === "function") {
+    return await runtime.resolveDirectStatusReplyForSession(params);
+  }
+  throw new Error("command status runtime is unavailable in OpenZues plugin runtime.");
+}
+
+const commandStatusSessionRuntime = {
+  resolveDirectStatusReplyForSession,
+};
+
 const commandNativeRuntime = {
   buildCommandText,
   buildCommandTextFromArgs,
@@ -59477,6 +60382,50 @@ const fileLockRuntime = {
   drainFileLockStateForTest,
   resetFileLockStateForTest,
   withFileLock,
+};
+
+const infraRuntime = {
+  ...asyncLockRuntime,
+  ...channelActivityRuntime,
+  ...concurrencyRuntime,
+  ...deliveryQueueRuntime,
+  ...diagnosticRuntime,
+  ...errorRuntime,
+  ...fetchRuntime,
+  ...fileLockRuntime,
+  ...globalSingletonRuntime,
+  ...jsonStoreRuntime,
+  ...outboundRuntime,
+  ...outboundSendDepsRuntime,
+  ...requestUrlRuntime,
+  ...runtimeFetchRuntime,
+  ...ssrfPolicyRuntime,
+  ...ssrfRuntime,
+  ...systemEventRuntime,
+  ...tempPathRuntime,
+  ...transportReadyRuntime,
+  JsonFileReadError,
+  bindAbortRelay,
+  buildTimeoutAbortSignal,
+  computeBackoff,
+  fetchWithTimeout,
+  formatDurationPrecise,
+  formatDurationSeconds,
+  generateSecureToken,
+  generateSecureUuid,
+  parseFiniteNumber,
+  pruneMapToMaxSize,
+  readDurableJsonFile,
+  readJsonFile,
+  readJsonFileSync,
+  resolvePreferredOpenClawTmpDir,
+  resolveRequiredHomeDir,
+  resolveUserPath,
+  retryAsync,
+  resolveRetryConfig,
+  sleepWithAbort,
+  writeJsonAtomic,
+  writeTextAtomic,
 };
 
 function parseBrowserHttpUrl(raw, label) {
@@ -70293,6 +71242,62 @@ const replyPayloadRuntime = {
   sendTextMediaPayload,
 };
 
+const replyRuntime = {
+  DEFAULT_HEARTBEAT_ACK_MAX_CHARS,
+  HEARTBEAT_PROMPT,
+  HEARTBEAT_TOKEN,
+  SILENT_REPLY_TOKEN,
+  chunkMarkdownText,
+  chunkMarkdownTextWithMode,
+  chunkText,
+  chunkTextWithMode,
+  createInboundDebouncer,
+  createReplyDispatcher,
+  createReplyDispatcherWithTyping,
+  createReplyReferencePlanner,
+  dispatchInboundMessage,
+  dispatchInboundMessageWithBufferedDispatcher,
+  dispatchInboundMessageWithDispatcher,
+  dispatchReplyWithBufferedBlockDispatcher,
+  dispatchReplyWithDispatcher,
+  finalizeInboundContext,
+  generateConversationLabel,
+  getReplyFromConfig,
+  isAbortRequestText,
+  isBtwRequestText,
+  isSilentReplyText,
+  normalizeGroupActivation,
+  parseActivationCommand,
+  resetInboundDedupe,
+  resolveChunkMode,
+  resolveHeartbeatPrompt,
+  resolveHeartbeatReplyPayload,
+  resolveInboundDebounceMs,
+  resolveTextChunkLimit,
+  settleReplyDispatcher,
+  stripHeartbeatToken,
+};
+
+const replyDispatchRuntime = {
+  dispatchReplyWithBufferedBlockDispatcher,
+  dispatchReplyWithDispatcher,
+  finalizeInboundContext,
+  generateConversationLabel,
+  resolveChunkMode,
+};
+
+const inboundReplyDispatchRuntime = {
+  buildInboundReplyDispatchBase,
+  dispatchInboundReplyWithBase,
+  dispatchReplyFromConfigWithSettledDispatcher,
+  hasFinalInboundReplyDispatch,
+  hasVisibleInboundReplyDispatch,
+  recordInboundSessionAndDispatchReply,
+  resolveInboundReplyDispatchCounts,
+  runInboundReplyTurn,
+  runPreparedInboundReplyTurn,
+};
+
 const agentMediaPayloadRuntime = {
   buildAgentMediaPayload,
   getAgentScopedMediaLocalRoots,
@@ -72133,6 +73138,7 @@ const genericSdk = new Proxy(
     ...channelSendResultRuntime,
     ...channelPairingRuntime,
     ...commandStatusRuntime,
+    ...commandStatusSessionRuntime,
     ...commandNativeRuntime,
     ...commandGatingRuntime,
     ...commandSurfaceRuntime,
@@ -72182,8 +73188,14 @@ const genericSdk = new Proxy(
     ...threadBindingsSessionRuntime,
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
+    ...replyRuntime,
+    ...replyDispatchRuntime,
+    ...inboundReplyDispatchRuntime,
+    ...interactiveRuntime,
     ...outboundRuntime,
+    ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
+    ...infraRuntime,
     ...migrationRuntime,
     ...migrationHelperRuntime,
     ...providerAuthResultRuntime,
@@ -73254,10 +74266,22 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return outboundRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/outbound-send-deps" ||
+    request === "@openclaw/plugin-sdk/outbound-send-deps"
+  ) {
+    return outboundSendDepsRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/delivery-queue-runtime" ||
     request === "@openclaw/plugin-sdk/delivery-queue-runtime"
   ) {
     return deliveryQueueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/infra-runtime" ||
+    request === "@openclaw/plugin-sdk/infra-runtime"
+  ) {
+    return infraRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/migration-runtime" ||
@@ -73683,6 +74707,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/command-status"
   ) {
     return commandStatusRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/command-status-runtime" ||
+    request === "@openclaw/plugin-sdk/command-status-runtime"
+  ) {
+    return commandStatusSessionRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-setup" ||
@@ -74219,6 +75249,30 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-status"
   ) {
     return channelStatusRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-runtime" ||
+    request === "@openclaw/plugin-sdk/reply-runtime"
+  ) {
+    return replyRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/reply-dispatch-runtime" ||
+    request === "@openclaw/plugin-sdk/reply-dispatch-runtime"
+  ) {
+    return replyDispatchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/inbound-reply-dispatch" ||
+    request === "@openclaw/plugin-sdk/inbound-reply-dispatch"
+  ) {
+    return inboundReplyDispatchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/interactive-runtime" ||
+    request === "@openclaw/plugin-sdk/interactive-runtime"
+  ) {
+    return interactiveRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||

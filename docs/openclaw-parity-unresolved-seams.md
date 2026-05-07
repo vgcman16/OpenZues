@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~99.2% overall, with a reasonable
-  band of ~80-99.5%.
+- Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
+  band of ~80-99.95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -119,7 +119,10 @@ Current percentage rollup:
   adapter-factory, realtime-voice helper, media-understanding-runtime helper,
   media-understanding provider-helper, messaging-targets, web-media, speech,
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
-  outbound-media, delivery-queue-runtime, and migration-runtime slices.
+  outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
+  outbound-send-deps, command-status-runtime, reply-runtime,
+  reply-dispatch-runtime, inbound-reply-dispatch, and interactive-runtime
+  slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9432,8 +9435,52 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   side effects, conflict/error shaping, report redaction, and Markdown summary
   output. Source/test checkpointed in `7a9c8208`; repo-wide parity is now
   estimated at ~99.2%.
+- Current queue-head adjustment: imported plugin SDK `migration` now exposes
+  the source-backed migration helper facade for scoped and unscoped imports,
+  including item creation/status helpers, config path/patch helpers, summary
+  counts, patch/manual application, and redaction helpers. Source/test
+  checkpointed in `d4a72ad9`; repo-wide parity is now estimated at ~99.3%.
+- Current queue-head adjustment: imported plugin SDK `outbound-send-deps` now
+  exposes the exact source-backed facade for scoped and unscoped imports,
+  including legacy dependency key resolution and dynamic channel dependency
+  precedence. Source/test checkpointed in `90665ba5`; repo-wide parity is now
+  estimated at ~99.4%.
+- Current queue-head adjustment: imported plugin SDK `command-status-runtime`
+  now exposes the source-backed lazy facade for scoped and unscoped imports,
+  including blank session-key early return, fakeable native session-status
+  delegation, and precise unavailable error projection. Source/test
+  checkpointed in `b0242a2c`; repo-wide parity is now estimated at ~99.5%.
+- Current queue-head adjustment: imported plugin SDK `reply-runtime` now
+  exposes the source-backed aggregate facade for scoped and unscoped imports,
+  including reply chunking, heartbeat, silent-token, group activation, inbound
+  finalization, dedupe, reply-reference, dispatch, reply-generation, and
+  conversation-label helpers with fakeable native host delegation for heavy
+  runtime calls. Source/test checkpointed in `32213a5c`; repo-wide parity is
+  now estimated at ~99.6%.
+- Current queue-head adjustment: imported plugin SDK
+  `reply-dispatch-runtime` now exposes the exact source-backed dispatch facade
+  for scoped and unscoped imports, including chunk-mode resolution, inbound
+  context finalization, conversation label delegation, buffered block dispatch
+  delegation, direct dispatcher delegation, narrow export shape, and precise
+  unavailable error projection. Source/test checkpointed in `c587ef3e`;
+  repo-wide parity is now estimated at ~99.7%.
+- Current queue-head adjustment: imported plugin SDK
+  `inbound-reply-dispatch` now exposes the exact source-backed channel-turn
+  orchestration facade for scoped and unscoped imports, including
+  prepared/full inbound turns, visible/final dispatch counts, settled
+  dispatch-from-config callbacks, dispatch-base assembly, record then dispatch
+  ordering, normalized outbound delivery, and fakeable native reply dispatch
+  delegation. Source/test checkpointed in `25231852`; repo-wide parity is now
+  estimated at ~99.8%.
+- Current queue-head adjustment: imported plugin SDK `interactive-runtime` now
+  exposes the exact source-backed interactive payload facade for scoped and
+  unscoped imports, including interactive reply normalization, message
+  presentation normalization, presentation/interactive conversion, fallback
+  text rendering, reply content/channel-data predicates, text fallback
+  extraction, and block reduction. Source/test checkpointed in `3781cad9`;
+  repo-wide parity is now estimated at ~99.9%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the sibling `migration` helper facade, broader runtime/client
+  especially the exact `infra-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
