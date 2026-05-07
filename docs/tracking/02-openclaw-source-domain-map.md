@@ -178,8 +178,12 @@ message-transform, prompt-boundary, and OpenAI completions helpers is verified
 in `dd8bcfd8`, and imported `provider-http` exact helper coverage from
 `src/plugin-sdk/provider-http.ts`, `src/agents/provider-http-errors.ts`,
 `src/media-understanding/shared.ts`, `src/agents/provider-attribution.ts`, and
-`src/agents/provider-request-config.ts` is verified in `750bbf71`. All are
-counted with the plugin/extension system row above.
+`src/agents/provider-request-config.ts` is verified in `750bbf71`, and
+imported `provider-catalog-runtime` exact helper coverage from
+`src/plugin-sdk/provider-catalog-runtime.ts`,
+`src/plugins/provider-runtime.ts`, `src/plugins/providers.ts`, and
+`src/plugins/providers.runtime.ts` is verified in `2ede5f0d`. All are counted
+with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
@@ -369,6 +373,10 @@ helpers, and `src/agents/provider-http-errors.ts` is checkpointed in
 `src/agents/provider-http-errors.ts`, `src/media-understanding/shared.ts`,
 `src/agents/provider-attribution.ts`, and
 `src/agents/provider-request-config.ts` is checkpointed in `750bbf71`.
+`provider-catalog-runtime` from
+`src/plugin-sdk/provider-catalog-runtime.ts`, adjacent
+`src/plugins/provider-runtime.ts`, `src/plugins/providers.ts`, and
+`src/plugins/providers.runtime.ts` is checkpointed in `2ede5f0d`.
 `video-generation-core` from `src/plugin-sdk/video-generation-core.ts`,
 adjacent video/media generation helpers, failover helpers, model input
 helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
