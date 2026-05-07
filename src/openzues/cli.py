@@ -39921,6 +39921,11 @@ const providerModelIdNormalizeRuntime = {
   normalizeNativeXaiModelId,
 };
 
+const googleModelIdRuntime = {
+  normalizeAntigravityModelId: normalizeAntigravityPreviewModelId,
+  normalizeGoogleModelId: normalizeGooglePreviewModelId,
+};
+
 const xaiModelIdRuntime = {
   normalizeXaiModelId,
 };
@@ -62148,6 +62153,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-model-id-normalize"
   ) {
     return providerModelIdNormalizeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/google-model-id" ||
+    request === "@openclaw/plugin-sdk/google-model-id"
+  ) {
+    return googleModelIdRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/xai-model-id" ||
