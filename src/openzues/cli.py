@@ -53969,6 +53969,31 @@ function resolveSessionAgentId(params = {}) {
 const AGENT_RUNTIME_DEFAULT_PROVIDER = "openai";
 const AGENT_RUNTIME_DEFAULT_MODEL = "gpt-5.5";
 const AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS = 200000;
+const MINIMAX_OAUTH_MARKER = "minimax-oauth";
+const OAUTH_API_KEY_MARKER_PREFIX = "oauth:";
+const OLLAMA_LOCAL_AUTH_MARKER = "ollama-local";
+const CUSTOM_LOCAL_AUTH_MARKER = "custom-local";
+const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
+const NON_ENV_SECRETREF_MARKER = "secretref-managed";
+const SECRETREF_ENV_HEADER_MARKER_PREFIX = "secretref-env:";
+const AGENT_RUNTIME_AWS_SDK_ENV_MARKERS = new Set([
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_PROFILE",
+]);
+const AGENT_RUNTIME_LEGACY_ENV_API_KEY_MARKERS = new Set([
+  "GOOGLE_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "PERPLEXITY_API_KEY",
+  "FIREWORKS_API_KEY",
+  "NOVITA_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_API_KEY",
+  "MINIMAX_CODE_PLAN_KEY",
+]);
+const AGENT_RUNTIME_UNICODE_SPACES_RE = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const AGENT_RUNTIME_PUBLIC_AVATAR_SOURCE_MAX_CHARS = 256;
+const AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS = 64;
 
 function agentRuntimeNormalizeProviderId(provider) {
   const normalized = normalizeLowercaseStringOrEmpty(provider);
@@ -54201,6 +54226,64 @@ function agentRuntimeTrimStringValue(value) {
   return String(value).trim();
 }
 
+function agentRuntimeListKnownNonSecretApiKeyMarkers() {
+  return [CUSTOM_LOCAL_AUTH_MARKER, OLLAMA_LOCAL_AUTH_MARKER, NON_ENV_SECRETREF_MARKER];
+}
+
+function agentRuntimeIsAwsSdkAuthMarker(value) {
+  return AGENT_RUNTIME_AWS_SDK_ENV_MARKERS.has(agentRuntimeTrimStringValue(value));
+}
+
+function agentRuntimeIsKnownEnvApiKeyMarker(value) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  return AGENT_RUNTIME_LEGACY_ENV_API_KEY_MARKERS.has(trimmed) &&
+    !agentRuntimeIsAwsSdkAuthMarker(trimmed);
+}
+
+function agentRuntimeResolveOAuthApiKeyMarker(providerId) {
+  return `${OAUTH_API_KEY_MARKER_PREFIX}${agentRuntimeTrimStringValue(providerId)}`;
+}
+
+function agentRuntimeIsOAuthApiKeyMarker(value) {
+  return agentRuntimeTrimStringValue(value).startsWith(OAUTH_API_KEY_MARKER_PREFIX);
+}
+
+function agentRuntimeResolveNonEnvSecretRefApiKeyMarker() {
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveNonEnvSecretRefHeaderValueMarker() {
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveEnvSecretRefHeaderValueMarker(envVarName) {
+  return `${SECRETREF_ENV_HEADER_MARKER_PREFIX}${agentRuntimeTrimStringValue(envVarName)}`;
+}
+
+function agentRuntimeIsSecretRefHeaderValueMarker(value) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  return trimmed === NON_ENV_SECRETREF_MARKER ||
+    trimmed.startsWith(SECRETREF_ENV_HEADER_MARKER_PREFIX);
+}
+
+function agentRuntimeIsNonSecretApiKeyMarker(value, opts = {}) {
+  const trimmed = agentRuntimeTrimStringValue(value);
+  if (!trimmed) {
+    return false;
+  }
+  if (
+    agentRuntimeIsOAuthApiKeyMarker(trimmed) ||
+    agentRuntimeListKnownNonSecretApiKeyMarkers().includes(trimmed) ||
+    agentRuntimeIsAwsSdkAuthMarker(trimmed)
+  ) {
+    return true;
+  }
+  if (opts && opts.includeEnvVarName === false) {
+    return false;
+  }
+  return agentRuntimeIsKnownEnvApiKeyMarker(trimmed);
+}
+
 function agentRuntimeModelKey(provider, model) {
   const providerId = agentRuntimeTrimStringValue(provider);
   const modelId = agentRuntimeTrimStringValue(model);
@@ -54324,6 +54407,103 @@ function agentRuntimeNormalizeStoredOverrideModel(params = {}) {
       ? modelOverride.slice(providerOverride.length + 1).trim() || modelOverride
       : modelOverride,
   };
+}
+
+function agentRuntimeNormalizeUnicodeSpaces(value) {
+  return String(value || "").replace(AGENT_RUNTIME_UNICODE_SPACES_RE, " ");
+}
+
+function agentRuntimeNormalizeAtPrefix(filePath) {
+  const normalized = agentRuntimeNormalizeUnicodeSpaces(filePath);
+  return normalized.startsWith("@") ? normalized.slice(1) : normalized;
+}
+
+function agentRuntimeIsWindowsDrivePath(value) {
+  return /^[A-Za-z]:[\\/]/.test(String(value || ""));
+}
+
+function agentRuntimeResolveSandboxInputPath(filePath, cwd) {
+  const expandedRaw = agentRuntimeNormalizeAtPrefix(filePath);
+  const expanded =
+    expandedRaw === "~"
+      ? os.homedir()
+      : expandedRaw.startsWith("~/")
+        ? os.homedir() + expandedRaw.slice(1)
+        : expandedRaw;
+  if (agentRuntimeIsWindowsDrivePath(expanded)) {
+    return path.win32.normalize(expanded);
+  }
+  if (path.isAbsolute(expanded)) {
+    return expanded;
+  }
+  return path.resolve(cwd, expanded);
+}
+
+function agentRuntimeResolveSandboxPath(params = {}) {
+  const resolved = agentRuntimeResolveSandboxInputPath(params.filePath, params.cwd);
+  const rootResolved = path.resolve(params.root);
+  const relative = path.relative(rootResolved, resolved);
+  if (!relative || relative === "") {
+    return { resolved, relative: "" };
+  }
+  if (
+    relative.startsWith("..") ||
+    path.isAbsolute(relative) ||
+    agentRuntimeIsWindowsDrivePath(relative)
+  ) {
+    throw new Error(`Path escapes sandbox root (${rootResolved}): ${params.filePath}`);
+  }
+  return { resolved, relative };
+}
+
+function agentRuntimeIsAvatarDataUrl(source) {
+  return /^data:/i.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsAvatarHttpUrl(source) {
+  return /^https?:\/\//i.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeHasAvatarUriScheme(source) {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsWindowsAbsolutePath(source) {
+  return /^[A-Za-z]:[\\/]/.test(agentRuntimeTrimStringValue(source)) ||
+    /^\\\\/.test(agentRuntimeTrimStringValue(source));
+}
+
+function agentRuntimeIsSafeRelativeAvatarSource(source) {
+  const raw = agentRuntimeTrimStringValue(source);
+  if (
+    raw.length > AGENT_RUNTIME_PUBLIC_AVATAR_SOURCE_MAX_CHARS ||
+    raw.startsWith("~") ||
+    path.isAbsolute(raw) ||
+    agentRuntimeIsWindowsAbsolutePath(raw) ||
+    (agentRuntimeHasAvatarUriScheme(raw) && !agentRuntimeIsWindowsAbsolutePath(raw)) ||
+    raw.includes("\0")
+  ) {
+    return false;
+  }
+  return raw.replace(/\\/g, "/").split("/").every((part) => part !== "..");
+}
+
+function agentRuntimeResolvePublicAgentAvatarSource(resolved = {}) {
+  const source = normalizeOptionalString(resolved.source);
+  if (!source) {
+    return undefined;
+  }
+  if (agentRuntimeIsAvatarDataUrl(source)) {
+    const commaIndex = source.indexOf(",");
+    const header = commaIndex > 0
+      ? source.slice(0, Math.min(commaIndex, AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS))
+      : source.slice(0, AGENT_RUNTIME_PUBLIC_DATA_AVATAR_HEADER_MAX_CHARS);
+    return `${header},...`;
+  }
+  if (agentRuntimeIsAvatarHttpUrl(source)) {
+    return "remote URL";
+  }
+  return agentRuntimeIsSafeRelativeAvatarSource(source) ? source : undefined;
 }
 
 function agentRuntimeConfiguredModels(cfg = {}) {
@@ -54715,6 +54895,76 @@ function agentRuntimeResolveSubagentSpawnModelSelection(params = {}) {
   return agentRuntimeResolveModelThroughAliases(raw, aliasIndex);
 }
 
+function agentRuntimeSplitTrailingAuthProfile(raw) {
+  const trimmed = agentRuntimeTrimStringValue(raw);
+  if (!trimmed) {
+    return { model: "" };
+  }
+  const lastSlash = trimmed.lastIndexOf("/");
+  let profileDelimiter = trimmed.indexOf("@", lastSlash + 1);
+  if (profileDelimiter <= 0) {
+    return { model: trimmed };
+  }
+  const suffix = () => trimmed.slice(profileDelimiter + 1);
+  if (/^\d{8}(?:@|$)/.test(suffix())) {
+    const nextDelimiter = trimmed.indexOf("@", profileDelimiter + 9);
+    if (nextDelimiter < 0) {
+      return { model: trimmed };
+    }
+    profileDelimiter = nextDelimiter;
+  }
+  if (/^(?:i?q\d+(?:_[a-z0-9]+)*|\d+bit)(?:@|$)/i.test(suffix())) {
+    const nextDelimiter = trimmed.indexOf("@", profileDelimiter + 1);
+    if (nextDelimiter < 0) {
+      return { model: trimmed };
+    }
+    profileDelimiter = nextDelimiter;
+  }
+  const model = trimmed.slice(0, profileDelimiter).trim();
+  const profile = trimmed.slice(profileDelimiter + 1).trim();
+  if (!model || !profile) {
+    return { model: trimmed };
+  }
+  return { model, profile };
+}
+
+function agentRuntimeResolveSimpleCompletionSelectionForAgent(params = {}) {
+  const cfg = params.cfg || {};
+  const fallbackRef = agentRuntimeResolveDefaultModelForAgent({
+    cfg,
+    agentId: params.agentId,
+  });
+  const modelRef =
+    agentRuntimeTrimStringValue(params.modelRef) ||
+    agentRuntimeResolveAgentEffectiveModelPrimary(cfg, params.agentId);
+  const split = modelRef ? agentRuntimeSplitTrailingAuthProfile(modelRef) : null;
+  const aliasIndex = agentRuntimeBuildModelAliasIndex({
+    cfg,
+    defaultProvider: fallbackRef.provider || AGENT_RUNTIME_DEFAULT_PROVIDER,
+  });
+  const resolved = split
+    ? agentRuntimeResolveModelRefFromString({
+        raw: split.model,
+        defaultProvider: fallbackRef.provider || AGENT_RUNTIME_DEFAULT_PROVIDER,
+        aliasIndex,
+      })
+    : null;
+  const provider = (resolved && resolved.ref.provider) || fallbackRef.provider;
+  const modelId = (resolved && resolved.ref.model) || fallbackRef.model;
+  if (!provider || !modelId) {
+    return null;
+  }
+  const selection = {
+    provider,
+    modelId,
+    agentDir: agentRuntimeResolveAgentDir(cfg, params.agentId),
+  };
+  if (split && split.profile) {
+    selection.profileId = split.profile;
+  }
+  return selection;
+}
+
 function agentRuntimeResolveAgentModelFallbackValues(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return [];
@@ -55061,11 +55311,19 @@ const agentRuntime = {
   DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
   DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
+  CUSTOM_LOCAL_AUTH_MARKER,
+  GCP_VERTEX_CREDENTIALS_MARKER,
+  MINIMAX_OAUTH_MARKER,
+  NON_ENV_SECRETREF_MARKER,
+  OAUTH_API_KEY_MARKER_PREFIX,
+  OLLAMA_LOCAL_AUTH_MARKER,
   OWNER_ONLY_TOOL_ERROR,
+  SECRETREF_ENV_HEADER_MARKER_PREFIX,
   ToolAuthorizationError,
   ToolInputError,
   ToolPlanContractError,
   appendCronStyleCurrentTimeLine,
+  assertMediaNotDataUrl,
   asToolParamsRecord,
   buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
   buildConfiguredAllowlistKeys: agentRuntimeBuildConfiguredAllowlistKeys,
@@ -55082,8 +55340,14 @@ const agentRuntime = {
   formatToolExecutorRef,
   formatUserTime,
   getModelRefStatus: agentRuntimeGetModelRefStatus,
+  isAwsSdkAuthMarker: agentRuntimeIsAwsSdkAuthMarker,
+  isKnownEnvApiKeyMarker: agentRuntimeIsKnownEnvApiKeyMarker,
+  isNonSecretApiKeyMarker: agentRuntimeIsNonSecretApiKeyMarker,
+  isOAuthApiKeyMarker: agentRuntimeIsOAuthApiKeyMarker,
+  isSecretRefHeaderValueMarker: agentRuntimeIsSecretRefHeaderValueMarker,
   jsonResult,
   legacyModelKey: agentRuntimeLegacyModelKey,
+  listKnownNonSecretApiKeyMarkers: agentRuntimeListKnownNonSecretApiKeyMarkers,
   listAgentEntries: agentRuntimeListAgentEntries,
   listAgentIds: agentRuntimeListAgentIds,
   modelKey: agentRuntimeModelKey,
@@ -55120,15 +55384,23 @@ const agentRuntime = {
   resolveIdentityNamePrefix: agentRuntimeResolveIdentityNamePrefix,
   resolveMessagePrefix: agentRuntimeResolveMessagePrefix,
   resolveModelRefFromString: agentRuntimeResolveModelRefFromString,
+  resolveEnvSecretRefHeaderValueMarker: agentRuntimeResolveEnvSecretRefHeaderValueMarker,
+  resolveNonEnvSecretRefApiKeyMarker: agentRuntimeResolveNonEnvSecretRefApiKeyMarker,
+  resolveNonEnvSecretRefHeaderValueMarker: agentRuntimeResolveNonEnvSecretRefHeaderValueMarker,
+  resolveOAuthApiKeyMarker: agentRuntimeResolveOAuthApiKeyMarker,
   resolveOpenClawAgentDir,
   resolvePersistedModelRef: agentRuntimeResolvePersistedModelRef,
   resolvePersistedOverrideModelRef: agentRuntimeResolvePersistedOverrideModelRef,
   resolvePersistedSelectedModelRef: agentRuntimeResolvePersistedSelectedModelRef,
   resolveProviderIdForAuth: agentRuntimeNormalizeProviderId,
+  resolvePublicAgentAvatarSource: agentRuntimeResolvePublicAgentAvatarSource,
   resolveReasoningDefault: agentRuntimeResolveReasoningDefault,
+  resolveSandboxInputPath: agentRuntimeResolveSandboxInputPath,
+  resolveSandboxPath: agentRuntimeResolveSandboxPath,
   resolveResponsePrefix: agentRuntimeResolveResponsePrefix,
   resolveSessionAgentId: agentRuntimeResolveSessionAgentId,
   resolveSessionAgentIds: agentRuntimeResolveSessionAgentIds,
+  resolveSimpleCompletionSelectionForAgent: agentRuntimeResolveSimpleCompletionSelectionForAgent,
   resolveSubagentConfiguredModelSelection: agentRuntimeResolveSubagentConfiguredModelSelection,
   resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
   resolveUserTimeFormat,

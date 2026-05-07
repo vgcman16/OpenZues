@@ -37926,6 +37926,303 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_facade_utilities(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-facade.cjs"
+    runtime_entry.write_text(
+        """
+const path = require("node:path");
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+function capture(fn) {
+  try {
+    return fn();
+  } catch (error) {
+    return { name: error.name, message: error.message };
+  }
+}
+
+function slashes(value) {
+  return typeof value === "string" ? value.replace(/\\\\/g, "/") : value;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_facade",
+      description: "Use OpenClaw agent-runtime facade utility helpers",
+      parameters: { type: "object" },
+      execute(_toolCallId, args) {
+        const cfg = {
+          agents: {
+            defaults: {
+              model: { primary: "fast" },
+              models: {
+                "openai/gpt-5.5": { alias: "fast" },
+                "anthropic/claude-sonnet-4-6": { alias: "writer-alias" },
+                "openrouter/openai/gpt-oss-20b:free": { alias: "free" }
+              }
+            },
+            list: [
+              {
+                id: "writer",
+                agentDir: args.agentDir,
+                model: { primary: "writer-alias" }
+              }
+            ]
+          }
+        };
+        const sandboxPath = agent.resolveSandboxPath({
+          filePath: "nested/file.txt",
+          cwd: args.cwd,
+          root: args.cwd
+        });
+        const selectionOverride = agent.resolveSimpleCompletionSelectionForAgent({
+          cfg,
+          agentId: "writer",
+          modelRef: "free@work"
+        });
+        const selectionDefault = agent.resolveSimpleCompletionSelectionForAgent({
+          cfg,
+          agentId: "writer"
+        });
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "CUSTOM_LOCAL_AUTH_MARKER",
+            "GCP_VERTEX_CREDENTIALS_MARKER",
+            "MINIMAX_OAUTH_MARKER",
+            "NON_ENV_SECRETREF_MARKER",
+            "OAUTH_API_KEY_MARKER_PREFIX",
+            "OLLAMA_LOCAL_AUTH_MARKER",
+            "SECRETREF_ENV_HEADER_MARKER_PREFIX",
+            "assertMediaNotDataUrl",
+            "isAwsSdkAuthMarker",
+            "isKnownEnvApiKeyMarker",
+            "isNonSecretApiKeyMarker",
+            "isOAuthApiKeyMarker",
+            "isSecretRefHeaderValueMarker",
+            "listKnownNonSecretApiKeyMarkers",
+            "resolveEnvSecretRefHeaderValueMarker",
+            "resolveNonEnvSecretRefApiKeyMarker",
+            "resolveNonEnvSecretRefHeaderValueMarker",
+            "resolveOAuthApiKeyMarker",
+            "resolvePublicAgentAvatarSource",
+            "resolveSandboxInputPath",
+            "resolveSandboxPath",
+            "resolveSimpleCompletionSelectionForAgent"
+          ].includes(key)).sort(),
+          markers: {
+            minimax: agent.MINIMAX_OAUTH_MARKER,
+            oauthPrefix: agent.OAUTH_API_KEY_MARKER_PREFIX,
+            ollama: agent.OLLAMA_LOCAL_AUTH_MARKER,
+            custom: agent.CUSTOM_LOCAL_AUTH_MARKER,
+            gcp: agent.GCP_VERTEX_CREDENTIALS_MARKER,
+            nonEnv: agent.NON_ENV_SECRETREF_MARKER,
+            envHeaderPrefix: agent.SECRETREF_ENV_HEADER_MARKER_PREFIX,
+            knownNonSecret: agent.listKnownNonSecretApiKeyMarkers()
+              .filter((value) => [
+                "custom-local",
+                "ollama-local",
+                "secretref-managed"
+              ].includes(value))
+              .sort(),
+            awsMarker: agent.isAwsSdkAuthMarker(" AWS_PROFILE "),
+            knownEnv: agent.isKnownEnvApiKeyMarker("GOOGLE_API_KEY"),
+            awsNotEnv: agent.isKnownEnvApiKeyMarker("AWS_PROFILE"),
+            oauthMarker: agent.resolveOAuthApiKeyMarker("openai"),
+            isOauth: agent.isOAuthApiKeyMarker(" oauth:openai "),
+            nonEnvApi: agent.resolveNonEnvSecretRefApiKeyMarker({}),
+            nonEnvHeader: agent.resolveNonEnvSecretRefHeaderValueMarker({}),
+            envHeader: agent.resolveEnvSecretRefHeaderValueMarker(" X_KEY "),
+            secretHeader: agent.isSecretRefHeaderValueMarker("secretref-env:X_KEY"),
+            nonSecretKnown: agent.isNonSecretApiKeyMarker("custom-local"),
+            nonSecretEnv: agent.isNonSecretApiKeyMarker("GOOGLE_API_KEY"),
+            nonSecretEnvDisabled: agent.isNonSecretApiKeyMarker(
+              "GOOGLE_API_KEY",
+              { includeEnvVarName: false }
+            )
+          },
+          sandbox: {
+            inputRelative: slashes(path.relative(
+              args.cwd,
+              agent.resolveSandboxInputPath("@nested/file.txt", args.cwd)
+            )),
+            resolvedRelative: slashes(sandboxPath.relative),
+            escape: capture(() => agent.resolveSandboxPath({
+              filePath: "../outside.txt",
+              cwd: args.cwd,
+              root: args.cwd
+            })),
+            dataUrl: capture(() => agent.assertMediaNotDataUrl("data:text/plain,hello"))
+          },
+          avatar: {
+            data: agent.resolvePublicAgentAvatarSource({
+              kind: "data",
+              source: "data:image/png;base64,abcdef"
+            }),
+            remote: agent.resolvePublicAgentAvatarSource({
+              kind: "remote",
+              source: "https://example.test/avatar.png"
+            }),
+            relative: agent.resolvePublicAgentAvatarSource({
+              kind: "local",
+              source: "avatars/me.png"
+            }),
+            unsafe: agent.resolvePublicAgentAvatarSource({
+              kind: "local",
+              source: "../secret.png"
+            }) || null
+          },
+          selection: {
+            override: selectionOverride,
+            default: selectionDefault
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-facade-plugin",
+                    "name": "Runtime Agent Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-runtime-facade.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_facade"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    agent_dir = tmp_path / "agent"
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.agent_facade",
+            "args": {
+                "cwd": str(cwd),
+                "agentDir": str(agent_dir),
+            },
+        },
+    )
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "CUSTOM_LOCAL_AUTH_MARKER",
+        "GCP_VERTEX_CREDENTIALS_MARKER",
+        "MINIMAX_OAUTH_MARKER",
+        "NON_ENV_SECRETREF_MARKER",
+        "OAUTH_API_KEY_MARKER_PREFIX",
+        "OLLAMA_LOCAL_AUTH_MARKER",
+        "SECRETREF_ENV_HEADER_MARKER_PREFIX",
+        "assertMediaNotDataUrl",
+        "isAwsSdkAuthMarker",
+        "isKnownEnvApiKeyMarker",
+        "isNonSecretApiKeyMarker",
+        "isOAuthApiKeyMarker",
+        "isSecretRefHeaderValueMarker",
+        "listKnownNonSecretApiKeyMarkers",
+        "resolveEnvSecretRefHeaderValueMarker",
+        "resolveNonEnvSecretRefApiKeyMarker",
+        "resolveNonEnvSecretRefHeaderValueMarker",
+        "resolveOAuthApiKeyMarker",
+        "resolvePublicAgentAvatarSource",
+        "resolveSandboxInputPath",
+        "resolveSandboxPath",
+        "resolveSimpleCompletionSelectionForAgent",
+    ]
+    assert result["markers"] == {
+        "minimax": "minimax-oauth",
+        "oauthPrefix": "oauth:",
+        "ollama": "ollama-local",
+        "custom": "custom-local",
+        "gcp": "gcp-vertex-credentials",
+        "nonEnv": "secretref-managed",
+        "envHeaderPrefix": "secretref-env:",
+        "knownNonSecret": ["custom-local", "ollama-local", "secretref-managed"],
+        "awsMarker": True,
+        "knownEnv": True,
+        "awsNotEnv": False,
+        "oauthMarker": "oauth:openai",
+        "isOauth": True,
+        "nonEnvApi": "secretref-managed",
+        "nonEnvHeader": "secretref-managed",
+        "envHeader": "secretref-env:X_KEY",
+        "secretHeader": True,
+        "nonSecretKnown": True,
+        "nonSecretEnv": True,
+        "nonSecretEnvDisabled": False,
+    }
+    assert result["sandbox"]["inputRelative"] == "nested/file.txt"
+    assert result["sandbox"]["resolvedRelative"] == "nested/file.txt"
+    assert result["sandbox"]["escape"]["name"] == "Error"
+    assert "Path escapes sandbox root" in result["sandbox"]["escape"]["message"]
+    assert result["sandbox"]["dataUrl"] == {
+        "name": "Error",
+        "message": "data: URLs are not supported for media. Use buffer instead.",
+    }
+    assert result["avatar"] == {
+        "data": "data:image/png;base64,...",
+        "remote": "remote URL",
+        "relative": "avatars/me.png",
+        "unsafe": None,
+    }
+    assert result["selection"] == {
+        "override": {
+            "provider": "openrouter",
+            "modelId": "openai/gpt-oss-20b:free",
+            "profileId": "work",
+            "agentDir": str(agent_dir),
+        },
+        "default": {
+            "provider": "anthropic",
+            "modelId": "claude-sonnet-4-6",
+            "agentDir": str(agent_dir),
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
