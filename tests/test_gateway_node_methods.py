@@ -13761,6 +13761,157 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_music_generation_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-music-generation-core.cjs"
+    runtime_entry.write_text(
+        """
+const music = require("openclaw/plugin-sdk/music-generation-core");
+const scopedMusic = require("@openclaw/plugin-sdk/music-generation-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.music_generation_core",
+      description: "Use OpenClaw music-generation-core SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = { plugins: { enabled: false } };
+        const failoverLike = {
+          name: "FailoverError",
+          message: "auth failed",
+          reason: "auth",
+          status: 401,
+          code: "auth",
+          provider: "minimax",
+          model: "music-2.6"
+        };
+        return {
+          keys: Object.keys(music).sort(),
+          scopedType: typeof scopedMusic.parseMusicGenerationModelRef,
+          refs: {
+            parsed: music.parseMusicGenerationModelRef(" minimax/music-2.6 "),
+            invalid: music.parseMusicGenerationModelRef("missing-slash")
+          },
+          models: {
+            primary: music.resolveAgentModelPrimaryValue({ primary: " minimax/music-2.6 " }),
+            fallback: music.resolveAgentModelFallbackValues({
+              fallbacks: ["google/lyria-3", "minimax/music-2.6"]
+            })
+          },
+          providers: {
+            listDisabled: music.listMusicGenerationProviders(cfg).length,
+            missing: music.getMusicGenerationProvider("missing", cfg) ?? null,
+            envVars: music.getProviderEnvVars("minimax")
+          },
+          failover: {
+            isFailover: music.isFailoverError(failoverLike),
+            described: music.describeFailoverError(failoverLike)
+          },
+          logger: {
+            subsystem: music.createSubsystemLogger("music/generation").subsystem,
+            errorType: typeof music.createSubsystemLogger("music/generation").error
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "music-generation-core-plugin",
+                    "name": "Music Generation Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-music-generation-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.music_generation_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.music_generation_core"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createSubsystemLogger",
+            "describeFailoverError",
+            "getMusicGenerationProvider",
+            "getProviderEnvVars",
+            "isFailoverError",
+            "listMusicGenerationProviders",
+            "parseMusicGenerationModelRef",
+            "resolveAgentModelFallbackValues",
+            "resolveAgentModelPrimaryValue",
+        ],
+        "scopedType": "function",
+        "refs": {
+            "parsed": {"provider": "minimax", "model": "music-2.6"},
+            "invalid": None,
+        },
+        "models": {
+            "primary": "minimax/music-2.6",
+            "fallback": ["google/lyria-3", "minimax/music-2.6"],
+        },
+        "providers": {
+            "listDisabled": 0,
+            "missing": None,
+            "envVars": ["MINIMAX_API_KEY"],
+        },
+        "failover": {
+            "isFailover": True,
+            "described": {
+                "message": "auth failed",
+                "reason": "auth",
+                "status": 401,
+                "code": "auth",
+                "provider": "minimax",
+                "model": "music-2.6",
+            },
+        },
+        "logger": {"subsystem": "music/generation", "errorType": "function"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:

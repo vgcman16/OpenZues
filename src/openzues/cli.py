@@ -40911,6 +40911,56 @@ const imageGenerationCoreRuntime = {
   throwCapabilityGenerationFailure,
 };
 
+function parseMusicGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+const UNSAFE_MUSIC_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeMusicGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_MUSIC_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listMusicGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getMusicGenerationProvider(providerId, cfg) {
+  const normalized = normalizeMusicGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listMusicGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeMusicGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeMusicGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+const musicGenerationCoreRuntime = {
+  createSubsystemLogger,
+  describeFailoverError,
+  getMusicGenerationProvider,
+  getProviderEnvVars,
+  isFailoverError,
+  listMusicGenerationProviders,
+  parseMusicGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -53207,6 +53257,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/video-generation-core"
   ) {
     return videoGenerationCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/music-generation-core" ||
+    request === "@openclaw/plugin-sdk/music-generation-core"
+  ) {
+    return musicGenerationCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||
