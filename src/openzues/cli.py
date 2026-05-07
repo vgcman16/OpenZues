@@ -57109,6 +57109,784 @@ const channelTargetTestingRuntime = {
   installCommonResolveTargetErrorCases,
 };
 
+function createChannelTestMockFn(implementation = () => undefined) {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return implementation(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  return fn;
+}
+
+function runOrRegisterChannelTestCase(name, runCase) {
+  const registerTest =
+    typeof globalThis !== "undefined" && typeof globalThis.it === "function"
+      ? globalThis.it
+      : null;
+  if (registerTest) {
+    return registerTest.call(globalThis, name, runCase);
+  }
+  return runCase();
+}
+
+function createDirectoryTestRuntime() {
+  return {
+    log: () => {},
+    error: () => {},
+    exit: (code) => {
+      throw new Error(`exit ${code}`);
+    },
+  };
+}
+
+function expectDirectorySurface(directory) {
+  assertChannelContract(Boolean(directory) && typeof directory === "object", "expected directory");
+  assertChannelContract(typeof directory.listPeers === "function", "expected listPeers");
+  assertChannelContract(typeof directory.listGroups === "function", "expected listGroups");
+  return {
+    listPeers: directory.listPeers,
+    listGroups: directory.listGroups,
+  };
+}
+
+function sortDirectoryIds(values) {
+  return [...values].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
+
+async function expectDirectoryIds(listFn, cfg, expected, options = {}) {
+  const entries = await listFn({
+    cfg,
+    accountId: "default",
+    query: null,
+    limit: null,
+  });
+  const ids = entries.map((entry) => entry.id);
+  const actualIds = options.sorted ? sortDirectoryIds(ids) : ids;
+  const expectedIds = options.sorted ? sortDirectoryIds(expected) : expected;
+  assertChannelContract(
+    JSON.stringify(actualIds) === JSON.stringify(expectedIds),
+    `expected directory ids ${JSON.stringify(expectedIds)}; got ${JSON.stringify(actualIds)}`,
+  );
+}
+
+function createEmptyPluginRegistry() {
+  return {
+    plugins: [],
+    tools: [],
+    hooks: [],
+    typedHooks: [],
+    channels: [],
+    channelSetups: [],
+    providers: [],
+    cliBackends: [],
+    textTransforms: [],
+    speechProviders: [],
+    realtimeTranscriptionProviders: [],
+    realtimeVoiceProviders: [],
+    mediaUnderstandingProviders: [],
+    imageGenerationProviders: [],
+    videoGenerationProviders: [],
+    musicGenerationProviders: [],
+    webFetchProviders: [],
+    webSearchProviders: [],
+    migrationProviders: [],
+    codexAppServerExtensionFactories: [],
+    agentToolResultMiddlewares: [],
+    memoryEmbeddingProviders: [],
+    agentHarnesses: [],
+    gatewayHandlers: {},
+    coreGatewayMethodNames: [],
+    gatewayMethodScopes: {},
+    httpRoutes: [],
+    cliRegistrars: [],
+    reloads: [],
+    nodeHostCommands: [],
+    nodeInvokePolicies: [],
+    securityAuditCollectors: [],
+    services: [],
+    gatewayDiscoveryServices: [],
+    commands: [],
+    sessionExtensions: [],
+    trustedToolPolicies: [],
+    toolMetadata: [],
+    controlUiDescriptors: [],
+    runtimeLifecycles: [],
+    agentEventSubscriptions: [],
+    sessionSchedulerJobs: [],
+    conversationBindingResolvedHandlers: [],
+    diagnostics: [],
+  };
+}
+
+function createTestRegistry(channels = []) {
+  const registry = createEmptyPluginRegistry();
+  registry.channels = channels;
+  registry.channelSetups = channels.map((entry) => ({
+    pluginId: entry.pluginId,
+    plugin: entry.plugin,
+    source: entry.source,
+    enabled: true,
+  }));
+  return registry;
+}
+
+function createChannelTestPluginBase(params = {}) {
+  return {
+    id: params.id,
+    meta: {
+      id: params.id,
+      label: params.label || String(params.id),
+      selectionLabel: params.label || String(params.id),
+      docsPath: params.docsPath || `/channels/${params.id}`,
+      blurb: "test stub.",
+      ...(params.markdownCapable !== undefined
+        ? { markdownCapable: params.markdownCapable }
+        : {}),
+    },
+    capabilities: params.capabilities || { chatTypes: ["direct"] },
+    config: {
+      listAccountIds: () => ["default"],
+      resolveAccount: () => ({}),
+      ...(params.config || {}),
+    },
+  };
+}
+
+function createOutboundTestPlugin(params = {}) {
+  return {
+    ...createChannelTestPluginBase({
+      id: params.id,
+      label: params.label,
+      docsPath: params.docsPath,
+      capabilities: params.capabilities,
+      config: { listAccountIds: () => [] },
+    }),
+    outbound: params.outbound,
+    ...(params.messaging ? { messaging: params.messaging } : {}),
+  };
+}
+
+function expectChannelPluginContract(plugin) {
+  assertChannelContract(typeof plugin.id === "string" && plugin.id.trim(), "expected plugin id");
+  assertChannelContract(plugin.meta && plugin.meta.id === plugin.id, "expected matching meta id");
+  assertChannelContract(
+    Boolean(plugin.meta.label && plugin.meta.label.trim()),
+    "expected plugin meta label",
+  );
+  assertChannelContract(
+    Boolean(plugin.meta.selectionLabel && plugin.meta.selectionLabel.trim()),
+    "expected plugin meta selection label",
+  );
+  assertChannelContract(
+    /^\/channels\//u.test(plugin.meta.docsPath || ""),
+    "expected channel docs path",
+  );
+  assertChannelContract(
+    Boolean(plugin.meta.blurb && plugin.meta.blurb.trim()),
+    "expected plugin meta blurb",
+  );
+  assertChannelContract(
+    Array.isArray(plugin.capabilities.chatTypes) && plugin.capabilities.chatTypes.length > 0,
+    "expected channel chat type capabilities",
+  );
+  assertChannelContract(
+    typeof plugin.config.listAccountIds === "function",
+    "expected listAccountIds",
+  );
+  assertChannelContract(
+    typeof plugin.config.resolveAccount === "function",
+    "expected resolveAccount",
+  );
+}
+
+function installChannelPluginContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base channel plugin contract", () => {
+    expectChannelPluginContract(params.plugin);
+  });
+}
+
+function resolveContractMessageDiscovery(params = {}) {
+  const actions = params.plugin && params.plugin.actions;
+  if (!actions || typeof actions.describeMessageTool !== "function") {
+    return { actions: [], capabilities: [] };
+  }
+  const discovery = actions.describeMessageTool({ cfg: params.cfg }) || null;
+  return {
+    actions: Array.isArray(discovery && discovery.actions) ? [...discovery.actions] : [],
+    capabilities: Array.isArray(discovery && discovery.capabilities)
+      ? [...discovery.capabilities]
+      : [],
+  };
+}
+
+function sortChannelTestStrings(values) {
+  return [...(values || [])].sort((left, right) => String(left).localeCompare(String(right)));
+}
+
+function installChannelActionsContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base message actions contract", () => {
+    assertChannelContract(Boolean(params.plugin.actions), "expected channel actions");
+    assertChannelContract(
+      typeof params.plugin.actions.describeMessageTool === "function",
+      "expected describeMessageTool",
+    );
+  });
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`actions contract: ${testCase.name}`, () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const discovery = resolveContractMessageDiscovery({
+        plugin: params.plugin,
+        cfg: testCase.cfg,
+      });
+      assertChannelContract(
+        JSON.stringify([...new Set(discovery.actions)]) === JSON.stringify(discovery.actions),
+        "expected unique actions",
+      );
+      assertChannelContract(
+        JSON.stringify([...new Set(discovery.capabilities)]) ===
+          JSON.stringify(discovery.capabilities),
+        "expected unique capabilities",
+      );
+      assertChannelContract(
+        JSON.stringify(sortChannelTestStrings(discovery.actions)) ===
+          JSON.stringify(sortChannelTestStrings(testCase.expectedActions || [])),
+        "expected action discovery to match",
+      );
+      assertChannelContract(
+        JSON.stringify(sortChannelTestStrings(discovery.capabilities)) ===
+          JSON.stringify(sortChannelTestStrings(testCase.expectedCapabilities || [])),
+        "expected capability discovery to match",
+      );
+    });
+  }
+}
+
+function installChannelSetupContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base setup contract", () => {
+    assertChannelContract(Boolean(params.plugin.setup), "expected channel setup");
+    assertChannelContract(
+      typeof params.plugin.setup.applyAccountConfig === "function",
+      "expected applyAccountConfig",
+    );
+  });
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`setup contract: ${testCase.name}`, () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const resolvedAccountId =
+        (params.plugin.setup.resolveAccountId &&
+          params.plugin.setup.resolveAccountId({
+            cfg: testCase.cfg,
+            accountId: testCase.accountId,
+            input: testCase.input,
+          })) ||
+        testCase.accountId ||
+        "default";
+      assertChannelContract(
+        resolvedAccountId === (testCase.expectedAccountId || resolvedAccountId),
+        "expected setup account id",
+      );
+      const validation =
+        (params.plugin.setup.validateInput &&
+          params.plugin.setup.validateInput({
+            cfg: testCase.cfg,
+            accountId: resolvedAccountId,
+            input: testCase.input,
+          })) ||
+        null;
+      assertChannelContract(
+        validation === (testCase.expectedValidation || null),
+        "expected setup validation result",
+      );
+      const nextCfg = params.plugin.setup.applyAccountConfig({
+        cfg: testCase.cfg,
+        accountId: resolvedAccountId,
+        input: testCase.input,
+      });
+      assertChannelContract(nextCfg !== undefined, "expected patched setup config");
+      const account = params.plugin.config.resolveAccount(nextCfg, resolvedAccountId);
+      if (typeof testCase.assertPatchedConfig === "function") {
+        testCase.assertPatchedConfig(nextCfg);
+      }
+      if (typeof testCase.assertResolvedAccount === "function") {
+        testCase.assertResolvedAccount(account, nextCfg);
+      }
+    });
+  }
+}
+
+function installChannelStatusContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("exposes the base status contract", () => {
+    assertChannelContract(Boolean(params.plugin.status), "expected channel status");
+    assertChannelContract(
+      typeof params.plugin.status.buildAccountSnapshot === "function",
+      "expected buildAccountSnapshot",
+    );
+  });
+  if (params.plugin.status && params.plugin.status.defaultRuntime) {
+    runOrRegisterChannelTestCase(
+      "status contract: default runtime is shaped like an account snapshot",
+      () => {
+        assertChannelContract(
+          typeof params.plugin.status.defaultRuntime.accountId === "string",
+          "expected default runtime account id",
+        );
+      },
+    );
+  }
+  for (const testCase of params.cases || []) {
+    runOrRegisterChannelTestCase(`status contract: ${testCase.name}`, async () => {
+      if (typeof testCase.beforeTest === "function") {
+        testCase.beforeTest();
+      }
+      const account = params.plugin.config.resolveAccount(testCase.cfg, testCase.accountId);
+      const snapshot = await params.plugin.status.buildAccountSnapshot({
+        account,
+        cfg: testCase.cfg,
+        runtime: testCase.runtime,
+        probe: testCase.probe,
+      });
+      assertChannelContract(
+        typeof snapshot.accountId === "string" && snapshot.accountId.trim(),
+        "expected status snapshot account id",
+      );
+      if (typeof testCase.assertSnapshot === "function") {
+        testCase.assertSnapshot(snapshot);
+      }
+    });
+  }
+}
+
+function addTestHook(params = {}) {
+  params.registry.typedHooks.push({
+    pluginId: params.pluginId,
+    hookName: params.hookName,
+    handler: params.handler,
+    priority: params.priority || 0,
+    ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+    source: "test",
+  });
+}
+
+function getPluginRegistryTestState() {
+  return resolveGlobalSingleton("openzues.channelTestHelpers.registry", () => ({
+    activeRegistry: null,
+    channelRegistry: null,
+    channelPinned: false,
+  }));
+}
+
+function setActivePluginRegistry(registry) {
+  const state = getPluginRegistryTestState();
+  state.activeRegistry = registry;
+  if (!state.channelPinned) {
+    state.channelRegistry = registry;
+  }
+}
+
+function releasePinnedPluginChannelRegistry(registry) {
+  const state = getPluginRegistryTestState();
+  if (registry && state.channelRegistry !== registry) {
+    return;
+  }
+  state.channelPinned = false;
+  state.channelRegistry = state.activeRegistry;
+}
+
+function createSendCfgThreadingRuntime(params = {}) {
+  return {
+    config: {
+      loadConfig: params.loadConfig,
+    },
+    channel: {
+      text: {
+        resolveMarkdownTableMode: params.resolveMarkdownTableMode,
+        convertMarkdownTables: params.convertMarkdownTables,
+      },
+      activity: {
+        record: params.record,
+      },
+    },
+  };
+}
+
+function mockCallList(fn) {
+  if (fn && fn.mock && Array.isArray(fn.mock.calls)) {
+    return fn.mock.calls;
+  }
+  if (fn && Array.isArray(fn.calls)) {
+    return fn.calls;
+  }
+  return [];
+}
+
+function assertMockCalledWith(fn, expected) {
+  const expectedJson = JSON.stringify(expected);
+  assertChannelContract(
+    mockCallList(fn).some((call) => JSON.stringify(call[0]) === expectedJson),
+    `expected mock to be called with ${expectedJson}`,
+  );
+}
+
+function expectProvidedCfgSkipsRuntimeLoad(params = {}) {
+  assertChannelContract(mockCallList(params.loadConfig).length === 0, "expected no config load");
+  assertMockCalledWith(params.resolveAccount, {
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+}
+
+function expectRuntimeCfgFallback(params = {}) {
+  assertChannelContract(mockCallList(params.loadConfig).length === 1, "expected one config load");
+  assertMockCalledWith(params.resolveAccount, {
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+}
+
+function createStartAccountContext(params = {}) {
+  const snapshot = {
+    accountId: params.account.accountId,
+    configured: true,
+    enabled: true,
+    running: false,
+  };
+  return {
+    accountId: params.account.accountId,
+    account: params.account,
+    cfg: params.cfg || {},
+    runtime: params.runtime || createPluginRuntimeMock(),
+    abortSignal:
+      params.abortSignal || (typeof AbortController !== "undefined"
+        ? new AbortController().signal
+        : undefined),
+    log: {
+      info: createChannelTestMockFn(),
+      warn: createChannelTestMockFn(),
+      error: createChannelTestMockFn(),
+      debug: createChannelTestMockFn(),
+    },
+    getStatus: () => snapshot,
+    setStatus: (next) => {
+      Object.assign(snapshot, next);
+      if (typeof params.statusPatchSink === "function") {
+        params.statusPatchSink(snapshot);
+      }
+    },
+  };
+}
+
+function startAccountAndTrackLifecycle(params = {}) {
+  const patches = [];
+  const abort = new AbortController();
+  let settled = false;
+  const task = Promise.resolve(
+    params.startAccount(
+      createStartAccountContext({
+        account: params.account,
+        abortSignal: abort.signal,
+        statusPatchSink: (next) => patches.push({ ...next }),
+      }),
+    ),
+  ).finally(() => {
+    settled = true;
+  });
+  return {
+    abort,
+    patches,
+    task,
+    isSettled: () => settled,
+  };
+}
+
+async function abortStartedAccount(params = {}) {
+  params.abort.abort();
+  await params.task;
+}
+
+function waitForStartedMocks(...mocks) {
+  return async () => {
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      if (mocks.every((mock) => mockCallList(mock).length > 0)) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("expected started mocks to be called");
+  };
+}
+
+function matchesPartialObject(actual, expected) {
+  return Object.entries(expected || {}).every(([key, value]) => actual && actual[key] === value);
+}
+
+function expectLifecyclePatch(patches, expected) {
+  assertChannelContract(
+    (patches || []).some((patch) => matchesPartialObject(patch, expected)),
+    `expected lifecycle patch ${JSON.stringify(expected)}`,
+  );
+}
+
+async function expectPendingUntilAbort(params = {}) {
+  await params.waitForStarted();
+  assertChannelContract(params.isSettled() === false, "expected task to remain pending");
+  if (typeof params.assertBeforeAbort === "function") {
+    params.assertBeforeAbort();
+  }
+  await abortStartedAccount({ abort: params.abort, task: params.task });
+  if (typeof params.assertAfterAbort === "function") {
+    params.assertAfterAbort();
+  }
+}
+
+async function expectStopPendingUntilAbort(params = {}) {
+  await expectPendingUntilAbort({
+    waitForStarted: params.waitForStarted,
+    isSettled: params.isSettled,
+    abort: params.abort,
+    task: params.task,
+    assertBeforeAbort: () => {
+      assertChannelContract(mockCallList(params.stop).length === 0, "expected stop not called");
+    },
+    assertAfterAbort: () => {
+      assertChannelContract(mockCallList(params.stop).length === 1, "expected stop called once");
+    },
+  });
+}
+
+function expectOpenDmPolicyConfigIssue(params = {}) {
+  const issues = params.collectIssues([params.account]);
+  assertChannelContract(Array.isArray(issues) && issues.length === 1, "expected one issue");
+  assertChannelContract(issues[0] && issues[0].kind === "config", "expected config issue");
+}
+
+function registerHookHandlersForTest(params = {}) {
+  const handlers = new Map();
+  const api = {
+    config: params.config || {},
+    on: (hookName, handler) => {
+      handlers.set(hookName, handler);
+    },
+  };
+  params.register(api);
+  return handlers;
+}
+
+function getRequiredHookHandler(handlers, hookName) {
+  const handler = handlers.get(hookName);
+  assertChannelContract(Boolean(handler), `expected ${hookName} hook handler`);
+  return handler;
+}
+
+function assertBundledChannelEntries(params = {}) {
+  runOrRegisterChannelTestCase(
+    params.channelMessage || "declares the channel plugin without importing the broad api barrel",
+    () => {
+      assertChannelContract(
+        params.entry.kind === "bundled-channel-entry",
+        "expected bundled channel entry",
+      );
+      assertChannelContract(params.entry.id === params.expectedId, "expected channel entry id");
+      assertChannelContract(
+        params.entry.name === params.expectedName,
+        "expected channel entry name",
+      );
+    },
+  );
+  runOrRegisterChannelTestCase(
+    params.setupMessage || "declares the setup plugin without importing the broad api barrel",
+    () => {
+      assertChannelContract(
+        params.setupEntry.kind === "bundled-channel-setup-entry",
+        "expected bundled channel setup entry",
+      );
+      assertChannelContract(
+        typeof params.setupEntry.loadSetupPlugin === "function",
+        "expected setup plugin loader",
+      );
+    },
+  );
+}
+
+function formatEnvelopeTimestamp(date, zone = "utc") {
+  const trimmedZone = String(zone || "utc").trim();
+  const normalized = trimmedZone.toLowerCase();
+  let weekday;
+  try {
+    const weekdayOptions =
+      normalized === "utc" || normalized === "gmt"
+        ? { timeZone: "UTC", weekday: "short" }
+        : normalized === "local" || normalized === "host"
+          ? { weekday: "short" }
+          : { timeZone: trimmedZone, weekday: "short" };
+    weekday = new Intl.DateTimeFormat("en-US", weekdayOptions).format(date);
+  } catch (_error) {
+    weekday = undefined;
+  }
+  if (normalized === "utc" || normalized === "gmt") {
+    const ts = formatUtcTimestamp(date);
+    return weekday ? `${weekday} ${ts}` : ts;
+  }
+  if (normalized === "local" || normalized === "host") {
+    const ts = formatZonedTimestamp(date) || formatUtcTimestamp(date);
+    return weekday ? `${weekday} ${ts}` : ts;
+  }
+  const ts = formatZonedTimestamp(date, { timeZone: trimmedZone }) || formatUtcTimestamp(date);
+  return weekday ? `${weekday} ${ts}` : ts;
+}
+
+function formatLocalEnvelopeTimestamp(date) {
+  return formatEnvelopeTimestamp(date, "local");
+}
+
+function extractPairingCode(text) {
+  const match = String(text).match(/Pairing code:\s*```[\r\n]+([A-Z2-9]{6,})/u);
+  assertChannelContract(Boolean(match), "expected pairing code");
+  return match ? match[1] : "";
+}
+
+function expectPairingReplyText(text, params = {}) {
+  const code = params.code || extractPairingCode(text);
+  assertChannelContract(text.includes("OpenClaw: access not configured."), "expected pairing text");
+  assertChannelContract(text.includes(params.idLine), "expected pairing id line");
+  assertChannelContract(text.includes("Pairing code:"), "expected pairing code label");
+  assertChannelContract(text.includes(`\n\`\`\`\n${code}\n\`\`\`\n`), "expected code fence");
+  assertChannelContract(
+    text.includes(`pairing approve ${params.channel} ${code}`),
+    "expected pairing approve command",
+  );
+  return code;
+}
+
+function createTaskFlowSessionMock() {
+  return {
+    sessionKey: "agent:main:main",
+    createManaged: createChannelTestMockFn(),
+    get: createChannelTestMockFn(),
+    list: createChannelTestMockFn(() => []),
+    findLatest: createChannelTestMockFn(),
+    resolve: createChannelTestMockFn(),
+    getTaskSummary: createChannelTestMockFn(),
+    setWaiting: createChannelTestMockFn(),
+    resume: createChannelTestMockFn(),
+    finish: createChannelTestMockFn(),
+    fail: createChannelTestMockFn(),
+    requestCancel: createChannelTestMockFn(),
+    cancel: createChannelTestMockFn(),
+    runTask: createChannelTestMockFn(),
+  };
+}
+
+function createDeprecatedRuntimeConfigError(name) {
+  return new Error(
+    `Plugin runtime config.${name}() is deprecated in tests; ` +
+      "pass cfg/current() or use mutateConfigFile()/replaceConfigFile().",
+  );
+}
+
+function isPlainChannelTestObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeChannelTestDeep(base, overrides = {}) {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides || {})) {
+    if (value === undefined) {
+      continue;
+    }
+    if (isPlainChannelTestObject(result[key]) && isPlainChannelTestObject(value)) {
+      result[key] = mergeChannelTestDeep(result[key], value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function createPluginRuntimeMock(overrides = {}) {
+  const runtime = {
+    config: {
+      current: () => ({}),
+      loadConfig: () => {
+        throw createDeprecatedRuntimeConfigError("loadConfig");
+      },
+      writeConfigFile: () => {
+        throw createDeprecatedRuntimeConfigError("writeConfigFile");
+      },
+      mutateConfigFile: createChannelTestMockFn(),
+      replaceConfigFile: createChannelTestMockFn(),
+    },
+    channel: {
+      text: {
+        resolveMarkdownTableMode: createChannelTestMockFn(() => undefined),
+        convertMarkdownTables: createChannelTestMockFn((text) => text),
+      },
+      activity: {
+        record: createChannelTestMockFn(),
+      },
+      turn: {
+        runPrepared: createChannelTestMockFn(async (params) => ({
+          admission: params && params.admission ? params.admission : { kind: "dispatch" },
+          dispatched: true,
+          dispatchResult: { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } },
+        })),
+      },
+    },
+    tasks: {
+      managedFlows: {
+        bindSession: createChannelTestMockFn(createTaskFlowSessionMock),
+        fromToolContext: createChannelTestMockFn(createTaskFlowSessionMock),
+      },
+    },
+    hooks: {
+      initializeGlobalHookRunner,
+      resetGlobalHookRunner,
+    },
+  };
+  return mergeChannelTestDeep(runtime, overrides);
+}
+
+const channelTestHelpersRuntime = {
+  abortStartedAccount,
+  addTestHook,
+  assertBundledChannelEntries,
+  createDirectoryTestRuntime,
+  createEmptyPluginRegistry,
+  createOutboundTestPlugin,
+  createPluginRuntimeMock,
+  createSendCfgThreadingRuntime,
+  createStartAccountContext,
+  createTestRegistry,
+  deliverOutboundPayloads,
+  escapeRegExp,
+  expectChannelPluginContract,
+  expectDirectoryIds,
+  expectDirectorySurface,
+  expectLifecyclePatch,
+  expectOpenDmPolicyConfigIssue,
+  expectPairingReplyText,
+  expectPendingUntilAbort,
+  expectProvidedCfgSkipsRuntimeLoad,
+  expectRuntimeCfgFallback,
+  expectStopPendingUntilAbort,
+  extractPairingCode,
+  formatEnvelopeTimestamp,
+  formatLocalEnvelopeTimestamp,
+  getRequiredHookHandler,
+  initializeGlobalHookRunner,
+  registerHookHandlersForTest,
+  releasePinnedPluginChannelRegistry,
+  resetGlobalHookRunner,
+  setActivePluginRegistry,
+  startAccountAndTrackLifecycle,
+  waitForStartedMocks,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -75874,6 +76652,7 @@ const genericSdk = new Proxy(
     ...channelCoreRuntime,
     ...channelContractTestingRuntime,
     ...channelTargetTestingRuntime,
+    ...channelTestHelpersRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -77918,6 +78697,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-target-testing"
   ) {
     return channelTargetTestingRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/channel-test-helpers" ||
+    request === "@openclaw/plugin-sdk/channel-test-helpers"
+  ) {
+    return channelTestHelpersRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

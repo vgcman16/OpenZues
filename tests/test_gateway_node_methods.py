@@ -31304,6 +31304,384 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_channel_test_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-channel-test-helpers.cjs"
+    runtime_entry.write_text(
+        """
+const helpers = require("openclaw/plugin-sdk/channel-test-helpers");
+const scopedHelpers = require("@openclaw/plugin-sdk/channel-test-helpers");
+
+function mockFn(impl = () => undefined) {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return impl(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  return fn;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.channel_test_helpers",
+      description: "Use OpenClaw channel test helpers SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registered = [];
+        const previousIt = globalThis.it;
+        globalThis.it = (name, callback) => {
+          registered.push(name);
+          callback();
+        };
+        try {
+          helpers.assertBundledChannelEntries({
+            entry: { kind: "bundled-channel-entry", id: "demo", name: "Demo" },
+            expectedId: "demo",
+            expectedName: "Demo",
+            setupEntry: {
+              kind: "bundled-channel-setup-entry",
+              loadSetupPlugin: () => ({})
+            }
+          });
+        } finally {
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+
+        const directoryRuntime = helpers.createDirectoryTestRuntime();
+        let exitError = "";
+        try {
+          directoryRuntime.exit(7);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const directory = {
+          listPeers: async () => [{ id: "peer-a" }],
+          listGroups: async () => [{ id: "group-a" }]
+        };
+        const surface = helpers.expectDirectorySurface(directory);
+        await helpers.expectDirectoryIds(
+          async () => [{ id: "b" }, { id: "a" }],
+          {},
+          ["a", "b"],
+          { sorted: true }
+        );
+
+        const outbound = { sendMessage: async () => ({ messageId: "m1" }) };
+        const plugin = helpers.createOutboundTestPlugin({
+          id: "demo",
+          outbound,
+          label: "Demo Channel",
+          docsPath: "/channels/demo",
+          capabilities: { chatTypes: ["direct", "group"] }
+        });
+        helpers.expectChannelPluginContract(plugin);
+        const registry = helpers.createTestRegistry([
+          { pluginId: "demo", plugin, source: "test" }
+        ]);
+        helpers.addTestHook({
+          registry,
+          pluginId: "demo",
+          hookName: "message_received",
+          handler: () => "handled",
+          priority: 3,
+          timeoutMs: 99
+        });
+        helpers.setActivePluginRegistry(registry);
+        helpers.releasePinnedPluginChannelRegistry(registry);
+
+        const hooks = helpers.registerHookHandlersForTest({
+          config: { enabled: true },
+          register(api) {
+            api.on("message_received", (event, ctx) => ({ event, ctx, cfg: api.config }));
+          }
+        });
+        const hookResult = helpers.getRequiredHookHandler(
+          hooks,
+          "message_received"
+        )("event", "ctx");
+
+        const statusPatches = [];
+        const ctx = helpers.createStartAccountContext({
+          account: { accountId: "default", token: "t" },
+          statusPatchSink: (next) => statusPatches.push({ ...next })
+        });
+        ctx.setStatus({ running: true, message: "started" });
+        helpers.expectLifecyclePatch(statusPatches, { running: true });
+
+        const loadConfig = mockFn(() => ({ cfg: true }));
+        const resolveAccount = mockFn(() => ({ accountId: "default" }));
+        const cfg = { channels: { demo: {} } };
+        loadConfig();
+        resolveAccount({ cfg, accountId: "default" });
+        helpers.expectRuntimeCfgFallback({
+          loadConfig,
+          resolveAccount,
+          cfg,
+          accountId: "default"
+        });
+        const loadConfigProvided = mockFn();
+        const resolveProvided = mockFn();
+        resolveProvided({ cfg, accountId: "default" });
+        helpers.expectProvidedCfgSkipsRuntimeLoad({
+          loadConfig: loadConfigProvided,
+          resolveAccount: resolveProvided,
+          cfg,
+          accountId: "default"
+        });
+        const sendRuntime = helpers.createSendCfgThreadingRuntime({
+          loadConfig,
+          resolveMarkdownTableMode: mockFn(() => "preserve"),
+          convertMarkdownTables: mockFn((text) => text),
+          record: mockFn()
+        });
+
+        helpers.expectOpenDmPolicyConfigIssue({
+          collectIssues: () => [{ kind: "config" }],
+          account: { accountId: "default" }
+        });
+
+        const started = helpers.startAccountAndTrackLifecycle({
+          account: { accountId: "default" },
+          startAccount: async (startCtx) => {
+            startCtx.setStatus({ running: true });
+            await new Promise((resolve) =>
+              startCtx.abortSignal.addEventListener("abort", resolve, { once: true })
+            );
+            startCtx.setStatus({ running: false });
+          }
+        });
+        await helpers.abortStartedAccount({
+          abort: started.abort,
+          task: started.task
+        });
+
+        const runtimeMock = helpers.createPluginRuntimeMock({
+          config: { current: () => ({ mocked: true }) }
+        });
+        let deprecatedError = "";
+        try {
+          runtimeMock.config.loadConfig();
+        } catch (error) {
+          deprecatedError = error.message;
+        }
+
+        const timestamp = helpers.formatEnvelopeTimestamp(
+          new Date("2026-05-07T12:34:00.000Z"),
+          "utc"
+        );
+        const localTimestamp = helpers.formatLocalEnvelopeTimestamp(
+          new Date("2026-05-07T12:34:00.000Z")
+        );
+        const pairingText =
+          "OpenClaw: access not configured.\\nUser: Ada\\n" +
+          "Pairing code:\\n```\\nABC234\\n```\\n" +
+          "Run pairing approve demo ABC234";
+        const pairingCode = helpers.expectPairingReplyText(pairingText, {
+          channel: "demo",
+          idLine: "User: Ada"
+        });
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          scopedSame:
+            scopedHelpers.createTestRegistry === helpers.createTestRegistry,
+          directory: {
+            logType: typeof directoryRuntime.log,
+            errorType: typeof directoryRuntime.error,
+            exitError,
+            peersType: typeof surface.listPeers,
+            groupsType: typeof surface.listGroups
+          },
+          plugin: {
+            id: plugin.id,
+            label: plugin.meta.label,
+            docsPath: plugin.meta.docsPath,
+            chatTypes: plugin.capabilities.chatTypes,
+            outboundSame: plugin.outbound === outbound
+          },
+          registry: {
+            channels: registry.channels.length,
+            setups: registry.channelSetups.length,
+            hook: registry.typedHooks[0]
+          },
+          hookResult,
+          statusPatches,
+          sendRuntime: {
+            hasConfig: typeof sendRuntime.config.loadConfig,
+            mode: sendRuntime.channel.text.resolveMarkdownTableMode(),
+            providedCalls: resolveProvided.calls.length
+          },
+          lifecycle: {
+            patches: started.patches,
+            settled: started.isSettled()
+          },
+          runtimeMock: {
+            current: runtimeMock.config.current(),
+            deprecatedError,
+            bindSessionType: typeof runtimeMock.tasks.managedFlows.bindSession
+          },
+          registered,
+          timestamp,
+          localTimestampType: typeof localTimestamp,
+          escape: helpers.escapeRegExp("a+b?"),
+          pairingCode
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-channel-test-helpers-plugin",
+                    "name": "Runtime Channel Test Helpers Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-channel-test-helpers.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.channel_test_helpers"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.channel_test_helpers"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "abortStartedAccount",
+        "addTestHook",
+        "assertBundledChannelEntries",
+        "createDirectoryTestRuntime",
+        "createEmptyPluginRegistry",
+        "createOutboundTestPlugin",
+        "createPluginRuntimeMock",
+        "createSendCfgThreadingRuntime",
+        "createStartAccountContext",
+        "createTestRegistry",
+        "deliverOutboundPayloads",
+        "escapeRegExp",
+        "expectChannelPluginContract",
+        "expectDirectoryIds",
+        "expectDirectorySurface",
+        "expectLifecyclePatch",
+        "expectOpenDmPolicyConfigIssue",
+        "expectPairingReplyText",
+        "expectPendingUntilAbort",
+        "expectProvidedCfgSkipsRuntimeLoad",
+        "expectRuntimeCfgFallback",
+        "expectStopPendingUntilAbort",
+        "extractPairingCode",
+        "formatEnvelopeTimestamp",
+        "formatLocalEnvelopeTimestamp",
+        "getRequiredHookHandler",
+        "initializeGlobalHookRunner",
+        "registerHookHandlersForTest",
+        "releasePinnedPluginChannelRegistry",
+        "resetGlobalHookRunner",
+        "setActivePluginRegistry",
+        "startAccountAndTrackLifecycle",
+        "waitForStartedMocks",
+    ]
+    assert result["scopedSame"] is True
+    assert result["directory"] == {
+        "logType": "function",
+        "errorType": "function",
+        "exitError": "exit 7",
+        "peersType": "function",
+        "groupsType": "function",
+    }
+    assert result["plugin"] == {
+        "id": "demo",
+        "label": "Demo Channel",
+        "docsPath": "/channels/demo",
+        "chatTypes": ["direct", "group"],
+        "outboundSame": True,
+    }
+    assert result["registry"]["channels"] == 1
+    assert result["registry"]["setups"] == 1
+    assert result["registry"]["hook"] == {
+        "pluginId": "demo",
+        "hookName": "message_received",
+        "priority": 3,
+        "timeoutMs": 99,
+        "source": "test",
+    }
+    assert result["hookResult"] == {
+        "event": "event",
+        "ctx": "ctx",
+        "cfg": {"enabled": True},
+    }
+    assert result["statusPatches"][0]["running"] is True
+    assert result["sendRuntime"] == {
+        "hasConfig": "function",
+        "mode": "preserve",
+        "providedCalls": 1,
+    }
+    assert result["lifecycle"]["patches"][0]["running"] is True
+    assert result["lifecycle"]["patches"][-1]["running"] is False
+    assert result["lifecycle"]["settled"] is True
+    assert result["runtimeMock"] == {
+        "current": {"mocked": True},
+        "deprecatedError": (
+            "Plugin runtime config.loadConfig() is deprecated in tests; "
+            "pass cfg/current() or use mutateConfigFile()/replaceConfigFile()."
+        ),
+        "bindSessionType": "function",
+    }
+    assert result["registered"] == [
+        "declares the channel plugin without importing the broad api barrel",
+        "declares the setup plugin without importing the broad api barrel",
+    ]
+    assert result["timestamp"] == "Thu 2026-05-07T12:34Z"
+    assert result["localTimestampType"] == "string"
+    assert result["escape"] == "a\\+b\\?"
+    assert result["pairingCode"] == "ABC234"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
