@@ -55111,6 +55111,541 @@ function agentRuntimeIsNonSecretApiKeyMarker(value, opts = {}) {
   return agentRuntimeIsKnownEnvApiKeyMarker(trimmed);
 }
 
+function agentRuntimeResolveProviderConfig(cfg = {}, provider) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(providers, provider)) {
+    return providers[provider];
+  }
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  if (Object.prototype.hasOwnProperty.call(providers, normalized)) {
+    return providers[normalized];
+  }
+  const match = Object.entries(providers).find(
+    ([key]) => agentRuntimeNormalizeProviderId(key) === normalized,
+  );
+  return match ? match[1] : undefined;
+}
+
+function agentRuntimeGetCustomProviderApiKey(cfg, provider) {
+  const entry = agentRuntimeResolveProviderConfig(cfg, provider);
+  const literal = normalizeSecretInputString(entry && entry.apiKey);
+  if (literal) {
+    return literal;
+  }
+  const ref = coerceSecretRef(entry && entry.apiKey);
+  if (!ref) {
+    return undefined;
+  }
+  if (ref.source === "env") {
+    const envId = agentRuntimeTrimStringValue(ref.id);
+    return envId || NON_ENV_SECRETREF_MARKER;
+  }
+  return NON_ENV_SECRETREF_MARKER;
+}
+
+function agentRuntimeResolveDefaultSecretProviderAlias(_cfg = {}, _source = "env") {
+  return DEFAULT_SECRET_PROVIDER_ALIAS;
+}
+
+function agentRuntimeCanResolveEnvSecretRefInReadOnlyPath(params = {}) {
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  const id = agentRuntimeTrimStringValue(params.id);
+  const secretProviders = params.cfg && params.cfg.secrets && params.cfg.secrets.providers;
+  const providerConfig = secretProviders && secretProviders[provider];
+  if (!providerConfig) {
+    return provider === agentRuntimeResolveDefaultSecretProviderAlias(params.cfg || {}, "env");
+  }
+  if (providerConfig.source !== "env") {
+    return false;
+  }
+  const allowlist = providerConfig.allowlist;
+  return !Array.isArray(allowlist) || allowlist.includes(id);
+}
+
+function agentRuntimeResolveEnvSourceLabel(params = {}) {
+  return `env: ${params.label || ""}`;
+}
+
+function agentRuntimeResolveUsableCustomProviderApiKey(params = {}) {
+  const provider = agentRuntimeTrimStringValue(params.provider);
+  const cfg = params.cfg;
+  const env = params.env || process.env;
+  const customProviderConfig = agentRuntimeResolveProviderConfig(cfg, provider);
+  const apiKeyRef = coerceSecretRef(customProviderConfig && customProviderConfig.apiKey);
+  if (apiKeyRef) {
+    if (apiKeyRef.source !== "env") {
+      return null;
+    }
+    const envVarName = agentRuntimeTrimStringValue(apiKeyRef.id);
+    if (!envVarName) {
+      return null;
+    }
+    if (
+      !agentRuntimeCanResolveEnvSecretRefInReadOnlyPath({
+        cfg,
+        provider: apiKeyRef.provider,
+        id: envVarName,
+      })
+    ) {
+      return null;
+    }
+    const envValue = normalizeSecretInputString(env && env[envVarName]);
+    if (!envValue) {
+      return null;
+    }
+    return {
+      apiKey: envValue,
+      source: agentRuntimeResolveEnvSourceLabel({
+        envVars: [envVarName],
+        label: `${envVarName} (models.json secretref)`,
+      }),
+    };
+  }
+
+  const customKey = agentRuntimeGetCustomProviderApiKey(cfg, provider);
+  if (!customKey) {
+    return null;
+  }
+  if (!agentRuntimeIsNonSecretApiKeyMarker(customKey)) {
+    return { apiKey: customKey, source: "models.json" };
+  }
+  if (agentRuntimeIsKnownEnvApiKeyMarker(customKey)) {
+    const envValue = normalizeSecretInputString(env && env[customKey]);
+    if (!envValue) {
+      return null;
+    }
+    return {
+      apiKey: envValue,
+      source: agentRuntimeResolveEnvSourceLabel({
+        envVars: [customKey],
+        label: `${customKey} (models.json marker)`,
+      }),
+    };
+  }
+  if (
+    customProviderConfig &&
+    agentRuntimeIsCustomLocalProviderConfig(customProviderConfig) &&
+    (customProviderConfig.api === "openai-completions" || customProviderConfig.api === "ollama") &&
+    customProviderConfig.baseUrl &&
+    agentRuntimeIsLocalBaseUrl(customProviderConfig.baseUrl)
+  ) {
+    return {
+      apiKey: customProviderConfig.api === "ollama" ? customKey : CUSTOM_LOCAL_AUTH_MARKER,
+      source: "models.json (local marker)",
+    };
+  }
+  return null;
+}
+
+function agentRuntimeHasUsableCustomProviderApiKey(cfg, provider, env = process.env) {
+  return Boolean(agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env }));
+}
+
+function agentRuntimeResolveProviderAuthOverride(cfg, provider) {
+  const entry = agentRuntimeResolveProviderConfig(cfg, provider);
+  const auth = entry && entry.auth;
+  return auth === "api-key" || auth === "aws-sdk" || auth === "oauth" || auth === "token"
+    ? auth
+    : undefined;
+}
+
+function agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig) {
+  return (
+    normalizeSecretInputString(providerConfig && providerConfig.apiKey) !== undefined ||
+    coerceSecretRef(providerConfig && providerConfig.apiKey) !== null
+  );
+}
+
+function agentRuntimeShouldPreferExplicitConfigApiKeyAuth(cfg, provider) {
+  const providerConfig = agentRuntimeResolveProviderConfig(cfg, provider);
+  return (
+    agentRuntimeResolveProviderAuthOverride(cfg, provider) === "api-key" &&
+    providerConfig !== undefined &&
+    agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig)
+  );
+}
+
+function agentRuntimeIsPrivateIpv4Host(host) {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return false;
+  }
+  const octets = host.split(".").map((part) => Number.parseInt(part, 10));
+  if (octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  const [a, b] = octets;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function agentRuntimeIsLocalBaseUrl(baseUrl) {
+  try {
+    let host = normalizeLowercaseStringOrEmpty(new URL(baseUrl).hostname);
+    if (host.startsWith("[") && host.endsWith("]")) {
+      host = host.slice(1, -1);
+    }
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "::ffff:7f00:1" ||
+      host === "::ffff:127.0.0.1" ||
+      host.endsWith(".local") ||
+      agentRuntimeIsPrivateIpv4Host(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function agentRuntimeIsCustomLocalProviderConfig(providerConfig) {
+  return (
+    typeof (providerConfig && providerConfig.baseUrl) === "string" &&
+    providerConfig.baseUrl.trim().length > 0 &&
+    typeof providerConfig.api === "string" &&
+    providerConfig.api.trim().length > 0 &&
+    Array.isArray(providerConfig.models) &&
+    providerConfig.models.length > 0
+  );
+}
+
+function agentRuntimeHasSyntheticLocalProviderAuthConfig(params = {}) {
+  const providerConfig = agentRuntimeResolveProviderConfig(params.cfg, params.provider);
+  if (!providerConfig) {
+    return false;
+  }
+  const hasApiConfig =
+    Boolean(agentRuntimeTrimStringValue(providerConfig.api)) ||
+    Boolean(agentRuntimeTrimStringValue(providerConfig.baseUrl)) ||
+    (Array.isArray(providerConfig.models) && providerConfig.models.length > 0);
+  if (!hasApiConfig) {
+    return false;
+  }
+  const authOverride = agentRuntimeResolveProviderAuthOverride(params.cfg, params.provider);
+  if (authOverride && authOverride !== "api-key") {
+    return false;
+  }
+  if (!agentRuntimeIsCustomLocalProviderConfig(providerConfig)) {
+    return false;
+  }
+  if (agentRuntimeHasExplicitProviderApiKeyConfig(providerConfig)) {
+    return false;
+  }
+  return Boolean(providerConfig.baseUrl && agentRuntimeIsLocalBaseUrl(providerConfig.baseUrl));
+}
+
+function agentRuntimeResolveEnvApiKey(provider, env = process.env, options = {}) {
+  return resolveEnvApiKey(provider, env, options);
+}
+
+function agentRuntimeHasRuntimeAvailableProviderAuth(params = {}) {
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const authOverride = agentRuntimeResolveProviderAuthOverride(params.cfg, provider);
+  if (authOverride === "aws-sdk") {
+    return true;
+  }
+  if (authOverride === undefined && provider === "amazon-bedrock") {
+    return true;
+  }
+  if (
+    agentRuntimeResolveEnvApiKey(provider, params.env || process.env, {
+      config: params.cfg,
+      workspaceDir: params.workspaceDir,
+    })
+  ) {
+    return true;
+  }
+  if (
+    agentRuntimeResolveUsableCustomProviderApiKey({
+      cfg: params.cfg,
+      provider,
+      env: params.env || process.env,
+    })
+  ) {
+    return true;
+  }
+  return agentRuntimeHasSyntheticLocalProviderAuthConfig({ cfg: params.cfg, provider });
+}
+
+function agentRuntimeListProfilesForProvider(store = {}, provider) {
+  const normalized = agentRuntimeNormalizeProviderId(provider);
+  const profiles = store && store.profiles && typeof store.profiles === "object"
+    ? store.profiles
+    : {};
+  return Object.entries(profiles)
+    .filter(
+      ([, profile]) => agentRuntimeNormalizeProviderId(profile && profile.provider) === normalized,
+    )
+    .map(([profileId]) => profileId);
+}
+
+function agentRuntimeResolveAuthProfileOrder(params = {}) {
+  const store = params.store || {};
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const order = store.order && typeof store.order === "object" ? store.order : {};
+  const direct = Array.isArray(order[provider]) ? order[provider] : undefined;
+  const matched = direct ||
+    Object.entries(order).find(([key]) => agentRuntimeNormalizeProviderId(key) === provider)?.[1];
+  const ordered = Array.isArray(matched)
+    ? matched
+    : agentRuntimeListProfilesForProvider(store, provider);
+  const preferred = agentRuntimeTrimStringValue(params.preferredProfile);
+  return preferred && !ordered.includes(preferred) ? [preferred, ...ordered] : ordered;
+}
+
+async function agentRuntimeResolveApiKeyForProfile(params = {}) {
+  const profileId = agentRuntimeTrimStringValue(params.profileId);
+  const profile = params.store && params.store.profiles && params.store.profiles[profileId];
+  if (!profile || typeof profile !== "object") {
+    return null;
+  }
+  const env = params.env || process.env;
+  if (profile.type === "api_key" || profile.type === "api-key") {
+    const literal = normalizeSecretInputString(profile.key);
+    if (literal) {
+      return { apiKey: literal };
+    }
+    const ref = coerceSecretRef(profile.keyRef || profile.key);
+    if (ref && ref.source === "env") {
+      const value = normalizeSecretInputString(env && env[ref.id]);
+      return value ? { apiKey: value } : null;
+    }
+  }
+  if (profile.type === "oauth") {
+    const token = normalizeSecretInputString(
+      profile.token || profile.accessToken || profile.apiKey,
+    );
+    return token ? { apiKey: token } : null;
+  }
+  if (profile.type === "token") {
+    const token = normalizeSecretInputString(profile.token || profile.key || profile.apiKey);
+    return token ? { apiKey: token } : null;
+  }
+  return null;
+}
+
+function agentRuntimeResolveAwsSdkAuthInfo(env = process.env) {
+  if (normalizeSecretInputString(env && env.AWS_BEARER_TOKEN_BEDROCK)) {
+    return { mode: "aws-sdk", source: "env: AWS_BEARER_TOKEN_BEDROCK" };
+  }
+  if (
+    normalizeSecretInputString(env && env.AWS_ACCESS_KEY_ID) &&
+    normalizeSecretInputString(env && env.AWS_SECRET_ACCESS_KEY)
+  ) {
+    return { mode: "aws-sdk", source: "env: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY" };
+  }
+  if (normalizeSecretInputString(env && env.AWS_PROFILE)) {
+    return { mode: "aws-sdk", source: "env: AWS_PROFILE" };
+  }
+  return { mode: "aws-sdk", source: "aws-sdk default chain" };
+}
+
+async function agentRuntimeResolveApiKeyForProvider(params = {}) {
+  const provider = agentRuntimeNormalizeProviderId(params.provider);
+  const cfg = params.cfg;
+  const env = params.env || process.env;
+  if (params.profileId) {
+    const resolved = await agentRuntimeResolveApiKeyForProfile({
+      store: params.store || { profiles: {}, order: {} },
+      profileId: params.profileId,
+      env,
+    });
+    if (!resolved) {
+      throw new Error(`No credentials found for profile "${params.profileId}".`);
+    }
+    const profile =
+      params.store && params.store.profiles && params.store.profiles[params.profileId];
+    const type = profile && profile.type;
+    return {
+      apiKey: resolved.apiKey,
+      profileId: params.profileId,
+      source: `profile:${params.profileId}`,
+      mode: type === "oauth" ? "oauth" : type === "token" ? "token" : "api-key",
+    };
+  }
+  const authOverride = agentRuntimeResolveProviderAuthOverride(cfg, provider);
+  if (authOverride === "aws-sdk" || (authOverride === undefined && provider === "amazon-bedrock")) {
+    return agentRuntimeResolveAwsSdkAuthInfo(env);
+  }
+  if (agentRuntimeShouldPreferExplicitConfigApiKeyAuth(cfg, provider)) {
+    const explicitKey = agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env });
+    if (explicitKey) {
+      return { apiKey: explicitKey.apiKey, source: explicitKey.source, mode: "api-key" };
+    }
+  }
+  if (params.credentialPrecedence === "env-first") {
+    const envResolved = agentRuntimeResolveEnvApiKey(provider, env, {
+      config: cfg,
+      workspaceDir: params.workspaceDir,
+    });
+    if (envResolved) {
+      return {
+        apiKey: envResolved.apiKey,
+        source: envResolved.source,
+        mode: envResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+      };
+    }
+  }
+  if (params.store) {
+    for (const candidate of agentRuntimeResolveAuthProfileOrder({
+      store: params.store,
+      provider,
+      preferredProfile: params.preferredProfile,
+    })) {
+      const resolved = await agentRuntimeResolveApiKeyForProfile({
+        store: params.store,
+        profileId: candidate,
+        env,
+      });
+      if (resolved) {
+        const profile = params.store.profiles && params.store.profiles[candidate];
+        const type = profile && profile.type;
+        return {
+          apiKey: resolved.apiKey,
+          profileId: candidate,
+          source: `profile:${candidate}`,
+          mode: type === "oauth" ? "oauth" : type === "token" ? "token" : "api-key",
+        };
+      }
+    }
+  }
+  const envResolved = agentRuntimeResolveEnvApiKey(provider, env, {
+    config: cfg,
+    workspaceDir: params.workspaceDir,
+  });
+  if (envResolved) {
+    return {
+      apiKey: envResolved.apiKey,
+      source: envResolved.source,
+      mode: envResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+    };
+  }
+  const customKey = agentRuntimeResolveUsableCustomProviderApiKey({ cfg, provider, env });
+  if (customKey) {
+    return { apiKey: customKey.apiKey, source: customKey.source, mode: "api-key" };
+  }
+  if (agentRuntimeHasSyntheticLocalProviderAuthConfig({ cfg, provider })) {
+    return {
+      apiKey: CUSTOM_LOCAL_AUTH_MARKER,
+      source: `models.providers.${provider} (synthetic local key)`,
+      mode: "api-key",
+    };
+  }
+  throw new Error(`No API key found for provider "${provider}".`);
+}
+
+function agentRuntimeResolveModelAuthMode(provider, cfg, store, options = {}) {
+  const resolved = agentRuntimeTrimStringValue(provider);
+  if (!resolved) {
+    return undefined;
+  }
+  const normalized = agentRuntimeNormalizeProviderId(resolved);
+  const authOverride = agentRuntimeResolveProviderAuthOverride(cfg, normalized);
+  if (authOverride === "aws-sdk") {
+    return "aws-sdk";
+  }
+  const profiles = agentRuntimeListProfilesForProvider(store || { profiles: {} }, normalized);
+  if (profiles.length > 0) {
+    const modes = new Set(
+      profiles
+        .map((id) => store && store.profiles && store.profiles[id] && store.profiles[id].type)
+        .filter(Boolean),
+    );
+    const distinct = ["oauth", "token", "api_key", "api-key"].filter((mode) => modes.has(mode));
+    if (distinct.length >= 2) {
+      return "mixed";
+    }
+    if (modes.has("oauth")) {
+      return "oauth";
+    }
+    if (modes.has("token")) {
+      return "token";
+    }
+    if (modes.has("api_key") || modes.has("api-key")) {
+      return "api-key";
+    }
+  }
+  if (authOverride === undefined && normalized === "amazon-bedrock") {
+    return "aws-sdk";
+  }
+  const envKey = agentRuntimeResolveEnvApiKey(normalized, options.env || process.env, {
+    config: cfg,
+    workspaceDir: options.workspaceDir,
+  });
+  if (envKey && envKey.apiKey) {
+    return envKey.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key";
+  }
+  if (agentRuntimeHasUsableCustomProviderApiKey(cfg, normalized, options.env || process.env)) {
+    return "api-key";
+  }
+  return "unknown";
+}
+
+async function agentRuntimeHasAvailableAuthForProvider(params = {}) {
+  try {
+    await agentRuntimeResolveApiKeyForProvider(params);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function agentRuntimeGetApiKeyForModel(params = {}) {
+  return agentRuntimeResolveApiKeyForProvider({
+    provider: params.model && params.model.provider,
+    cfg: params.cfg,
+    profileId: params.profileId,
+    preferredProfile: params.preferredProfile,
+    store: params.store,
+    agentDir: params.agentDir,
+    workspaceDir: params.workspaceDir,
+    lockedProfile: params.lockedProfile,
+    credentialPrecedence: params.credentialPrecedence,
+    env: params.env,
+  });
+}
+
+function agentRuntimeApplyLocalNoAuthHeaderOverride(model, auth) {
+  if (
+    !auth ||
+    auth.apiKey !== CUSTOM_LOCAL_AUTH_MARKER ||
+    !model ||
+    model.api !== "openai-completions"
+  ) {
+    return model;
+  }
+  return {
+    ...model,
+    headers: {
+      ...(model.headers || {}),
+      Authorization: null,
+    },
+  };
+}
+
+function agentRuntimeApplyAuthHeaderOverride(model, auth, cfg) {
+  if (!model || !auth || !auth.apiKey || agentRuntimeIsNonSecretApiKeyMarker(auth.apiKey)) {
+    return model;
+  }
+  const providerConfig = agentRuntimeResolveProviderConfig(cfg, model.provider);
+  if (!providerConfig || providerConfig.authHeader !== true) {
+    return model;
+  }
+  const headers = {};
+  if (model.headers && typeof model.headers === "object") {
+    for (const [key, value] of Object.entries(model.headers)) {
+      if (normalizeOptionalLowercaseString(key) !== "authorization") {
+        headers[key] = value;
+      }
+    }
+  }
+  headers.Authorization = `Bearer ${auth.apiKey}`;
+  return { ...model, headers };
+}
+
 function agentRuntimeModelKey(provider, model) {
   const providerId = agentRuntimeTrimStringValue(provider);
   const modelId = agentRuntimeTrimStringValue(model);
@@ -56191,6 +56726,8 @@ const agentRuntime = {
   ToolInputError,
   ToolPlanContractError,
   appendCronStyleCurrentTimeLine,
+  applyAuthHeaderOverride: agentRuntimeApplyAuthHeaderOverride,
+  applyLocalNoAuthHeaderOverride: agentRuntimeApplyLocalNoAuthHeaderOverride,
   assertMediaNotDataUrl,
   asToolParamsRecord,
   buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
@@ -56215,7 +56752,13 @@ const agentRuntime = {
   formatReasoningMessage,
   formatToolExecutorRef,
   formatUserTime,
+  getApiKeyForModel: agentRuntimeGetApiKeyForModel,
+  getCustomProviderApiKey: agentRuntimeGetCustomProviderApiKey,
   getModelRefStatus: agentRuntimeGetModelRefStatus,
+  hasAvailableAuthForProvider: agentRuntimeHasAvailableAuthForProvider,
+  hasRuntimeAvailableProviderAuth: agentRuntimeHasRuntimeAvailableProviderAuth,
+  hasSyntheticLocalProviderAuthConfig: agentRuntimeHasSyntheticLocalProviderAuthConfig,
+  hasUsableCustomProviderApiKey: agentRuntimeHasUsableCustomProviderApiKey,
   isAssistantMessage,
   isAwsSdkAuthMarker: agentRuntimeIsAwsSdkAuthMarker,
   isKnownEnvApiKeyMarker: agentRuntimeIsKnownEnvApiKeyMarker,
@@ -56257,13 +56800,16 @@ const agentRuntime = {
   resolveAgentWorkspaceDir: agentRuntimeResolveAgentWorkspaceDir,
   resolveAllowedModelRef: agentRuntimeResolveAllowedModelRef,
   resolveAllowlistModelKey: agentRuntimeResolveAllowlistModelKey,
+  resolveApiKeyForProvider: agentRuntimeResolveApiKeyForProvider,
   resolveConfiguredModelRef: agentRuntimeResolveConfiguredModelRef,
   resolveCronStyleNow,
   resolveDefaultAgentId: agentRuntimeResolveDefaultAgentId,
   resolveDefaultModelForAgent: agentRuntimeResolveDefaultModelForAgent,
   resolveEffectiveMessagesConfig: agentRuntimeResolveEffectiveMessagesConfig,
+  resolveEnvApiKey: agentRuntimeResolveEnvApiKey,
   resolveIdentityNamePrefix: agentRuntimeResolveIdentityNamePrefix,
   resolveMessagePrefix: agentRuntimeResolveMessagePrefix,
+  resolveModelAuthMode: agentRuntimeResolveModelAuthMode,
   resolveModelRefFromString: agentRuntimeResolveModelRefFromString,
   resolveEnvSecretRefHeaderValueMarker: agentRuntimeResolveEnvSecretRefHeaderValueMarker,
   resolveNonEnvSecretRefApiKeyMarker: agentRuntimeResolveNonEnvSecretRefApiKeyMarker,
@@ -56284,8 +56830,10 @@ const agentRuntime = {
   resolveSimpleCompletionSelectionForAgent: agentRuntimeResolveSimpleCompletionSelectionForAgent,
   resolveSubagentConfiguredModelSelection: agentRuntimeResolveSubagentConfiguredModelSelection,
   resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
+  resolveUsableCustomProviderApiKey: agentRuntimeResolveUsableCustomProviderApiKey,
   resolveUserTimeFormat,
   resolveUserTimezone,
+  shouldPreferExplicitConfigApiKeyAuth: agentRuntimeShouldPreferExplicitConfigApiKeyAuth,
   stringifyToolPayload,
   splitThinkingTaggedText,
   stripDowngradedToolCallText,

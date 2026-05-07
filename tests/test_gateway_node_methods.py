@@ -38747,6 +38747,278 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_model_auth_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-model-auth.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_model_auth",
+      description: "Use OpenClaw agent-runtime model auth helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          models: {
+            providers: {
+              literal: { apiKey: " literal-key " },
+              envref: {
+                apiKey: { source: "env", provider: "default", id: "FIXTURE_API_KEY" }
+              },
+              localai: {
+                api: "openai-completions",
+                baseUrl: "http://127.0.0.1:8000/v1",
+                models: ["local-model"]
+              },
+              "amazon-bedrock": { auth: "aws-sdk" },
+              "auth-header": { apiKey: "header-key", authHeader: true }
+            }
+          }
+        };
+        const store = {
+          profiles: {
+            "mixed-oauth": { provider: "mixed", type: "oauth", token: "oauth-token" },
+            "mixed-api": { provider: "mixed", type: "api_key", key: "profile-key" },
+            "literal-profile": { provider: "literal", type: "api_key", key: "profile-literal" }
+          },
+          order: {
+            literal: ["literal-profile"]
+          }
+        };
+        const env = { FIXTURE_API_KEY: "env-secret" };
+        const localModel = agent.applyLocalNoAuthHeaderOverride(
+          {
+            provider: "localai",
+            api: "openai-completions",
+            headers: { Authorization: "Bearer old", "X-Test": "1" }
+          },
+          { apiKey: agent.CUSTOM_LOCAL_AUTH_MARKER }
+        );
+        const authHeaderModel = agent.applyAuthHeaderOverride(
+          {
+            provider: "auth-header",
+            api: "google",
+            headers: { authorization: "Bearer old", "X-Test": "1" }
+          },
+          { apiKey: "real-key" },
+          cfg
+        );
+
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "applyAuthHeaderOverride",
+            "applyLocalNoAuthHeaderOverride",
+            "getApiKeyForModel",
+            "getCustomProviderApiKey",
+            "hasAvailableAuthForProvider",
+            "hasRuntimeAvailableProviderAuth",
+            "hasSyntheticLocalProviderAuthConfig",
+            "hasUsableCustomProviderApiKey",
+            "resolveApiKeyForProvider",
+            "resolveEnvApiKey",
+            "resolveModelAuthMode",
+            "resolveUsableCustomProviderApiKey",
+            "shouldPreferExplicitConfigApiKeyAuth"
+          ].includes(key)).sort(),
+          custom: {
+            literal: agent.getCustomProviderApiKey(cfg, "literal"),
+            envref: agent.getCustomProviderApiKey(cfg, "envref"),
+            usableEnv: agent.resolveUsableCustomProviderApiKey({
+              cfg,
+              provider: "envref",
+              env
+            }),
+            hasLiteral: agent.hasUsableCustomProviderApiKey(cfg, "literal"),
+            prefersExplicit: agent.shouldPreferExplicitConfigApiKeyAuth(
+              { models: { providers: { literal: { auth: "api-key", apiKey: "x" } } } },
+              "literal"
+            )
+          },
+          runtime: {
+            localSynthetic: agent.hasSyntheticLocalProviderAuthConfig({
+              cfg,
+              provider: "localai"
+            }),
+            localAvailable: agent.hasRuntimeAvailableProviderAuth({
+              cfg,
+              provider: "localai",
+              env
+            }),
+            bedrockAvailable: agent.hasRuntimeAvailableProviderAuth({
+              cfg,
+              provider: "amazon-bedrock",
+              env
+            }),
+            envAvailable: agent.hasRuntimeAvailableProviderAuth({
+              cfg,
+              provider: "envref",
+              env
+            })
+          },
+          modes: {
+            mixed: agent.resolveModelAuthMode("mixed", cfg, store),
+            bedrock: agent.resolveModelAuthMode("amazon-bedrock", cfg, store),
+            literal: agent.resolveModelAuthMode("literal", cfg, store),
+            missing: agent.resolveModelAuthMode("missing", cfg, store)
+          },
+          asyncAuth: {
+            literal: await agent.resolveApiKeyForProvider({ provider: "literal", cfg, store }),
+            explicit: await agent.resolveApiKeyForProvider({ provider: "literal", cfg }),
+            envref: await agent.resolveApiKeyForProvider({ provider: "envref", cfg, env }),
+            bedrock: await agent.resolveApiKeyForProvider({
+              provider: "amazon-bedrock",
+              cfg,
+              env
+            }),
+            model: await agent.getApiKeyForModel({
+              model: { provider: "literal" },
+              cfg,
+              store
+            }),
+            hasAvailable: await agent.hasAvailableAuthForProvider({
+              provider: "literal",
+              cfg,
+              store
+            })
+          },
+          headers: {
+            local: localModel.headers,
+            authHeader: authHeaderModel.headers
+          },
+          envApiKey: agent.resolveEnvApiKey("envref", env, {
+            candidateMap: { envref: ["FIXTURE_API_KEY"] }
+          })
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-model-auth-plugin",
+                    "name": "Runtime Agent Model Auth Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-model-auth.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_model_auth"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_model_auth"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "applyAuthHeaderOverride",
+        "applyLocalNoAuthHeaderOverride",
+        "getApiKeyForModel",
+        "getCustomProviderApiKey",
+        "hasAvailableAuthForProvider",
+        "hasRuntimeAvailableProviderAuth",
+        "hasSyntheticLocalProviderAuthConfig",
+        "hasUsableCustomProviderApiKey",
+        "resolveApiKeyForProvider",
+        "resolveEnvApiKey",
+        "resolveModelAuthMode",
+        "resolveUsableCustomProviderApiKey",
+        "shouldPreferExplicitConfigApiKeyAuth",
+    ]
+    assert result["custom"] == {
+        "literal": "literal-key",
+        "envref": "FIXTURE_API_KEY",
+        "usableEnv": {
+            "apiKey": "env-secret",
+            "source": "env: FIXTURE_API_KEY (models.json secretref)",
+        },
+        "hasLiteral": True,
+        "prefersExplicit": True,
+    }
+    assert result["runtime"] == {
+        "localSynthetic": True,
+        "localAvailable": True,
+        "bedrockAvailable": True,
+        "envAvailable": True,
+    }
+    assert result["modes"] == {
+        "mixed": "mixed",
+        "bedrock": "aws-sdk",
+        "literal": "api-key",
+        "missing": "unknown",
+    }
+    assert result["asyncAuth"]["literal"] == {
+        "apiKey": "profile-literal",
+        "profileId": "literal-profile",
+        "source": "profile:literal-profile",
+        "mode": "api-key",
+    }
+    assert result["asyncAuth"]["explicit"] == {
+        "apiKey": "literal-key",
+        "source": "models.json",
+        "mode": "api-key",
+    }
+    assert result["asyncAuth"]["envref"] == {
+        "apiKey": "env-secret",
+        "source": "env: FIXTURE_API_KEY (models.json secretref)",
+        "mode": "api-key",
+    }
+    assert result["asyncAuth"]["bedrock"] == {
+        "mode": "aws-sdk",
+        "source": "aws-sdk default chain",
+    }
+    assert result["asyncAuth"]["model"] == result["asyncAuth"]["literal"]
+    assert result["asyncAuth"]["hasAvailable"] is True
+    assert result["headers"] == {
+        "local": {"Authorization": None, "X-Test": "1"},
+        "authHeader": {"X-Test": "1", "Authorization": "Bearer real-key"},
+    }
+    assert result["envApiKey"] == {
+        "apiKey": "env-secret",
+        "source": "env: FIXTURE_API_KEY",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
