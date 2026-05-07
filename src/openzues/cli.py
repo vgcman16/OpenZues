@@ -54260,6 +54260,885 @@ const sandboxRuntime = {
   uploadDirectoryToSshTarget,
 };
 
+const OPENCLAW_DEBUG_PROXY_ENABLED = "OPENCLAW_DEBUG_PROXY_ENABLED";
+const OPENCLAW_DEBUG_PROXY_URL = "OPENCLAW_DEBUG_PROXY_URL";
+const OPENCLAW_DEBUG_PROXY_DB_PATH = "OPENCLAW_DEBUG_PROXY_DB_PATH";
+const OPENCLAW_DEBUG_PROXY_BLOB_DIR = "OPENCLAW_DEBUG_PROXY_BLOB_DIR";
+const OPENCLAW_DEBUG_PROXY_CERT_DIR = "OPENCLAW_DEBUG_PROXY_CERT_DIR";
+const OPENCLAW_DEBUG_PROXY_SESSION_ID = "OPENCLAW_DEBUG_PROXY_SESSION_ID";
+const OPENCLAW_DEBUG_PROXY_REQUIRE = "OPENCLAW_DEBUG_PROXY_REQUIRE";
+const DEBUG_PROXY_FETCH_PATCH_KEY = Symbol.for("openclaw.debugProxy.fetchPatch");
+const REDACTED_CAPTURE_HEADER_VALUE = "[REDACTED]";
+const SENSITIVE_CAPTURE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "api-key",
+  "apikey",
+  "x-auth-token",
+  "auth-token",
+  "x-access-token",
+  "access-token",
+]);
+const SENSITIVE_CAPTURE_HEADER_NAME_FRAGMENTS = [
+  "api-key",
+  "apikey",
+  "token",
+  "secret",
+  "password",
+  "credential",
+  "session",
+];
+let cachedDebugProxyImplicitSessionId;
+let cachedDebugProxyCaptureStore = null;
+let cachedDebugProxyCaptureStoreKey = "";
+let cachedDebugProxyCaptureStoreLeases = 0;
+
+function isDebugProxyTruthy(value) {
+  const normalized = normalizeLowercaseStringOrEmpty(value);
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function resolveDebugProxyRootDir(env = process.env) {
+  return path.join(resolveStateDir(env || process.env), "debug-proxy");
+}
+
+function resolveDebugProxyDbPath(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "capture.sqlite");
+}
+
+function resolveDebugProxyBlobDir(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "blobs");
+}
+
+function resolveDebugProxyCertDir(env = process.env) {
+  return path.join(resolveDebugProxyRootDir(env), "certs");
+}
+
+function resolveDebugProxySettings(env = process.env) {
+  const sourceEnv = env || process.env;
+  const explicitSessionId = normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_SESSION_ID]);
+  const sessionId =
+    explicitSessionId || (cachedDebugProxyImplicitSessionId ||= crypto.randomUUID());
+  return {
+    enabled: isDebugProxyTruthy(sourceEnv[OPENCLAW_DEBUG_PROXY_ENABLED]),
+    required: isDebugProxyTruthy(sourceEnv[OPENCLAW_DEBUG_PROXY_REQUIRE]),
+    proxyUrl: normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_URL]),
+    dbPath:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_DB_PATH]) ||
+      resolveDebugProxyDbPath(sourceEnv),
+    blobDir:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_BLOB_DIR]) ||
+      resolveDebugProxyBlobDir(sourceEnv),
+    certDir:
+      normalizeOptionalString(sourceEnv[OPENCLAW_DEBUG_PROXY_CERT_DIR]) ||
+      resolveDebugProxyCertDir(sourceEnv),
+    sessionId,
+    sourceProcess: "openclaw",
+  };
+}
+
+function applyDebugProxyEnv(env, params = {}) {
+  const sourceEnv = env || process.env;
+  return {
+    ...sourceEnv,
+    [OPENCLAW_DEBUG_PROXY_ENABLED]: "1",
+    [OPENCLAW_DEBUG_PROXY_REQUIRE]: "1",
+    [OPENCLAW_DEBUG_PROXY_URL]: params.proxyUrl,
+    [OPENCLAW_DEBUG_PROXY_DB_PATH]: params.dbPath || resolveDebugProxyDbPath(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_BLOB_DIR]: params.blobDir || resolveDebugProxyBlobDir(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_CERT_DIR]: params.certDir || resolveDebugProxyCertDir(sourceEnv),
+    [OPENCLAW_DEBUG_PROXY_SESSION_ID]: params.sessionId,
+    HTTP_PROXY: params.proxyUrl,
+    HTTPS_PROXY: params.proxyUrl,
+    ALL_PROXY: params.proxyUrl,
+  };
+}
+
+function createDebugProxyWebSocketAgent(settings = {}) {
+  if (!settings.enabled || !settings.proxyUrl) {
+    return undefined;
+  }
+  try {
+    const { HttpsProxyAgent } = require("https-proxy-agent");
+    return new HttpsProxyAgent(settings.proxyUrl);
+  } catch {
+    return { proxyUrl: settings.proxyUrl, __openzuesDebugProxyAgent: true };
+  }
+}
+
+function resolveEffectiveDebugProxyUrl(configuredProxyUrl) {
+  const explicit = normalizeOptionalString(configuredProxyUrl);
+  if (explicit) {
+    return explicit;
+  }
+  const settings = resolveDebugProxySettings();
+  return settings.enabled ? settings.proxyUrl : undefined;
+}
+
+function proxyCaptureSafeJsonString(value) {
+  if (value == null) {
+    return undefined;
+  }
+  return JSON.stringify(value);
+}
+
+function parseProxyCaptureMetaJson(metaJson) {
+  if (typeof metaJson !== "string" || !metaJson.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(metaJson);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProxyCaptureObservedValue(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function sortProxyCaptureObservedCounts(counts) {
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value));
+}
+
+function ensureProxyCaptureParentDir(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function writeProxyCaptureBlob(params = {}) {
+  const data = Buffer.isBuffer(params.data) ? params.data : Buffer.from(params.data || "");
+  fs.mkdirSync(params.blobDir, { recursive: true });
+  const sha256 = crypto.createHash("sha256").update(data).digest("hex");
+  const blobId = sha256.slice(0, 24);
+  const outputPath = path.join(params.blobDir, `${blobId}.bin.gz`);
+  if (!fs.existsSync(outputPath)) {
+    const { gzipSync } = require("zlib");
+    fs.writeFileSync(outputPath, gzipSync(data));
+  }
+  return {
+    blobId,
+    path: outputPath,
+    encoding: "gzip",
+    sizeBytes: data.byteLength,
+    sha256,
+    ...(params.contentType ? { contentType: params.contentType } : {}),
+  };
+}
+
+function readProxyCaptureBlobText(blobPath) {
+  const { gunzipSync } = require("zlib");
+  return gunzipSync(fs.readFileSync(blobPath)).toString("utf8");
+}
+
+function proxyCaptureGroupRows(rows, keyFn, valueName, includeRow) {
+  const grouped = new Map();
+  for (const row of rows) {
+    if (includeRow && !includeRow(row)) {
+      continue;
+    }
+    const key = keyFn(row);
+    const current = grouped.get(key.key) || { ...key.values, [valueName]: 0 };
+    current[valueName] += 1;
+    grouped.set(key.key, current);
+  }
+  return [...grouped.values()].sort((left, right) => {
+    const countDelta = Number(right[valueName] || 0) - Number(left[valueName] || 0);
+    return countDelta || String(left.host || "").localeCompare(String(right.host || ""));
+  });
+}
+
+class DebugProxyCaptureStore {
+  constructor(dbPath, blobDir) {
+    this.dbPath = dbPath;
+    this.blobDir = blobDir;
+    this.closed = false;
+    this.sessions = new Map();
+    this.events = [];
+    this.nextEventId = 1;
+    ensureProxyCaptureParentDir(dbPath);
+    fs.mkdirSync(blobDir, { recursive: true });
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  get isClosed() {
+    return this.closed;
+  }
+
+  upsertSession(session) {
+    const existing = this.sessions.get(session.id);
+    this.sessions.set(session.id, {
+      ...(existing || {}),
+      ...session,
+      startedAt: existing ? existing.startedAt : session.startedAt,
+      mode: existing ? existing.mode : session.mode,
+      sourceScope: "openclaw",
+      dbPath: session.dbPath || this.dbPath,
+      blobDir: session.blobDir || this.blobDir,
+    });
+  }
+
+  endSession(sessionId, endedAt = Date.now()) {
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      this.sessions.set(sessionId, { ...existing, endedAt });
+    }
+  }
+
+  persistPayload(data, contentType) {
+    return writeProxyCaptureBlob({ blobDir: this.blobDir, data, contentType });
+  }
+
+  recordEvent(event) {
+    this.events.push({ id: this.nextEventId, ...event });
+    this.nextEventId += 1;
+  }
+
+  listSessions(limit = 50) {
+    return [...this.sessions.values()]
+      .map((session) => ({
+        id: session.id,
+        startedAt: session.startedAt,
+        ...(session.endedAt == null ? {} : { endedAt: session.endedAt }),
+        mode: session.mode,
+        sourceProcess: session.sourceProcess,
+        ...(session.proxyUrl ? { proxyUrl: session.proxyUrl } : {}),
+        eventCount: this.events.filter((event) => event.sessionId === session.id).length,
+      }))
+      .sort((left, right) => Number(right.startedAt || 0) - Number(left.startedAt || 0))
+      .slice(0, limit);
+  }
+
+  getSessionEvents(sessionId, limit = 500) {
+    return this.events
+      .filter((event) => event.sessionId === sessionId)
+      .sort((left, right) => Number(right.ts || 0) - Number(left.ts || 0) || right.id - left.id)
+      .slice(0, limit);
+  }
+
+  summarizeSessionCoverage(sessionId) {
+    const rows = this.events.filter((event) => event.sessionId === sessionId);
+    const providers = new Map();
+    const apis = new Map();
+    const models = new Map();
+    const hosts = new Map();
+    const localPeers = new Map();
+    let unlabeledEventCount = 0;
+    for (const row of rows) {
+      const meta = parseProxyCaptureMetaJson(row.metaJson);
+      const provider = normalizeProxyCaptureObservedValue(meta && meta.provider);
+      const api = normalizeProxyCaptureObservedValue(meta && meta.api);
+      const model = normalizeProxyCaptureObservedValue(meta && meta.model);
+      const host = normalizeProxyCaptureObservedValue(row.host);
+      if (!provider && !api && !model) {
+        unlabeledEventCount += 1;
+      }
+      if (provider) {
+        providers.set(provider, (providers.get(provider) || 0) + 1);
+      }
+      if (api) {
+        apis.set(api, (apis.get(api) || 0) + 1);
+      }
+      if (model) {
+        models.set(model, (models.get(model) || 0) + 1);
+      }
+      if (host) {
+        hosts.set(host, (hosts.get(host) || 0) + 1);
+        if (
+          host === "127.0.0.1:11434" ||
+          host.startsWith("127.0.0.1:") ||
+          host.startsWith("localhost:")
+        ) {
+          localPeers.set(host, (localPeers.get(host) || 0) + 1);
+        }
+      }
+    }
+    return {
+      sessionId,
+      totalEvents: rows.length,
+      unlabeledEventCount,
+      providers: sortProxyCaptureObservedCounts(providers),
+      apis: sortProxyCaptureObservedCounts(apis),
+      models: sortProxyCaptureObservedCounts(models),
+      hosts: sortProxyCaptureObservedCounts(hosts),
+      localPeers: sortProxyCaptureObservedCounts(localPeers),
+    };
+  }
+
+  readBlob(blobId) {
+    const row = this.events.find((event) => event.dataBlobId === blobId);
+    if (!row) {
+      return null;
+    }
+    const blobPath = path.join(this.blobDir, `${blobId}.bin.gz`);
+    return fs.existsSync(blobPath) ? readProxyCaptureBlobText(blobPath) : null;
+  }
+
+  queryPreset(preset, sessionId) {
+    const rows = this.events.filter((event) => !sessionId || event.sessionId === sessionId);
+    switch (preset) {
+      case "double-sends":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}:${row.method}:${row.dataSha256 || ""}`,
+            values: { host: row.host, path: row.path, method: row.method },
+          }),
+          "duplicateCount",
+          (row) => row.kind === "request",
+        ).filter((row) => row.duplicateCount > 1);
+      case "retry-storms":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "errorCount",
+          (row) => row.kind === "response" && Number(row.status || 0) >= 429,
+        ).filter((row) => row.errorCount > 1);
+      case "cache-busting":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "variantCount",
+          (row) =>
+            row.kind === "request" &&
+            (String(row.path || "").includes("?") ||
+              String(row.headersJson || "").includes("cache-control") ||
+              String(row.headersJson || "").includes("pragma")),
+        );
+      case "ws-duplicate-frames":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}:${row.dataSha256 || ""}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "duplicateFrames",
+          (row) => row.kind === "ws-frame" && row.direction === "outbound",
+        ).filter((row) => row.duplicateFrames > 1);
+      case "missing-ack": {
+        const inbound = new Set(
+          rows
+            .filter((row) => row.kind === "ws-frame" && row.direction === "inbound")
+            .map((row) => row.flowId),
+        );
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.flowId}:${row.host}:${row.path}`,
+            values: { flowId: row.flowId, host: row.host, path: row.path },
+          }),
+          "outboundFrames",
+          (row) =>
+            row.kind === "ws-frame" && row.direction === "outbound" && !inbound.has(row.flowId),
+        );
+      }
+      case "error-bursts":
+        return proxyCaptureGroupRows(
+          rows,
+          (row) => ({
+            key: `${row.host}:${row.path}`,
+            values: { host: row.host, path: row.path },
+          }),
+          "errorCount",
+          (row) => row.kind === "error",
+        );
+      default:
+        return [];
+    }
+  }
+
+  purgeAll() {
+    const sessions = this.sessions.size;
+    const events = this.events.length;
+    this.sessions.clear();
+    this.events = [];
+    let blobs = 0;
+    if (fs.existsSync(this.blobDir)) {
+      for (const entry of fs.readdirSync(this.blobDir)) {
+        fs.rmSync(path.join(this.blobDir, entry), { force: true });
+        blobs += 1;
+      }
+    }
+    return { sessions, events, blobs };
+  }
+
+  deleteSessions(sessionIds = []) {
+    const ids = new Set(sessionIds.map((id) => String(id || "").trim()).filter(Boolean));
+    if (ids.size === 0) {
+      return { sessions: 0, events: 0, blobs: 0 };
+    }
+    const sessions = [...ids].filter((id) => this.sessions.has(id)).length;
+    const removedEvents = this.events.filter((event) => ids.has(event.sessionId));
+    this.events = this.events.filter((event) => !ids.has(event.sessionId));
+    for (const id of ids) {
+      this.sessions.delete(id);
+    }
+    let blobs = 0;
+    const removedBlobIds = new Set(
+      removedEvents.map((event) => event.dataBlobId).filter((blobId) => Boolean(blobId)),
+    );
+    const remainingBlobIds = new Set(
+      this.events.map((event) => event.dataBlobId).filter((blobId) => Boolean(blobId)),
+    );
+    for (const blobId of removedBlobIds) {
+      if (remainingBlobIds.has(blobId)) {
+        continue;
+      }
+      const blobPath = path.join(this.blobDir, `${blobId}.bin.gz`);
+      if (fs.existsSync(blobPath)) {
+        fs.rmSync(blobPath, { force: true });
+        blobs += 1;
+      }
+    }
+    return { sessions, events: removedEvents.length, blobs };
+  }
+}
+
+function getDebugProxyCaptureStore(dbPath, blobDir) {
+  const key = `${dbPath}:${blobDir}`;
+  if (
+    !cachedDebugProxyCaptureStore ||
+    cachedDebugProxyCaptureStore.isClosed ||
+    cachedDebugProxyCaptureStoreKey !== key
+  ) {
+    cachedDebugProxyCaptureStore = new DebugProxyCaptureStore(dbPath, blobDir);
+    cachedDebugProxyCaptureStoreKey = key;
+    cachedDebugProxyCaptureStoreLeases = 0;
+  }
+  return cachedDebugProxyCaptureStore;
+}
+
+function closeDebugProxyCaptureStore() {
+  if (!cachedDebugProxyCaptureStore) {
+    return;
+  }
+  cachedDebugProxyCaptureStore.close();
+  cachedDebugProxyCaptureStore = null;
+  cachedDebugProxyCaptureStoreKey = "";
+  cachedDebugProxyCaptureStoreLeases = 0;
+}
+
+function acquireDebugProxyCaptureStore(dbPath, blobDir) {
+  const store = getDebugProxyCaptureStore(dbPath, blobDir);
+  const key = cachedDebugProxyCaptureStoreKey;
+  cachedDebugProxyCaptureStoreLeases += 1;
+  let released = false;
+  return {
+    store,
+    release: () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      cachedDebugProxyCaptureStoreLeases = Math.max(
+        0,
+        cachedDebugProxyCaptureStoreLeases - 1,
+      );
+      if (
+        cachedDebugProxyCaptureStoreLeases === 0 &&
+        cachedDebugProxyCaptureStore === store &&
+        cachedDebugProxyCaptureStoreKey === key
+      ) {
+        closeDebugProxyCaptureStore();
+      }
+    },
+  };
+}
+
+function persistEventPayload(store, params = {}) {
+  if (params.data == null) {
+    return {};
+  }
+  const buffer = Buffer.isBuffer(params.data) ? params.data : Buffer.from(params.data);
+  const previewLimit = params.previewLimit || 8192;
+  const blob = store.persistPayload(buffer, params.contentType);
+  return {
+    dataText: buffer.subarray(0, previewLimit).toString("utf8"),
+    dataBlobId: blob.blobId,
+    dataSha256: blob.sha256,
+  };
+}
+
+function resolveProxyCaptureRuntimeDeps(deps = {}) {
+  return {
+    getStore: deps.getStore || getDebugProxyCaptureStore,
+    closeStore: deps.closeStore || closeDebugProxyCaptureStore,
+    persistEventPayload:
+      deps.persistEventPayload ||
+      ((store, payload) => persistEventPayload(store, payload)),
+    safeJsonString: deps.safeJsonString || proxyCaptureSafeJsonString,
+    fetchTarget: deps.fetchTarget || globalThis,
+  };
+}
+
+function proxyCaptureProtocolFromUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "https:") {
+      return "https";
+    }
+    if (url.protocol === "wss:") {
+      return "wss";
+    }
+    if (url.protocol === "ws:") {
+      return "ws";
+    }
+    return "http";
+  } catch {
+    return "http";
+  }
+}
+
+function resolveProxyCaptureUrlString(input) {
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  if (typeof input === "string") {
+    return input;
+  }
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return input.url;
+  }
+  return null;
+}
+
+function isSensitiveCaptureHeaderName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (SENSITIVE_CAPTURE_HEADER_NAMES.has(normalized)) {
+    return true;
+  }
+  return SENSITIVE_CAPTURE_HEADER_NAME_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+function redactedCaptureHeaders(headers) {
+  if (!headers) {
+    return undefined;
+  }
+  const entries =
+    typeof Headers !== "undefined" && headers instanceof Headers
+      ? Array.from(headers.entries())
+      : Object.entries(headers);
+  const redacted = {};
+  for (const [name, value] of entries) {
+    redacted[name] = isSensitiveCaptureHeaderName(name)
+      ? REDACTED_CAPTURE_HEADER_VALUE
+      : String(value);
+  }
+  return redacted;
+}
+
+function proxyCaptureContentTypeFromHeaders(headers) {
+  if (!headers) {
+    return undefined;
+  }
+  if (typeof headers.get === "function") {
+    return headers.get("content-type") || undefined;
+  }
+  return headers["content-type"] || headers["Content-Type"] || undefined;
+}
+
+function createHttpCaptureEventBase(params = {}) {
+  return {
+    sessionId: params.settings.sessionId,
+    ts: Date.now(),
+    sourceScope: "openclaw",
+    sourceProcess: params.settings.sourceProcess,
+    protocol: params.transport || proxyCaptureProtocolFromUrl(params.rawUrl),
+    direction: params.direction,
+    kind: params.kind,
+    flowId: params.flowId,
+    method: params.method,
+    host: params.url.host,
+    path: `${params.url.pathname}${params.url.search}`,
+  };
+}
+
+function installDebugProxyGlobalFetchPatch(settings, deps = {}) {
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  const fetchTarget = runtime.fetchTarget;
+  if (!fetchTarget || typeof fetchTarget.fetch !== "function") {
+    return;
+  }
+  if (fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY]) {
+    return;
+  }
+  const originalFetch = fetchTarget.fetch.bind(fetchTarget);
+  fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY] = { originalFetch };
+  fetchTarget.fetch = async (input, init) => {
+    const rawUrl = resolveProxyCaptureUrlString(input);
+    try {
+      const response = await originalFetch(input, init);
+      if (rawUrl && /^https?:/i.test(rawUrl)) {
+        captureHttpExchange(
+          {
+            url: rawUrl,
+            method:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.method
+                : undefined) ||
+              (init && init.method) ||
+              "GET",
+            requestHeaders:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.headers
+                : undefined) ||
+              (init && init.headers),
+            requestBody:
+              (typeof Request !== "undefined" && input instanceof Request
+                ? input.body
+                : undefined) ||
+              (init && init.body) ||
+              null,
+            response,
+            transport: "http",
+            meta: { captureOrigin: "global-fetch", source: settings.sourceProcess },
+          },
+          settings,
+          deps,
+        );
+      }
+      return response;
+    } catch (error) {
+      if (rawUrl && /^https?:/i.test(rawUrl)) {
+        const parsed = new URL(rawUrl);
+        runtime.getStore(settings.dbPath, settings.blobDir).recordEvent({
+          sessionId: settings.sessionId,
+          ts: Date.now(),
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: proxyCaptureProtocolFromUrl(rawUrl),
+          direction: "local",
+          kind: "error",
+          flowId: crypto.randomUUID(),
+          method:
+            (typeof Request !== "undefined" && input instanceof Request
+              ? input.method
+              : undefined) ||
+            (init && init.method) ||
+            "GET",
+          host: parsed.host,
+          path: `${parsed.pathname}${parsed.search}`,
+          errorText: error instanceof Error ? error.message : String(error),
+          metaJson: runtime.safeJsonString({ captureOrigin: "global-fetch" }),
+        });
+      }
+      throw error;
+    }
+  };
+}
+
+function uninstallDebugProxyGlobalFetchPatch(deps = {}) {
+  const fetchTarget = resolveProxyCaptureRuntimeDeps(deps).fetchTarget;
+  const state = fetchTarget && fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY];
+  if (!state) {
+    return;
+  }
+  fetchTarget.fetch = state.originalFetch;
+  delete fetchTarget[DEBUG_PROXY_FETCH_PATCH_KEY];
+}
+
+function isDebugProxyGlobalFetchPatchInstalled() {
+  return Boolean(globalThis[DEBUG_PROXY_FETCH_PATCH_KEY]);
+}
+
+function initializeDebugProxyCapture(mode, resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  resolveProxyCaptureRuntimeDeps(deps).getStore(settings.dbPath, settings.blobDir).upsertSession({
+    id: settings.sessionId,
+    startedAt: Date.now(),
+    mode,
+    sourceScope: "openclaw",
+    sourceProcess: settings.sourceProcess,
+    proxyUrl: settings.proxyUrl,
+    dbPath: settings.dbPath,
+    blobDir: settings.blobDir,
+  });
+  installDebugProxyGlobalFetchPatch(settings, deps);
+}
+
+function finalizeDebugProxyCapture(resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  runtime.getStore(settings.dbPath, settings.blobDir).endSession(settings.sessionId);
+  uninstallDebugProxyGlobalFetchPatch(deps);
+  runtime.closeStore();
+}
+
+function captureHttpExchange(params = {}, resolved, deps = {}) {
+  const settings = resolved || resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const runtime = resolveProxyCaptureRuntimeDeps(deps);
+  const store = runtime.getStore(settings.dbPath, settings.blobDir);
+  const flowId = params.flowId || crypto.randomUUID();
+  const url = new URL(params.url);
+  const requestBody =
+    typeof params.requestBody === "string" || Buffer.isBuffer(params.requestBody)
+      ? params.requestBody
+      : null;
+  const requestPayload = runtime.persistEventPayload(store, {
+    data: requestBody,
+    contentType: proxyCaptureContentTypeFromHeaders(params.requestHeaders),
+  });
+  store.recordEvent({
+    ...createHttpCaptureEventBase({
+      settings,
+      rawUrl: params.url,
+      url,
+      transport: params.transport,
+      direction: "outbound",
+      kind: "request",
+      flowId,
+      method: params.method,
+    }),
+    contentType: proxyCaptureContentTypeFromHeaders(params.requestHeaders),
+    headersJson: runtime.safeJsonString(redactedCaptureHeaders(params.requestHeaders)),
+    metaJson: runtime.safeJsonString(params.meta),
+    ...requestPayload,
+  });
+  const cloneable =
+    params.response &&
+    typeof params.response.clone === "function" &&
+    typeof params.response.arrayBuffer === "function";
+  if (!cloneable) {
+    store.recordEvent({
+      ...createHttpCaptureEventBase({
+        settings,
+        rawUrl: params.url,
+        url,
+        transport: params.transport,
+        direction: "inbound",
+        kind: "response",
+        flowId,
+        method: params.method,
+      }),
+      status: params.response && params.response.status,
+      contentType: proxyCaptureContentTypeFromHeaders(params.response && params.response.headers),
+      metaJson: runtime.safeJsonString({ ...(params.meta || {}), bodyCapture: "unavailable" }),
+    });
+    return;
+  }
+  void params.response
+    .clone()
+    .arrayBuffer()
+    .then((buffer) => {
+      const responsePayload = runtime.persistEventPayload(store, {
+        data: Buffer.from(buffer),
+        contentType: proxyCaptureContentTypeFromHeaders(params.response.headers),
+      });
+      store.recordEvent({
+        ...createHttpCaptureEventBase({
+          settings,
+          rawUrl: params.url,
+          url,
+          transport: params.transport,
+          direction: "inbound",
+          kind: "response",
+          flowId,
+          method: params.method,
+        }),
+        status: params.response.status,
+        contentType: proxyCaptureContentTypeFromHeaders(params.response.headers),
+        headersJson: runtime.safeJsonString(redactedCaptureHeaders(params.response.headers)),
+        metaJson: runtime.safeJsonString(params.meta),
+        ...responsePayload,
+      });
+    })
+    .catch((error) => {
+      store.recordEvent({
+        ...createHttpCaptureEventBase({
+          settings,
+          rawUrl: params.url,
+          url,
+          transport: params.transport,
+          direction: "local",
+          kind: "error",
+          flowId,
+          method: params.method,
+        }),
+        errorText: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+function captureWsEvent(params = {}) {
+  const settings = resolveDebugProxySettings();
+  if (!settings.enabled) {
+    return;
+  }
+  const store = getDebugProxyCaptureStore(settings.dbPath, settings.blobDir);
+  const url = new URL(params.url);
+  const payload = persistEventPayload(store, {
+    data: params.payload,
+    contentType: "application/json",
+  });
+  store.recordEvent({
+    sessionId: settings.sessionId,
+    ts: Date.now(),
+    sourceScope: "openclaw",
+    sourceProcess: settings.sourceProcess,
+    protocol: proxyCaptureProtocolFromUrl(params.url),
+    direction: params.direction,
+    kind: params.kind,
+    flowId: params.flowId,
+    host: url.host,
+    path: `${url.pathname}${url.search}`,
+    closeCode: params.closeCode,
+    errorText: params.errorText,
+    metaJson: proxyCaptureSafeJsonString(params.meta),
+    ...payload,
+  });
+}
+
+const proxyCaptureRuntime = {
+  OPENCLAW_DEBUG_PROXY_BLOB_DIR,
+  OPENCLAW_DEBUG_PROXY_CERT_DIR,
+  OPENCLAW_DEBUG_PROXY_DB_PATH,
+  OPENCLAW_DEBUG_PROXY_ENABLED,
+  OPENCLAW_DEBUG_PROXY_REQUIRE,
+  OPENCLAW_DEBUG_PROXY_SESSION_ID,
+  OPENCLAW_DEBUG_PROXY_URL,
+  DebugProxyCaptureStore,
+  acquireDebugProxyCaptureStore,
+  applyDebugProxyEnv,
+  captureHttpExchange,
+  captureWsEvent,
+  closeDebugProxyCaptureStore,
+  createDebugProxyWebSocketAgent,
+  finalizeDebugProxyCapture,
+  getDebugProxyCaptureStore,
+  initializeDebugProxyCapture,
+  isDebugProxyGlobalFetchPatchInstalled,
+  resolveDebugProxySettings,
+  resolveEffectiveDebugProxyUrl,
+};
+
 const simpleCompletionRuntime = {
   extractAssistantText,
 };
@@ -64102,6 +64981,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/sandbox"
   ) {
     return sandboxRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/proxy-capture" ||
+    request === "@openclaw/plugin-sdk/proxy-capture"
+  ) {
+    return proxyCaptureRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/lmstudio" ||

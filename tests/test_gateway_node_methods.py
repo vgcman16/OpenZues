@@ -34118,6 +34118,321 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_proxy_capture_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    db_path = tmp_path / "capture.sqlite"
+    blob_dir = tmp_path / "proxy-blobs"
+    cert_dir = tmp_path / "proxy-certs"
+    runtime_entry = tmp_path / "runtime-plugin-proxy-capture.cjs"
+    runtime_entry.write_text(
+        f"""
+const proxy = require("openclaw/plugin-sdk/proxy-capture");
+const scopedProxy = require("@openclaw/plugin-sdk/proxy-capture");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.proxyCapture",
+      description: "Use OpenClaw proxy-capture SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const env = {{
+          OPENCLAW_DEBUG_PROXY_ENABLED: "yes",
+          OPENCLAW_DEBUG_PROXY_REQUIRE: "1",
+          OPENCLAW_DEBUG_PROXY_URL: " http://127.0.0.1:19999 ",
+          OPENCLAW_DEBUG_PROXY_DB_PATH: {json.dumps(str(db_path))},
+          OPENCLAW_DEBUG_PROXY_BLOB_DIR: {json.dumps(str(blob_dir))},
+          OPENCLAW_DEBUG_PROXY_CERT_DIR: {json.dumps(str(cert_dir))},
+          OPENCLAW_DEBUG_PROXY_SESSION_ID: "session-explicit"
+        }};
+        const settings = proxy.resolveDebugProxySettings(env);
+        proxy.closeDebugProxyCaptureStore();
+        const store = proxy.getDebugProxyCaptureStore(settings.dbPath, settings.blobDir);
+        store.upsertSession({{
+          id: settings.sessionId,
+          startedAt: 1000,
+          mode: "test",
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          proxyUrl: settings.proxyUrl,
+          dbPath: settings.dbPath,
+          blobDir: settings.blobDir
+        }});
+        const payload = store.persistPayload(Buffer.from("request body"), "text/plain");
+        store.recordEvent({{
+          sessionId: settings.sessionId,
+          ts: 1001,
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: "https",
+          direction: "outbound",
+          kind: "request",
+          flowId: "flow-1",
+          method: "POST",
+          host: "api.example.test",
+          path: "/v1/messages?cache=1",
+          contentType: "text/plain",
+          dataText: "request body",
+          dataBlobId: payload.blobId,
+          dataSha256: payload.sha256,
+          metaJson: JSON.stringify({{ provider: "openai", api: "chat", model: "gpt-test" }})
+        }});
+        store.recordEvent({{
+          sessionId: settings.sessionId,
+          ts: 1002,
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: "https",
+          direction: "outbound",
+          kind: "request",
+          flowId: "flow-2",
+          method: "POST",
+          host: "api.example.test",
+          path: "/v1/messages?cache=1",
+          dataSha256: payload.sha256
+        }});
+        store.recordEvent({{
+          sessionId: settings.sessionId,
+          ts: 1003,
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: "https",
+          direction: "inbound",
+          kind: "response",
+          flowId: "flow-2",
+          method: "POST",
+          host: "api.example.test",
+          path: "/v1/messages?cache=1",
+          status: 429
+        }});
+        store.recordEvent({{
+          sessionId: settings.sessionId,
+          ts: 1004,
+          sourceScope: "openclaw",
+          sourceProcess: settings.sourceProcess,
+          protocol: "https",
+          direction: "local",
+          kind: "error",
+          flowId: "flow-3",
+          host: "api.example.test",
+          path: "/v1/messages?cache=1",
+          errorText: "boom"
+        }});
+        store.endSession(settings.sessionId, 1005);
+
+        const originalFetch = async () => new Response("{{}}", {{
+          status: 200,
+          headers: {{
+            "content-type": "application/json",
+            "set-cookie": "hidden"
+          }}
+        }});
+        const fetchTarget = {{ ...globalThis, fetch: originalFetch }};
+        const runtimeEvents = [];
+        const runtimeCalls = [];
+        const runtimeStore = {{
+          upsertSession: (session) => runtimeCalls.push(["upsertSession", session.mode]),
+          endSession: (sessionId) => runtimeCalls.push(["endSession", sessionId]),
+          recordEvent: (event) => runtimeEvents.push(event)
+        }};
+        const deps = {{
+          fetchTarget,
+          getStore: () => runtimeStore,
+          closeStore: () => runtimeCalls.push(["closeStore"]),
+          persistEventPayload: (_store, body) => (
+            body && body.data != null ? {{ dataText: String(body.data) }} : {{}}
+          ),
+          safeJsonString: (value) => value == null ? undefined : JSON.stringify(value)
+        }};
+        proxy.initializeDebugProxyCapture("plugin-test", settings, deps);
+        const patched = fetchTarget.fetch !== originalFetch;
+        await fetchTarget.fetch("https://api.example.test/v1/models", {{
+          method: "GET",
+          headers: {{ Authorization: "Bearer secret", "x-safe": "shown" }}
+        }});
+        await new Promise((resolve) => setImmediate(resolve));
+        proxy.finalizeDebugProxyCapture(settings, deps);
+        const restored = !fetchTarget[Symbol.for("openclaw.debugProxy.fetchPatch")];
+
+        const leaseOne = proxy.acquireDebugProxyCaptureStore(
+          settings.dbPath + ".lease",
+          settings.blobDir + "-lease"
+        );
+        const leaseTwo = proxy.acquireDebugProxyCaptureStore(
+          settings.dbPath + ".lease",
+          settings.blobDir + "-lease"
+        );
+        const leasedSame = leaseOne.store === leaseTwo.store;
+        leaseOne.release();
+        const openAfterFirstRelease = !leaseTwo.store.isClosed;
+        leaseTwo.release();
+        const closedAfterSecondRelease = leaseTwo.store.isClosed;
+
+        return {{
+          keys: Object.keys(proxy).filter((key) => [
+            "DebugProxyCaptureStore",
+            "acquireDebugProxyCaptureStore",
+            "captureHttpExchange",
+            "captureWsEvent",
+            "closeDebugProxyCaptureStore",
+            "createDebugProxyWebSocketAgent",
+            "finalizeDebugProxyCapture",
+            "getDebugProxyCaptureStore",
+            "initializeDebugProxyCapture",
+            "isDebugProxyGlobalFetchPatchInstalled",
+            "resolveDebugProxySettings",
+            "resolveEffectiveDebugProxyUrl"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedProxy.captureHttpExchange,
+          settings,
+          effectiveUrl: proxy.resolveEffectiveDebugProxyUrl(" http://configured.test:1888 "),
+          implicitStable:
+            proxy.resolveDebugProxySettings({{ OPENCLAW_DEBUG_PROXY_ENABLED: "1" }}).sessionId ===
+            proxy.resolveDebugProxySettings({{ OPENCLAW_DEBUG_PROXY_ENABLED: "1" }}).sessionId,
+          disabledAgent:
+            proxy.createDebugProxyWebSocketAgent({{ ...settings, enabled: false }}) ?? null,
+          enabledAgentType: typeof proxy.createDebugProxyWebSocketAgent(settings),
+          store: {{
+            sessions: store.listSessions(10),
+            eventKinds: store
+              .getSessionEvents(settings.sessionId)
+              .map((event) => event.kind)
+              .sort(),
+            coverage: store.summarizeSessionCoverage(settings.sessionId),
+            blobText: store.readBlob(payload.blobId),
+            doubleSends: store.queryPreset("double-sends", settings.sessionId),
+            errorBursts: store.queryPreset("error-bursts", settings.sessionId)
+          }},
+          runtime: {{
+            patched,
+            restored,
+            calls: runtimeCalls,
+            requestHeaders: JSON.parse(
+              runtimeEvents.find((event) => event.kind === "request").headersJson
+            ),
+            eventKinds: runtimeEvents.map((event) => event.kind).sort()
+          }},
+          leases: {{ leasedSame, openAfterFirstRelease, closedAfterSecondRelease }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-proxy-capture-plugin",
+                    "name": "Runtime Proxy Capture Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-proxy-capture.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.proxyCapture"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.proxyCapture"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "DebugProxyCaptureStore",
+        "acquireDebugProxyCaptureStore",
+        "captureHttpExchange",
+        "captureWsEvent",
+        "closeDebugProxyCaptureStore",
+        "createDebugProxyWebSocketAgent",
+        "finalizeDebugProxyCapture",
+        "getDebugProxyCaptureStore",
+        "initializeDebugProxyCapture",
+        "isDebugProxyGlobalFetchPatchInstalled",
+        "resolveDebugProxySettings",
+        "resolveEffectiveDebugProxyUrl",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["settings"] == {
+        "enabled": True,
+        "required": True,
+        "proxyUrl": "http://127.0.0.1:19999",
+        "dbPath": str(db_path),
+        "blobDir": str(blob_dir),
+        "certDir": str(cert_dir),
+        "sessionId": "session-explicit",
+        "sourceProcess": "openclaw",
+    }
+    assert payload["result"]["effectiveUrl"] == "http://configured.test:1888"
+    assert payload["result"]["implicitStable"] is True
+    assert payload["result"]["disabledAgent"] is None
+    assert payload["result"]["enabledAgentType"] == "object"
+    assert payload["result"]["store"]["sessions"][0]["eventCount"] == 4
+    assert payload["result"]["store"]["sessions"][0]["endedAt"] == 1005
+    assert payload["result"]["store"]["eventKinds"] == [
+        "error",
+        "request",
+        "request",
+        "response",
+    ]
+    assert payload["result"]["store"]["coverage"]["providers"] == [
+        {"value": "openai", "count": 1}
+    ]
+    assert payload["result"]["store"]["coverage"]["hosts"] == [
+        {"value": "api.example.test", "count": 4}
+    ]
+    assert payload["result"]["store"]["blobText"] == "request body"
+    assert payload["result"]["store"]["doubleSends"][0]["duplicateCount"] == 2
+    assert payload["result"]["store"]["errorBursts"][0]["errorCount"] == 1
+    assert payload["result"]["runtime"]["patched"] is True
+    assert payload["result"]["runtime"]["restored"] is True
+    assert payload["result"]["runtime"]["eventKinds"] == ["request", "response"]
+    assert payload["result"]["runtime"]["requestHeaders"] == {
+        "Authorization": "[REDACTED]",
+        "x-safe": "shown",
+    }
+    assert payload["result"]["runtime"]["calls"] == [
+        ["upsertSession", "plugin-test"],
+        ["endSession", "session-explicit"],
+        ["closeStore"],
+    ]
+    assert payload["result"]["leases"] == {
+        "leasedSame": True,
+        "openAfterFirstRelease": True,
+        "closedAfterSecondRelease": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
