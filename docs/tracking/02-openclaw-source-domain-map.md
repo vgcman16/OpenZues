@@ -51,6 +51,11 @@ The imported `image-generation-core` SDK helper coverage from
 helpers, Gemini auth, Google model id helpers, failover helpers, model input
 helpers, logging, auth-runtime, and provider env-var helpers is verified in
 `1a128fa5` and is counted with the plugin/extension system row above.
+The imported `music-generation-core` SDK helper coverage from
+`src/plugin-sdk/music-generation-core.ts`, adjacent music generation helpers,
+failover helpers, model input helpers, logging, and provider env-var helpers
+is verified in `a17da4e3` and is counted with the plugin/extension system row
+above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -164,6 +169,9 @@ helpers, logging, and provider env-var helpers is checkpointed in `f85c7465`.
 adjacent image/media generation helpers, Gemini auth, Google model id helpers,
 failover helpers, model input helpers, logging, auth-runtime, and provider
 env-var helpers is checkpointed in `1a128fa5`.
+`music-generation-core` from `src/plugin-sdk/music-generation-core.ts`,
+adjacent music generation helpers, failover helpers, model input helpers,
+logging, and provider env-var helpers is checkpointed in `a17da4e3`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
