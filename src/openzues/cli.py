@@ -39612,6 +39612,7 @@ const pluginSdkEntrypoints = [
   "browser-config-runtime",
   "browser-host-inspection",
   "browser-maintenance",
+  "browser-node-host",
   "browser-profiles",
   "browser-trash",
   "boolean-param",
@@ -39794,6 +39795,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-config-runtime",
   "browser-host-inspection",
   "browser-maintenance",
+  "browser-node-host",
   "browser-profiles",
   "browser-trash",
   "image-generation-core",
@@ -55019,6 +55021,26 @@ const browserHostInspectionRuntime = {
   resolveGoogleChromeExecutableForPlatform,
 };
 
+function decodeBrowserProxyParams(paramsJSON) {
+  if (!paramsJSON) {
+    throw new Error("INVALID_REQUEST: paramsJSON required");
+  }
+  return JSON.parse(paramsJSON);
+}
+
+async function runBrowserProxyCommand(paramsJSON) {
+  const params = decodeBrowserProxyParams(paramsJSON);
+  const pathValue = typeof params.path === "string" ? params.path.trim() : "";
+  if (!pathValue) {
+    throw new Error("INVALID_REQUEST: path required");
+  }
+  throw new Error("UNAVAILABLE: node browser proxy disabled");
+}
+
+const browserNodeHostRuntime = {
+  runBrowserProxyCommand,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -64109,6 +64131,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-host-inspection"
   ) {
     return browserHostInspectionRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-node-host" ||
+    request === "@openclaw/plugin-sdk/browser-node-host"
+  ) {
+    return browserNodeHostRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
