@@ -81650,6 +81650,199 @@ const providerTransportRuntime = {
   transformTransportMessages,
 };
 
+function safeParseWithSchema(schema, value) {
+  const parsed = schema.safeParse(value);
+  return parsed && parsed.success ? parsed.data : null;
+}
+
+function safeParseJsonWithSchema(schema, raw) {
+  try {
+    return safeParseWithSchema(schema, JSON.parse(raw));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function buildPassiveChannelStatusSummary(snapshot = {}, extra = {}) {
+  return {
+    configured: snapshot.configured ?? false,
+    ...(extra || {}),
+    running: snapshot.running ?? false,
+    lastStartAt: snapshot.lastStartAt ?? null,
+    lastStopAt: snapshot.lastStopAt ?? null,
+    lastError: snapshot.lastError ?? null,
+  };
+}
+
+function buildPassiveProbedChannelStatusSummary(snapshot = {}, extra = {}) {
+  return {
+    ...buildPassiveChannelStatusSummary(snapshot, extra),
+    probe: snapshot.probe,
+    lastProbeAt: snapshot.lastProbeAt ?? null,
+  };
+}
+
+function buildTrafficStatusSummary(snapshot = {}) {
+  return {
+    lastInboundAt: (snapshot && snapshot.lastInboundAt) ?? null,
+    lastOutboundAt: (snapshot && snapshot.lastOutboundAt) ?? null,
+  };
+}
+
+async function runStoppablePassiveMonitor(params = {}) {
+  await runPassiveAccountLifecycle({
+    abortSignal: params.abortSignal,
+    start: params.start,
+    stop: async (monitor) => {
+      monitor.stop();
+    },
+  });
+}
+
+function resolveLoggerBackedRuntime(runtime, logger) {
+  return (
+    runtime ??
+    createLoggerBackedRuntime({
+      logger,
+      exitError: () => new Error("Runtime exit not available"),
+    })
+  );
+}
+
+function requireChannelOpenAllowFrom(params = {}) {
+  params.requireOpenAllowFrom({
+    policy: params.policy,
+    allowFrom: params.allowFrom,
+    ctx: params.ctx,
+    path: ["allowFrom"],
+    message:
+      `channels.${params.channel}.dmPolicy="open" requires ` +
+      `channels.${params.channel}.allowFrom to include "*"`,
+  });
+}
+
+function readStatusIssueFields(value, fields) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const result = {};
+  for (const field of fields || []) {
+    result[field] = value[field];
+  }
+  return result;
+}
+
+function coerceStatusIssueAccountId(value) {
+  return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function formatPluginConfigIssue(issue, options = {}) {
+  if (!issue) {
+    return options.invalidConfigMessage ?? "invalid config";
+  }
+  if (issue.code === "unrecognized_keys" && Array.isArray(issue.keys) && issue.keys.length > 0) {
+    return typeof options.unknownKeyMessage === "function"
+      ? options.unknownKeyMessage(issue.keys[0])
+      : `unknown config key: ${issue.keys[0]}`;
+  }
+  if (issue.code === "invalid_type" && (!Array.isArray(issue.path) || issue.path.length === 0)) {
+    return options.rootInvalidTypeMessage ?? "expected config object";
+  }
+  return issue.message;
+}
+
+function normalizePluginConfigIssuePath(pathSegments) {
+  return (Array.isArray(pathSegments) ? pathSegments : []).filter((segment) => {
+    const kind = typeof segment;
+    return kind === "string" || kind === "number";
+  });
+}
+
+function mapPluginConfigIssues(issues, options = {}) {
+  return (Array.isArray(issues) ? issues : []).map((issue) => ({
+    path: normalizePluginConfigIssuePath(issue.path),
+    message: formatPluginConfigIssue(issue, options),
+  }));
+}
+
+function canResolveEnvSecretRefInReadOnlyPath(params = {}) {
+  const cfg = params.cfg || {};
+  const providers = cfg.secrets && cfg.secrets.providers;
+  const providerConfig = providers && providers[params.provider];
+  if (!providerConfig) {
+    return params.provider === resolveDefaultSecretProviderAliasFromConfig(cfg, "env");
+  }
+  if (providerConfig.source !== "env") {
+    return false;
+  }
+  const allowlist = providerConfig.allowlist;
+  return !Array.isArray(allowlist) || allowlist.includes(params.id);
+}
+
+function readPluginPackageVersion(params = {}) {
+  const candidates = params.candidates || [
+    "../package.json",
+    "./package.json",
+    "../../package.json",
+  ];
+  for (const candidate of candidates) {
+    try {
+      const version = params.require(candidate).version;
+      if (typeof version === "string" && version.trim().length > 0) {
+        return version;
+      }
+    } catch (_error) {
+      // Missing candidate paths are expected across source and bundled layouts.
+    }
+  }
+  return params.fallback ?? "unknown";
+}
+
+async function resolveAmbientNodeProxyAgent(params = {}) {
+  if (!hasEnvHttpProxyConfigured(params.protocol || "https")) {
+    return undefined;
+  }
+  try {
+    const { ProxyAgent } = await import("proxy-agent");
+    params.onUsingProxy?.();
+    return new ProxyAgent();
+  } catch (error) {
+    params.onError?.(error);
+    return undefined;
+  }
+}
+
+const extensionSharedRuntime = {
+  buildPassiveChannelStatusSummary,
+  buildPassiveProbedChannelStatusSummary,
+  buildTimeoutAbortSignal,
+  buildTrafficStatusSummary,
+  canResolveEnvSecretRefInReadOnlyPath,
+  coerceStatusIssueAccountId,
+  createDeferred,
+  formatPluginConfigIssue,
+  mapPluginConfigIssues,
+  normalizePluginConfigIssuePath,
+  readPluginPackageVersion,
+  readStatusIssueFields,
+  requireChannelOpenAllowFrom,
+  resolveAmbientNodeProxyAgent,
+  resolveLoggerBackedRuntime,
+  runStoppablePassiveMonitor,
+  safeParseJsonWithSchema,
+  safeParseWithSchema,
+};
+
 const discordThreadBindingRecords = [];
 const discordBuiltComponentMessages = new Map();
 
@@ -84090,6 +84283,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/discord"
   ) {
     return discordRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/extension-shared" ||
+    request === "@openclaw/plugin-sdk/extension-shared"
+  ) {
+    return extensionSharedRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-plugin-common" ||

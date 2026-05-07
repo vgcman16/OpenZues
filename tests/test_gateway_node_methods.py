@@ -36452,6 +36452,391 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_extension_shared_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-extension-shared.cjs"
+    runtime_entry.write_text(
+        """
+const ext = require("openclaw/plugin-sdk/extension-shared");
+const scopedExt = require("@openclaw/plugin-sdk/extension-shared");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.extension_shared",
+      description: "Use OpenClaw extension-shared SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const requiredKeys = [
+          "buildPassiveChannelStatusSummary",
+          "buildPassiveProbedChannelStatusSummary",
+          "buildTimeoutAbortSignal",
+          "buildTrafficStatusSummary",
+          "canResolveEnvSecretRefInReadOnlyPath",
+          "coerceStatusIssueAccountId",
+          "createDeferred",
+          "formatPluginConfigIssue",
+          "mapPluginConfigIssues",
+          "normalizePluginConfigIssuePath",
+          "readPluginPackageVersion",
+          "readStatusIssueFields",
+          "requireChannelOpenAllowFrom",
+          "resolveAmbientNodeProxyAgent",
+          "resolveLoggerBackedRuntime",
+          "runStoppablePassiveMonitor",
+          "safeParseJsonWithSchema",
+          "safeParseWithSchema"
+        ];
+        const keys = Object.keys(ext).sort();
+        const missing = requiredKeys.filter(
+          (key) => !Object.prototype.hasOwnProperty.call(ext, key)
+        );
+        const genericOnlyPresent = keys.includes("formatCliCommand");
+        if (missing.length > 0) {
+          return {
+            keys,
+            missing,
+            genericOnlyPresent,
+            scopedType: typeof scopedExt.buildPassiveChannelStatusSummary
+          };
+        }
+
+        const schema = {
+          safeParse(value) {
+            if (value === "ok") {
+              return { success: true, data: { value } };
+            }
+            return {
+              success: false,
+              error: {
+                issues: [{ code: "custom", path: ["value"], message: "not ok" }]
+              }
+            };
+          }
+        };
+        const passive = ext.buildPassiveChannelStatusSummary(
+          { configured: true, running: true, lastStartAt: 10 },
+          { mode: "passive" }
+        );
+        const probed = ext.buildPassiveProbedChannelStatusSummary(
+          { running: true, probe: { ok: true }, lastProbeAt: 20 },
+          { mode: "probe" }
+        );
+        const traffic = ext.buildTrafficStatusSummary({ lastInboundAt: 1 });
+        const monitorAbort = new AbortController();
+        const monitorEvents = [];
+        const monitorTask = ext.runStoppablePassiveMonitor({
+          abortSignal: monitorAbort.signal,
+          start: async () => ({
+            stop() {
+              monitorEvents.push("stopped");
+            }
+          })
+        });
+        monitorAbort.abort();
+        await monitorTask;
+
+        const loggerCalls = [];
+        const runtime = ext.resolveLoggerBackedRuntime(undefined, {
+          info: (value) => loggerCalls.push(["info", value]),
+          error: (value) => loggerCalls.push(["error", value])
+        });
+        runtime.log("hello %s", "world");
+        runtime.error("bad %s", "thing");
+        let exitMessage = "";
+        try {
+          runtime.exit(2);
+        } catch (error) {
+          exitMessage = String(error && error.message ? error.message : error);
+        }
+
+        const issues = [];
+        ext.requireChannelOpenAllowFrom({
+          channel: "discord",
+          policy: "open",
+          allowFrom: ["admin"],
+          ctx: { addIssue: (issue) => issues.push(issue) },
+          requireOpenAllowFrom({ policy, allowFrom, ctx, path, message }) {
+            if (policy === "open" && !allowFrom.includes("*")) {
+              ctx.addIssue({ code: "custom", path, message });
+            }
+          }
+        });
+        ext.requireChannelOpenAllowFrom({
+          channel: "discord",
+          policy: "open",
+          allowFrom: ["*"],
+          ctx: { addIssue: (issue) => issues.push(issue) },
+          requireOpenAllowFrom({ policy, allowFrom, ctx, path, message }) {
+            if (policy === "open" && !allowFrom.includes("*")) {
+              ctx.addIssue({ code: "custom", path, message });
+            }
+          }
+        });
+
+        const deferred = ext.createDeferred();
+        setTimeout(() => deferred.resolve("done"), 0);
+        const previousEnv = {};
+        for (const key of [
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy"
+        ]) {
+          previousEnv[key] = process.env[key];
+          delete process.env[key];
+        }
+        const proxyEvents = [];
+        const proxyAgent = await ext.resolveAmbientNodeProxyAgent({
+          onUsingProxy: () => proxyEvents.push("proxy")
+        });
+        for (const [key, value] of Object.entries(previousEnv)) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+
+        return {
+          keysPresent: requiredKeys.every((key) => keys.includes(key)),
+          genericOnlyPresent,
+          scopedSame:
+            scopedExt.buildPassiveChannelStatusSummary ===
+            ext.buildPassiveChannelStatusSummary,
+          parsing: {
+            safe: ext.safeParseWithSchema(schema, "ok"),
+            unsafe: ext.safeParseWithSchema(schema, "bad") || null,
+            jsonSafe: ext.safeParseJsonWithSchema(schema, '"ok"'),
+            jsonInvalid: ext.safeParseJsonWithSchema(schema, "{nope") || null
+          },
+          passive,
+          probed,
+          traffic,
+          monitorEvents,
+          logger: {
+            calls: loggerCalls,
+            exitMessage
+          },
+          openAllowIssue: issues,
+          statusFields: {
+            selected: ext.readStatusIssueFields(
+              { accountId: 7, message: "bad", ignored: true },
+              ["accountId", "message"]
+            ),
+            invalid: ext.readStatusIssueFields(null, ["accountId"]) || null,
+            accountIds: [
+              ext.coerceStatusIssueAccountId(42),
+              ext.coerceStatusIssueAccountId("abc"),
+              ext.coerceStatusIssueAccountId({}) || null
+            ]
+          },
+          deferred: await deferred.promise,
+          configIssues: {
+            unknown: ext.formatPluginConfigIssue(
+              {
+                code: "unrecognized_keys",
+                keys: ["token"],
+                path: [],
+                message: "Unrecognized key"
+              },
+              { unknownKeyMessage: (key) => `bad key ${key}` }
+            ),
+            root: ext.formatPluginConfigIssue(
+              { code: "invalid_type", path: [], message: "Expected object" },
+              { rootInvalidTypeMessage: "root must be object" }
+            ),
+            default: ext.formatPluginConfigIssue(undefined),
+            path: ext.normalizePluginConfigIssuePath(["a", 1, false, null, "b"]),
+            mapped: ext.mapPluginConfigIssues([
+              { code: "custom", path: ["config", 2], message: "bad" }
+            ])
+          },
+          envSecret: {
+            defaultProvider: ext.canResolveEnvSecretRefInReadOnlyPath({
+              cfg: { secrets: { defaults: { env: "default" } } },
+              provider: "default",
+              id: "ANY"
+            }),
+            allowlisted: ext.canResolveEnvSecretRefInReadOnlyPath({
+              cfg: {
+                secrets: {
+                  providers: {
+                    envDefault: { source: "env", allowlist: ["OPENAI_KEY"] },
+                    fileDefault: { source: "file" }
+                  }
+                }
+              },
+              provider: "envDefault",
+              id: "OPENAI_KEY"
+            }),
+            denied: ext.canResolveEnvSecretRefInReadOnlyPath({
+              cfg: {
+                secrets: {
+                  providers: {
+                    envDefault: { source: "env", allowlist: ["OPENAI_KEY"] }
+                  }
+                }
+              },
+              provider: "envDefault",
+              id: "OTHER"
+            }),
+            fileDenied: ext.canResolveEnvSecretRefInReadOnlyPath({
+              cfg: { secrets: { providers: { fileDefault: { source: "file" } } } },
+              provider: "fileDefault",
+              id: "OPENAI_KEY"
+            })
+          },
+          packageVersions: {
+            found: ext.readPluginPackageVersion({
+              candidates: ["missing.json", "./package.json"],
+              require(id) {
+                if (id === "./package.json") {
+                  return { version: "1.2.3" };
+                }
+                throw new Error("missing");
+              },
+              fallback: "fallback"
+            }),
+            fallback: ext.readPluginPackageVersion({
+              candidates: ["missing.json"],
+              require() {
+                throw new Error("missing");
+              },
+              fallback: "fallback"
+            })
+          },
+          proxy: {
+            agent: proxyAgent || null,
+            events: proxyEvents
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-extension-shared-plugin",
+                    "name": "Runtime Extension Shared Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-extension-shared.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.extension_shared"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.extension_shared"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keysPresent": True,
+        "genericOnlyPresent": False,
+        "scopedSame": True,
+        "parsing": {
+            "safe": {"value": "ok"},
+            "unsafe": None,
+            "jsonSafe": {"value": "ok"},
+            "jsonInvalid": None,
+        },
+        "passive": {
+            "configured": True,
+            "mode": "passive",
+            "running": True,
+            "lastStartAt": 10,
+            "lastStopAt": None,
+            "lastError": None,
+        },
+        "probed": {
+            "configured": False,
+            "mode": "probe",
+            "running": True,
+            "lastStartAt": None,
+            "lastStopAt": None,
+            "lastError": None,
+            "probe": {"ok": True},
+            "lastProbeAt": 20,
+        },
+        "traffic": {"lastInboundAt": 1, "lastOutboundAt": None},
+        "monitorEvents": ["stopped"],
+        "logger": {
+            "calls": [["info", "hello world"], ["error", "bad thing"]],
+            "exitMessage": "Runtime exit not available",
+        },
+        "openAllowIssue": [
+            {
+                "code": "custom",
+                "path": ["allowFrom"],
+                "message": (
+                    'channels.discord.dmPolicy="open" requires '
+                    'channels.discord.allowFrom to include "*"'
+                ),
+            }
+        ],
+        "statusFields": {
+            "selected": {"accountId": 7, "message": "bad"},
+            "invalid": None,
+            "accountIds": ["42", "abc", None],
+        },
+        "deferred": "done",
+        "configIssues": {
+            "unknown": "bad key token",
+            "root": "root must be object",
+            "default": "invalid config",
+            "path": ["a", 1, "b"],
+            "mapped": [{"path": ["config", 2], "message": "bad"}],
+        },
+        "envSecret": {
+            "defaultProvider": True,
+            "allowlisted": True,
+            "denied": False,
+            "fileDenied": False,
+        },
+        "packageVersions": {"found": "1.2.3", "fallback": "fallback"},
+        "proxy": {"agent": None, "events": []},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_inbound_envelope_helpers(
     tmp_path,
 ) -> None:
