@@ -101,8 +101,10 @@ verified in `ed03c127` and counted with the plugin/extension system row above.
 The imported `google-model-id` alias coverage from
 `src/plugin-sdk/google-model-id.ts` is verified in `67db67b5`, and the
 imported `googlechat-runtime-shared` schema coverage from
-`src/plugin-sdk/googlechat-runtime-shared.ts` is verified in `f721b7e3`; both
-are counted with the plugin/extension system row above.
+`src/plugin-sdk/googlechat-runtime-shared.ts` is verified in `f721b7e3`, and
+the imported `open-prose` exact helper coverage from
+`src/plugin-sdk/open-prose.ts` is verified in `ef8830b1`; all are counted with
+the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
