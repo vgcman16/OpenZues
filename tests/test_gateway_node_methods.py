@@ -28823,6 +28823,313 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_speech_core_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-speech-core.cjs"
+    runtime_entry.write_text(
+        """
+const speech = require("openclaw/plugin-sdk/speech-core");
+const scopedSpeech = require("@openclaw/plugin-sdk/speech-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.speech_core",
+      description: "Use OpenClaw speech-core SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let rangeError = "";
+        let languageError = "";
+        let seedError = "";
+        let normalizationError = "";
+        let assertError = "";
+        let summaryError = "";
+        try {
+          speech.requireInRange(11, 0, 10, "speed");
+        } catch (err) {
+          rangeError = String(err && err.message ? err.message : err);
+        }
+        try {
+          speech.normalizeLanguageCode("eng");
+        } catch (err) {
+          languageError = String(err && err.message ? err.message : err);
+        }
+        try {
+          speech.normalizeSeed(5000000000);
+        } catch (err) {
+          seedError = String(err && err.message ? err.message : err);
+        }
+        try {
+          speech.normalizeApplyTextNormalization("sometimes");
+        } catch (err) {
+          normalizationError = String(err && err.message ? err.message : err);
+        }
+        try {
+          await speech.assertOkOrThrowProviderError(
+            new Response(JSON.stringify({
+              error: { message: "too many requests", type: "rate_limit", code: "429" }
+            }), {
+              status: 429,
+              headers: { "x-request-id": "req-1" }
+            }),
+            "Speech provider"
+          );
+        } catch (err) {
+          assertError = String(err && err.message ? err.message : err);
+        }
+        try {
+          await speech.summarizeText({
+            text: "short",
+            targetLength: 99,
+            cfg: {},
+            config: {},
+            timeoutMs: 100
+          });
+        } catch (err) {
+          summaryError = String(err && err.message ? err.message : err);
+        }
+        const directive = speech.parseTtsDirectives(
+          "Say [[tts:provider=openai voice=alloy]]hello[[/tts]] [[tts:text]]hidden[[/tts:text]]",
+          { enabled: true, allowText: true, allowProvider: true },
+          {
+            providers: [
+              {
+                id: "openai",
+                aliases: ["oa"],
+                autoSelectOrder: 2,
+                parseDirectiveToken({ key, value }) {
+                  if (key === "voice") {
+                    return { handled: true, overrides: { voice: value } };
+                  }
+                  return { handled: false };
+                }
+              }
+            ]
+          }
+        );
+        const cfg = {
+          messages: {
+            tts: {
+              enabled: true,
+              provider: "base",
+              modelOverrides: { enabled: true, base: "yes" }
+            }
+          },
+          agents: {
+            list: [
+              {
+                id: "Main Agent",
+                tts: { provider: "agent", modelOverrides: { voice: "nova" } }
+              }
+            ]
+          },
+          channels: {
+            telegram: {
+              tts: { auto: "tagged" },
+              accounts: { main: { tts: { provider: "account" } } }
+            }
+          }
+        };
+        const responseText = await speech.readResponseTextLimited(new Response("abcdef"), 3);
+        return {
+          keys: Object.keys(speech).sort(),
+          scopedType: typeof scopedSpeech.parseTtsDirectives,
+          normalized: {
+            language: speech.normalizeLanguageCode(" EN "),
+            textNormalization: speech.normalizeApplyTextNormalization(" ON "),
+            seed: speech.normalizeSeed(12.9),
+            autoMode: speech.normalizeTtsAutoMode("TAGGED"),
+            autoModes: Array.from(speech.TTS_AUTO_MODES).sort()
+          },
+          errors: {
+            rangeError,
+            languageError,
+            seedError,
+            normalizationError,
+            assertError,
+            summaryError
+          },
+          directives: {
+            cleanedText: directive.cleanedText,
+            hasDirective: directive.hasDirective,
+            ttsText: directive.ttsText,
+            overrides: directive.overrides,
+            warnings: directive.warnings
+          },
+          config: speech.resolveEffectiveTtsConfig(cfg, {
+            agentId: "main-agent",
+            channelId: "telegram",
+            accountId: "main"
+          }),
+          providerIds: {
+            normalized: speech.normalizeSpeechProviderId(" OpenAI "),
+            canonicalMissing: speech.canonicalizeSpeechProviderId(" Missing "),
+            getMissing: speech.getSpeechProvider("missing") ?? null,
+            list: speech.listSpeechProviders().length
+          },
+          http: {
+            boolean: [speech.asBoolean(true), speech.asBoolean("true") ?? null],
+            finite: [speech.asFiniteNumber(3), speech.asFiniteNumber("3") ?? null],
+            object: speech.asObject({ ok: true }),
+            trimmed: speech.trimToUndefined("  value  "),
+            payload: speech.formatProviderErrorPayload({
+              error: { message: "bad", type: "invalid", code: "E_BAD" }
+            }),
+            message: speech.formatProviderHttpErrorMessage({
+              label: "Provider",
+              status: 500,
+              detail: "failed",
+              requestId: "req-2"
+            }),
+            responseText,
+            createdError: String((await speech.createProviderHttpError(
+              new Response("plain detail", { status: 400 }),
+              "Provider"
+            )).message)
+          },
+          scheduleCleanupType: typeof speech.scheduleCleanup
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "speech-core-plugin",
+                    "name": "Speech Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-speech-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.speech_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.speech_core"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "TTS_AUTO_MODES",
+            "asBoolean",
+            "asFiniteNumber",
+            "asObject",
+            "assertOkOrThrowProviderError",
+            "canonicalizeSpeechProviderId",
+            "createProviderHttpError",
+            "extractProviderErrorDetail",
+            "extractProviderRequestId",
+            "formatProviderErrorPayload",
+            "formatProviderHttpErrorMessage",
+            "getSpeechProvider",
+            "listSpeechProviders",
+            "normalizeApplyTextNormalization",
+            "normalizeLanguageCode",
+            "normalizeSeed",
+            "normalizeSpeechProviderId",
+            "normalizeTtsAutoMode",
+            "parseTtsDirectives",
+            "readResponseTextLimited",
+            "requireInRange",
+            "resolveEffectiveTtsConfig",
+            "scheduleCleanup",
+            "summarizeText",
+            "trimToUndefined",
+            "truncateErrorDetail",
+        ],
+        "scopedType": "function",
+        "normalized": {
+            "language": "en",
+            "textNormalization": "on",
+            "seed": 12,
+            "autoMode": "tagged",
+            "autoModes": ["always", "inbound", "off", "tagged"],
+        },
+        "errors": {
+            "rangeError": "speed must be between 0 and 10",
+            "languageError": (
+                "languageCode must be a 2-letter ISO 639-1 code (e.g. en, de, fr)"
+            ),
+            "seedError": "seed must be between 0 and 4294967295",
+            "normalizationError": "applyTextNormalization must be one of: auto, on, off",
+            "assertError": (
+                "Speech provider (429): too many requests "
+                "[type=rate_limit, code=429] [request_id=req-1]"
+            ),
+            "summaryError": "Invalid targetLength: 99",
+        },
+        "directives": {
+            "cleanedText": "Say hello ",
+            "hasDirective": True,
+            "ttsText": "hidden",
+            "overrides": {
+                "provider": "openai",
+                "ttsText": "hidden",
+                "providerOverrides": {"openai": {"voice": "alloy"}},
+            },
+            "warnings": [],
+        },
+        "config": {
+            "enabled": True,
+            "provider": "account",
+            "modelOverrides": {"enabled": True, "base": "yes", "voice": "nova"},
+            "auto": "tagged",
+        },
+        "providerIds": {
+            "normalized": "openai",
+            "canonicalMissing": "missing",
+            "getMissing": None,
+            "list": 0,
+        },
+        "http": {
+            "boolean": [True, None],
+            "finite": [3, None],
+            "object": {"ok": True},
+            "trimmed": "value",
+            "payload": "bad [type=invalid, code=E_BAD]",
+            "message": "Provider (500): failed [request_id=req-2]",
+            "responseText": "abc",
+            "createdError": "Provider (400): plain detail",
+        },
+        "scheduleCleanupType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_files_helpers(
     tmp_path,
 ) -> None:

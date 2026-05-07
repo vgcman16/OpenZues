@@ -50878,6 +50878,507 @@ const memoryHostSdkEngineRuntime = {
   ...memoryCoreHostEngineQmdRuntime,
 };
 
+const TTS_AUTO_MODES = new Set(["off", "always", "inbound", "tagged"]);
+
+function requireInRange(value, min, max, label) {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`${label} must be between ${min} and ${max}`);
+  }
+}
+
+function normalizeLanguageCode(code) {
+  const normalized = normalizeOptionalLowercaseString(code);
+  if (!normalized) {
+    return undefined;
+  }
+  if (!/^[a-z]{2}$/.test(normalized)) {
+    throw new Error("languageCode must be a 2-letter ISO 639-1 code (e.g. en, de, fr)");
+  }
+  return normalized;
+}
+
+function normalizeApplyTextNormalization(mode) {
+  const normalized = normalizeOptionalLowercaseString(mode);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "auto" || normalized === "on" || normalized === "off") {
+    return normalized;
+  }
+  throw new Error("applyTextNormalization must be one of: auto, on, off");
+}
+
+function normalizeSeed(seed) {
+  if (seed == null) {
+    return undefined;
+  }
+  const next = Math.floor(seed);
+  if (!Number.isFinite(next) || next < 0 || next > 4294967295) {
+    throw new Error("seed must be between 0 and 4294967295");
+  }
+  return next;
+}
+
+function scheduleCleanup(tempDir, delayMs = 5 * 60 * 1000) {
+  const timer = setTimeout(() => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }, delayMs);
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
+}
+
+function normalizeTtsAutoMode(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = normalizeOptionalLowercaseString(value);
+  return TTS_AUTO_MODES.has(normalized) ? normalized : undefined;
+}
+
+function normalizeSpeechProviderId(providerId) {
+  return normalizeOptionalLowercaseString(providerId);
+}
+
+function listSpeechProviders(_cfg) {
+  return [];
+}
+
+function getSpeechProvider(_providerId, _cfg) {
+  return undefined;
+}
+
+function canonicalizeSpeechProviderId(providerId, cfg) {
+  const normalized = normalizeSpeechProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const provider = getSpeechProvider(normalized, cfg);
+  return provider && provider.id ? provider.id : normalized;
+}
+
+function sortSpeechDirectiveProviders(providers) {
+  return [...(Array.isArray(providers) ? providers : [])].sort((left, right) => {
+    const leftOrder = Number.isFinite(left && left.autoSelectOrder)
+      ? left.autoSelectOrder
+      : Number.MAX_SAFE_INTEGER;
+    const rightOrder = Number.isFinite(right && right.autoSelectOrder)
+      ? right.autoSelectOrder
+      : Number.MAX_SAFE_INTEGER;
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return String((left && left.id) || "").localeCompare(String((right && right.id) || ""));
+  });
+}
+
+function resolveSpeechDirectiveProvider(providers, providerId) {
+  const normalized = normalizeOptionalLowercaseString(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  return providers.find(
+    (provider) =>
+      provider &&
+      (provider.id === normalized ||
+        (Array.isArray(provider.aliases) &&
+          provider.aliases.some(
+            (alias) => normalizeOptionalLowercaseString(alias) === normalized,
+          ))),
+  );
+}
+
+function prioritizeSpeechDirectiveProvider(providers, providerId) {
+  const preferred = resolveSpeechDirectiveProvider(providers, providerId);
+  if (!preferred) {
+    return [...providers];
+  }
+  return [preferred, ...providers.filter((provider) => provider !== preferred)];
+}
+
+function parseTtsDirectives(text, policy = {}, options = {}) {
+  if (!policy.enabled) {
+    return { cleanedText: text, overrides: {}, warnings: [], hasDirective: false };
+  }
+  if (!/\[\[\s*\/?\s*tts(?:\s*:|\s*\]\])/iu.test(text)) {
+    return { cleanedText: text, overrides: {}, warnings: [], hasDirective: false };
+  }
+  const providers = sortSpeechDirectiveProviders(
+    options.providers || listSpeechProviders(options.cfg),
+  );
+  const overrides = {};
+  const warnings = [];
+  let cleanedText = String(text);
+  let hasDirective = false;
+
+  cleanedText = cleanedText.replace(
+    /\[\[\s*tts\s*:\s*text\s*\]\]([\s\S]*?)\[\[\s*\/\s*tts\s*:\s*text\s*\]\]/gi,
+    (_match, inner = "") => {
+      hasDirective = true;
+      if (policy.allowText && overrides.ttsText == null) {
+        overrides.ttsText = String(inner).trim();
+      }
+      return "";
+    },
+  );
+  cleanedText = cleanedText.replace(
+    /\[\[\s*tts\s*\]\]([\s\S]*?)\[\[\s*\/\s*tts\s*\]\]/gi,
+    (_match, inner = "") => {
+      hasDirective = true;
+      const visible = String(inner).trim();
+      if (policy.allowText && overrides.ttsText == null) {
+        overrides.ttsText = visible;
+      }
+      return visible;
+    },
+  );
+  cleanedText = cleanedText.replace(/\[\[\s*tts\s*:\s*([^\]]+)\]\]/gi, (_match, body = "") => {
+    hasDirective = true;
+    const tokens = String(body).split(/\s+/).filter(Boolean);
+    let declaredProviderId;
+    if (policy.allowProvider) {
+      for (const token of tokens) {
+        const eqIndex = token.indexOf("=");
+        if (eqIndex < 0) {
+          continue;
+        }
+        const key = normalizeOptionalLowercaseString(token.slice(0, eqIndex));
+        const value = normalizeOptionalLowercaseString(token.slice(eqIndex + 1));
+        if (key === "provider" && value) {
+          declaredProviderId = value;
+          overrides.provider = value;
+        }
+      }
+    }
+    const directiveProviders = declaredProviderId
+      ? [resolveSpeechDirectiveProvider(providers, declaredProviderId)].filter(Boolean)
+      : prioritizeSpeechDirectiveProvider(providers, options.preferredProviderId);
+    if (declaredProviderId && directiveProviders.length === 0) {
+      warnings.push(`unknown provider "${declaredProviderId}"`);
+    }
+    for (const token of tokens) {
+      const eqIndex = token.indexOf("=");
+      if (eqIndex < 0) {
+        continue;
+      }
+      const key = normalizeOptionalLowercaseString(token.slice(0, eqIndex));
+      const value = token.slice(eqIndex + 1).trim();
+      if (!key || !value || key === "provider") {
+        continue;
+      }
+      let handled = false;
+      for (const provider of directiveProviders) {
+        if (typeof provider.parseDirectiveToken !== "function") {
+          continue;
+        }
+        const parsed = provider.parseDirectiveToken({
+          key,
+          value,
+          policy,
+          selectedProvider: declaredProviderId ? provider.id : undefined,
+          providerConfig: options.providerConfigs && options.providerConfigs[provider.id],
+          currentOverrides:
+            overrides.providerOverrides && overrides.providerOverrides[provider.id],
+        });
+        if (!parsed || !parsed.handled) {
+          continue;
+        }
+        if (parsed.overrides) {
+          overrides.providerOverrides = {
+            ...(overrides.providerOverrides || {}),
+            [provider.id]: {
+              ...((overrides.providerOverrides || {})[provider.id] || {}),
+              ...parsed.overrides,
+            },
+          };
+        }
+        if (Array.isArray(parsed.warnings) && parsed.warnings.length > 0) {
+          warnings.push(...parsed.warnings);
+        }
+        handled = true;
+        break;
+      }
+      if (!handled && declaredProviderId && directiveProviders.length > 0) {
+        warnings.push(`unsupported ${declaredProviderId} directive key "${key}"`);
+      }
+    }
+    return "";
+  });
+  cleanedText = cleanedText
+    .replace(/\[\[\s*tts\s*\]\]/gi, () => {
+      hasDirective = true;
+      return "";
+    })
+    .replace(/\[\[\s*\/\s*tts(?:\s*:\s*[^\]]*)?\]\]/gi, () => {
+      hasDirective = true;
+      return "";
+    });
+  return {
+    cleanedText,
+    ttsText: overrides.ttsText,
+    hasDirective,
+    overrides,
+    warnings,
+  };
+}
+
+function speechCoreIsPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function speechCoreDeepMergeDefined(base, override) {
+  if (!speechCoreIsPlainObject(base) || !speechCoreIsPlainObject(override)) {
+    return override === undefined ? base : override;
+  }
+  const result = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    if (["__proto__", "prototype", "constructor"].includes(key) || value === undefined) {
+      continue;
+    }
+    result[key] =
+      key in result ? speechCoreDeepMergeDefined(result[key], value) : value;
+  }
+  return result;
+}
+
+function resolveSpeechCoreRecordEntry(entries, id, normalize) {
+  const normalizedId = normalizeOptionalString(id);
+  if (!entries || !normalizedId) {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(entries, normalizedId)) {
+    return entries[normalizedId];
+  }
+  const normalized = normalize(normalizedId);
+  const key = Object.keys(entries).find((candidate) => normalize(candidate) === normalized);
+  return key ? entries[key] : undefined;
+}
+
+function resolveSpeechCoreChannelConfig(cfg, channelId) {
+  if (!speechCoreIsPlainObject(cfg && cfg.channels)) {
+    return undefined;
+  }
+  return speechCoreAsObject(
+    resolveSpeechCoreRecordEntry(
+      cfg.channels,
+      channelId,
+      normalizeLowercaseStringOrEmpty,
+    ),
+  );
+}
+
+function resolveEffectiveTtsConfig(cfg = {}, contextOrAgentId = {}) {
+  const context =
+    typeof contextOrAgentId === "string" ? { agentId: contextOrAgentId } : contextOrAgentId || {};
+  let merged = (cfg.messages && cfg.messages.tts) || {};
+  const agentId = normalizeOptionalString(context.agentId);
+  if (agentId && Array.isArray(cfg.agents && cfg.agents.list)) {
+    const normalized = normalizeAgentId(agentId);
+    const agent = cfg.agents.list.find(
+      (entry) => normalizeAgentId(entry && entry.id) === normalized,
+    );
+    merged = speechCoreDeepMergeDefined(merged, (agent && agent.tts) || {});
+  }
+  const channelConfig = resolveSpeechCoreChannelConfig(cfg, context.channelId);
+  merged = speechCoreDeepMergeDefined(merged, (channelConfig && channelConfig.tts) || {});
+  const accountTts =
+    channelConfig && speechCoreIsPlainObject(channelConfig.accounts)
+      ? speechCoreAsObject(
+          resolveSpeechCoreRecordEntry(
+            channelConfig.accounts,
+            context.accountId,
+            normalizeAccountId,
+          ),
+        )?.tts
+      : undefined;
+  merged = speechCoreDeepMergeDefined(merged, accountTts || {});
+  return merged || {};
+}
+
+async function summarizeText(params = {}, deps = {}) {
+  const targetLength = Number(params.targetLength);
+  if (targetLength < 100 || targetLength > 10000) {
+    throw new Error(`Invalid targetLength: ${params.targetLength}`);
+  }
+  if (
+    typeof deps.completeSimple !== "function" ||
+    typeof deps.resolveModelAsync !== "function" ||
+    typeof deps.prepareModelForSimpleCompletion !== "function" ||
+    typeof deps.getApiKeyForModel !== "function" ||
+    typeof deps.requireApiKey !== "function"
+  ) {
+    throw new Error("speech summarization unavailable in OpenZues plugin runtime.");
+  }
+  const startTime = Date.now();
+  const ref = { provider: "default", model: params.config && params.config.summaryModel };
+  const resolved = await deps.resolveModelAsync(ref.provider, ref.model, undefined, params.cfg);
+  if (!resolved || !resolved.model) {
+    throw new Error(
+      (resolved && resolved.error) || `Unknown summary model: ${ref.provider}/${ref.model}`,
+    );
+  }
+  const completionModel = deps.prepareModelForSimpleCompletion({
+    model: resolved.model,
+    cfg: params.cfg,
+  });
+  const apiKey = deps.requireApiKey(
+    await deps.getApiKeyForModel({ model: completionModel, cfg: params.cfg }),
+    ref.provider,
+  );
+  const response = await deps.completeSimple(
+    completionModel,
+    { messages: [{ role: "user", content: String(params.text || ""), timestamp: Date.now() }] },
+    { apiKey, maxTokens: Math.ceil(targetLength / 2), temperature: 0.3 },
+  );
+  const summary = (Array.isArray(response && response.content) ? response.content : [])
+    .filter((block) => block && block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (!summary) {
+    throw new Error("No summary returned");
+  }
+  return {
+    summary,
+    latencyMs: Date.now() - startTime,
+    inputLength: String(params.text || "").length,
+    outputLength: summary.length,
+  };
+}
+
+function speechCoreAsObject(value) {
+  return speechCoreIsPlainObject(value) ? value : undefined;
+}
+
+function truncateErrorDetail(detail, limit = 220) {
+  const text = String(detail || "");
+  return text.length <= limit ? text : `${text.slice(0, limit - 1)}...`;
+}
+
+async function readResponseTextLimited(response, limitBytes = 16 * 1024) {
+  if (limitBytes <= 0 || !response || typeof response.text !== "function") {
+    return "";
+  }
+  const text = await response.text();
+  return Buffer.byteLength(text, "utf8") <= limitBytes
+    ? text
+    : Buffer.from(text, "utf8").subarray(0, limitBytes).toString("utf8");
+}
+
+function formatProviderErrorPayload(payload) {
+  const root = speechCoreAsObject(payload);
+  const detailObject = speechCoreAsObject(root && root.detail);
+  const subject = speechCoreAsObject(root && root.error) || detailObject || root;
+  if (!subject) {
+    return undefined;
+  }
+  const message =
+    normalizeOptionalString(subject.message) ||
+    normalizeOptionalString(subject.detail) ||
+    normalizeOptionalString(root && root.message) ||
+    normalizeOptionalString(root && root.error) ||
+    normalizeOptionalString(root && root.detail);
+  const type = normalizeOptionalString(subject.type);
+  const code = normalizeOptionalString(subject.code) || normalizeOptionalString(subject.status);
+  const metadata = [
+    type ? `type=${type}` : undefined,
+    code ? `code=${code}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  if (message && metadata) {
+    return `${truncateErrorDetail(message)} [${metadata}]`;
+  }
+  if (message) {
+    return truncateErrorDetail(message);
+  }
+  return metadata ? `[${metadata}]` : undefined;
+}
+
+async function extractProviderErrorDetail(response) {
+  const rawBody = normalizeOptionalString(await readResponseTextLimited(response));
+  if (!rawBody) {
+    return undefined;
+  }
+  try {
+    return formatProviderErrorPayload(JSON.parse(rawBody)) || truncateErrorDetail(rawBody);
+  } catch {
+    return truncateErrorDetail(rawBody);
+  }
+}
+
+function extractProviderRequestId(response) {
+  return (
+    (response &&
+      response.headers &&
+      normalizeOptionalString(response.headers.get("x-request-id"))) ||
+    (response && response.headers && normalizeOptionalString(response.headers.get("request-id"))) ||
+    undefined
+  );
+}
+
+function formatProviderHttpErrorMessage(params = {}) {
+  const statusPrefix = params.statusPrefix || "";
+  return (
+    `${params.label} (${statusPrefix}${params.status})` +
+    (params.detail ? `: ${params.detail}` : "") +
+    (params.requestId ? ` [request_id=${params.requestId}]` : "")
+  );
+}
+
+async function createProviderHttpError(response, label, options = {}) {
+  const detail = await extractProviderErrorDetail(response);
+  const requestId = extractProviderRequestId(response);
+  return new Error(
+    formatProviderHttpErrorMessage({
+      label,
+      status: response && response.status,
+      detail,
+      requestId,
+      statusPrefix: options.statusPrefix,
+    }),
+  );
+}
+
+async function assertOkOrThrowProviderError(response, label) {
+  if (response && response.ok) {
+    return;
+  }
+  throw await createProviderHttpError(response, label);
+}
+
+const speechCoreRuntime = {
+  TTS_AUTO_MODES,
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowProviderError,
+  canonicalizeSpeechProviderId,
+  createProviderHttpError,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getSpeechProvider,
+  listSpeechProviders,
+  normalizeApplyTextNormalization,
+  normalizeLanguageCode,
+  normalizeSeed,
+  normalizeSpeechProviderId,
+  normalizeTtsAutoMode,
+  parseTtsDirectives,
+  readResponseTextLimited,
+  requireInRange,
+  resolveEffectiveTtsConfig,
+  scheduleCleanup,
+  summarizeText,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -52259,6 +52760,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/image-generation-core.auth.runtime"
   ) {
     return imageGenerationCoreAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/speech-core" ||
+    request === "@openclaw/plugin-sdk/speech-core"
+  ) {
+    return speechCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||
