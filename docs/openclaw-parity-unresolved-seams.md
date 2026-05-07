@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~94.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~94.8% overall, with a reasonable
   band of ~80-95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9151,6 +9151,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   already verified provider model ID normalizers. Source/test checkpointed in
   `67db67b5`; broader SDK helper/runtime surface breadth remains the next
   plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK
+  `googlechat-runtime-shared` now exposes the source-backed narrow schema
+  subset for scoped and unscoped imports: `GoogleChatConfigSchema` projects the
+  upstream provider channel config object schema without leaking the broader
+  generic SDK surface. Source/test checkpointed in `f721b7e3`; broader SDK
+  helper/runtime surface breadth remains the next plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

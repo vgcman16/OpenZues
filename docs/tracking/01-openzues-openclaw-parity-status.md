@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~94.7% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~94.8% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2849,6 +2849,18 @@ may lag behind this tracker.
     adjacent SDK helper proof (`16 passed, 1034 deselected`), adjacent
     imported-plugin proof (`238 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK googlechat-runtime-shared schema shim.
+  - Source: `openclaw-main/src/plugin-sdk/googlechat-runtime-shared.ts`,
+    `openclaw-main/src/config/zod-schema.providers-core.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `f721b7e3`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused googlechat-runtime-shared proof (`1
+    passed`), adjacent SDK helper proof (`17 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`239 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,
