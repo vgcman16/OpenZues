@@ -40828,6 +40828,130 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_cdp_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-cdp.cjs"
+    runtime_entry.write_text(
+        """
+const browserCdp = require("openclaw/plugin-sdk/browser-cdp");
+const scopedBrowserCdp = require("@openclaw/plugin-sdk/browser-cdp");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_cdp",
+      description: "Use OpenClaw browser CDP helpers",
+      parameters: { type: "object" },
+      execute() {
+        const parsed = browserCdp.parseBrowserHttpUrl(
+          "http://user:pass@127.0.0.1:9222/",
+          "browser.cdpUrl"
+        );
+        const secureDefault = browserCdp.parseBrowserHttpUrl(
+          "wss://example.test/devtools/browser/abc",
+          "browser.wsUrl"
+        );
+        let invalidMessage = null;
+        try {
+          browserCdp.parseBrowserHttpUrl("ftp://example.test", "browser.cdpUrl");
+        } catch (error) {
+          invalidMessage = error.message;
+        }
+        return {
+          keys: Object.keys(browserCdp).sort(),
+          scopedSame: scopedBrowserCdp.redactCdpUrl === browserCdp.redactCdpUrl,
+          parsed: {
+            port: parsed.port,
+            normalized: parsed.normalized,
+            protocol: parsed.parsed.protocol,
+            hostname: parsed.parsed.hostname
+          },
+          secureDefault: {
+            port: secureDefault.port,
+            normalized: secureDefault.normalized
+          },
+          redacted: browserCdp.redactCdpUrl(parsed.normalized),
+          emptyRedacted: browserCdp.redactCdpUrl("   "),
+          nullRedacted: browserCdp.redactCdpUrl(null),
+          invalidMessage
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-cdp-plugin",
+                    "name": "Runtime Browser CDP Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-cdp.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_cdp"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.browser_cdp"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["parseBrowserHttpUrl", "redactCdpUrl"],
+        "scopedSame": True,
+        "parsed": {
+            "port": 9222,
+            "normalized": "http://user:pass@127.0.0.1:9222",
+            "protocol": "http:",
+            "hostname": "127.0.0.1",
+        },
+        "secureDefault": {
+            "port": 443,
+            "normalized": "wss://example.test/devtools/browser/abc",
+        },
+        "redacted": "http://127.0.0.1:9222",
+        "emptyRedacted": "",
+        "nullRedacted": None,
+        "invalidMessage": "browser.cdpUrl must be http(s) or ws(s), got: ftp",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

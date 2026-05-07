@@ -54125,6 +54125,55 @@ const fileLockRuntime = {
   withFileLock,
 };
 
+function parseBrowserHttpUrl(raw, label) {
+  const trimmed = String(raw || "").trim();
+  const parsed = new URL(trimmed);
+  const allowed = ["http:", "https:", "ws:", "wss:"];
+  if (!allowed.includes(parsed.protocol)) {
+    throw new Error(
+      `${label} must be http(s) or ws(s), got: ${parsed.protocol.replace(":", "")}`,
+    );
+  }
+  const isSecure = parsed.protocol === "https:" || parsed.protocol === "wss:";
+  const port =
+    parsed.port && Number.parseInt(parsed.port, 10) > 0
+      ? Number.parseInt(parsed.port, 10)
+      : isSecure
+        ? 443
+        : 80;
+  if (Number.isNaN(port) || port <= 0 || port > 65535) {
+    throw new Error(`${label} has invalid port: ${parsed.port}`);
+  }
+  return {
+    parsed,
+    port,
+    normalized: parsed.toString().replace(/\/$/, ""),
+  };
+}
+
+function redactCdpUrl(cdpUrl) {
+  if (typeof cdpUrl !== "string") {
+    return cdpUrl;
+  }
+  const trimmed = cdpUrl.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    parsed.username = "";
+    parsed.password = "";
+    return redactSensitiveText(parsed.toString().replace(/\/$/, ""));
+  } catch (_error) {
+    return redactSensitiveText(trimmed);
+  }
+}
+
+const browserCdpRuntime = {
+  parseBrowserHttpUrl,
+  redactCdpUrl,
+};
+
 const browserSecurityRuntime = {
   SafeOpenError,
   SsrFBlockedError,
@@ -61617,6 +61666,7 @@ const genericSdk = new Proxy(
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
+    ...browserCdpRuntime,
     ...secretFileRuntime,
     ...runtimeEnvRuntime,
     ...runtimeRuntime,
@@ -63158,6 +63208,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-security-runtime"
   ) {
     return browserSecurityRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-cdp" ||
+    request === "@openclaw/plugin-sdk/browser-cdp"
+  ) {
+    return browserCdpRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||
