@@ -110,6 +110,9 @@ The imported `request-url` SDK helper coverage from
 `src/plugin-sdk/request-url.ts` is reverified from the `f4a23a25`
 fetch/SSRF helper checkpoint and is counted with the plugin/extension system
 row above.
+The imported `persistent-dedupe` SDK helper coverage from
+`src/plugin-sdk/persistent-dedupe.ts` is verified in `cfe26bca` and is counted
+with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
