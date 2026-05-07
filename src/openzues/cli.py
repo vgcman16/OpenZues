@@ -39611,6 +39611,7 @@ const pluginSdkEntrypoints = [
   "browser-config",
   "browser-config-runtime",
   "browser-profiles",
+  "browser-trash",
   "boolean-param",
   "channel-contract-testing",
   "dangerous-name-runtime",
@@ -39790,6 +39791,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-config",
   "browser-config-runtime",
   "browser-profiles",
+  "browser-trash",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
   "memory-core-host-engine-foundation",
@@ -54753,10 +54755,19 @@ async function ensureBrowserControlAuth(params = {}) {
 }
 
 function assertTrashTargetAllowed(targetPath, allowedRoots) {
-  const roots = Array.from(allowedRoots || [os.homedir(), os.tmpdir()]).map((root) =>
-    path.resolve(String(root)),
-  );
-  const resolvedTarget = path.resolve(targetPath);
+  const roots = Array.from(allowedRoots || [os.homedir(), os.tmpdir()]).map((root) => {
+    try {
+      return path.resolve(fs.realpathSync.native(String(root)));
+    } catch (_error) {
+      return path.resolve(String(root));
+    }
+  });
+  let resolvedTarget = path.resolve(targetPath);
+  try {
+    resolvedTarget = path.resolve(fs.realpathSync.native(targetPath));
+  } catch (_error) {
+    // The later move will surface missing or inaccessible targets.
+  }
   if (
     !roots.some(
       (root) => resolvedTarget !== root && resolvedTarget.startsWith(`${root}${path.sep}`),
@@ -54766,25 +54777,79 @@ function assertTrashTargetAllowed(targetPath, allowedRoots) {
   }
 }
 
+function resolveBrowserTrashDir() {
+  const homeDir = os.homedir();
+  const trashDir = path.join(homeDir, ".Trash");
+  fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+  const trashDirStat = fs.lstatSync(trashDir);
+  if (!trashDirStat.isDirectory() || trashDirStat.isSymbolicLink()) {
+    throw new Error(`Refusing to use non-directory/symlink trash directory: ${trashDir}`);
+  }
+  const realHome = path.resolve(fs.realpathSync.native(homeDir));
+  const resolvedTrashDir = path.resolve(fs.realpathSync.native(trashDir));
+  if (
+    resolvedTrashDir === realHome ||
+    !resolvedTrashDir.startsWith(`${realHome}${path.sep}`)
+  ) {
+    throw new Error(`Trash directory escaped home directory: ${trashDir}`);
+  }
+  return resolvedTrashDir;
+}
+
+function resolveContainedBrowserTrashPath(root, leaf) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(resolvedRoot, leaf);
+  if (!resolvedPath.startsWith(`${resolvedRoot}${path.sep}`) || resolvedPath === resolvedRoot) {
+    throw new Error(`Trash destination escaped trash directory: ${resolvedPath}`);
+  }
+  return resolvedPath;
+}
+
+function reserveBrowserTrashDestination(trashDir, base, timestamp) {
+  const containerPrefix = resolveContainedBrowserTrashPath(trashDir, `${base}-${timestamp}-`);
+  const container = fs.mkdtempSync(containerPrefix);
+  return resolveContainedBrowserTrashPath(container, base);
+}
+
+function movePathToBrowserTrashDestination(targetPath, destination) {
+  try {
+    fs.renameSync(targetPath, destination);
+    return true;
+  } catch (error) {
+    if (!error || error.code !== "EXDEV") {
+      if (error && ["EEXIST", "ENOTEMPTY", "ERR_FS_CP_EEXIST"].includes(error.code)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  try {
+    fs.cpSync(targetPath, destination, { recursive: true, force: false, errorOnExist: true });
+    fs.rmSync(targetPath, { recursive: true, force: false });
+    return true;
+  } catch (error) {
+    if (error && ["EEXIST", "ENOTEMPTY", "ERR_FS_CP_EEXIST"].includes(error.code)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function movePathToTrash(targetPath, options = {}) {
   assertTrashTargetAllowed(targetPath, options.allowedRoots);
-  const trashDir = path.join(os.homedir(), ".Trash");
-  fs.mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+  const trashDir = resolveBrowserTrashDir();
   const base = path.basename(path.resolve(targetPath)).replace(/[\\/]+/g, "");
   if (!base) {
     throw new Error(`Unable to derive safe trash basename for: ${targetPath}`);
   }
-  const destination = path.join(trashDir, `${base}-${Date.now()}`);
-  try {
-    fs.renameSync(targetPath, destination);
-  } catch (error) {
-    if (!error || error.code !== "EXDEV") {
-      throw error;
+  const timestamp = Date.now();
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const destination = reserveBrowserTrashDestination(trashDir, base, timestamp);
+    if (movePathToBrowserTrashDestination(targetPath, destination)) {
+      return destination;
     }
-    fs.cpSync(targetPath, destination, { recursive: true, force: false, errorOnExist: true });
-    fs.rmSync(targetPath, { recursive: true, force: false });
   }
-  return destination;
+  throw new Error(`Unable to choose a unique trash destination for ${targetPath}`);
 }
 
 const browserConfigRuntime = {
@@ -54841,6 +54906,10 @@ const browserConfigRuntimeSdk = {
   resolveUserPath,
   shortenHomePath,
   writeConfigFile,
+};
+
+const browserTrashRuntime = {
+  movePathToTrash,
 };
 
 const browserSecurityRuntime = {
@@ -63915,6 +63984,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-config-runtime"
   ) {
     return browserConfigRuntimeSdk;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-trash" ||
+    request === "@openclaw/plugin-sdk/browser-trash"
+  ) {
+    return browserTrashRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

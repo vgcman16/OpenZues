@@ -41779,6 +41779,126 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_trash_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-trash.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const trash = require("openclaw/plugin-sdk/browser-trash");
+const scopedTrash = require("@openclaw/plugin-sdk/browser-trash");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_trash",
+      description: "Use OpenClaw browser trash helpers",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        fs.writeFileSync(args.targetPath, "trash me");
+        const destination = await trash.movePathToTrash(args.targetPath, {
+          allowedRoots: [args.allowedRoot]
+        });
+        const existsAfterMove = fs.existsSync(destination);
+        const originalExists = fs.existsSync(args.targetPath);
+        const container = path.dirname(destination);
+        const result = {
+          keys: Object.keys(trash).sort(),
+          scopedSame: scopedTrash.movePathToTrash === trash.movePathToTrash,
+          existsAfterMove,
+          originalExists,
+          destinationBasename: path.basename(destination),
+          containerBasename: path.basename(container),
+          content: fs.readFileSync(destination, "utf8")
+        };
+        if (
+          path.basename(destination) === path.basename(args.targetPath) &&
+          path.basename(container).startsWith(`${path.basename(args.targetPath)}-`)
+        ) {
+          fs.rmSync(container, { recursive: true, force: true });
+        } else {
+          fs.rmSync(destination, { recursive: true, force: true });
+        }
+        return result;
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-trash-plugin",
+                    "name": "Runtime Browser Trash Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-trash.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_trash"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.browser_trash",
+            "args": {
+                "targetPath": str(tmp_path / "victim.txt"),
+                "allowedRoot": str(tmp_path),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["movePathToTrash"],
+        "scopedSame": True,
+        "existsAfterMove": True,
+        "originalExists": False,
+        "destinationBasename": "victim.txt",
+        "containerBasename": payload["result"]["containerBasename"],
+        "content": "trash me",
+    }
+    assert payload["result"]["containerBasename"].startswith("victim.txt-")
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -43982,11 +44102,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 297,
-            "subpaths": 296,
-            "specifiers": 297,
-            "exports": 297,
-            "artifacts": 594,
+            "entrypoints": 298,
+            "subpaths": 297,
+            "specifiers": 298,
+            "exports": 298,
+            "artifacts": 596,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
