@@ -18054,6 +18054,24 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`313 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `b56d15d7`.
+- Google Chat route-backed account probes now mirror OpenClaw's
+  `probeGoogleChat` status hook: `channels status --probe --json` calls the
+  Google Chat API `spaces?pageSize=1` endpoint through the saved native route
+  bearer token, normalizes specific route targets back to the Chat API base,
+  and returns the native-provider-backed probe envelope with account and
+  timeout metadata. This closes `OZ-PROV-001CS`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.99996%.
+  The next channel-probe queue rotates to remaining provider-specific account
+  probes such as Feishu/Lark, Mattermost, IRC, Signal, Twitch, BlueBubbles,
+  iMessage, and Tlon.
+- Verified the Google Chat probe slice with
+  `python -m pytest tests\test_cli.py::test_channels_status_json_uses_route_backed_googlechat_probe -q`
+  (`1 passed`), adjacent channel-probe proof
+  `python -m pytest tests\test_cli.py -q -k "route_backed_googlechat_probe or route_backed_line_probe or route_backed_zalo_probe or route_backed_matrix_probe or route_backed_discord_probe or route_backed_telegram_probe or route_backed_slack_probe or keeps_whatsapp_no_hook_probe or msteams_native_probe"`
+  (`9 passed, 506 deselected`), `ruff check
+  src\openzues\services\ops_mesh.py tests\test_cli.py`, `mypy
+  src\openzues\services\ops_mesh.py`, and `git diff --check`. Source/test
+  checkpointed in `816d97c4`.
 
 ## References
 

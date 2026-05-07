@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.99995%.
+  band of ~80-99.99996%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1672,7 +1672,13 @@ through the saved native route token and returns `displayName`, `userId`,
 `basicId`, and `pictureUrl` bot metadata in the per-account probe result.
 Remaining channel CLI parity is provider-specific credential probe breadth
 beyond Slack/Telegram/Discord/Matrix/Zalo/LINE and production provider-backed
-live resolve adapters.
+live resolve adapters. Google Chat route-backed account probes now mirror
+OpenClaw's `probeGoogleChat` status hook: `channels status --probe --json`
+calls Chat API `spaces?pageSize=1` through the saved native route bearer token
+and returns the native-provider-backed account probe envelope. Remaining
+channel CLI parity is provider-specific credential probe breadth beyond
+Slack/Telegram/Discord/Matrix/Zalo/LINE/Google Chat and production
+provider-backed live resolve adapters.
 `channels capabilities --channel/--account/--target --timeout
 --json` now returns a native OpenClaw-shaped capability report over
 route-backed channel metadata, including support/actions and the same account
