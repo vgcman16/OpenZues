@@ -76899,6 +76899,137 @@ const providerHttpRuntime = {
   waitProviderOperationPollInterval,
 };
 
+function createProviderHttpTestMockFn(implementation = () => undefined) {
+  let currentImplementation = implementation;
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return currentImplementation(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  fn.mockClear = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockReset = () => {
+    fn.mockClear();
+    currentImplementation = () => undefined;
+    return fn;
+  };
+  fn.mockImplementation = (nextImplementation) => {
+    currentImplementation = nextImplementation;
+    return fn;
+  };
+  return fn;
+}
+
+const providerHttpTestMocks = {
+  resolveApiKeyForProviderMock: createProviderHttpTestMockFn(
+    async () => ({ apiKey: "provider-key" }),
+  ),
+  postJsonRequestMock: createProviderHttpTestMockFn(),
+  fetchWithTimeoutMock: createProviderHttpTestMockFn(),
+  pollProviderOperationJsonMock: createProviderHttpTestMockFn(),
+  assertOkOrThrowHttpErrorMock: createProviderHttpTestMockFn(async () => {}),
+  assertOkOrThrowProviderErrorMock: createProviderHttpTestMockFn(async () => {}),
+  sanitizeConfiguredModelProviderRequestMock: createProviderHttpTestMockFn(
+    (request) => request,
+  ),
+  resolveProviderHttpRequestConfigMock: createProviderHttpTestMockFn((params = {}) => ({
+    baseUrl: params.baseUrl || params.defaultBaseUrl,
+    allowPrivateNetwork: params.allowPrivateNetwork === true,
+    headers: new Headers(params.defaultHeaders),
+    dispatcherPolicy: undefined,
+  })),
+};
+
+providerHttpTestMocks.pollProviderOperationJsonMock.mockImplementation(async (params = {}) => {
+  for (let attempt = 0; attempt < params.maxAttempts; attempt += 1) {
+    const response = await providerHttpTestMocks.fetchWithTimeoutMock(
+      params.url,
+      {
+        method: "GET",
+        headers: params.headers,
+      },
+      params.defaultTimeoutMs,
+      params.fetchFn,
+    );
+    await providerHttpTestMocks.assertOkOrThrowHttpErrorMock(
+      response,
+      params.requestFailedMessage,
+    );
+    const payload = await response.json();
+    if (params.isComplete(payload)) {
+      return payload;
+    }
+    const failureMessage =
+      typeof params.getFailureMessage === "function"
+        ? params.getFailureMessage(payload)
+        : undefined;
+    if (failureMessage) {
+      throw new Error(failureMessage);
+    }
+  }
+  throw new Error(params.timeoutMessage);
+});
+
+let providerHttpTestMocksInstalled = false;
+
+function getProviderHttpMocks() {
+  providerHttpTestMocksInstalled = true;
+  return providerHttpTestMocks;
+}
+
+function resetProviderHttpMocksForTest() {
+  for (const key of [
+    "resolveApiKeyForProviderMock",
+    "pollProviderOperationJsonMock",
+    "assertOkOrThrowHttpErrorMock",
+    "assertOkOrThrowProviderErrorMock",
+    "sanitizeConfiguredModelProviderRequestMock",
+    "resolveProviderHttpRequestConfigMock",
+  ]) {
+    providerHttpTestMocks[key].mockClear();
+  }
+  for (const key of ["postJsonRequestMock", "fetchWithTimeoutMock"]) {
+    providerHttpTestMocks[key].mockReset();
+  }
+}
+
+function installProviderHttpMockCleanup() {
+  providerHttpTestMocksInstalled = true;
+  if (typeof globalThis.afterEach === "function") {
+    globalThis.afterEach(resetProviderHttpMocksForTest);
+  }
+}
+
+const providerHttpTestMocksRuntime = {
+  getProviderHttpMocks,
+  installProviderHttpMockCleanup,
+};
+
+const providerHttpTestAuthRuntime = {
+  resolveApiKeyForProvider: providerHttpTestMocks.resolveApiKeyForProviderMock,
+};
+
+const providerHttpTestProviderHttpRuntime = {
+  assertOkOrThrowHttpError: providerHttpTestMocks.assertOkOrThrowHttpErrorMock,
+  assertOkOrThrowProviderError: providerHttpTestMocks.assertOkOrThrowProviderErrorMock,
+  createProviderOperationDeadline: ({ label, timeoutMs } = {}) => ({
+    label,
+    timeoutMs,
+  }),
+  fetchWithTimeout: providerHttpTestMocks.fetchWithTimeoutMock,
+  pollProviderOperationJson: providerHttpTestMocks.pollProviderOperationJsonMock,
+  postJsonRequest: providerHttpTestMocks.postJsonRequestMock,
+  resolveProviderOperationTimeoutMs: ({ defaultTimeoutMs } = {}) => defaultTimeoutMs,
+  resolveProviderHttpRequestConfig:
+    providerHttpTestMocks.resolveProviderHttpRequestConfigMock,
+  sanitizeConfiguredModelProviderRequest:
+    providerHttpTestMocks.sanitizeConfiguredModelProviderRequestMock,
+  waitProviderOperationPollInterval: async () => {},
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -80454,6 +80585,7 @@ const genericSdk = new Proxy(
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
     ...providerHttpRuntime,
+    ...providerHttpTestMocksRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
@@ -81617,6 +81749,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "openclaw/plugin-sdk/provider-auth-runtime" ||
     request === "@openclaw/plugin-sdk/provider-auth-runtime"
   ) {
+    if (providerHttpTestMocksInstalled) {
+      return providerHttpTestAuthRuntime;
+    }
     return providerAuthRuntimeRuntime;
   }
   if (
@@ -82110,6 +82245,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "openclaw/plugin-sdk/provider-http" ||
     request === "@openclaw/plugin-sdk/provider-http"
   ) {
+    if (providerHttpTestMocksInstalled) {
+      return providerHttpTestProviderHttpRuntime;
+    }
     return providerHttpRuntime;
   }
   if (
@@ -82469,6 +82607,13 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-test-runtime"
   ) {
     return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-http-test-mocks" ||
+    request === "@openclaw/plugin-sdk/provider-http-test-mocks"
+  ) {
+    providerHttpTestMocksInstalled = true;
+    return providerHttpTestMocksRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-test-contracts" ||

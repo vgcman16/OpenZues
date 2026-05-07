@@ -33932,6 +33932,267 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_http_test_mocks_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-provider-http-test-mocks.cjs"
+    runtime_entry.write_text(
+        """
+let cleanupCallback = null;
+globalThis.afterEach = (fn) => {
+  cleanupCallback = fn;
+};
+
+const helpers = require("openclaw/plugin-sdk/provider-http-test-mocks");
+const scopedHelpers = require("@openclaw/plugin-sdk/provider-http-test-mocks");
+const providerHttp = require("openclaw/plugin-sdk/provider-http");
+const providerAuth = require("openclaw/plugin-sdk/provider-auth-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_http_test_mocks",
+      description: "Use OpenClaw provider-http-test-mocks SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const mocks = helpers.getProviderHttpMocks();
+        helpers.installProviderHttpMockCleanup();
+        const apiKey = await providerAuth.resolveApiKeyForProvider({
+          providerId: "demo"
+        });
+        const sanitized = providerHttp.sanitizeConfiguredModelProviderRequest({
+          request: { headers: { "X-Test": "yes" } }
+        });
+        const config = providerHttp.resolveProviderHttpRequestConfig({
+          defaultBaseUrl: "https://api.example.test",
+          defaultHeaders: { "X-Default": "yes" },
+          allowPrivateNetwork: true
+        });
+        mocks.fetchWithTimeoutMock.mockImplementation(
+          async (url, init, timeoutMs) =>
+            new Response(
+              JSON.stringify({
+                status:
+                  mocks.fetchWithTimeoutMock.mock.calls.length < 2
+                    ? "running"
+                    : "done",
+                url,
+                method: init.method,
+                timeoutMs
+              }),
+              { headers: { "content-type": "application/json" } }
+            )
+        );
+        const poll = await providerHttp.pollProviderOperationJson({
+          url: "https://api.example.test/tasks/1",
+          headers: { "X-Poll": "yes" },
+          maxAttempts: 3,
+          defaultTimeoutMs: 123,
+          requestFailedMessage: "poll failed",
+          timeoutMessage: "timed out",
+          isComplete: (payload) => payload.status === "done",
+          getFailureMessage: (payload) => payload.error
+        });
+        await providerHttp.assertOkOrThrowHttpError(
+          new Response("ok"),
+          "http label"
+        );
+        await providerHttp.assertOkOrThrowProviderError(
+          new Response("ok"),
+          "provider label"
+        );
+        mocks.postJsonRequestMock.mockImplementation(async (params) => ({
+          ok: true,
+          url: params.url,
+          body: params.body
+        }));
+        const post = await providerHttp.postJsonRequest({
+          url: "https://api.example.test/post",
+          body: { ok: true }
+        });
+        const beforeCleanup = {
+          apiKeyCalls: mocks.resolveApiKeyForProviderMock.mock.calls.length,
+          fetchCalls: mocks.fetchWithTimeoutMock.mock.calls.length,
+          pollCalls: mocks.pollProviderOperationJsonMock.mock.calls.length,
+          postCalls: mocks.postJsonRequestMock.mock.calls.length,
+          assertHttpCalls: mocks.assertOkOrThrowHttpErrorMock.mock.calls.length,
+          assertProviderCalls:
+            mocks.assertOkOrThrowProviderErrorMock.mock.calls.length,
+          sanitizeCalls:
+            mocks.sanitizeConfiguredModelProviderRequestMock.mock.calls.length,
+          configCalls:
+            mocks.resolveProviderHttpRequestConfigMock.mock.calls.length
+        };
+        if (cleanupCallback) {
+          cleanupCallback();
+        }
+        const afterCleanup = {
+          apiKeyCalls: mocks.resolveApiKeyForProviderMock.mock.calls.length,
+          fetchCalls: mocks.fetchWithTimeoutMock.mock.calls.length,
+          pollCalls: mocks.pollProviderOperationJsonMock.mock.calls.length,
+          postCalls: mocks.postJsonRequestMock.mock.calls.length,
+          assertHttpCalls: mocks.assertOkOrThrowHttpErrorMock.mock.calls.length,
+          assertProviderCalls:
+            mocks.assertOkOrThrowProviderErrorMock.mock.calls.length,
+          sanitizeCalls:
+            mocks.sanitizeConfiguredModelProviderRequestMock.mock.calls.length,
+          configCalls:
+            mocks.resolveProviderHttpRequestConfigMock.mock.calls.length
+        };
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          mockKeys: Object.keys(mocks).sort(),
+          scopedSame:
+            scopedHelpers.getProviderHttpMocks === helpers.getProviderHttpMocks,
+          sameMocks: {
+            auth:
+              providerAuth.resolveApiKeyForProvider ===
+              mocks.resolveApiKeyForProviderMock,
+            post: providerHttp.postJsonRequest === mocks.postJsonRequestMock,
+            fetch:
+              providerHttp.fetchWithTimeout === mocks.fetchWithTimeoutMock,
+            poll:
+              providerHttp.pollProviderOperationJson ===
+              mocks.pollProviderOperationJsonMock
+          },
+          apiKey,
+          sanitized,
+          config: {
+            baseUrl: config.baseUrl,
+            allowPrivateNetwork: config.allowPrivateNetwork,
+            headers: Array.from(config.headers.entries()),
+            dispatcherPolicy: config.dispatcherPolicy ?? null
+          },
+          poll,
+          post,
+          beforeCleanup,
+          afterCleanup,
+          cleanupRegistered: typeof cleanupCallback === "function"
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-http-test-mocks-plugin",
+                    "name": "Runtime Provider HTTP Test Mocks Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-http-test-mocks.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.provider_http_test_mocks"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_http_test_mocks"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "getProviderHttpMocks",
+        "installProviderHttpMockCleanup",
+    ]
+    assert result["mockKeys"] == [
+        "assertOkOrThrowHttpErrorMock",
+        "assertOkOrThrowProviderErrorMock",
+        "fetchWithTimeoutMock",
+        "pollProviderOperationJsonMock",
+        "postJsonRequestMock",
+        "resolveApiKeyForProviderMock",
+        "resolveProviderHttpRequestConfigMock",
+        "sanitizeConfiguredModelProviderRequestMock",
+    ]
+    assert result["scopedSame"] is True
+    assert result["sameMocks"] == {
+        "auth": True,
+        "post": True,
+        "fetch": True,
+        "poll": True,
+    }
+    assert result["apiKey"] == {"apiKey": "provider-key"}
+    assert result["sanitized"] == {"request": {"headers": {"X-Test": "yes"}}}
+    assert result["config"] == {
+        "baseUrl": "https://api.example.test",
+        "allowPrivateNetwork": True,
+        "headers": [["x-default", "yes"]],
+        "dispatcherPolicy": None,
+    }
+    assert result["poll"] == {
+        "status": "done",
+        "url": "https://api.example.test/tasks/1",
+        "method": "GET",
+        "timeoutMs": 123,
+    }
+    assert result["post"] == {
+        "ok": True,
+        "url": "https://api.example.test/post",
+        "body": {"ok": True},
+    }
+    assert result["beforeCleanup"] == {
+        "apiKeyCalls": 1,
+        "fetchCalls": 2,
+        "pollCalls": 1,
+        "postCalls": 1,
+        "assertHttpCalls": 3,
+        "assertProviderCalls": 1,
+        "sanitizeCalls": 1,
+        "configCalls": 1,
+    }
+    assert result["afterCleanup"] == {
+        "apiKeyCalls": 0,
+        "fetchCalls": 0,
+        "pollCalls": 0,
+        "postCalls": 0,
+        "assertHttpCalls": 0,
+        "assertProviderCalls": 0,
+        "sanitizeCalls": 0,
+        "configCalls": 0,
+    }
+    assert result["cleanupRegistered"] is True
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
