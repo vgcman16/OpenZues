@@ -61,6 +61,10 @@ SDK helper coverage from `src/plugin-sdk/media-generation-runtime.ts`,
 `src/plugin-sdk/media-generation-runtime-shared.ts`, and
 `src/media-generation/runtime-shared.ts` is verified in `f475d85a` and is
 counted with the plugin/extension system row above.
+The imported `image-generation-runtime` SDK helper coverage from
+`src/plugin-sdk/image-generation-runtime.ts` and
+`src/image-generation/runtime.ts` is verified in `719fcee8` and is counted
+with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -181,6 +185,8 @@ logging, and provider env-var helpers is checkpointed in `a17da4e3`.
 `src/plugin-sdk/media-generation-runtime.ts`,
 `src/plugin-sdk/media-generation-runtime-shared.ts`, and
 `src/media-generation/runtime-shared.ts` are checkpointed in `f475d85a`.
+`image-generation-runtime` from `src/plugin-sdk/image-generation-runtime.ts`
+and `src/image-generation/runtime.ts` is checkpointed in `719fcee8`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
