@@ -37,6 +37,10 @@ is verified in `fa5ad046`; `@openclaw/memory-host-sdk/runtime` aggregate
 coverage is verified in `ebd215d5`; memory-host package facade coverage for
 `query`, `multimodal`, `secret`, and `status` is verified in `c95e0129`. All
 are counted with the SDK helper/runtime set above.
+The imported `agent-runtime` core SDK helper coverage from
+`src/plugin-sdk/agent-runtime.ts` and adjacent agent scope/path/time/defaults/
+identity/provider-id helpers is verified in `a8e871a3` and counted with the
+plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
