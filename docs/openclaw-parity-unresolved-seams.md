@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~96.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~96.7% overall, with a reasonable
   band of ~80-97%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -100,7 +100,7 @@ Current percentage rollup:
   browser-security-runtime helper, browser-host-inspection helper,
   browser-node-host helper, browser-node-runtime helper,
   browser-setup-tools helper, browser-support helper, browser-bridge helper,
-  agent-harness-runtime helper, sandbox helper,
+  agent-harness-runtime helper, sandbox helper, proxy-capture helper,
   fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -9243,6 +9243,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   plugin bridge, with honest unavailable boundaries for remote fs
   bridge/upload helpers. Source/test checkpointed in `2aba5dbc`; broader SDK
   helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `proxy-capture` now
+  exposes the source-backed exact helper subset for scoped and unscoped
+  imports: debug proxy env/settings resolution, effective proxy URL selection,
+  WebSocket agent fallback, capture-store leasing, blob persistence, session
+  summaries, query presets, HTTP exchange capture with sensitive-header
+  redaction, fetch patch initialize/finalize lifecycle, and WS event capture.
+  Source/test checkpointed in `84300681`; broader SDK helper/runtime surface
+  breadth remains the next plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older

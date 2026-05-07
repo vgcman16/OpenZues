@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~96.6% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~96.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,7 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK sandbox helper slice is checkpointed in `2aba5dbc`.
+The imported plugin SDK proxy-capture helper slice is checkpointed in
+`84300681`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -895,6 +896,29 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     SDK helper proof (`7 passed, 1062 deselected`), adjacent imported-plugin
     proof (`257 passed, 812 deselected`), `ruff check`, `mypy`, and `git diff
     --check`.
+
+- [x] `OZ-PLUGIN-00247` Imported proxy-capture helper shim
+  - Source: `openclaw-main/src/plugin-sdk/proxy-capture.ts`,
+    `openclaw-main/src/proxy-capture/env.ts`,
+    `openclaw-main/src/proxy-capture/store.sqlite.ts`,
+    `openclaw-main/src/proxy-capture/runtime.ts`,
+    `openclaw-main/src/proxy-capture/blob-store.ts`, and
+    `openclaw-main/src/proxy-capture/paths.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `proxy-capture` and receive debug proxy env/settings resolution,
+    WebSocket agent fallback, capture-store leasing, blob persistence,
+    session/event query helpers, HTTP exchange capture with sensitive-header
+    redaction, fetch patch lifecycle, and WS event capture.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `84300681`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused proxy-capture proof (`1 passed`),
+    adjacent SDK helper proof (`6 passed, 1064 deselected`), adjacent
+    imported-plugin proof (`258 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-00205` Imported media-understanding provider-helper shim
   - Source: `openclaw-main/src/plugin-sdk/media-understanding.ts`,
