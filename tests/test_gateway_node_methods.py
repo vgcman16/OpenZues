@@ -35503,6 +35503,243 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_tools_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-tools.cjs"
+    runtime_entry.write_text(
+        """
+const providerTools = require("openclaw/plugin-sdk/provider-tools");
+const scopedProviderTools = require("@openclaw/plugin-sdk/provider-tools");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerTools",
+      description: "Use OpenClaw provider-tools SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const schema = {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "missing"],
+          properties: {
+            name: { type: "string", minLength: 2, description: "Name" },
+            choice: {
+              anyOf: [
+                { const: "a", type: "string" },
+                { const: "b", type: "string" }
+              ],
+              description: "Choice"
+            },
+            maybe: { type: ["string", "null"] }
+          }
+        };
+        const xaiSchema = {
+          type: "object",
+          minLength: 1,
+          properties: {
+            tags: { type: "array", maxItems: 2, items: { type: "string" } }
+          }
+        };
+        const cleaned = providerTools.cleanSchemaForGemini(schema);
+        const stripped = providerTools.stripXaiUnsupportedKeywords(xaiSchema);
+        const normalizedGemini = providerTools.normalizeGeminiToolSchemas({
+          tools: [{ name: "demo", parameters: schema }]
+        });
+        const inspectedGemini = providerTools.inspectGeminiToolSchemas({
+          tools: [{ name: "demo", parameters: xaiSchema }]
+        });
+        const normalizedOpenAI = providerTools.normalizeOpenAIToolSchemas({
+          provider: "openai",
+          modelApi: "openai-responses",
+          tools: [{ name: "demo", parameters: { properties: { q: { type: "string" } } } }]
+        });
+        const openaiViolations = providerTools.findOpenAIStrictSchemaViolations(
+          normalizedOpenAI[0].parameters,
+          "demo.parameters",
+          { requireObjectRoot: true }
+        );
+        const geminiHooks = providerTools.buildProviderToolCompatFamilyHooks("gemini");
+        let unsupportedError = null;
+        try {
+          providerTools.buildProviderToolCompatFamilyHooks("bad-family");
+        } catch (error) {
+          unsupportedError = error.message;
+        }
+        return {
+          keys: Object.keys(providerTools).filter((key) => [
+            "GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS",
+            "HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING",
+            "XAI_TOOL_SCHEMA_PROFILE",
+            "buildProviderToolCompatFamilyHooks",
+            "cleanSchemaForGemini",
+            "findOpenAIStrictSchemaViolations",
+            "findUnsupportedSchemaKeywords",
+            "inspectGeminiToolSchemas",
+            "normalizeGeminiToolSchemas",
+            "normalizeOpenAIToolSchemas",
+            "resolveXaiModelCompatPatch",
+            "stripXaiUnsupportedKeywords"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedProviderTools.cleanSchemaForGemini,
+          constants: {
+            xai: providerTools.XAI_TOOL_SCHEMA_PROFILE,
+            html: providerTools.HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING,
+            geminiHasMinLength:
+              providerTools.GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS.has("minLength")
+          },
+          cleaned,
+          stripped,
+          xaiPatch: providerTools.resolveXaiModelCompatPatch(),
+          unsupportedKeywords: providerTools.findUnsupportedSchemaKeywords(
+            xaiSchema,
+            "tool.parameters",
+            providerTools.XAI_UNSUPPORTED_SCHEMA_KEYWORDS
+          ),
+          normalizedGemini: normalizedGemini[0].parameters,
+          inspectedGemini,
+          normalizedOpenAI: normalizedOpenAI[0].parameters,
+          openaiViolations,
+          hookTypes: {
+            geminiNormalize: typeof geminiHooks.normalizeToolSchemas,
+            geminiInspect: typeof geminiHooks.inspectToolSchemas
+          },
+          unsupportedError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-tools-plugin",
+                    "name": "Runtime Provider Tools Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-tools.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerTools"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerTools"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS",
+        "HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING",
+        "XAI_TOOL_SCHEMA_PROFILE",
+        "buildProviderToolCompatFamilyHooks",
+        "cleanSchemaForGemini",
+        "findOpenAIStrictSchemaViolations",
+        "findUnsupportedSchemaKeywords",
+        "inspectGeminiToolSchemas",
+        "normalizeGeminiToolSchemas",
+        "normalizeOpenAIToolSchemas",
+        "resolveXaiModelCompatPatch",
+        "stripXaiUnsupportedKeywords",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["constants"] == {
+        "xai": "xai",
+        "html": "html-entities",
+        "geminiHasMinLength": True,
+    }
+    assert payload["result"]["cleaned"] == {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+            "name": {"type": "string", "description": "Name"},
+            "choice": {
+                "type": "string",
+                "enum": ["a", "b"],
+                "description": "Choice",
+            },
+            "maybe": {"type": "string"},
+        },
+    }
+    assert payload["result"]["stripped"] == {
+        "type": "object",
+        "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
+    }
+    assert payload["result"]["xaiPatch"] == {
+        "toolSchemaProfile": "xai",
+        "unsupportedToolSchemaKeywords": [
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+            "minContains",
+            "maxContains",
+        ],
+        "nativeWebSearchTool": True,
+        "toolCallArgumentsEncoding": "html-entities",
+    }
+    assert payload["result"]["unsupportedKeywords"] == [
+        "tool.parameters.minLength",
+        "tool.parameters.properties.tags.maxItems",
+    ]
+    assert payload["result"]["normalizedGemini"] == payload["result"]["cleaned"]
+    assert payload["result"]["inspectedGemini"] == [
+        {
+            "toolName": "demo",
+            "toolIndex": 0,
+            "violations": [
+                "demo.parameters.minLength",
+                "demo.parameters.properties.tags.maxItems",
+            ],
+        }
+    ]
+    assert payload["result"]["normalizedOpenAI"] == {
+        "properties": {"q": {"type": "string"}},
+        "type": "object",
+    }
+    assert payload["result"]["openaiViolations"] == [
+        "demo.parameters.additionalProperties",
+        "demo.parameters.required",
+    ]
+    assert payload["result"]["hookTypes"] == {
+        "geminiNormalize": "function",
+        "geminiInspect": "function",
+    }
+    assert payload["result"]["unsupportedError"] == "Unsupported provider tool compatibility family"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:

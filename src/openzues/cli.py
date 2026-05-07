@@ -65459,6 +65459,421 @@ const configMutationRuntime = {
   updateConfig,
 };
 
+const GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "patternProperties",
+  "additionalProperties",
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "examples",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "multipleOf",
+  "pattern",
+  "format",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "minProperties",
+  "maxProperties",
+  "not",
+]);
+const XAI_TOOL_SCHEMA_PROFILE = "xai";
+const HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING = "html-entities";
+const XAI_UNSUPPORTED_SCHEMA_KEYWORDS = new Set([
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minContains",
+  "maxContains",
+]);
+
+function copyProviderSchemaMeta(from, to) {
+  for (const key of ["description", "title", "default"]) {
+    if (from && from[key] !== undefined) {
+      to[key] = from[key];
+    }
+  }
+}
+
+function tryFlattenLiteralUnionVariants(variants) {
+  if (!Array.isArray(variants) || variants.length === 0) {
+    return null;
+  }
+  const values = [];
+  let commonType = null;
+  for (const variant of variants) {
+    if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+      return null;
+    }
+    let literalValue;
+    if (Object.prototype.hasOwnProperty.call(variant, "const")) {
+      literalValue = variant.const;
+    } else if (Array.isArray(variant.enum) && variant.enum.length === 1) {
+      literalValue = variant.enum[0];
+    } else {
+      return null;
+    }
+    const variantType = typeof variant.type === "string" ? variant.type : null;
+    if (!variantType || (commonType !== null && commonType !== variantType)) {
+      return null;
+    }
+    commonType = variantType;
+    values.push(literalValue);
+  }
+  return commonType ? { type: commonType, enum: values } : null;
+}
+
+function isNullProviderSchemaVariant(variant) {
+  if (!variant || typeof variant !== "object" || Array.isArray(variant)) {
+    return false;
+  }
+  if (variant.const === null) {
+    return true;
+  }
+  if (Array.isArray(variant.enum) && variant.enum.length === 1 && variant.enum[0] === null) {
+    return true;
+  }
+  if (variant.type === "null") {
+    return true;
+  }
+  return Array.isArray(variant.type) && variant.type.length === 1 && variant.type[0] === "null";
+}
+
+function sanitizeProviderRequiredFields(schema) {
+  if (!Array.isArray(schema.required)) {
+    return schema;
+  }
+  if (
+    !schema.properties ||
+    typeof schema.properties !== "object" ||
+    Array.isArray(schema.properties)
+  ) {
+    if (schema.type === "object") {
+      delete schema.required;
+    }
+    return schema;
+  }
+  const properties = schema.properties;
+  const required = schema.required.filter(
+    (key) => typeof key === "string" && Object.prototype.hasOwnProperty.call(properties, key),
+  );
+  if (required.length > 0) {
+    schema.required = required;
+  } else {
+    delete schema.required;
+  }
+  return schema;
+}
+
+function cleanSchemaForGemini(schema) {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map(cleanSchemaForGemini);
+  }
+  const obj = schema;
+  const cleaned = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS.has(key)) {
+      continue;
+    }
+    if (key === "const") {
+      cleaned.enum = [value];
+      continue;
+    }
+    if (key === "required" && Array.isArray(value) && value.length === 0) {
+      continue;
+    }
+    if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
+      const variants = value
+        .filter((variant) => !isNullProviderSchemaVariant(variant))
+        .map(cleanSchemaForGemini);
+      const flattened = tryFlattenLiteralUnionVariants(variants);
+      if (flattened) {
+        copyProviderSchemaMeta(obj, flattened);
+        return sanitizeProviderRequiredFields(flattened);
+      }
+      cleaned[key] = variants;
+      continue;
+    }
+    if (key === "type" && Array.isArray(value)) {
+      const types = value.filter((entry) => entry !== "null");
+      cleaned.type = types.length === 1 ? types[0] : types;
+      continue;
+    }
+    if (key === "properties" && value && typeof value === "object" && !Array.isArray(value)) {
+      cleaned.properties = Object.fromEntries(
+        Object.entries(value).map(([childKey, childValue]) => [
+          childKey,
+          cleanSchemaForGemini(childValue),
+        ]),
+      );
+      continue;
+    }
+    if (key === "items" && value && typeof value === "object") {
+      cleaned.items = cleanSchemaForGemini(value);
+      continue;
+    }
+    cleaned[key] = value;
+  }
+  return sanitizeProviderRequiredFields(cleaned);
+}
+
+function stripUnsupportedSchemaKeywords(schema, unsupportedKeywords) {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((entry) => stripUnsupportedSchemaKeywords(entry, unsupportedKeywords));
+  }
+  const cleaned = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (unsupportedKeywords.has(key)) {
+      continue;
+    }
+    cleaned[key] = stripUnsupportedSchemaKeywords(value, unsupportedKeywords);
+  }
+  return cleaned;
+}
+
+function stripXaiUnsupportedKeywords(schema) {
+  return stripUnsupportedSchemaKeywords(schema, XAI_UNSUPPORTED_SCHEMA_KEYWORDS);
+}
+
+function resolveXaiModelCompatPatch() {
+  return {
+    toolSchemaProfile: XAI_TOOL_SCHEMA_PROFILE,
+    unsupportedToolSchemaKeywords: Array.from(XAI_UNSUPPORTED_SCHEMA_KEYWORDS),
+    nativeWebSearchTool: true,
+    toolCallArgumentsEncoding: HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING,
+  };
+}
+
+function applyXaiModelCompat(model = {}) {
+  return {
+    ...model,
+    compat: {
+      ...((model && model.compat) || {}),
+      ...resolveXaiModelCompatPatch(),
+    },
+  };
+}
+
+function findUnsupportedSchemaKeywords(schema, schemaPath, unsupportedKeywords) {
+  if (!schema || typeof schema !== "object") {
+    return [];
+  }
+  if (Array.isArray(schema)) {
+    return schema.flatMap((entry, index) =>
+      findUnsupportedSchemaKeywords(entry, `${schemaPath}[${index}]`, unsupportedKeywords),
+    );
+  }
+  const violations = [];
+  for (const [key, value] of Object.entries(schema)) {
+    if (unsupportedKeywords.has(key)) {
+      violations.push(`${schemaPath}.${key}`);
+    }
+    if (value && typeof value === "object") {
+      violations.push(
+        ...findUnsupportedSchemaKeywords(value, `${schemaPath}.${key}`, unsupportedKeywords),
+      );
+    }
+  }
+  return violations;
+}
+
+function normalizeGeminiToolSchemas(ctx = {}) {
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).map((tool) => ({
+    ...tool,
+    parameters:
+      tool && tool.parameters && typeof tool.parameters === "object"
+        ? cleanSchemaForGemini(tool.parameters)
+        : tool.parameters,
+  }));
+}
+
+function inspectGeminiToolSchemas(ctx = {}) {
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).flatMap((tool, toolIndex) => {
+    const violations = findUnsupportedSchemaKeywords(
+      tool && tool.parameters,
+      `${tool && tool.name ? tool.name : `tool${toolIndex}`}.parameters`,
+      GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+    );
+    return violations.length > 0 ? [{ toolName: tool.name, toolIndex, violations }] : [];
+  });
+}
+
+function shouldApplyOpenAIToolCompat(ctx = {}) {
+  const provider = normalizeLowercaseStringOrEmpty(
+    (ctx.model && ctx.model.provider) || ctx.provider,
+  );
+  const api = normalizeLowercaseStringOrEmpty((ctx.model && ctx.model.api) || ctx.modelApi);
+  const baseUrl = normalizeLowercaseStringOrEmpty((ctx.model && ctx.model.baseUrl) || "");
+  if (provider === "openai") {
+    return (
+      api === "openai-responses" &&
+      (!baseUrl || /^https:\/\/api\.openai\.com(?:\/v1)?(?:\/|$)/i.test(baseUrl))
+    );
+  }
+  if (provider === "openai-codex") {
+    return api === "openai-codex-responses";
+  }
+  return false;
+}
+
+function normalizeOpenAIStrictCompatSchema(schema, options = { promoteEmptyObject: true }) {
+  if (Array.isArray(schema)) {
+    return schema.map((entry) =>
+      normalizeOpenAIStrictCompatSchema(entry, { promoteEmptyObject: false }),
+    );
+  }
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  const normalized = {};
+  for (const [key, value] of Object.entries(schema)) {
+    normalized[key] =
+      value && typeof value === "object"
+        ? normalizeOpenAIStrictCompatSchema(value, { promoteEmptyObject: false })
+        : value;
+  }
+  if (Object.keys(normalized).length === 0 && options.promoteEmptyObject) {
+    return { type: "object", properties: {}, required: [], additionalProperties: false };
+  }
+  const hasObjectHints =
+    !("type" in normalized) &&
+    ((normalized.properties && typeof normalized.properties === "object") ||
+      Array.isArray(normalized.required));
+  if (hasObjectHints) {
+    normalized.type = "object";
+  }
+  if (normalized.type === "object" && !("properties" in normalized)) {
+    normalized.properties = {};
+  }
+  const hasEmptyProperties =
+    normalized.properties &&
+    typeof normalized.properties === "object" &&
+    !Array.isArray(normalized.properties) &&
+    Object.keys(normalized.properties).length === 0;
+  if (normalized.type === "object" && hasEmptyProperties && !Array.isArray(normalized.required)) {
+    normalized.required = [];
+  }
+  if (
+    normalized.type === "object" &&
+    hasEmptyProperties &&
+    !("additionalProperties" in normalized)
+  ) {
+    normalized.additionalProperties = false;
+  }
+  return normalized;
+}
+
+function normalizeOpenAIToolSchemas(ctx = {}) {
+  if (!shouldApplyOpenAIToolCompat(ctx)) {
+    return Array.isArray(ctx.tools) ? ctx.tools : [];
+  }
+  return (Array.isArray(ctx.tools) ? ctx.tools : []).map((tool) => ({
+    ...tool,
+    parameters: normalizeOpenAIStrictCompatSchema(tool.parameters || {}),
+  }));
+}
+
+function findOpenAIStrictSchemaViolations(schema, schemaPath, options = {}) {
+  if (Array.isArray(schema)) {
+    return options.requireObjectRoot ? [`${schemaPath}.type`] : [];
+  }
+  if (!schema || typeof schema !== "object") {
+    return options.requireObjectRoot ? [`${schemaPath}.type`] : [];
+  }
+  const violations = [];
+  if (Array.isArray(schema.anyOf)) {
+    violations.push(`${schemaPath}.anyOf`);
+  }
+  if (Array.isArray(schema.oneOf)) {
+    violations.push(`${schemaPath}.oneOf`);
+  }
+  if (Array.isArray(schema.allOf)) {
+    violations.push(`${schemaPath}.allOf`);
+  }
+  if (Array.isArray(schema.type)) {
+    violations.push(`${schemaPath}.type`);
+  }
+  if (schema.type === "object") {
+    if (schema.additionalProperties !== false) {
+      violations.push(`${schemaPath}.additionalProperties`);
+    }
+    if (!Array.isArray(schema.required)) {
+      violations.push(`${schemaPath}.required`);
+    } else if (schema.properties && typeof schema.properties === "object") {
+      const requiredSet = new Set(schema.required.filter((entry) => typeof entry === "string"));
+      for (const key of Object.keys(schema.properties)) {
+        if (!requiredSet.has(key)) {
+          violations.push(`${schemaPath}.required.${key}`);
+        }
+      }
+    }
+  }
+  const properties =
+    schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+      ? schema.properties
+      : undefined;
+  if (properties) {
+    for (const [key, value] of Object.entries(properties)) {
+      violations.push(
+        ...findOpenAIStrictSchemaViolations(value, `${schemaPath}.properties.${key}`),
+      );
+    }
+  }
+  return violations;
+}
+
+function inspectOpenAIToolSchemas(_ctx = {}) {
+  return [];
+}
+
+function buildProviderToolCompatFamilyHooks(family) {
+  switch (family) {
+    case "gemini":
+      return {
+        normalizeToolSchemas: normalizeGeminiToolSchemas,
+        inspectToolSchemas: inspectGeminiToolSchemas,
+      };
+    case "openai":
+      return {
+        normalizeToolSchemas: normalizeOpenAIToolSchemas,
+        inspectToolSchemas: inspectOpenAIToolSchemas,
+      };
+    default:
+      throw new Error("Unsupported provider tool compatibility family");
+  }
+}
+
+const providerToolsRuntime = {
+  GEMINI_UNSUPPORTED_SCHEMA_KEYWORDS,
+  HTML_ENTITY_TOOL_CALL_ARGUMENTS_ENCODING,
+  XAI_TOOL_SCHEMA_PROFILE,
+  XAI_UNSUPPORTED_SCHEMA_KEYWORDS,
+  applyXaiModelCompat,
+  buildProviderToolCompatFamilyHooks,
+  cleanSchemaForGemini,
+  findOpenAIStrictSchemaViolations,
+  findUnsupportedSchemaKeywords,
+  inspectGeminiToolSchemas,
+  inspectOpenAIToolSchemas,
+  normalizeGeminiToolSchemas,
+  normalizeOpenAIToolSchemas,
+  resolveXaiModelCompatPatch,
+  stripUnsupportedSchemaKeywords,
+  stripXaiUnsupportedKeywords,
+};
+
 const genericSdk = new Proxy(
   {
     CLAUDE_CLI_BACKEND_ID,
@@ -67006,6 +67421,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/config-mutation"
   ) {
     return configMutationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-tools" ||
+    request === "@openclaw/plugin-sdk/provider-tools"
+  ) {
+    return providerToolsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||
