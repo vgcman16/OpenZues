@@ -49260,6 +49260,18 @@ const channelTargetsRuntime = {
   resolveTargetsWithOptionalToken,
 };
 
+const messagingTargetsRuntime = {
+  buildMessagingTarget,
+  ensureTargetId,
+  normalizeTargetId,
+  parseAtUserTarget,
+  parseMentionPrefixOrAtUserTarget,
+  parseTargetMention,
+  parseTargetPrefix,
+  parseTargetPrefixes,
+  requireTargetKind,
+};
+
 const channelStreamingRuntime = {
   getChannelStreamingConfigObject,
   resolveChannelPreviewStreamMode,
@@ -57150,6 +57162,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-targets"
   ) {
     return channelTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/messaging-targets" ||
+    request === "@openclaw/plugin-sdk/messaging-targets"
+  ) {
+    return messagingTargetsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-streaming" ||

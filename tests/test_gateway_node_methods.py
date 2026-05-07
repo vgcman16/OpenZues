@@ -15881,6 +15881,194 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_messaging_targets_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-messaging-targets.cjs"
+    runtime_entry.write_text(
+        """
+const targets = require("openclaw/plugin-sdk/messaging-targets");
+const scopedTargets = require("@openclaw/plugin-sdk/messaging-targets");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.messaging_targets",
+      description: "Use OpenClaw messaging-targets SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const mention = targets.parseTargetMention({
+          raw: "<@U123>",
+          mentionPattern: /^<@([A-Z0-9]+)>$/,
+          kind: "user"
+        });
+        const prefixed = targets.parseTargetPrefix({
+          raw: "channel: C123 ",
+          prefix: "channel:",
+          kind: "channel"
+        });
+        const prefixedMulti = targets.parseTargetPrefixes({
+          raw: "user: ada",
+          prefixes: [
+            { prefix: "channel:", kind: "channel" },
+            { prefix: "user:", kind: "user" }
+          ]
+        });
+        const atUser = targets.parseAtUserTarget({
+          raw: "@ada",
+          pattern: /^[a-z]+$/,
+          errorMessage: "invalid user"
+        });
+        const mentionPrefixOrAt = targets.parseMentionPrefixOrAtUserTarget({
+          raw: "@bob",
+          mentionPattern: /^<@([A-Z0-9]+)>$/,
+          prefixes: [{ prefix: "channel:", kind: "channel" }],
+          atUserPattern: /^[a-z]+$/,
+          atUserErrorMessage: "invalid user"
+        });
+        let requiredError = "";
+        try {
+          targets.requireTargetKind({
+            platform: "Slack",
+            target: atUser,
+            kind: "channel"
+          });
+        } catch (err) {
+          requiredError = String(err && err.message ? err.message : err);
+        }
+        return {
+          keys: Object.keys(targets).sort(),
+          scopedType: typeof scopedTargets.buildMessagingTarget,
+          target: targets.buildMessagingTarget("channel", "C123", "channel:C123"),
+          targetId: targets.normalizeTargetId("user", "Ada"),
+          ensured: targets.ensureTargetId({
+            candidate: "U123",
+            pattern: /^U\\d+$/,
+            errorMessage: "invalid user"
+          }),
+          mention,
+          prefixed,
+          prefixedMulti,
+          atUser,
+          mentionPrefixOrAt,
+          required: targets.requireTargetKind({
+            platform: "Slack",
+            target: prefixed,
+            kind: "channel"
+          }),
+          requiredError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "messaging-targets-plugin",
+                    "name": "Messaging Targets Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-messaging-targets.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.messaging_targets"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.messaging_targets"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildMessagingTarget",
+            "ensureTargetId",
+            "normalizeTargetId",
+            "parseAtUserTarget",
+            "parseMentionPrefixOrAtUserTarget",
+            "parseTargetMention",
+            "parseTargetPrefix",
+            "parseTargetPrefixes",
+            "requireTargetKind",
+        ],
+        "scopedType": "function",
+        "target": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel:C123",
+            "normalized": "channel:c123",
+        },
+        "targetId": "user:ada",
+        "ensured": "U123",
+        "mention": {
+            "kind": "user",
+            "id": "U123",
+            "raw": "<@U123>",
+            "normalized": "user:u123",
+        },
+        "prefixed": {
+            "kind": "channel",
+            "id": "C123",
+            "raw": "channel: C123 ",
+            "normalized": "channel:c123",
+        },
+        "prefixedMulti": {
+            "kind": "user",
+            "id": "ada",
+            "raw": "user: ada",
+            "normalized": "user:ada",
+        },
+        "atUser": {
+            "kind": "user",
+            "id": "ada",
+            "raw": "@ada",
+            "normalized": "user:ada",
+        },
+        "mentionPrefixOrAt": {
+            "kind": "user",
+            "id": "bob",
+            "raw": "@bob",
+            "normalized": "user:bob",
+        },
+        "required": "C123",
+        "requiredError": "Slack channel id is required (use channel:<id>).",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
