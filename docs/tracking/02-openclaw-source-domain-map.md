@@ -164,8 +164,12 @@ helper coverage from `src/plugin-sdk/config-mutation.ts` plus adjacent config
 mutation, config IO, config logging, and model shared update helpers is
 verified in `a9813667`, and imported `provider-tools` exact helper coverage
 from `src/plugin-sdk/provider-tools.ts`, `src/agents/schema/clean-for-gemini.ts`,
-and `src/plugins/provider-model-compat.ts` is verified in `2762ee46`. All are
-counted with the plugin/extension system row above.
+and `src/plugins/provider-model-compat.ts` is verified in `2762ee46`, and
+imported `provider-stream-shared` exact helper coverage from
+`src/plugin-sdk/provider-stream-shared.ts`,
+`src/agents/pi-embedded-runner/stream-payload-utils.ts`, adjacent stream
+wrappers, and `src/shared/message-content-blocks.ts` is verified in
+`711865e0`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
