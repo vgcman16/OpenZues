@@ -126,7 +126,10 @@ imported `browser-config-runtime` helper coverage from
 `browser-trash` exact helper coverage from `src/plugin-sdk/browser-trash.ts`
 is verified in `9a90555e`, and imported `browser-maintenance` exact helper
 coverage from `src/plugin-sdk/browser-maintenance.ts` is verified in
-`ce39d8c6`. All are counted with the plugin/extension system row above.
+`ce39d8c6`, and imported `browser-host-inspection` exact helper coverage from
+`src/plugin-sdk/browser-host-inspection.ts` and
+`extensions/browser/src/browser/chrome.executables.ts` is verified in
+`bf5ce3f0`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
