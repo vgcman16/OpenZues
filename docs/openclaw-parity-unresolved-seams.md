@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~93.3% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~93.4% overall, with a reasonable
   band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9000,8 +9000,9 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   channel-config-helpers/channel-config-writes/channel-lifecycle path, plus
   models-provider-runtime provider menu/list helpers, skill-commands-runtime
   workspace/agent skill command discovery, skills-runtime refresh-state
-  helpers, and the first agent-runtime core helper subset, continuing with
-  `agent-runtime` model-selection/agent-command breadth.
+  helpers, the first agent-runtime core helper subset, and the bounded
+  agent-runtime model-selection helper subset, continuing with `agent-runtime`
+  agent-command/tool bridge breadth.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
   `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
@@ -9034,6 +9035,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   identity/ack/message/response prefix resolution, timestamp normalization,
   Cron-style current-time lines, and OpenClaw agent-dir env overrides.
   Source/test checkpointed in `a8e871a3`; broader model-selection and
+  agent-command/tool bridge exports remained next at that checkpoint.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed model-selection helper subset for scoped and
+  unscoped imports: canonical/legacy model keys, model ref parsing and
+  normalization, persisted runtime/override model resolution, stored override
+  normalization, configured catalog and allowlist helpers, alias indexes,
+  default/subagent model selection, allowed-model status/projection, and
+  reasoning-default projection. Source/test checkpointed in `0d009e7d`;
   agent-command/tool bridge exports remain the next `agent-runtime` seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods

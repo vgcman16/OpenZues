@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~93.3% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~93.4% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2648,6 +2648,22 @@ may lag behind this tracker.
     adjacent SDK helper proof (`3 passed, 1033 deselected`), adjacent
     imported-plugin proof (`224 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK agent-runtime model-selection helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime.ts`,
+    `openclaw-main/src/agents/model-selection.ts`,
+    `openclaw-main/src/agents/model-selection-normalize.ts`,
+    `openclaw-main/src/agents/model-selection-shared.ts`,
+    `openclaw-main/src/agents/model-selection-resolve.ts`,
+    `openclaw-main/src/agents/model-ref-shared.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0d009e7d`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime model-selection proof
+    (`1 passed`), adjacent SDK helper proof (`3 passed, 1034 deselected`),
+    adjacent imported-plugin proof (`225 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
   - Source: `openclaw-main/src/plugins/tool-types.ts`,
