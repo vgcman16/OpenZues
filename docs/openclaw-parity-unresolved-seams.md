@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~94.1% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~94.2% overall, with a reasonable
   band of ~80-95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9005,9 +9005,10 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   helper subset, the agent-runtime facade utility subset, and the
   agent-runtime model-catalog lookup subset, the agent-runtime PI embedded
   utility subset, the agent-runtime embedded block chunker subset, and the
-  agent-runtime model-auth helper subset, and the agent-runtime schema/typebox
-  helper subset, continuing with remaining provider-auth alias-map depth,
-  web-tool helpers, TTS exports, and agent-command breadth.
+  agent-runtime model-auth helper subset, the agent-runtime schema/typebox
+  helper subset, and the agent-runtime web-tool helper subset, continuing with
+  remaining provider-auth alias-map depth, TTS exports, and agent-command
+  breadth.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
   `formatModelsAvailableHeader`, and `resolveModelsCommandReply` exports for
@@ -9102,6 +9103,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   descriptions and enum-object support. Source/test checkpointed in
   `0884d4f3`; provider-auth alias-map depth, web-tool helpers, TTS exports,
   and agent-command entrypoints remain the next `agent-runtime` seams.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed web-tool helper subset for scoped and unscoped
+  imports: cache key/read/write helpers, timeout and cache TTL resolution,
+  bounded response text reads, whitespace/Markdown/text helpers, HTML content
+  extraction, trusted/self-hosted/strict endpoint wrappers, and fakeable
+  guarded fetch lifecycle behavior. Source/test checkpointed in `9bc67f5e`;
+  provider-auth alias-map depth, TTS exports, and agent-command entrypoints
+  remain the next `agent-runtime` seams.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
