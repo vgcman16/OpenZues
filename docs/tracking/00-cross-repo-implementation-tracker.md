@@ -29,7 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK setup facade slice is checkpointed in `ec94f934`.
+The imported plugin SDK setup facade slice is checkpointed in `ec94f934`, and
+the exact `config-types` type-only barrel was reverified on 2026-05-07.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -61,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Setup SDK facade shim checkpointed in `ec94f934` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `config-types` facade |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Setup SDK facade checkpointed in `ec94f934`; `config-types` reverified as type-only | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-runtime` facade |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -2199,10 +2200,11 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tests, ruff, mypy
   - Status: checkpointed in `fceeecc8`
   - Weight: 1
-  - Last verified: 2026-05-06, focused type-only SDK barrel proof (`1
-    passed`), adjacent SDK helper proof (`3 passed, 981 deselected`),
-    adjacent imported-plugin proof (`172 passed, 812 deselected`), `ruff
-    check`, and `mypy`.
+  - Last verified: 2026-05-07, focused type-only SDK barrel proof (`1
+    passed`) reverified the exact `config-types` queue head as type-only;
+    original adjacent SDK helper proof (`3 passed, 981 deselected`), adjacent
+    imported-plugin proof (`172 passed, 812 deselected`), `ruff check`, and
+    `mypy` remain from checkpoint `fceeecc8`.
 
 - [x] `OZ-PLUGIN-001YL` Imported cli-backend helper shim
   - Source: `openclaw-main/src/plugin-sdk/cli-backend.ts`,

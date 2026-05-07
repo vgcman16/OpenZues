@@ -17961,6 +17961,12 @@ These are complete within the bounded OpenZues-local parity contract verified in
   (`309 passed, 812 deselected`), `ruff check src\openzues\cli.py
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check`. Source/test checkpointed in `ec94f934`.
+- Re-verified the exact `config-types` queue head as an upstream type-only
+  barrel from `src/plugin-sdk/config-types.ts`; the existing native empty
+  runtime module contract still matches OpenClaw. Verification-only closure:
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_type_only_sdk_barrels -q`
+  (`1 passed`) on 2026-05-07. No source changes were required; the next exact
+  advertised SDK subpath queue head is `channel-runtime`.
 
 ## References
 

@@ -9626,6 +9626,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   `ec94f934`; repo-wide parity remains estimated at ~99.9%, with the evidence
   band tightened to ~80-99.99991%.
 - The queue head now tracks the remaining exact advertised SDK subpath
-  `config-types`, followed by `channel-runtime`, `compat`, `discord`,
-  `extension-shared`, generation/provider/document helper facades, and any
-  newly exposed repo-wide OpenClaw namespaces.
+  `channel-runtime`, followed by `compat`, `discord`, `extension-shared`,
+  generation/provider/document helper facades, and any newly exposed
+  repo-wide OpenClaw namespaces. `config-types` was re-verified on
+  2026-05-07 as an upstream type-only barrel through the existing empty
+  runtime module proof.

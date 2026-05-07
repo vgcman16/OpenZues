@@ -1024,7 +1024,9 @@ may lag behind this tracker.
   `document-extractor`, `music-generation`, `provider-model-types`,
   `qa-channel-protocol`, and `tts-runtime.types`, preserving empty runtime
   modules rather than broad generic SDK fallback exports.
-  - Status: checkpointed in `fceeecc8`
+  - Status: checkpointed in `fceeecc8`; exact `config-types` queue head
+    reverified on 2026-05-07 with the focused type-only SDK barrel proof
+    (`1 passed`)
 
 - [x] Imported plugin SDK config-schema shim for root config object parsing and
   JSON Schema value validation with required/additional-property, enum
