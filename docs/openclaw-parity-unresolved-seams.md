@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~93.7% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~93.8% overall, with a reasonable
   band of ~80-94%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9003,7 +9003,8 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   helpers, the first agent-runtime core helper subset, the bounded
   agent-runtime model-selection helper subset, the agent-runtime tool bridge
   helper subset, the agent-runtime facade utility subset, and the
-  agent-runtime model-catalog lookup subset, continuing with remaining
+  agent-runtime model-catalog lookup subset, and the agent-runtime PI embedded
+  utility subset, continuing with embedded block chunking plus remaining
   live/provider `agent-runtime` facade and agent-command breadth.
 - Current queue-head adjustment: imported plugin SDK `models-provider-runtime`
   now exposes the upstream `buildModelsProviderData`,
@@ -9069,6 +9070,14 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   unique-match lookup, and text/image/audio/document capability probes.
   Source/test checkpointed in `a5794303`; live provider/model runtime helpers
   and agent-command entrypoints remain the next seam.
+- Current queue-head adjustment: imported plugin SDK `agent-runtime` now
+  exposes the source-backed PI embedded utility helper subset for scoped and
+  unscoped imports: assistant-message detection, assistant text/final-answer/
+  reasoning extraction, thinking-tag splitting/promotion/extraction helpers,
+  reasoning message formatting, downgraded tool-call text stripping, and
+  Minimax XML stripping. Source/test checkpointed in `db2affa5`; embedded
+  block chunking, live provider/model runtime helpers, and agent-command
+  entrypoints remain the next seam.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
