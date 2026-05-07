@@ -60688,6 +60688,547 @@ const providerTestContractsRuntime = {
   waitForLiveExpectation,
 };
 
+function createAuthCaptureJsonFetch(responseBody) {
+  let seenAuth = null;
+  const fetchFn = withFetchPreconnect(async (_input, init = {}) => {
+    const headers = new Headers(init.headers);
+    seenAuth = headers.get("authorization");
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return {
+    fetchFn,
+    getAuthHeader: () => seenAuth,
+  };
+}
+
+function createRequestCaptureJsonFetch(responseBody) {
+  let seenUrl = null;
+  let seenInit;
+  const fetchFn = withFetchPreconnect(async (input, init = undefined) => {
+    seenUrl = requestUrl(input);
+    seenInit = init;
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return {
+    fetchFn,
+    getRequest: () => ({ url: seenUrl, init: seenInit }),
+  };
+}
+
+function installPinnedHostnameTestHooks() {}
+
+function createSingleUserPromptMessage(content = "Reply with the word ok.") {
+  return [{ role: "user", content, timestamp: Date.now() }];
+}
+
+function extractNonEmptyAssistantText(content = []) {
+  return content
+    .filter((block) => block && block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isLiveTestEnabled(extraEnvVars = [], env = process.env) {
+  return [...extraEnvVars, "LIVE", "OPENCLAW_LIVE_TEST"].some((name) =>
+    isTruthyEnvValue(env[name]),
+  );
+}
+
+function isLiveProfileKeyModeEnabled(env = process.env) {
+  return isTruthyEnvValue(env.OPENCLAW_LIVE_REQUIRE_PROFILE_KEYS);
+}
+
+function collectProviderApiKeys(provider, options = {}) {
+  const env = options.env || process.env;
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  const base = normalized === "google-vertex"
+    ? "GEMINI"
+    : normalized === "google"
+      ? "GEMINI"
+      : normalized.toUpperCase().replace(/-/gu, "_");
+  const config = {
+    liveSingle: `OPENCLAW_LIVE_${base}_KEY`,
+    listVar: `${base}_API_KEYS`,
+    primaryVar: `${base}_API_KEY`,
+    prefixedVar: `${base}_API_KEY_`,
+  };
+  if (normalized === "openai") {
+    config.liveSingle = "OPENCLAW_LIVE_OPENAI_KEY";
+    config.listVar = "OPENAI_API_KEYS";
+    config.primaryVar = "OPENAI_API_KEY";
+    config.prefixedVar = "OPENAI_API_KEY_";
+  } else if (normalized === "anthropic") {
+    config.liveSingle = "OPENCLAW_LIVE_ANTHROPIC_KEY";
+    config.listVar = "OPENCLAW_LIVE_ANTHROPIC_KEYS";
+    config.primaryVar = "ANTHROPIC_API_KEY";
+    config.prefixedVar = "ANTHROPIC_API_KEY_";
+  }
+  const seen = new Set();
+  const keys = [];
+  const add = (value) => {
+    const trimmed = normalizeOptionalString(value);
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    keys.push(trimmed);
+  };
+  const liveSingle = normalizeOptionalString(env[config.liveSingle]);
+  if (liveSingle) {
+    return [liveSingle];
+  }
+  for (const value of String(env[config.listVar] || "").split(/[\s,;]+/u)) {
+    add(value);
+  }
+  add(env[config.primaryVar]);
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith(config.prefixedVar)) {
+      add(value);
+    }
+  }
+  for (const envVar of options.providerEnvVars || []) {
+    add(env[envVar]);
+  }
+  return keys;
+}
+
+function isModelNotFoundErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("model not found") ||
+    value.includes("model_not_found") ||
+    value.includes("unknown model") ||
+    (value.includes("404") && value.includes("not found")) ||
+    (value.includes("model") && value.includes("does not exist"))
+  );
+}
+
+function isAuthErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("invalid api key") ||
+    value.includes("unauthorized") ||
+    value.includes("forbidden") ||
+    value.includes("authentication") ||
+    value.includes("auth")
+  );
+}
+
+function isBillingErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("402") ||
+    value.includes("billing") ||
+    value.includes("payment") ||
+    value.includes("credits") ||
+    value.includes("subscription")
+  );
+}
+
+function isOverloadedErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("overloaded") || value.includes("too many requests");
+}
+
+function isServerErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("500") || value.includes("internal server error");
+}
+
+function isTimeoutErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("timeout") || value.includes("timed out");
+}
+
+function maybeLoadShellEnvForGenerationProviders(_providerIds = []) {}
+
+function getShellEnvAppliedKeys() {
+  return [];
+}
+
+function fillPixel(buf, x, y, width, r, g, b, a = 255) {
+  if (x < 0 || y < 0 || x >= width) {
+    return;
+  }
+  const idx = (y * width + x) * 4;
+  if (idx < 0 || idx + 3 >= buf.length) {
+    return;
+  }
+  buf[idx] = r;
+  buf[idx + 1] = g;
+  buf[idx + 2] = b;
+  buf[idx + 3] = a;
+}
+
+function encodePngRgba(buffer, _width, _height) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(buffer || ""),
+  ]);
+}
+
+function parseCsvFilter(raw, options = {}) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed || trimmed === "all") {
+    return null;
+  }
+  const values = trimmed
+    .split(",")
+    .map((entry) =>
+      options.lowercase === false
+        ? normalizeOptionalString(entry)
+        : normalizeOptionalLowercaseString(entry),
+    )
+    .filter(Boolean);
+  return values.length > 0 ? new Set(values) : null;
+}
+
+function parseProviderModelMap(raw) {
+  const entries = new Map();
+  for (const token of String(raw || "").split(",")) {
+    const parsed = parseGenerationModelRef(token);
+    if (parsed) {
+      entries.set(parsed.provider, token.trim());
+    }
+  }
+  return entries;
+}
+
+function redactLiveApiKey(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return "none";
+  }
+  if (trimmed.length <= 12) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
+function resolveConfiguredLiveProviderModels(configured) {
+  const resolved = new Map();
+  const add = (value) => {
+    const parsed = parseGenerationModelRef(value);
+    if (parsed) {
+      resolved.set(parsed.provider, value.trim());
+    }
+  };
+  if (typeof configured === "string") {
+    add(configured);
+    return resolved;
+  }
+  add(configured && configured.primary);
+  for (const fallback of (configured && configured.fallbacks) || []) {
+    add(fallback);
+  }
+  return resolved;
+}
+
+const DEFAULT_LIVE_MUSIC_MODELS = {
+  google: "google/lyria-3-clip-preview",
+  minimax: "minimax/music-2.6",
+};
+
+function resolveConfiguredLiveMusicModels(cfg = {}) {
+  return resolveConfiguredLiveProviderModels(cfg.agents?.defaults?.musicGenerationModel);
+}
+
+function resolveLiveAuthStore(params = {}) {
+  if (params.requireProfileKeys || !params.hasLiveKeys) {
+    return undefined;
+  }
+  return { version: 1, profiles: {} };
+}
+
+function resolveLiveMusicAuthStore(params = {}) {
+  return resolveLiveAuthStore(params);
+}
+
+const DEFAULT_LIVE_VIDEO_MODELS = {
+  alibaba: "alibaba/wan2.6-t2v",
+  byteplus: "byteplus/seedance-1-0-lite-t2v-250428",
+  deepinfra: "deepinfra/Pixverse/Pixverse-T2V",
+  fal: "fal/fal-ai/minimax/video-01-live",
+  google: "google/veo-3.1-fast-generate-preview",
+  minimax: "minimax/MiniMax-Hailuo-2.3",
+  openai: "openai/sora-2",
+  openrouter: "openrouter/google/veo-3.1-fast",
+  qwen: "qwen/wan2.6-t2v",
+  runway: "runway/gen4.5",
+  together: "together/Wan-AI/Wan2.2-T2V-A14B",
+  vydra: "vydra/veo3",
+  xai: "xai/grok-imagine-video",
+};
+
+function resolveConfiguredLiveVideoModels(cfg = {}) {
+  return resolveConfiguredLiveProviderModels(cfg.agents?.defaults?.videoGenerationModel);
+}
+
+function resolveLiveVideoAuthStore(params = {}) {
+  return resolveLiveAuthStore(params);
+}
+
+function resolveLiveVideoResolution(params = {}) {
+  const providerId = normalizeLowercaseStringOrEmpty(params.providerId);
+  if (providerId === "minimax") {
+    return "768P";
+  }
+  if (providerId === "openrouter") {
+    return "720P";
+  }
+  return "480P";
+}
+
+function canRunBufferBackedImageToVideoLiveLane(params = {}) {
+  return normalizeLowercaseStringOrEmpty(params.providerId) !== "vydra";
+}
+
+function canRunBufferBackedVideoToVideoLiveLane(params = {}) {
+  const providerId = normalizeLowercaseStringOrEmpty(params.providerId);
+  if (["alibaba", "google", "openai", "qwen", "xai"].includes(providerId)) {
+    return false;
+  }
+  if (providerId === "fal") {
+    return String(params.modelRef || "").includes("reference-to-video");
+  }
+  if (providerId === "runway") {
+    const parsed = parseGenerationModelRef(params.modelRef);
+    return (parsed ? parsed.model : String(params.modelRef || "").trim()) === "gen4_aleph";
+  }
+  return true;
+}
+
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function requestUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
+function requestBodyText(body) {
+  return typeof body === "string" ? body : "{}";
+}
+
+function mockPinnedHostnameResolution(_addresses = ["93.184.216.34"]) {
+  return { mockRestore() {} };
+}
+
+async function createWindowsCmdShimFixture(params = {}) {
+  await fs.promises.mkdir(path.dirname(params.scriptPath), { recursive: true });
+  await fs.promises.mkdir(path.dirname(params.shimPath), { recursive: true });
+  await fs.promises.writeFile(params.scriptPath, "module.exports = {};\n", "utf8");
+  await fs.promises.writeFile(params.shimPath, `@echo off\r\n${params.shimLine}\r\n`, "utf8");
+}
+
+function makeResponse(status, body) {
+  const payload = typeof body === "string" ? body : JSON.stringify(body);
+  const headers = typeof body === "string" ? undefined : { "Content-Type": "application/json" };
+  return new Response(payload, { status, headers });
+}
+
+function createProviderUsageFetch(handler) {
+  return withFetchPreconnect(async (input, init = undefined) =>
+    handler(requestUrl(input), init),
+  );
+}
+
+async function withStateDirEnv(prefix, fn) {
+  const snapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const stateDir = path.join(tempRoot, "state");
+  await fs.promises.mkdir(stateDir, { recursive: true, mode: 0o700 });
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  try {
+    return await fn({ tempRoot, stateDir });
+  } finally {
+    snapshot.restore();
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function createMockServerResponse() {
+  const headers = {};
+  const res = {
+    headersSent: false,
+    statusCode: 200,
+    setHeader(key, value) {
+      headers[lowercasePreservingWhitespace(key)] = value;
+      return res;
+    },
+    getHeader(key) {
+      return headers[lowercasePreservingWhitespace(key)];
+    },
+    end(body = undefined) {
+      res.headersSent = true;
+      res.body = body;
+      return res;
+    },
+  };
+  return res;
+}
+
+async function withTempDir(prefix, run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    return await run(dir);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+}
+
+function useFrozenTime(at) {
+  const fixed = new Date(at).getTime();
+  const previousNow = Date.now;
+  Date.now = () => fixed;
+  return () => {
+    Date.now = previousNow;
+  };
+}
+
+function useRealTime() {}
+
+async function withServer(handler, fn) {
+  const { createServer } = require("node:http");
+  const server = createServer(handler);
+  await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address) {
+    throw new Error("missing server address");
+  }
+  try {
+    return await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function createMockIncomingRequest(chunks = []) {
+  const { EventEmitter } = require("node:events");
+  const req = new EventEmitter();
+  req.destroyed = false;
+  req.headers = {};
+  req.destroy = () => {
+    req.destroyed = true;
+    return req;
+  };
+  void Promise.resolve().then(() => {
+    for (const chunk of chunks) {
+      req.emit("data", Buffer.from(chunk, "utf8"));
+      if (req.destroyed) {
+        return;
+      }
+    }
+    req.emit("end");
+  });
+  return req;
+}
+
+async function withTempHome(fn, opts = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), opts.prefix || "openclaw-test-home-"));
+  const snapshot = captureEnv([
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENCLAW_HOME",
+    "OPENCLAW_STATE_DIR",
+    ...Object.keys(opts.env || {}),
+  ]);
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.OPENCLAW_HOME;
+  process.env.OPENCLAW_STATE_DIR = path.join(home, ".openclaw");
+  await fs.promises.mkdir(process.env.OPENCLAW_STATE_DIR, { recursive: true, mode: 0o700 });
+  for (const [key, raw] of Object.entries(opts.env || {})) {
+    const value = typeof raw === "function" ? raw(home) : raw;
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await fn(home);
+  } finally {
+    snapshot.restore();
+    await fs.promises.rm(home, { recursive: true, force: true });
+  }
+}
+
+const testEnvRuntime = {
+  DEFAULT_LIVE_MUSIC_MODELS,
+  DEFAULT_LIVE_VIDEO_MODELS,
+  canRunBufferBackedImageToVideoLiveLane,
+  canRunBufferBackedVideoToVideoLiveLane,
+  captureEnv,
+  collectProviderApiKeys,
+  createAuthCaptureJsonFetch,
+  createMockIncomingRequest,
+  createMockServerResponse,
+  createProviderUsageFetch,
+  createRequestCaptureJsonFetch,
+  createSingleUserPromptMessage,
+  createTempHomeEnv,
+  encodePngRgba,
+  extractNonEmptyAssistantText,
+  fillPixel,
+  getShellEnvAppliedKeys,
+  installPinnedHostnameTestHooks,
+  isAuthErrorMessage,
+  isBillingErrorMessage,
+  isLiveProfileKeyModeEnabled,
+  isLiveTestEnabled,
+  isModelNotFoundErrorMessage,
+  isOverloadedErrorMessage,
+  isServerErrorMessage,
+  isTimeoutErrorMessage,
+  isTruthyEnvValue,
+  jsonResponse,
+  makeResponse,
+  maybeLoadShellEnvForGenerationProviders,
+  mockPinnedHostnameResolution,
+  normalizeVideoGenerationDuration,
+  parseCsvFilter,
+  parseProviderModelMap,
+  parseVideoGenerationModelRef,
+  redactLiveApiKey,
+  requestBodyText,
+  requestUrl,
+  resolveConfiguredLiveMusicModels,
+  resolveConfiguredLiveVideoModels,
+  resolveLiveMusicAuthStore,
+  resolveLiveVideoAuthStore,
+  resolveLiveVideoResolution,
+  useFrozenTime,
+  useRealTime,
+  withEnv,
+  withEnvAsync,
+  withFetchPreconnect,
+  withServer,
+  withStateDirEnv,
+  withTempDir,
+  withTempHome,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -79458,6 +79999,7 @@ const genericSdk = new Proxy(
     ...pluginTestContractsRuntime,
     ...pluginTestRuntimeRuntime,
     ...providerTestContractsRuntime,
+    ...testEnvRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -81532,6 +82074,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-test-contracts"
   ) {
     return providerTestContractsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-env" ||
+    request === "@openclaw/plugin-sdk/test-env"
+  ) {
+    return testEnvRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

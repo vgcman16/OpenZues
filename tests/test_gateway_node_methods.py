@@ -33032,6 +33032,396 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_env_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-env.cjs"
+    runtime_entry.write_text(
+        """
+const path = require("node:path");
+const env = require("openclaw/plugin-sdk/test-env");
+const scopedEnv = require("@openclaw/plugin-sdk/test-env");
+
+async function readIncoming(req) {
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk.toString("utf8")));
+    req.on("end", () => resolve(chunks.join("")));
+    req.on("error", reject);
+  });
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_env",
+      description: "Use OpenClaw test-env SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        process.env.OPENZUES_TEST_ENV = "before";
+        const snapshot = env.captureEnv(["OPENZUES_TEST_ENV"]);
+        process.env.OPENZUES_TEST_ENV = "changed";
+        snapshot.restore();
+        const afterRestore = process.env.OPENZUES_TEST_ENV;
+        const withEnvValue = env.withEnv(
+          { OPENZUES_TEST_ENV: "inside", OPENZUES_REMOVE_ME: undefined },
+          () => process.env.OPENZUES_TEST_ENV
+        );
+        const afterWithEnv = process.env.OPENZUES_TEST_ENV;
+        const asyncValue = await env.withEnvAsync(
+          { OPENZUES_TEST_ENV: "async" },
+          async () => process.env.OPENZUES_TEST_ENV
+        );
+        const liveEnabled = env.isLiveTestEnabled(["OPENZUES_LIVE_EXTRA"], {
+          OPENZUES_LIVE_EXTRA: "yes"
+        });
+        const profileMode = env.isLiveProfileKeyModeEnabled({
+          OPENCLAW_LIVE_REQUIRE_PROFILE_KEYS: "1"
+        });
+        const usageFetch = env.createProviderUsageFetch(async (url, init) =>
+          env.makeResponse(201, { url, method: init?.method || "GET" })
+        );
+        usageFetch.preconnect("https://example.test");
+        const usageResponse = await usageFetch("https://example.test/usage", {
+          method: "POST"
+        });
+        const usageJson = await usageResponse.json();
+        const authCapture = env.createAuthCaptureJsonFetch({ ok: true });
+        await authCapture.fetchFn("https://example.test/auth", {
+          headers: { authorization: "Bearer token" }
+        });
+        const requestCapture = env.createRequestCaptureJsonFetch({ ok: true });
+        await requestCapture.fetchFn(new URL("https://example.test/request"), {
+          method: "PUT",
+          body: "payload"
+        });
+        const jsonResponse = env.jsonResponse({ hello: "world" }, 202);
+        const mockResponse = env.createMockServerResponse();
+        mockResponse.setHeader("X-Test", "yes");
+        mockResponse.end("done");
+        const incomingText = await readIncoming(
+          env.createMockIncomingRequest(["hello", " ", "world"])
+        );
+        let serverBase = "";
+        await env.withServer((req, res) => {
+          res.end(req.url);
+        }, async (baseUrl) => {
+          serverBase = baseUrl;
+        });
+        const tempDirResult = await env.withTempDir(
+          "openzues-test-env-",
+          async (dir) => path.basename(dir).startsWith("openzues-test-env-")
+        );
+        const stateDirResult = await env.withStateDirEnv(
+          "openzues-state-env-",
+          async ({ stateDir }) => process.env.OPENCLAW_STATE_DIR === stateDir
+        );
+        const tempHome = await env.createTempHomeEnv("openzues-home-env-");
+        const tempHomeOk = process.env.OPENCLAW_STATE_DIR.startsWith(tempHome.home);
+        await tempHome.restore();
+        const withTempHomeResult = await env.withTempHome(async (home) =>
+          process.env.OPENCLAW_STATE_DIR.startsWith(home)
+        );
+        const pixels = Buffer.alloc(16);
+        env.fillPixel(pixels, 0, 0, 2, 255, 0, 0, 255);
+        const png = env.encodePngRgba(pixels, 2, 2);
+        const modelMap = Array.from(
+          env.parseProviderModelMap("openai/gpt-5.5,google/gemini").entries()
+        );
+        const csvFilter = Array.from(env.parseCsvFilter("Beta,alpha")).sort();
+        const videoModels = Array.from(
+          env.resolveConfiguredLiveVideoModels({
+            agents: {
+              defaults: {
+                videoGenerationModel: {
+                  primary: "openai/sora-2",
+                  fallbacks: ["google/veo-3"]
+                }
+              }
+            }
+          }).entries()
+        );
+        const musicModels = Array.from(
+          env.resolveConfiguredLiveMusicModels({
+            agents: { defaults: { musicGenerationModel: "google/lyria" } }
+          }).entries()
+        );
+        return {
+          keys: Object.keys(env).sort(),
+          scopedSame: scopedEnv.withEnv === env.withEnv,
+          env: {
+            afterRestore,
+            withEnvValue,
+            afterWithEnv,
+            asyncValue,
+            truthy: [env.isTruthyEnvValue("yes"), env.isTruthyEnvValue("0")],
+            liveEnabled,
+            profileMode,
+            shellKeys: env.getShellEnvAppliedKeys()
+          },
+          fetch: {
+            acceptsDispatcher: usageFetch.__openclawAcceptsDispatcher,
+            usageStatus: usageResponse.status,
+            usageJson,
+            auth: authCapture.getAuthHeader(),
+            request: requestCapture.getRequest()
+          },
+          http: {
+            jsonStatus: jsonResponse.status,
+            json: await jsonResponse.json(),
+            requestUrl: env.requestUrl(new URL("https://example.test/path")),
+            requestBodyText: [
+              env.requestBodyText("body"),
+              env.requestBodyText(undefined)
+            ],
+            mockHeader: mockResponse.getHeader("x-test"),
+            mockBody: mockResponse.body,
+            incomingText,
+            serverBaseStarts: serverBase.startsWith("http://127.0.0.1:")
+          },
+          temp: {
+            tempDirResult,
+            stateDirResult,
+            tempHomeOk,
+            withTempHomeResult
+          },
+          live: {
+            prompt: env.createSingleUserPromptMessage("hello")[0],
+            assistantText: env.extractNonEmptyAssistantText([
+              { type: "text", text: " hi " },
+              { type: "image", text: "ignored" },
+              { type: "text", text: "there" }
+            ]),
+            keys: env.collectProviderApiKeys("openai", {
+              env: {
+                OPENAI_API_KEYS: "a,b",
+                OPENAI_API_KEY_2: "c",
+                OPENAI_API_KEY: "a"
+              }
+            }),
+            errors: [
+              env.isModelNotFoundErrorMessage("model not found"),
+              env.isAuthErrorMessage("invalid api key"),
+              env.isBillingErrorMessage("402 payment required"),
+              env.isOverloadedErrorMessage("server overloaded"),
+              env.isServerErrorMessage("500 internal server error"),
+              env.isTimeoutErrorMessage("request timed out")
+            ]
+          },
+          media: {
+            pngHeader: Array.from(png.subarray(0, 8)),
+            csvFilter,
+            modelMap,
+            redacted: env.redactLiveApiKey("sk-1234567890abcdef"),
+            videoDefault: env.DEFAULT_LIVE_VIDEO_MODELS.openai,
+            musicDefault: env.DEFAULT_LIVE_MUSIC_MODELS.google,
+            videoModels,
+            musicModels,
+            videoAuthStore: env.resolveLiveVideoAuthStore({
+              requireProfileKeys: false,
+              hasLiveKeys: true
+            }),
+            musicAuthStore: env.resolveLiveMusicAuthStore({
+              requireProfileKeys: true,
+              hasLiveKeys: true
+            }) ?? null,
+            resolution: env.resolveLiveVideoResolution({
+              providerId: "minimax",
+              modelRef: "minimax/video"
+            }),
+            imageLane: env.canRunBufferBackedImageToVideoLiveLane({
+              providerId: "vydra",
+              modelRef: "vydra/veo"
+            }),
+            videoLane: env.canRunBufferBackedVideoToVideoLiveLane({
+              providerId: "fal",
+              modelRef: "fal/reference-to-video"
+            }),
+            duration: env.normalizeVideoGenerationDuration({
+              durationSeconds: 7,
+              provider: {
+                capabilities: {
+                  generate: { supportedDurationSeconds: [4, 8] }
+                }
+              }
+            }),
+            modelRef: env.parseVideoGenerationModelRef("openai/sora")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-env-plugin",
+                    "name": "Runtime Test Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-env.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_env"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "DEFAULT_LIVE_MUSIC_MODELS",
+        "DEFAULT_LIVE_VIDEO_MODELS",
+        "canRunBufferBackedImageToVideoLiveLane",
+        "canRunBufferBackedVideoToVideoLiveLane",
+        "captureEnv",
+        "collectProviderApiKeys",
+        "createAuthCaptureJsonFetch",
+        "createMockIncomingRequest",
+        "createMockServerResponse",
+        "createProviderUsageFetch",
+        "createRequestCaptureJsonFetch",
+        "createSingleUserPromptMessage",
+        "createTempHomeEnv",
+        "encodePngRgba",
+        "extractNonEmptyAssistantText",
+        "fillPixel",
+        "getShellEnvAppliedKeys",
+        "installPinnedHostnameTestHooks",
+        "isAuthErrorMessage",
+        "isBillingErrorMessage",
+        "isLiveProfileKeyModeEnabled",
+        "isLiveTestEnabled",
+        "isModelNotFoundErrorMessage",
+        "isOverloadedErrorMessage",
+        "isServerErrorMessage",
+        "isTimeoutErrorMessage",
+        "isTruthyEnvValue",
+        "jsonResponse",
+        "makeResponse",
+        "maybeLoadShellEnvForGenerationProviders",
+        "mockPinnedHostnameResolution",
+        "normalizeVideoGenerationDuration",
+        "parseCsvFilter",
+        "parseProviderModelMap",
+        "parseVideoGenerationModelRef",
+        "redactLiveApiKey",
+        "requestBodyText",
+        "requestUrl",
+        "resolveConfiguredLiveMusicModels",
+        "resolveConfiguredLiveVideoModels",
+        "resolveLiveMusicAuthStore",
+        "resolveLiveVideoAuthStore",
+        "resolveLiveVideoResolution",
+        "useFrozenTime",
+        "useRealTime",
+        "withEnv",
+        "withEnvAsync",
+        "withFetchPreconnect",
+        "withServer",
+        "withStateDirEnv",
+        "withTempDir",
+        "withTempHome",
+    ]
+    assert result["scopedSame"] is True
+    assert result["env"] == {
+        "afterRestore": "before",
+        "withEnvValue": "inside",
+        "afterWithEnv": "before",
+        "asyncValue": "async",
+        "truthy": [True, False],
+        "liveEnabled": True,
+        "profileMode": True,
+        "shellKeys": [],
+    }
+    assert result["fetch"]["acceptsDispatcher"] is True
+    assert result["fetch"]["usageStatus"] == 201
+    assert result["fetch"]["usageJson"] == {
+        "url": "https://example.test/usage",
+        "method": "POST",
+    }
+    assert result["fetch"]["auth"] == "Bearer token"
+    assert result["fetch"]["request"]["url"] == "https://example.test/request"
+    assert result["fetch"]["request"]["init"]["method"] == "PUT"
+    assert result["http"] == {
+        "jsonStatus": 202,
+        "json": {"hello": "world"},
+        "requestUrl": "https://example.test/path",
+        "requestBodyText": ["body", "{}"],
+        "mockHeader": "yes",
+        "mockBody": "done",
+        "incomingText": "hello world",
+        "serverBaseStarts": True,
+    }
+    assert result["temp"] == {
+        "tempDirResult": True,
+        "stateDirResult": True,
+        "tempHomeOk": True,
+        "withTempHomeResult": True,
+    }
+    assert result["live"]["prompt"]["role"] == "user"
+    assert result["live"]["prompt"]["content"] == "hello"
+    assert result["live"]["assistantText"] == "hi there"
+    assert result["live"]["keys"] == ["a", "b", "c"]
+    assert result["live"]["errors"] == [True, True, True, True, True, True]
+    assert result["media"]["pngHeader"] == [137, 80, 78, 71, 13, 10, 26, 10]
+    assert result["media"]["csvFilter"] == ["alpha", "beta"]
+    assert result["media"]["modelMap"] == [
+        ["openai", "openai/gpt-5.5"],
+        ["google", "google/gemini"],
+    ]
+    assert result["media"]["redacted"] == "sk-12345...cdef"
+    assert result["media"]["videoDefault"] == "openai/sora-2"
+    assert result["media"]["musicDefault"] == "google/lyria-3-clip-preview"
+    assert result["media"]["videoModels"] == [
+        ["openai", "openai/sora-2"],
+        ["google", "google/veo-3"],
+    ]
+    assert result["media"]["musicModels"] == [["google", "google/lyria"]]
+    assert result["media"]["videoAuthStore"] == {"version": 1, "profiles": {}}
+    assert result["media"]["musicAuthStore"] is None
+    assert result["media"]["resolution"] == "768P"
+    assert result["media"]["imageLane"] is False
+    assert result["media"]["videoLane"] is True
+    assert result["media"]["duration"] == 8
+    assert result["media"]["modelRef"] == {"provider": "openai", "model": "sora"}
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
