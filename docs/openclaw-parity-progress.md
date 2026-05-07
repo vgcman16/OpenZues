@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~96.2% overall, with a reasonable band of ~80-97%.
+- Estimated repo-wide parity: ~96.3% overall, with a reasonable band of ~80-97%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -89,6 +89,8 @@
 - Runtime helper addendum: imported `browser-setup-tools` aggregate coverage
   is now verified in `50876922` and counted with the plugin helper slices
   above.
+- Runtime helper addendum: imported `browser-support` aggregate coverage is
+  now verified in `37eec77e` and counted with the plugin helper slices above.
 - Estimated CLI/operator control-plane parity: ~99.9% after closing the bundle metadata mini-queue, marketplace source-shape install/update queue, native ACP client interactive replay, secrets reload CLI surface, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, local path/copy installs, missing local-looking install-spec guard, bundled pre-npm install, explicit/preferred plus production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, and runtime activation doctor posture; remaining CLI gaps are now dominated by real installed plugin module import/activation and packaging surfaces.
 - This is a planning rollup, not a generated metric or a claim of feature-complete parity.
 
@@ -16791,6 +16793,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `50876922`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `browser-support` aggregate SDK surface from
+  `src/plugin-sdk/browser-support.ts`: scoped and unscoped native runtime
+  entries compose the existing `browser-config-runtime`,
+  `browser-node-runtime`, `browser-security-runtime`, and
+  `browser-setup-tools` facades so browser plugins can import the single
+  support barrel without falling through to the broad SDK proxy. This closes
+  `OZ-PLUGIN-00243`; repo-wide parity is now estimated at ~96.3%. Remaining
+  plugin/runtime breadth continues with deeper browser control/runtime
+  surfaces and other upstream extension helper barrels.
+- Verified the browser-support helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_browser_support_helpers -q`
+  (`1 passed`), focused entrypoints proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_entrypoints_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "browser_support_helpers or browser_setup_tools_helpers or browser_node_runtime_helpers or browser_node_host_helpers or browser_host_inspection_helpers or browser_maintenance_helpers or browser_trash_helpers or browser_config_runtime_helpers or browser_profiles_helpers or browser_control_auth_helpers or browser_config_facade_exports or browser_config_support_helpers or browser_cdp_helpers or runtime_group_policy_helpers or open_prose_plugin_entry or googlechat_runtime_shared_schema or google_model_id_aliases or file_lock_helpers or browser_security or group_access_helpers or agent_runtime_agent_command_entrypoints or agent_runtime_tts_helpers or agent_runtime_provider_auth_alias_helpers or agent_runtime_web_tool_helpers or agent_runtime_schema_typebox_helpers or agent_runtime_model_auth_helpers or agent_runtime_block_chunker or agent_runtime_pi_embedded_helpers or agent_runtime_model_catalog_helpers or agent_runtime_facade_utilities or agent_runtime_tool_bridge_helpers or agent_runtime_model_helpers or agent_runtime_core or simple_completion_runtime or entrypoints_helpers"`
+  (`35 passed, 1031 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`254 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `37eec77e`.
 
 ## References
 
