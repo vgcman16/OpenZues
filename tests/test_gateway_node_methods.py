@@ -37462,6 +37462,470 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_tool_bridge_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-tools.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+function capture(fn) {
+  try {
+    return fn();
+  } catch (error) {
+    return {
+      name: error.name,
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      toolName: error.toolName
+    };
+  }
+}
+
+async function captureAsync(fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    return {
+      name: error.name,
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      toolName: error.toolName
+    };
+  }
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_tools",
+      description: "Use OpenClaw agent-runtime tool bridge helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const descriptorA = agent.defineToolDescriptor({
+          name: "alpha",
+          description: "Alpha tool",
+          inputSchema: { type: "object" },
+          executor: { kind: "core", executorId: "alpha.exec" },
+          availability: { kind: "always" }
+        });
+        const descriptorB = agent.defineToolDescriptor({
+          name: "beta",
+          description: "Beta tool",
+          sortKey: "aaa",
+          inputSchema: { type: "object", properties: { value: { type: "string" } } },
+          executor: { kind: "plugin", pluginId: "plug", toolName: "beta" },
+          availability: { kind: "auth", providerId: "openai" }
+        });
+        const hiddenDescriptor = agent.defineToolDescriptor({
+          name: "hidden",
+          description: "Hidden tool",
+          inputSchema: { type: "object" },
+          availability: { kind: "env", name: "MISSING_ENV" }
+        });
+        const plan = agent.buildToolPlan({
+          descriptors: [descriptorA, hiddenDescriptor, descriptorB],
+          availability: {
+            authProviderIds: new Set(["openai"]),
+            env: {},
+            config: { routes: { slack: { enabled: true } } }
+          }
+        });
+        const ownerWrapped = agent.wrapOwnerOnlyToolExecution(
+          {
+            ownerOnly: true,
+            execute: async () => agent.textResult("allowed", { status: "ok" })
+          },
+          false
+        );
+        const ownerAllowed = agent.wrapOwnerOnlyToolExecution(
+          {
+            ownerOnly: true,
+            execute: async () => agent.textResult("allowed", { status: "ok" })
+          },
+          true
+        );
+        return {
+          keys: Object.keys(agent).filter((key) => [
+            "OWNER_ONLY_TOOL_ERROR",
+            "ToolAuthorizationError",
+            "ToolInputError",
+            "ToolPlanContractError",
+            "asToolParamsRecord",
+            "buildToolPlan",
+            "createActionGate",
+            "defineToolDescriptor",
+            "defineToolDescriptors",
+            "evaluateToolAvailability",
+            "failedTextResult",
+            "formatToolExecutorRef",
+            "jsonResult",
+            "parseAvailableTags",
+            "payloadTextResult",
+            "readNumberParam",
+            "readReactionParams",
+            "readStringArrayParam",
+            "readStringOrNumberParam",
+            "readStringParam",
+            "stringifyToolPayload",
+            "textResult",
+            "toToolProtocolDescriptor",
+            "toToolProtocolDescriptors",
+            "wrapOwnerOnlyToolExecution"
+          ].includes(key)).sort(),
+          params: {
+            record: agent.asToolParamsRecord({ value: 1 }),
+            array: agent.asToolParamsRecord(["nope"]),
+            stringParam: agent.readStringParam(
+              { name: "  Zeus  " },
+              "name",
+              { required: true }
+            ),
+            missingString: capture(() => agent.readStringParam(
+              {},
+              "name",
+              { required: true, label: "Name" }
+            )),
+            stringOrNumber: agent.readStringOrNumberParam({ id: 42 }, "id"),
+            numberInteger: agent.readNumberParam(
+              { n: "4.8" },
+              "n",
+              { integer: true }
+            ),
+            numberMissing: capture(() => agent.readNumberParam(
+              {},
+              "n",
+              { required: true, label: "Count" }
+            )),
+            arrayParam: agent.readStringArrayParam({ tags: [" a ", "", 7, "b"] }, "tags"),
+            arrayFromString: agent.readStringArrayParam({ tags: "solo" }, "tags"),
+            reactionEmpty: agent.readReactionParams(
+              { emoji: "", remove: false },
+              { removeErrorMessage: "emoji required to remove" }
+            ),
+            reactionRemoveError: capture(() => agent.readReactionParams(
+              { emoji: "", remove: true },
+              { removeErrorMessage: "emoji required to remove" }
+            ))
+          },
+          gate: {
+            disabled: agent.createActionGate({ send: false })("send"),
+            enabled: agent.createActionGate({ send: true })("send"),
+            defaultFalse: agent.createActionGate({})("send", false),
+            defaultTrue: agent.createActionGate({})("send")
+          },
+          results: {
+            stringify: agent.stringifyToolPayload({ value: 1 }),
+            text: agent.textResult("hello", { status: "ok" }),
+            failed: agent.failedTextResult("nope", { status: "failed" }),
+            payload: agent.payloadTextResult({ value: 1 }),
+            json: agent.jsonResult({ value: 1 }),
+            ownerError: await captureAsync(() => ownerWrapped.execute()),
+            ownerAllowed: await ownerAllowed.execute()
+          },
+          tags: agent.parseAvailableTags([
+            {
+              id: "1",
+              name: "Ready",
+              moderated: true,
+              emoji_id: null,
+              emoji_name: "eyes"
+            },
+            { id: 2, name: "ignored id" },
+            { noName: true },
+            null
+          ]),
+          tools: {
+            descriptorsLength: agent.defineToolDescriptors([descriptorA, descriptorB]).length,
+            availabilityOk: agent.evaluateToolAvailability({
+              descriptor: descriptorA,
+              context: {}
+            }),
+            availabilityMissing: agent.evaluateToolAvailability({
+              descriptor: descriptorB,
+              context: {}
+            }),
+            configAvailability: agent.evaluateToolAvailability({
+              descriptor: {
+                ...descriptorA,
+                availability: {
+                  kind: "config",
+                  path: ["routes", "slack", "enabled"]
+                }
+              },
+              context: { config: { routes: { slack: { enabled: true } } } }
+            }),
+            planVisible: plan.visible.map((entry) => ({
+              name: entry.descriptor.name,
+              executor: agent.formatToolExecutorRef(entry.executor)
+            })),
+            planHidden: plan.hidden.map((entry) => ({
+              name: entry.descriptor.name,
+              reasons: entry.diagnostics.map((diagnostic) => diagnostic.reason)
+            })),
+            protocol: agent.toToolProtocolDescriptors(plan.visible),
+            duplicateError: capture(() => agent.buildToolPlan({
+              descriptors: [descriptorA, { ...descriptorA }],
+              availability: {}
+            })),
+            missingExecutorError: capture(() => agent.buildToolPlan({
+              descriptors: [{
+                name: "missing",
+                description: "Missing executor",
+                inputSchema: { type: "object" },
+                availability: { kind: "always" }
+              }],
+              availability: {}
+            })),
+            refs: {
+              core: agent.formatToolExecutorRef({ kind: "core", executorId: "run" }),
+              plugin: agent.formatToolExecutorRef({
+                kind: "plugin",
+                pluginId: "plug",
+                toolName: "tool"
+              }),
+              channel: agent.formatToolExecutorRef({
+                kind: "channel",
+                channelId: "slack",
+                actionId: "send"
+              }),
+              mcp: agent.formatToolExecutorRef({
+                kind: "mcp",
+                serverId: "srv",
+                toolName: "search"
+              })
+            }
+          },
+          errors: {
+            input: capture(() => { throw new agent.ToolInputError("bad input"); }),
+            auth: capture(() => { throw new agent.ToolAuthorizationError("nope"); }),
+            plan: capture(() => {
+              throw new agent.ToolPlanContractError({
+                code: "missing-executor",
+                toolName: "x",
+                message: "missing"
+              });
+            })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-tools-plugin",
+                    "name": "Runtime Agent Tools Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-runtime-tools.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_tools"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_tools"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == [
+        "OWNER_ONLY_TOOL_ERROR",
+        "ToolAuthorizationError",
+        "ToolInputError",
+        "ToolPlanContractError",
+        "asToolParamsRecord",
+        "buildToolPlan",
+        "createActionGate",
+        "defineToolDescriptor",
+        "defineToolDescriptors",
+        "evaluateToolAvailability",
+        "failedTextResult",
+        "formatToolExecutorRef",
+        "jsonResult",
+        "parseAvailableTags",
+        "payloadTextResult",
+        "readNumberParam",
+        "readReactionParams",
+        "readStringArrayParam",
+        "readStringOrNumberParam",
+        "readStringParam",
+        "stringifyToolPayload",
+        "textResult",
+        "toToolProtocolDescriptor",
+        "toToolProtocolDescriptors",
+        "wrapOwnerOnlyToolExecution",
+    ]
+    assert result["params"] == {
+        "record": {"value": 1},
+        "array": {},
+        "stringParam": "Zeus",
+        "missingString": {
+            "name": "ToolInputError",
+            "message": "Name required",
+            "status": 400,
+        },
+        "stringOrNumber": "42",
+        "numberInteger": 4,
+        "numberMissing": {
+            "name": "ToolInputError",
+            "message": "Count required",
+            "status": 400,
+        },
+        "arrayParam": ["a", "b"],
+        "arrayFromString": ["solo"],
+        "reactionEmpty": {"emoji": "", "remove": False, "isEmpty": True},
+        "reactionRemoveError": {
+            "name": "ToolInputError",
+            "message": "emoji required to remove",
+            "status": 400,
+        },
+    }
+    assert result["gate"] == {
+        "disabled": False,
+        "enabled": True,
+        "defaultFalse": False,
+        "defaultTrue": True,
+    }
+    assert result["results"] == {
+        "stringify": '{\n  "value": 1\n}',
+        "text": {
+            "content": [{"type": "text", "text": "hello"}],
+            "details": {"status": "ok"},
+        },
+        "failed": {
+            "content": [{"type": "text", "text": "nope"}],
+            "details": {"status": "failed"},
+        },
+        "payload": {
+            "content": [{"type": "text", "text": '{\n  "value": 1\n}'}],
+            "details": {"value": 1},
+        },
+        "json": {
+            "content": [{"type": "text", "text": '{\n  "value": 1\n}'}],
+            "details": {"value": 1},
+        },
+        "ownerError": {
+            "name": "Error",
+            "message": "Tool restricted to owner senders.",
+        },
+        "ownerAllowed": {
+            "content": [{"type": "text", "text": "allowed"}],
+            "details": {"status": "ok"},
+        },
+    }
+    assert result["tags"] == [
+        {
+            "id": "1",
+            "name": "Ready",
+            "moderated": True,
+            "emoji_id": None,
+            "emoji_name": "eyes",
+        },
+        {"name": "ignored id"},
+    ]
+    assert result["tools"]["descriptorsLength"] == 2
+    assert result["tools"]["availabilityOk"] == []
+    assert result["tools"]["availabilityMissing"] == [
+        {
+            "reason": "auth-missing",
+            "signal": {"kind": "auth", "providerId": "openai"},
+            "message": "Missing auth provider: openai",
+        }
+    ]
+    assert result["tools"]["configAvailability"] == []
+    assert result["tools"]["planVisible"] == [
+        {"name": "beta", "executor": "plugin:plug:beta"},
+        {"name": "alpha", "executor": "core:alpha.exec"},
+    ]
+    assert result["tools"]["planHidden"] == [
+        {"name": "hidden", "reasons": ["env-missing"]}
+    ]
+    assert result["tools"]["protocol"] == [
+        {
+            "name": "beta",
+            "description": "Beta tool",
+            "inputSchema": {"type": "object", "properties": {"value": {"type": "string"}}},
+        },
+        {
+            "name": "alpha",
+            "description": "Alpha tool",
+            "inputSchema": {"type": "object"},
+        },
+    ]
+    assert result["tools"]["duplicateError"] == {
+        "name": "ToolPlanContractError",
+        "message": "Duplicate tool descriptor name: alpha",
+        "code": "duplicate-tool-name",
+        "toolName": "alpha",
+    }
+    assert result["tools"]["missingExecutorError"] == {
+        "name": "ToolPlanContractError",
+        "message": "Visible tool descriptor has no executor ref: missing",
+        "code": "missing-executor",
+        "toolName": "missing",
+    }
+    assert result["tools"]["refs"] == {
+        "core": "core:run",
+        "plugin": "plugin:plug:tool",
+        "channel": "channel:slack:send",
+        "mcp": "mcp:srv:search",
+    }
+    assert result["errors"] == {
+        "input": {"name": "ToolInputError", "message": "bad input", "status": 400},
+        "auth": {
+            "name": "ToolAuthorizationError",
+            "message": "nope",
+            "status": 403,
+        },
+        "plan": {
+            "name": "ToolPlanContractError",
+            "message": "missing",
+            "code": "missing-executor",
+            "toolName": "x",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

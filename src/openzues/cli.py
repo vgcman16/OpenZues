@@ -29582,6 +29582,8 @@ function readBooleanParam(params, key) {
   return undefined;
 }
 
+const OWNER_ONLY_TOOL_ERROR = "Tool restricted to owner senders.";
+
 class ToolInputError extends Error {
   constructor(message) {
     super(message);
@@ -29785,8 +29787,28 @@ function textResult(text, details) {
   return { content: [{ type: "text", text }], details };
 }
 
+function failedTextResult(text, details) {
+  return textResult(text, details);
+}
+
+function payloadTextResult(payload) {
+  return textResult(stringifyToolPayload(payload), payload);
+}
+
 function jsonResult(payload) {
   return textResult(JSON.stringify(payload, null, 2), payload);
+}
+
+function wrapOwnerOnlyToolExecution(tool, senderIsOwner) {
+  if (!tool || tool.ownerOnly !== true || senderIsOwner || !tool.execute) {
+    return tool;
+  }
+  return {
+    ...tool,
+    execute: async () => {
+      throw new Error(OWNER_ONLY_TOOL_ERROR);
+    },
+  };
 }
 
 function parseAvailableTags(raw) {
@@ -29807,6 +29829,255 @@ function parseAvailableTags(raw) {
         : {}),
     }));
   return result.length ? result : undefined;
+}
+
+class ToolPlanContractError extends Error {
+  constructor(params) {
+    super(params.message);
+    this.name = "ToolPlanContractError";
+    this.code = params.code;
+    this.toolName = params.toolName;
+  }
+}
+
+function defineToolDescriptor(descriptor) {
+  return descriptor;
+}
+
+function defineToolDescriptors(descriptors) {
+  return descriptors;
+}
+
+function toolAvailabilityIsRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function toolAvailabilityResolveConfigPath(config, pathValue) {
+  let current = config;
+  for (const segment of Array.isArray(pathValue) ? pathValue : []) {
+    if (!toolAvailabilityIsRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function toolAvailabilityHasConfiguredValue(params) {
+  const value = params.value;
+  const signal = params.signal || {};
+  if (value === undefined || value === null) {
+    return false;
+  }
+  if ((signal.check || "exists") === "available") {
+    return params.context &&
+      typeof params.context.isConfigValueAvailable === "function" &&
+      params.context.isConfigValueAvailable({
+        value,
+        path: signal.path,
+        signal,
+      }) === true;
+  }
+  if ((signal.check || "exists") === "exists") {
+    return true;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  return true;
+}
+
+function toolAvailabilityDiagnostic(reason, signal, message) {
+  return { reason, signal, message };
+}
+
+function toolAvailabilityEvaluateSignal(signal, context = {}) {
+  switch (signal && signal.kind) {
+    case "always":
+      return null;
+    case "auth":
+      return context.authProviderIds && context.authProviderIds.has(signal.providerId)
+        ? null
+        : toolAvailabilityDiagnostic(
+            "auth-missing",
+            signal,
+            `Missing auth provider: ${signal.providerId}`,
+          );
+    case "config": {
+      const value = toolAvailabilityResolveConfigPath(context.config, signal.path);
+      return toolAvailabilityHasConfiguredValue({ value, signal, context })
+        ? null
+        : toolAvailabilityDiagnostic(
+            "config-missing",
+            signal,
+            `Missing config path: ${(signal.path || []).join(".")}`,
+          );
+    }
+    case "env":
+      return context.env && context.env[signal.name] && context.env[signal.name].trim()
+        ? null
+        : toolAvailabilityDiagnostic(
+            "env-missing",
+            signal,
+            `Missing environment value: ${signal.name}`,
+          );
+    case "plugin-enabled":
+      return context.enabledPluginIds && context.enabledPluginIds.has(signal.pluginId)
+        ? null
+        : toolAvailabilityDiagnostic(
+            "plugin-disabled",
+            signal,
+            `Plugin is not enabled: ${signal.pluginId}`,
+          );
+    case "context": {
+      const value = context.values && context.values[signal.key];
+      if (!Object.prototype.hasOwnProperty.call(signal, "equals")) {
+        return value === undefined
+          ? toolAvailabilityDiagnostic(
+              "context-mismatch",
+              signal,
+              `Missing context value: ${signal.key}`,
+            )
+          : null;
+      }
+      return value === signal.equals
+        ? null
+        : toolAvailabilityDiagnostic(
+            "context-mismatch",
+            signal,
+            `Context value did not match: ${signal.key}`,
+          );
+    }
+    default:
+      return toolAvailabilityDiagnostic(
+        "unsupported-signal",
+        signal,
+        "Unsupported availability signal",
+      );
+  }
+}
+
+function toolAvailabilityEvaluateExpression(expression, context = {}) {
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "kind")) {
+    const diagnostic = toolAvailabilityEvaluateSignal(expression, context);
+    return diagnostic ? [diagnostic] : [];
+  }
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "allOf")) {
+    if (!Array.isArray(expression.allOf) || expression.allOf.length === 0) {
+      return [{ reason: "unsupported-signal", message: "Empty availability allOf group" }];
+    }
+    return expression.allOf.flatMap((entry) =>
+      toolAvailabilityEvaluateExpression(entry, context),
+    );
+  }
+  if (expression && Object.prototype.hasOwnProperty.call(expression, "anyOf")) {
+    if (!Array.isArray(expression.anyOf) || expression.anyOf.length === 0) {
+      return [{ reason: "unsupported-signal", message: "Empty availability anyOf group" }];
+    }
+    const diagnostics = expression.anyOf.map((entry) =>
+      toolAvailabilityEvaluateExpression(entry, context),
+    );
+    return diagnostics.some((entries) => entries.length === 0) ? [] : diagnostics.flat();
+  }
+  return [{ reason: "unsupported-signal", message: "Unsupported availability expression" }];
+}
+
+function evaluateToolAvailability(params = {}) {
+  const descriptor = params.descriptor || {};
+  const availability = descriptor.availability || { kind: "always" };
+  if (
+    !availability ||
+    !(
+      Object.prototype.hasOwnProperty.call(availability, "kind") ||
+      Object.prototype.hasOwnProperty.call(availability, "allOf") ||
+      Object.prototype.hasOwnProperty.call(availability, "anyOf")
+    )
+  ) {
+    return [{ reason: "unsupported-signal", message: "Unsupported availability expression" }];
+  }
+  return toolAvailabilityEvaluateExpression(availability, params.context || {});
+}
+
+function formatToolExecutorRef(ref) {
+  switch (ref && ref.kind) {
+    case "core":
+      return `core:${ref.executorId}`;
+    case "plugin":
+      return `plugin:${ref.pluginId}:${ref.toolName}`;
+    case "channel":
+      return `channel:${ref.channelId}:${ref.actionId}`;
+    case "mcp":
+      return `mcp:${ref.serverId}:${ref.toolName}`;
+    default:
+      return ref;
+  }
+}
+
+function compareToolDescriptors(left, right) {
+  return (
+    String(left.sortKey || left.name).localeCompare(String(right.sortKey || right.name)) ||
+    String(left.name).localeCompare(String(right.name))
+  );
+}
+
+function assertUniqueToolDescriptorNames(descriptors) {
+  const seen = new Set();
+  for (const descriptor of descriptors) {
+    if (seen.has(descriptor.name)) {
+      throw new ToolPlanContractError({
+        code: "duplicate-tool-name",
+        toolName: descriptor.name,
+        message: `Duplicate tool descriptor name: ${descriptor.name}`,
+      });
+    }
+    seen.add(descriptor.name);
+  }
+}
+
+function buildToolPlan(options = {}) {
+  const descriptors = [...(Array.isArray(options.descriptors) ? options.descriptors : [])].sort(
+    compareToolDescriptors,
+  );
+  assertUniqueToolDescriptorNames(descriptors);
+  const visible = [];
+  const hidden = [];
+  for (const descriptor of descriptors) {
+    const diagnostics = evaluateToolAvailability({
+      descriptor,
+      context: options.availability,
+    });
+    if (diagnostics.length > 0) {
+      hidden.push({ descriptor, diagnostics });
+      continue;
+    }
+    if (!descriptor.executor) {
+      throw new ToolPlanContractError({
+        code: "missing-executor",
+        toolName: descriptor.name,
+        message: `Visible tool descriptor has no executor ref: ${descriptor.name}`,
+      });
+    }
+    visible.push({ descriptor, executor: descriptor.executor });
+  }
+  return { visible, hidden };
+}
+
+function toToolProtocolDescriptor(entry) {
+  return {
+    name: entry.descriptor.name,
+    description: entry.descriptor.description,
+    inputSchema: entry.descriptor.inputSchema,
+  };
+}
+
+function toToolProtocolDescriptors(entries) {
+  return (Array.isArray(entries) ? entries : []).map(toToolProtocolDescriptor);
 }
 
 function normalizeTimestamp(raw) {
@@ -54790,15 +55061,28 @@ const agentRuntime = {
   DEFAULT_CONTEXT_TOKENS: AGENT_RUNTIME_DEFAULT_CONTEXT_TOKENS,
   DEFAULT_MODEL: AGENT_RUNTIME_DEFAULT_MODEL,
   DEFAULT_PROVIDER: AGENT_RUNTIME_DEFAULT_PROVIDER,
+  OWNER_ONLY_TOOL_ERROR,
+  ToolAuthorizationError,
+  ToolInputError,
+  ToolPlanContractError,
   appendCronStyleCurrentTimeLine,
+  asToolParamsRecord,
   buildAllowedModelSet: agentRuntimeBuildAllowedModelSet,
   buildConfiguredAllowlistKeys: agentRuntimeBuildConfiguredAllowlistKeys,
   buildConfiguredModelCatalog: agentRuntimeBuildConfiguredModelCatalog,
   buildModelAliasIndex: agentRuntimeBuildModelAliasIndex,
+  buildToolPlan,
+  createActionGate,
+  defineToolDescriptor,
+  defineToolDescriptors,
+  evaluateToolAvailability,
+  failedTextResult,
   findNormalizedProviderKey: agentRuntimeFindNormalizedProviderKey,
   findNormalizedProviderValue: agentRuntimeFindNormalizedProviderValue,
+  formatToolExecutorRef,
   formatUserTime,
   getModelRefStatus: agentRuntimeGetModelRefStatus,
+  jsonResult,
   legacyModelKey: agentRuntimeLegacyModelKey,
   listAgentEntries: agentRuntimeListAgentEntries,
   listAgentIds: agentRuntimeListAgentIds,
@@ -54809,7 +55093,14 @@ const agentRuntime = {
   normalizeProviderIdForAuth: agentRuntimeNormalizeProviderId,
   normalizeStoredOverrideModel: agentRuntimeNormalizeStoredOverrideModel,
   normalizeTimestamp,
+  parseAvailableTags,
   parseModelRef: agentRuntimeParseModelRef,
+  payloadTextResult,
+  readNumberParam,
+  readReactionParams,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
   resolveAckReaction: agentRuntimeResolveAckReaction,
   resolveAgentConfig: agentRuntimeResolveAgentConfig,
   resolveAgentContextLimits: agentRuntimeResolveAgentContextLimits,
@@ -54842,7 +55133,12 @@ const agentRuntime = {
   resolveSubagentSpawnModelSelection: agentRuntimeResolveSubagentSpawnModelSelection,
   resolveUserTimeFormat,
   resolveUserTimezone,
+  stringifyToolPayload,
+  textResult,
+  toToolProtocolDescriptor,
+  toToolProtocolDescriptors,
   withNormalizedTimestamp,
+  wrapOwnerOnlyToolExecution,
 };
 
 function resolveMemorySearchConfig(cfg = {}, agentId) {
