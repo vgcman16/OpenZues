@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.997%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.998%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17724,6 +17724,26 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `0db396fe`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `channel-target-testing` facade from
+  `src/plugin-sdk/channel-target-testing.ts` and
+  `src/test-helpers/resolve-target-error-cases.ts`: scoped and unscoped
+  native runtime entries expose `installCommonResolveTargetErrorCases` with
+  the four upstream target-resolution error cases, fakeable test registration
+  through `globalThis.it`, and direct immediate assertion behavior when no test
+  runner hook is present. This closes `OZ-PLUGIN-00287`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.998%.
+- Verified the channel-target-testing slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_target_testing_helpers -q`
+  (`1 passed`), adjacent channel target proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channel_target_testing or channel_targets or channel_contract_testing"`
+  (`3 passed, 1107 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`298 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `e6307d8a`.
 
 ## References
 

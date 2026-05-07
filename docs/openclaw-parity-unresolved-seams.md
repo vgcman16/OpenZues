@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.997%.
+  band of ~80-99.998%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1853,6 +1853,14 @@ no-reply behavior, OpenClaw-owned tool hooks, Codex tool-result middleware,
 outcome fallback config, prompt overlays, strict schema/model helpers, and
 queued-message transcript fixtures. Remaining plugin SDK queue heads should
 continue with exact `channel-target-testing`, `channel-test-helpers`, and
+other public test/contract barrels that still require source-backed native
+shims.
+Imported plugin SDK `channel-target-testing` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues target-resolution error-case helpers, preserving the four upstream
+common error cases and supporting both fakeable test registration and immediate
+assertion execution. Remaining plugin SDK queue heads should continue with
+exact `channel-test-helpers`, `plugin-test-api`, `plugin-test-contracts`, and
 other public test/contract barrels that still require source-backed native
 shims.
 
