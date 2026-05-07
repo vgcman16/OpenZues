@@ -4,8 +4,8 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~95.9% overall, with a reasonable
-  band of ~80-96%.
+- Repo-wide OpenClaw parity is estimated at ~96.0% overall, with a reasonable
+  band of ~80-97%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -98,7 +98,7 @@ Current percentage rollup:
   self-hosted-provider-setup helper, LM Studio runtime helper,
   group-activation helper, media-store helper,
   browser-security-runtime helper, browser-host-inspection helper,
-  fetch-runtime helper, cli-backend helper,
+  browser-node-host helper, fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
   helper, ACP binding-runtime helper, CLI runtime helper, approval-auth-helpers,
