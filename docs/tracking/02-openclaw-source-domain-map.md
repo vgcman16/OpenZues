@@ -148,7 +148,9 @@ is verified in `ee7f5c49`, and imported `sandbox` exact helper coverage from
 `src/plugin-sdk/sandbox.ts` plus adjacent `src/agents/sandbox/*` helpers is
 verified in `2aba5dbc`, and imported `proxy-capture` exact helper coverage
 from `src/plugin-sdk/proxy-capture.ts` plus adjacent `src/proxy-capture/*`
-helpers is verified in `84300681`. All are counted with the plugin/extension
+helpers is verified in `84300681`, and imported `setup-runtime` exact helper
+coverage from `src/plugin-sdk/setup-runtime.ts` plus adjacent setup wizard
+helpers is verified in `252f28fe`. All are counted with the plugin/extension
 system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and

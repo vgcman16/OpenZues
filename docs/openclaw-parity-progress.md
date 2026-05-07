@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~96.7% overall, with a reasonable band of ~80-97%.
+- Estimated repo-wide parity: ~96.8% overall, with a reasonable band of ~80-97%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -51,6 +51,8 @@
   verified in `2aba5dbc` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `proxy-capture` exact helper coverage is
   now verified in `84300681` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `setup-runtime` exact helper coverage is
+  now verified in `252f28fe` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -16905,6 +16907,25 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `84300681`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `setup-runtime` exact SDK surface from `src/plugin-sdk/setup-runtime.ts`:
+  scoped and unscoped native runtime entries aggregate account setup adapters,
+  setup input validators, allow-from and group-access section builders,
+  standard status builders, account-scoped config patching, setup entry
+  parsing, delegated setup wizard proxies, and CLI path text input helpers.
+  This closes `OZ-PLUGIN-00248`; repo-wide parity is now estimated at
+  ~96.8%. Remaining plugin/runtime breadth continues with `setup-tools` and
+  adjacent config/runtime entrypoints.
+- Verified the setup-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_setup_runtime_helpers -q`
+  (`1 passed`), adjacent SDK helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "setup_runtime_helpers or proxy_capture_helpers or sandbox_helpers or channel_setup or setup_adapter or entrypoints_helpers"`
+  (`6 passed, 1065 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`259 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `252f28fe`.
 
 ## References
 

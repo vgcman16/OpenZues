@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~96.7% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~96.8% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK proxy-capture helper slice is checkpointed in
-`84300681`.
+The imported plugin SDK setup-runtime helper slice is checkpointed in
+`252f28fe`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -918,6 +918,28 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
   - Last verified: 2026-05-07, focused proxy-capture proof (`1 passed`),
     adjacent SDK helper proof (`6 passed, 1064 deselected`), adjacent
     imported-plugin proof (`258 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00248` Imported setup-runtime helper shim
+  - Source: `openclaw-main/src/plugin-sdk/setup-runtime.ts`,
+    `openclaw-main/src/channels/plugins/setup-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-binary.ts`, and
+    `openclaw-main/src/channels/plugins/setup-wizard-proxy.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `setup-runtime` and receive account setup adapters, setup input
+    validators, allow-from and group-access sections, setup status builders,
+    account-scoped config patching, setup entry parsing, delegated setup
+    wizard proxies, and CLI-path text input helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `252f28fe`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused setup-runtime proof (`1 passed`),
+    adjacent SDK helper proof (`6 passed, 1065 deselected`), adjacent
+    imported-plugin proof (`259 passed, 812 deselected`), `ruff check`,
     `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-00205` Imported media-understanding provider-helper shim
