@@ -2,7 +2,7 @@
 
 Agent report source: Banach
 
-Last updated: 2026-05-06
+Last updated: 2026-05-07
 
 OpenClaw is the upstream source of truth for repo-wide parity. Each domain below
 should become one or more bounded OpenZues parity seams before it can affect the
@@ -106,6 +106,10 @@ with the plugin/extension system row above.
 The imported `messaging-targets` SDK helper coverage from
 `src/plugin-sdk/messaging-targets.ts` and `src/channels/targets.ts` is verified
 in `cd85f7f5` and is counted with the plugin/extension system row above.
+The imported `request-url` SDK helper coverage from
+`src/plugin-sdk/request-url.ts` is reverified from the `f4a23a25`
+fetch/SSRF helper checkpoint and is counted with the plugin/extension system
+row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
