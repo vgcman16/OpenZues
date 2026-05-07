@@ -24011,6 +24011,313 @@ function resolveGlobalDedupeCache(key, options) {
   return resolveGlobalSingleton(key, () => createDedupeCache(options));
 }
 
+function sanitizePersistentDedupeData(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const out = {};
+  for (const [key, ts] of Object.entries(value)) {
+    if (typeof ts === "number" && Number.isFinite(ts) && ts > 0) {
+      out[key] = ts;
+    }
+  }
+  return out;
+}
+
+function prunePersistentDedupeData(data, now, ttlMs, maxEntries) {
+  if (ttlMs > 0) {
+    for (const [key, ts] of Object.entries(data)) {
+      if (now - ts >= ttlMs) {
+        delete data[key];
+      }
+    }
+  }
+  const keys = Object.keys(data);
+  if (keys.length <= maxEntries) {
+    return;
+  }
+  keys
+    .sort((left, right) => data[left] - data[right])
+    .slice(0, keys.length - maxEntries)
+    .forEach((key) => {
+      delete data[key];
+    });
+}
+
+function resolvePersistentDedupeNamespace(namespace) {
+  return String(namespace || "").trim() || "global";
+}
+
+function resolvePersistentDedupeScopedKey(namespace, key) {
+  return `${namespace}:${key}`;
+}
+
+function isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now) {
+  return seenAt != null && (ttlMs <= 0 || now - seenAt < ttlMs);
+}
+
+function createPersistentDedupe(options) {
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs));
+  const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
+  const fileMaxEntries = Math.max(1, Math.floor(options.fileMaxEntries));
+  const memory = createDedupeCache({ ttlMs, maxSize: memoryMaxSize });
+  const inflight = new Map();
+  const fileWriteQueues = new Map();
+
+  function enqueueFileWrite(filePath, fn) {
+    const previous = fileWriteQueues.get(filePath) || Promise.resolve();
+    const next = previous.then(fn, fn);
+    fileWriteQueues.set(filePath, next);
+    next
+      .finally(() => {
+        if (fileWriteQueues.get(filePath) === next) {
+          fileWriteQueues.delete(filePath);
+        }
+      })
+      .catch(() => undefined);
+    return next;
+  }
+
+  async function checkAndRecordInner(key, namespace, scopedKey, now, onDiskError) {
+    if (memory.check(scopedKey, now)) {
+      return false;
+    }
+    const filePath = options.resolveFilePath(namespace);
+    try {
+      const duplicate = await enqueueFileWrite(filePath, async () => {
+        const { value } = await readJsonFileWithFallback(filePath, {});
+        const data = sanitizePersistentDedupeData(value);
+        const seenAt = data[key];
+        if (isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now)) {
+          return true;
+        }
+        data[key] = now;
+        prunePersistentDedupeData(data, now, ttlMs, fileMaxEntries);
+        await writeJsonFileAtomically(filePath, data);
+        return false;
+      });
+      return !duplicate;
+    } catch (error) {
+      if (typeof onDiskError === "function") {
+        onDiskError(error);
+      }
+      memory.check(scopedKey, now);
+      return true;
+    }
+  }
+
+  async function hasRecentInner(key, namespace, scopedKey, now, onDiskError) {
+    if (memory.peek(scopedKey, now)) {
+      return true;
+    }
+    const filePath = options.resolveFilePath(namespace);
+    try {
+      const { value } = await readJsonFileWithFallback(filePath, {});
+      const data = sanitizePersistentDedupeData(value);
+      const seenAt = data[key];
+      if (!isRecentPersistentDedupeTimestamp(seenAt, ttlMs, now)) {
+        return false;
+      }
+      memory.check(scopedKey, seenAt);
+      return true;
+    } catch (error) {
+      if (typeof onDiskError === "function") {
+        onDiskError(error);
+      }
+      return memory.peek(scopedKey, now);
+    }
+  }
+
+  async function warmup(namespace = "global", onError) {
+    const resolvedNamespace = resolvePersistentDedupeNamespace(namespace);
+    const filePath = options.resolveFilePath(resolvedNamespace);
+    const now = Date.now();
+    try {
+      const { value } = await readJsonFileWithFallback(filePath, {});
+      const data = sanitizePersistentDedupeData(value);
+      let loaded = 0;
+      for (const [key, ts] of Object.entries(data)) {
+        if (ttlMs > 0 && now - ts >= ttlMs) {
+          continue;
+        }
+        memory.check(resolvePersistentDedupeScopedKey(resolvedNamespace, key), ts);
+        loaded += 1;
+      }
+      return loaded;
+    } catch (error) {
+      if (typeof onError === "function") {
+        onError(error);
+      }
+      return 0;
+    }
+  }
+
+  async function checkAndRecord(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return true;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    if (inflight.has(scopedKey)) {
+      return false;
+    }
+    const onDiskError = dedupeOptions.onDiskError || options.onDiskError;
+    const now = dedupeOptions.now ?? Date.now();
+    const work = checkAndRecordInner(trimmed, namespace, scopedKey, now, onDiskError);
+    inflight.set(scopedKey, work);
+    try {
+      return await work;
+    } finally {
+      inflight.delete(scopedKey);
+    }
+  }
+
+  async function hasRecent(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return false;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const onDiskError = dedupeOptions.onDiskError || options.onDiskError;
+    const now = dedupeOptions.now ?? Date.now();
+    return hasRecentInner(trimmed, namespace, scopedKey, now, onDiskError);
+  }
+
+  return {
+    checkAndRecord,
+    hasRecent,
+    warmup,
+    clearMemory: () => memory.clear(),
+    memorySize: () => memory.size(),
+  };
+}
+
+function createReleasedClaimError(scopedKey) {
+  return new Error(`claim released before commit: ${scopedKey}`);
+}
+
+function createClaimableDedupe(options) {
+  const ttlMs = Math.max(0, Math.floor(options.ttlMs));
+  const memoryMaxSize = Math.max(0, Math.floor(options.memoryMaxSize));
+  const memory = createDedupeCache({ ttlMs, maxSize: memoryMaxSize });
+  const persistent =
+    typeof options.resolveFilePath === "function"
+      ? createPersistentDedupe({
+          ttlMs,
+          memoryMaxSize,
+          fileMaxEntries: Math.max(1, Math.floor(options.fileMaxEntries)),
+          resolveFilePath: options.resolveFilePath,
+          lockOptions: options.lockOptions,
+          onDiskError: options.onDiskError,
+        })
+      : null;
+  const inflight = new Map();
+
+  async function hasRecent(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return false;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    if (persistent) {
+      return persistent.hasRecent(trimmed, dedupeOptions);
+    }
+    return memory.peek(scopedKey, dedupeOptions.now);
+  }
+
+  async function claim(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return { kind: "claimed" };
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const existing = inflight.get(scopedKey);
+    if (existing) {
+      return { kind: "inflight", pending: existing.promise };
+    }
+    let resolvePending;
+    let rejectPending;
+    const promise = new Promise((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    promise.catch(() => undefined);
+    inflight.set(scopedKey, { promise, resolve: resolvePending, reject: rejectPending });
+    try {
+      if (await hasRecent(trimmed, dedupeOptions)) {
+        resolvePending(false);
+        inflight.delete(scopedKey);
+        return { kind: "duplicate" };
+      }
+      return { kind: "claimed" };
+    } catch (error) {
+      rejectPending(error);
+      inflight.delete(scopedKey);
+      throw error;
+    }
+  }
+
+  async function commit(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return true;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const current = inflight.get(scopedKey);
+    try {
+      const recorded = persistent
+        ? await persistent.checkAndRecord(trimmed, dedupeOptions)
+        : !memory.check(scopedKey, dedupeOptions.now);
+      if (current) {
+        current.resolve(recorded);
+      }
+      return recorded;
+    } catch (error) {
+      if (current) {
+        current.reject(error);
+      }
+      throw error;
+    } finally {
+      inflight.delete(scopedKey);
+    }
+  }
+
+  function release(key, dedupeOptions = {}) {
+    const trimmed = String(key || "").trim();
+    if (!trimmed) {
+      return;
+    }
+    const namespace = resolvePersistentDedupeNamespace(dedupeOptions.namespace);
+    const scopedKey = resolvePersistentDedupeScopedKey(namespace, trimmed);
+    const current = inflight.get(scopedKey);
+    if (!current) {
+      return;
+    }
+    current.reject(dedupeOptions.error || createReleasedClaimError(scopedKey));
+    inflight.delete(scopedKey);
+  }
+
+  return {
+    claim,
+    commit,
+    release,
+    hasRecent,
+    warmup: persistent ? persistent.warmup : async () => 0,
+    clearMemory: () => {
+      if (persistent) {
+        persistent.clearMemory();
+      }
+      memory.clear();
+    },
+    memorySize: () => (persistent ? persistent.memorySize() : memory.size()),
+  };
+}
+
 const DEFAULT_INBOUND_DEDUPE_TTL_MS = 20 * 60000;
 const DEFAULT_INBOUND_DEDUPE_MAX = 5000;
 const INBOUND_DEDUPE_CACHE_KEY = Symbol.for("openclaw.inboundDedupeCache");
@@ -49678,6 +49985,11 @@ const dedupeRuntime = {
   resolveGlobalDedupeCache,
 };
 
+const persistentDedupeRuntime = {
+  createClaimableDedupe,
+  createPersistentDedupe,
+};
+
 const replyDedupeRuntime = {
   resetInboundDedupe,
 };
@@ -56744,6 +57056,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/dedupe-runtime"
   ) {
     return dedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/persistent-dedupe" ||
+    request === "@openclaw/plugin-sdk/persistent-dedupe"
+  ) {
+    return persistentDedupeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-dedupe" ||

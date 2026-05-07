@@ -35415,6 +35415,295 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_persistent_dedupe_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-persistent-dedupe.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("fs");
+const path = require("path");
+const persistentDedupe = require("openclaw/plugin-sdk/persistent-dedupe");
+const scopedPersistentDedupe = require("@openclaw/plugin-sdk/persistent-dedupe");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.persistent_dedupe",
+      description: "Use OpenClaw persistent-dedupe SDK shim",
+      parameters: { type: "object" },
+      async execute(_toolCallId, args) {
+        const root = args.root;
+        const blockedParent = args.blockedParent;
+        const baseNow = Date.now();
+        const errors = [];
+        const createStore = (overrides = {}) => persistentDedupe.createPersistentDedupe({
+          ttlMs: overrides.ttlMs ?? 10_000,
+          memoryMaxSize: overrides.memoryMaxSize ?? 100,
+          fileMaxEntries: overrides.fileMaxEntries ?? 1000,
+          resolveFilePath: (namespace) => path.join(root, `${namespace}.json`),
+          onDiskError: (error) => errors.push(error.message)
+        });
+
+        const first = createStore();
+        const firstA = await first.checkAndRecord("m1", { namespace: "a", now: baseNow + 1 });
+        const secondA = await first.checkAndRecord("m1", { namespace: "a", now: baseNow + 2 });
+        const secondStore = createStore();
+        const secondInstanceA = await secondStore.checkAndRecord("m1", {
+          namespace: "a",
+          now: baseNow + 3
+        });
+        const firstB = await secondStore.checkAndRecord("m1", { namespace: "b", now: baseNow + 4 });
+
+        const raceStore = createStore();
+        const race = await Promise.all([
+          raceStore.checkAndRecord("race-key", { namespace: "race", now: baseNow + 10 }),
+          raceStore.checkAndRecord("race-key", { namespace: "race", now: baseNow + 10 })
+        ]);
+
+        const warmWriter = createStore();
+        await warmWriter.checkAndRecord("msg-1", { namespace: "acct", now: baseNow + 20 });
+        await warmWriter.checkAndRecord("msg-2", { namespace: "acct", now: baseNow + 21 });
+        const warmReader = createStore();
+        const warmLoaded = await warmReader.warmup("acct");
+        const warmChecks = [
+          await warmReader.checkAndRecord("msg-1", { namespace: "acct", now: baseNow + 22 }),
+          await warmReader.checkAndRecord("msg-3", { namespace: "acct", now: baseNow + 23 })
+        ];
+        const recentChecks = [
+          await warmReader.hasRecent("msg-2", { namespace: "acct", now: baseNow + 24 }),
+          await warmReader.hasRecent("missing", { namespace: "acct", now: baseNow + 25 }),
+          await warmReader.hasRecent("   ", { namespace: "acct", now: baseNow + 26 })
+        ];
+
+        fs.writeFileSync(blockedParent, "not a directory", "utf8");
+        const fallback = persistentDedupe.createPersistentDedupe({
+          ttlMs: 10_000,
+          memoryMaxSize: 100,
+          fileMaxEntries: 1000,
+          resolveFilePath: (namespace) => path.join(blockedParent, `${namespace}.json`),
+          onDiskError: (error) => errors.push(error.message)
+        });
+        const fallbackFirst = await fallback.checkAndRecord("memory-only", {
+          namespace: "x",
+          now: baseNow + 30
+        });
+        const fallbackSecond = await fallback.checkAndRecord("memory-only", {
+          namespace: "x",
+          now: baseNow + 31
+        });
+
+        const claimable = scopedPersistentDedupe.createClaimableDedupe({
+          ttlMs: 10_000,
+          memoryMaxSize: 100
+        });
+        const claim = await claimable.claim("line:evt-1", { namespace: "line", now: baseNow + 40 });
+        const duplicate = await claimable.claim("line:evt-1", {
+          namespace: "line",
+          now: baseNow + 40
+        });
+        const commitResult = await claimable.commit("line:evt-1", {
+          namespace: "line",
+          now: baseNow + 41
+        });
+        const pendingResult = duplicate.kind === "inflight" ? await duplicate.pending : null;
+        const afterCommit = await claimable.claim("line:evt-1", {
+          namespace: "line",
+          now: baseNow + 42
+        });
+
+        const releaseDedupe = persistentDedupe.createClaimableDedupe({
+          ttlMs: 10_000,
+          memoryMaxSize: 100
+        });
+        await releaseDedupe.claim("line:evt-2", { namespace: "line", now: baseNow + 50 });
+        const releaseDuplicate = await releaseDedupe.claim("line:evt-2", {
+          namespace: "line",
+          now: baseNow + 50
+        });
+        releaseDedupe.release("line:evt-2", {
+          namespace: "line",
+          error: new Error("transient failure")
+        });
+        let releaseError = "";
+        if (releaseDuplicate.kind === "inflight") {
+          try {
+            await releaseDuplicate.pending;
+          } catch (error) {
+            releaseError = error.message;
+          }
+        }
+        const afterRelease = await releaseDedupe.claim("line:evt-2", {
+          namespace: "line",
+          now: baseNow + 51
+        });
+
+        const persistentClaimWriter = persistentDedupe.createClaimableDedupe({
+          ttlMs: 10_000,
+          memoryMaxSize: 100,
+          fileMaxEntries: 1000,
+          resolveFilePath: (namespace) => path.join(root, `claim-${namespace}.json`)
+        });
+        await persistentClaimWriter.claim("m1", { namespace: "acct", now: baseNow + 60 });
+        const persistentCommit = await persistentClaimWriter.commit("m1", {
+          namespace: "acct",
+          now: baseNow + 61
+        });
+        const persistentClaimReader = persistentDedupe.createClaimableDedupe({
+          ttlMs: 10_000,
+          memoryMaxSize: 100,
+          fileMaxEntries: 1000,
+          resolveFilePath: (namespace) => path.join(root, `claim-${namespace}.json`)
+        });
+        const persistentRecent = await persistentClaimReader.hasRecent("m1", {
+          namespace: "acct",
+          now: baseNow + 62
+        });
+        const persistentWarm = await persistentClaimReader.warmup("acct");
+        const persistentDuplicate = await persistentClaimReader.claim("m1", {
+          namespace: "acct",
+          now: baseNow + 63
+        });
+
+        return {
+          keys: Object.keys(persistentDedupe).sort(),
+          scopedType: typeof scopedPersistentDedupe.createClaimableDedupe,
+          persistent: {
+            firstA,
+            secondA,
+            secondInstanceA,
+            firstB,
+            race,
+            warmLoaded,
+            warmChecks,
+            recentChecks,
+            blankRecord: await first.checkAndRecord("   ", { namespace: "a", now: baseNow + 70 }),
+            diskAKeys: Object.keys(JSON.parse(fs.readFileSync(path.join(root, "a.json"), "utf8")))
+              .sort()
+          },
+          fallback: {
+            first: fallbackFirst,
+            second: fallbackSecond,
+            errorCount: errors.length
+          },
+          claimable: {
+            claim: claim.kind,
+            duplicate: duplicate.kind,
+            commitResult,
+            pendingResult,
+            afterCommit: afterCommit.kind,
+            releaseDuplicate: releaseDuplicate.kind,
+            releaseError,
+            afterRelease: afterRelease.kind,
+            persistentCommit,
+            persistentRecent,
+            persistentWarm,
+            persistentDuplicate: persistentDuplicate.kind,
+            memorySize: claimable.memorySize()
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-persistent-dedupe-plugin",
+                    "name": "Runtime Persistent Dedupe Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-persistent-dedupe.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.persistent_dedupe"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.persistent_dedupe",
+            "args": {
+                "root": str(tmp_path / "dedupe"),
+                "blockedParent": str(tmp_path / "not-a-directory"),
+            },
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createClaimableDedupe", "createPersistentDedupe"],
+        "scopedType": "function",
+        "persistent": {
+            "firstA": True,
+            "secondA": False,
+            "secondInstanceA": False,
+            "firstB": True,
+            "race": [True, False],
+            "warmLoaded": 2,
+            "warmChecks": [False, True],
+            "recentChecks": [True, False, False],
+            "blankRecord": True,
+            "diskAKeys": ["m1"],
+        },
+        "fallback": {
+            "first": True,
+            "second": False,
+            "errorCount": 1,
+        },
+        "claimable": {
+            "claim": "claimed",
+            "duplicate": "inflight",
+            "commitResult": True,
+            "pendingResult": True,
+            "afterCommit": "duplicate",
+            "releaseDuplicate": "inflight",
+            "releaseError": "transient failure",
+            "afterRelease": "claimed",
+            "persistentCommit": True,
+            "persistentRecent": True,
+            "persistentWarm": 1,
+            "persistentDuplicate": "duplicate",
+            "memorySize": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
