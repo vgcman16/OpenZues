@@ -20122,13 +20122,13 @@ function isJsonContentType(value) {
 
 function requestBodyErrorToText(code) {
   if (code === "PAYLOAD_TOO_LARGE") {
-    return "Payload Too Large";
+    return "Payload too large";
   }
   if (code === "REQUEST_BODY_TIMEOUT") {
-    return "Request Body Timeout";
+    return "Request body timeout";
   }
   if (code === "CONNECTION_CLOSED") {
-    return "Connection Closed";
+    return "Connection closed";
   }
   return "Bad Request";
 }
@@ -40486,6 +40486,174 @@ const webhookTargetsRuntime = {
   resolveWebhookTargetWithAuthOrRejectSync,
   resolveWebhookTargets,
   withResolvedWebhookRequestPipeline,
+};
+
+const DEFAULT_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+const AUTH_RATE_LIMIT_SCOPE_DEFAULT = "default";
+const AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET = "shared-secret";
+const AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN = "device-token";
+const AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH = "hook-auth";
+const BROWSER_ORIGIN_RATE_LIMIT_KEY_PREFIX = "browser-origin:";
+
+function normalizePluginHttpPath(inputPath, fallback) {
+  const trimmed = normalizeOptionalString(inputPath);
+  if (!trimmed) {
+    const fallbackTrimmed = normalizeOptionalString(fallback);
+    if (!fallbackTrimmed) {
+      return null;
+    }
+    return fallbackTrimmed.startsWith("/") ? fallbackTrimmed : `/${fallbackTrimmed}`;
+  }
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function normalizeRateLimitClientIp(ip) {
+  if (typeof ip === "string" && ip.startsWith(BROWSER_ORIGIN_RATE_LIMIT_KEY_PREFIX)) {
+    return ip;
+  }
+  const trimmed = normalizeOptionalString(ip);
+  if (!trimmed) {
+    return "unknown";
+  }
+  if (trimmed.startsWith("::ffff:")) {
+    return trimmed.slice("::ffff:".length);
+  }
+  return trimmed;
+}
+
+function isRateLimitLoopbackAddress(ip) {
+  const normalized = normalizeRateLimitClientIp(ip).toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "0:0:0:0:0:0:0:1" ||
+    normalized.startsWith("127.")
+  );
+}
+
+function createAuthRateLimiter(config = {}) {
+  const maxAttempts = config.maxAttempts || 10;
+  const windowMs = config.windowMs || 60000;
+  const lockoutMs = config.lockoutMs || 300000;
+  const exemptLoopback = config.exemptLoopback !== undefined ? config.exemptLoopback : true;
+  const pruneIntervalMs = config.pruneIntervalMs !== undefined ? config.pruneIntervalMs : 60000;
+  const entries = new Map();
+  const pruneTimer = pruneIntervalMs > 0 ? setInterval(() => prune(), pruneIntervalMs) : null;
+  if (pruneTimer && typeof pruneTimer.unref === "function") {
+    pruneTimer.unref();
+  }
+
+  function normalizeScope(scope) {
+    return normalizeOptionalString(scope) || AUTH_RATE_LIMIT_SCOPE_DEFAULT;
+  }
+
+  function resolveKey(rawIp, rawScope) {
+    const ip = normalizeRateLimitClientIp(rawIp);
+    return { key: `${normalizeScope(rawScope)}:${ip}`, ip };
+  }
+
+  function isExempt(ip) {
+    return exemptLoopback && isRateLimitLoopbackAddress(ip);
+  }
+
+  function slideWindow(entry, now) {
+    const cutoff = now - windowMs;
+    entry.attempts = entry.attempts.filter((timestamp) => timestamp > cutoff);
+  }
+
+  function check(rawIp, rawScope) {
+    const { key, ip } = resolveKey(rawIp, rawScope);
+    if (isExempt(ip)) {
+      return { allowed: true, remaining: maxAttempts, retryAfterMs: 0 };
+    }
+    const now = Date.now();
+    const entry = entries.get(key);
+    if (!entry) {
+      return { allowed: true, remaining: maxAttempts, retryAfterMs: 0 };
+    }
+    if (entry.lockedUntil && now < entry.lockedUntil) {
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs: entry.lockedUntil - now,
+      };
+    }
+    if (entry.lockedUntil && now >= entry.lockedUntil) {
+      entry.lockedUntil = undefined;
+      entry.attempts = [];
+    }
+    slideWindow(entry, now);
+    const remaining = Math.max(0, maxAttempts - entry.attempts.length);
+    return { allowed: remaining > 0, remaining, retryAfterMs: 0 };
+  }
+
+  function recordFailure(rawIp, rawScope) {
+    const { key, ip } = resolveKey(rawIp, rawScope);
+    if (isExempt(ip)) {
+      return;
+    }
+    const now = Date.now();
+    let entry = entries.get(key);
+    if (!entry) {
+      entry = { attempts: [] };
+      entries.set(key, entry);
+    }
+    if (entry.lockedUntil && now < entry.lockedUntil) {
+      return;
+    }
+    slideWindow(entry, now);
+    entry.attempts.push(now);
+    if (entry.attempts.length >= maxAttempts) {
+      entry.lockedUntil = now + lockoutMs;
+    }
+  }
+
+  function reset(rawIp, rawScope) {
+    const { key } = resolveKey(rawIp, rawScope);
+    entries.delete(key);
+  }
+
+  function prune() {
+    const now = Date.now();
+    for (const [key, entry] of entries) {
+      if (entry.lockedUntil && now < entry.lockedUntil) {
+        continue;
+      }
+      slideWindow(entry, now);
+      if (entry.attempts.length === 0) {
+        entries.delete(key);
+      }
+    }
+  }
+
+  function size() {
+    return entries.size;
+  }
+
+  function dispose() {
+    if (pruneTimer) {
+      clearInterval(pruneTimer);
+    }
+    entries.clear();
+  }
+
+  return { check, recordFailure, reset, size, prune, dispose };
+}
+
+const webhookIngressRuntime = {
+  DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+  AUTH_RATE_LIMIT_SCOPE_DEFAULT,
+  AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN,
+  AUTH_RATE_LIMIT_SCOPE_HOOK_AUTH,
+  AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
+  ...webhookMemoryGuardsRuntime,
+  ...webhookRequestGuardsRuntime,
+  ...webhookTargetsRuntime,
+  ...webhookPathRuntime,
+  createAuthRateLimiter,
+  normalizePluginHttpPath,
+  normalizeRateLimitClientIp,
+  rawDataToString,
 };
 
 const requestUrlRuntime = {
@@ -69900,6 +70068,7 @@ const genericSdk = new Proxy(
     ...webhookMemoryGuardsRuntime,
     ...webhookRequestGuardsRuntime,
     ...webhookTargetsRuntime,
+    ...webhookIngressRuntime,
     ...requestUrlRuntime,
     ...fetchAuthRuntime,
     ...ssrfPolicyRuntime,
@@ -70512,6 +70681,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/webhook-targets"
   ) {
     return webhookTargetsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/webhook-ingress" ||
+    request === "@openclaw/plugin-sdk/webhook-ingress"
+  ) {
+    return webhookIngressRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/request-url" ||

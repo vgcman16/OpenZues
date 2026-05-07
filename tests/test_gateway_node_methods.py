@@ -12084,6 +12084,169 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_webhook_ingress_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-webhook-ingress.cjs"
+    runtime_entry.write_text(
+        """
+const webhookIngress = require("openclaw/plugin-sdk/webhook-ingress");
+const scopedWebhookIngress = require("@openclaw/plugin-sdk/webhook-ingress");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.webhook_ingress",
+      description: "Use OpenClaw webhook-ingress SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const limiter = webhookIngress.createAuthRateLimiter({
+          maxAttempts: 2,
+          windowMs: 1000,
+          lockoutMs: 5000,
+          exemptLoopback: false,
+          pruneIntervalMs: 0
+        });
+        const before = limiter.check("203.0.113.7", "hook");
+        limiter.recordFailure("203.0.113.7", "hook");
+        const afterOne = limiter.check("203.0.113.7", "hook");
+        limiter.recordFailure("203.0.113.7", "hook");
+        const afterTwo = limiter.check("203.0.113.7", "hook");
+        const sizeBeforeReset = limiter.size();
+        limiter.reset("203.0.113.7", "hook");
+        const afterReset = limiter.check("203.0.113.7", "hook");
+        limiter.recordFailure("127.0.0.1", "hook");
+        const loopbackSize = limiter.size();
+        limiter.dispose();
+
+        return {
+          keys: Object.keys(webhookIngress).filter((key) => [
+            "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
+            "createAuthRateLimiter",
+            "createFixedWindowRateLimiter",
+            "normalizePluginHttpPath",
+            "normalizeWebhookPath",
+            "rawDataToString",
+            "requestBodyErrorToText",
+            "resolveWebhookPath"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedWebhookIngress.createAuthRateLimiter,
+          paths: [
+            webhookIngress.normalizeWebhookPath(" hook/ "),
+            webhookIngress.resolveWebhookPath({ webhookPath: " ingress " }),
+            webhookIngress.normalizePluginHttpPath("plugin/hook"),
+            webhookIngress.normalizePluginHttpPath("   ", "fallback"),
+            webhookIngress.normalizePluginHttpPath("   ") ?? null
+          ],
+          raw: [
+            webhookIngress.rawDataToString("text"),
+            webhookIngress.rawDataToString(Buffer.from("buf")),
+            webhookIngress.rawDataToString([Buffer.from("a"), Buffer.from("b")]),
+            webhookIngress.rawDataToString(Uint8Array.from([99]).buffer),
+            webhookIngress.rawDataToString(123)
+          ],
+          body: [
+            webhookIngress.DEFAULT_WEBHOOK_MAX_BODY_BYTES,
+            webhookIngress.requestBodyErrorToText("PAYLOAD_TOO_LARGE")
+          ],
+          authRate: {
+            before,
+            afterOne,
+            afterTwo: {
+              allowed: afterTwo.allowed,
+              remaining: afterTwo.remaining,
+              retryAfterPositive: afterTwo.retryAfterMs > 0
+            },
+            sizeBeforeReset,
+            afterReset,
+            loopbackSize
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-webhook-ingress-plugin",
+                    "name": "Runtime Webhook Ingress Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-webhook-ingress-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.webhook_ingress"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.webhook_ingress"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "DEFAULT_WEBHOOK_MAX_BODY_BYTES",
+            "createAuthRateLimiter",
+            "createFixedWindowRateLimiter",
+            "normalizePluginHttpPath",
+            "normalizeWebhookPath",
+            "rawDataToString",
+            "requestBodyErrorToText",
+            "resolveWebhookPath",
+        ],
+        "scopedType": "function",
+        "paths": ["/hook", "/ingress", "/plugin/hook", "/fallback", None],
+        "raw": ["text", "buf", "ab", "c", "123"],
+        "body": [1048576, "Payload too large"],
+        "authRate": {
+            "before": {"allowed": True, "remaining": 2, "retryAfterMs": 0},
+            "afterOne": {"allowed": True, "remaining": 1, "retryAfterMs": 0},
+            "afterTwo": {
+                "allowed": False,
+                "remaining": 0,
+                "retryAfterPositive": True,
+            },
+            "sizeBeforeReset": 1,
+            "afterReset": {"allowed": True, "remaining": 2, "retryAfterMs": 0},
+            "loopbackSize": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_fetch_ssrf_helpers(
     tmp_path,
 ) -> None:
