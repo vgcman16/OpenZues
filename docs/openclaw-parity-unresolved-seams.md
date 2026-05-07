@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~94.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~94.7% overall, with a reasonable
   band of ~80-95%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -9145,6 +9145,12 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   stale-lock cleanup, timeout error code/lockPath projection, and callback
   release behavior. Source/test checkpointed in `ed03c127`; broader SDK
   helper/runtime surface breadth remains the next plugin-runtime queue head.
+- Current queue-head adjustment: imported plugin SDK `google-model-id` now
+  exposes the source-backed alias subset for scoped and unscoped imports:
+  `normalizeGoogleModelId` and `normalizeAntigravityModelId` delegate to the
+  already verified provider model ID normalizers. Source/test checkpointed in
+  `67db67b5`; broader SDK helper/runtime surface breadth remains the next
+  plugin-runtime queue head.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
