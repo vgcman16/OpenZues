@@ -150,8 +150,10 @@ verified in `2aba5dbc`, and imported `proxy-capture` exact helper coverage
 from `src/plugin-sdk/proxy-capture.ts` plus adjacent `src/proxy-capture/*`
 helpers is verified in `84300681`, and imported `setup-runtime` exact helper
 coverage from `src/plugin-sdk/setup-runtime.ts` plus adjacent setup wizard
-helpers is verified in `252f28fe`. All are counted with the plugin/extension
-system row above.
+helpers is verified in `252f28fe`, and imported `setup-tools` exact helper
+coverage from `src/plugin-sdk/setup-tools.ts` plus adjacent CLI, archive,
+brew, binary detection, docs-link, and config-dir helpers is verified in
+`e0f1e72c`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted

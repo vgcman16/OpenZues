@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~96.8% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~96.9% overall, with a reasonable
   band of ~80-97%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -101,7 +101,7 @@ Current percentage rollup:
   browser-node-host helper, browser-node-runtime helper,
   browser-setup-tools helper, browser-support helper, browser-bridge helper,
   agent-harness-runtime helper, sandbox helper, proxy-capture helper,
-  setup-runtime helper,
+  setup-runtime helper, setup-tools helper,
   fetch-runtime helper, cli-backend helper,
   type-only SDK barrel helper, config-schema helper, entrypoints helper,
   diffs helper, acpx helper, ACP runtime-backend helper, ACP runtime facade
@@ -9259,6 +9259,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   setup entry parsing, delegated setup wizard proxies, and CLI-path text input
   helpers. Source/test checkpointed in `252f28fe`; `setup-tools` and adjacent
   config/runtime SDK surfaces remain nearby plugin-runtime queue heads.
+- Current queue-head adjustment: imported plugin SDK `setup-tools` now exposes
+  the source-backed exact helper subset for scoped and unscoped imports: CLI
+  command formatting, docs-link formatting, `CONFIG_DIR`, Homebrew executable
+  lookup, binary detection, and promise-returning archive extraction with the
+  upstream unsupported-archive error. Source/test checkpointed in `e0f1e72c`;
+  adjacent config/runtime SDK surfaces remain nearby plugin-runtime queue
+  heads.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
