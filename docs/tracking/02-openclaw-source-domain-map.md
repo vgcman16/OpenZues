@@ -105,8 +105,9 @@ imported `googlechat-runtime-shared` schema coverage from
 the imported `open-prose` exact helper coverage from
 `src/plugin-sdk/open-prose.ts` is verified in `ef8830b1`, and imported
 `runtime-group-policy` helper coverage from
-`src/plugin-sdk/runtime-group-policy.ts` is verified in `b11adc13`; all are
-counted with the plugin/extension system row above.
+`src/plugin-sdk/runtime-group-policy.ts` is verified in `b11adc13`; imported
+`browser-cdp` helper coverage from `src/plugin-sdk/browser-cdp.ts` is verified
+in `4e15c3c2`. All are counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
