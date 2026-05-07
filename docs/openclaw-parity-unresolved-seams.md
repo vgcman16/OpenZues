@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.996%.
+  band of ~80-99.997%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1844,6 +1844,15 @@ runtime shims for fire-and-forget dispatch, internal hook registry/trigger
 semantics, event guards, canonical message hook mappers, plugin hook event
 projection, and global hook-runner initialize/reset helpers. Remaining plugin
 SDK queue heads should continue with exact `agent-runtime-test-contracts` and
+other public test/contract barrels that still require source-backed native
+shims.
+Imported plugin SDK `agent-runtime-test-contracts` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues agent runtime contract fixtures for auth-profile forwarding, delivery
+no-reply behavior, OpenClaw-owned tool hooks, Codex tool-result middleware,
+outcome fallback config, prompt overlays, strict schema/model helpers, and
+queued-message transcript fixtures. Remaining plugin SDK queue heads should
+continue with exact `channel-target-testing`, `channel-test-helpers`, and
 other public test/contract barrels that still require source-backed native
 shims.
 

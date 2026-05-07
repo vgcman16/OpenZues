@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK hook-runtime facade slice is checkpointed in
-`89db1c12`.
+The imported plugin SDK agent-runtime-test-contracts facade slice is
+checkpointed in `0db396fe`.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,7 +62,7 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Hook runtime SDK shim checkpointed in `89db1c12` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `agent-runtime-test-contracts` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Agent runtime test contracts SDK shim checkpointed in `0db396fe` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-target-testing` alias |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
@@ -6029,6 +6029,34 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
   - Last verified: 2026-05-07, focused hook-runtime proof (`1 passed`),
     adjacent hook/plugin-runtime proof (`3 passed, 1105 deselected`),
     adjacent imported-plugin proof (`296 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00286` Imported agent-runtime-test-contracts facade shim
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime-test-contracts.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/auth-profile-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/delivery-no-reply-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/openclaw-owned-tool-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/outcome-fallback-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/prompt-overlay-runtime-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/schema-normalization-runtime-contract.ts`,
+    and
+    `openclaw-main/src/plugin-sdk/test-helpers/agents/transcript-repair-runtime-contract.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `agent-runtime-test-contracts` and receive source-backed
+    contract fixtures for auth-profile alias forwarding, delivery/no-reply
+    payloads, OpenClaw-owned tool hook installation/reset, Codex tool-result
+    middleware, fallback model config, prompt overlay contexts, strict schema
+    normalization models, queued-message transcript fixtures, and text/media
+    tool results without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `0db396fe`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime-test-contracts proof
+    (`1 passed`), adjacent agent-runtime proof (`14 passed, 1095 deselected`),
+    adjacent imported-plugin proof (`297 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim

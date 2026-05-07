@@ -2593,6 +2593,19 @@ may lag behind this tracker.
     adjacent imported-plugin proof (`296 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
+- [x] Imported plugin SDK agent-runtime-test-contracts facade shim.
+  - Source: `openclaw-main/src/plugin-sdk/agent-runtime-test-contracts.ts`
+    and adjacent `openclaw-main/src/plugin-sdk/test-helpers/agents/*`
+    runtime contract fixtures
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `0db396fe`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused agent-runtime-test-contracts proof
+    (`1 passed`), adjacent agent-runtime proof (`14 passed, 1095 deselected`),
+    adjacent imported-plugin proof (`297 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
 - [x] Imported plugin SDK account-core/account-resolution shim.
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,
     `openclaw-main/src/plugin-sdk/account-resolution.ts`,

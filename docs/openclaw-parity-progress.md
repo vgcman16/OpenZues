@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.996%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.997%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -17702,6 +17702,28 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `89db1c12`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `agent-runtime-test-contracts` facade from
+  `src/plugin-sdk/agent-runtime-test-contracts.ts` and adjacent
+  `src/plugin-sdk/test-helpers/agents/*` runtime contract fixtures: scoped and
+  unscoped native runtime entries aggregate auth-profile aliasing,
+  delivery/no-reply fixtures, OpenClaw-owned tool hook installation/reset,
+  Codex tool-result middleware, outcome fallback config, prompt overlay
+  contexts, schema/model normalization fixtures, queued-message transcript
+  repair fixtures, and text/media tool result constructors without importing
+  the TypeScript runtime. This closes `OZ-PLUGIN-00286`; repo-wide parity
+  remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.997%.
+- Verified the agent-runtime-test-contracts slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_agent_runtime_test_contracts -q`
+  (`1 passed`), adjacent agent-runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "agent_runtime_test_contracts or agent_runtime"`
+  (`14 passed, 1095 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`297 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `0db396fe`.
 
 ## References
 
