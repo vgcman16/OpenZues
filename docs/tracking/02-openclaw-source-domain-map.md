@@ -162,8 +162,10 @@ policy helpers is verified in `74fd1711`, and imported
 helpers is verified in `458d6c7f`, and imported `config-mutation` exact
 helper coverage from `src/plugin-sdk/config-mutation.ts` plus adjacent config
 mutation, config IO, config logging, and model shared update helpers is
-verified in `a9813667`. All are counted with the plugin/extension system row
-above.
+verified in `a9813667`, and imported `provider-tools` exact helper coverage
+from `src/plugin-sdk/provider-tools.ts`, `src/agents/schema/clean-for-gemini.ts`,
+and `src/plugins/provider-model-compat.ts` is verified in `2762ee46`. All are
+counted with the plugin/extension system row above.
 The imported `speech-core` SDK helper coverage from
 `src/plugin-sdk/speech-core.ts`, adjacent `src/tts/*` helpers, and
 `src/agents/provider-http-errors.ts` is verified in `ff03eba7` and is counted
