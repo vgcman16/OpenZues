@@ -40482,6 +40482,351 @@ const imageGenerationCoreAuthRuntime = {
   resolveApiKeyForProvider,
 };
 
+function parseGenerationModelRef(raw) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === trimmed.length - 1) {
+    return null;
+  }
+  const provider = normalizeOptionalString(trimmed.slice(0, slashIndex));
+  const model = normalizeOptionalString(trimmed.slice(slashIndex + 1));
+  if (!provider || !model) {
+    return null;
+  }
+  return { provider, model };
+}
+
+function parseVideoGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+function resolveAgentModelPrimaryValue(model) {
+  if (typeof model === "string") {
+    return normalizeOptionalString(model);
+  }
+  if (!model || typeof model !== "object") {
+    return undefined;
+  }
+  return normalizeOptionalString(model.primary);
+}
+
+function resolveAgentModelFallbackValues(model) {
+  if (!model || typeof model !== "object" || !Array.isArray(model.fallbacks)) {
+    return [];
+  }
+  return model.fallbacks;
+}
+
+function isFailoverError(err) {
+  if (err instanceof Error && err.name === "FailoverError") {
+    return true;
+  }
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      err.name === "FailoverError" &&
+      typeof err.reason === "string",
+  );
+}
+
+function readDirectStatusCode(err) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate = err.status ?? err.statusCode;
+  if (typeof candidate === "number" && Number.isFinite(candidate)) {
+    return candidate;
+  }
+  if (typeof candidate === "string" && /^\d+$/.test(candidate)) {
+    return Number(candidate);
+  }
+  return undefined;
+}
+
+function readDirectStringProperty(err, prop) {
+  if (!err || typeof err !== "object") {
+    return undefined;
+  }
+  const candidate = err[prop];
+  if (typeof candidate !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalString(candidate);
+}
+
+function describeFailoverError(err) {
+  if (isFailoverError(err)) {
+    return {
+      message: err.message || "",
+      rawError: err.rawError,
+      reason: err.reason,
+      status: err.status,
+      code: err.code,
+      provider: err.provider,
+      model: err.model,
+      profileId: err.profileId,
+      sessionId: err.sessionId,
+      lane: err.lane,
+    };
+  }
+  return {
+    message: formatErrorMessage(err),
+    status: readDirectStatusCode(err),
+    code: readDirectStringProperty(err, "code"),
+    provider: readDirectStringProperty(err, "provider"),
+  };
+}
+
+function formatCapabilityAttemptRef(attempt) {
+  return `${attempt.provider}/${attempt.model}`;
+}
+
+function isAbortLikeFallbackAttempt(attempt) {
+  const message = String((attempt && attempt.error) || "").trim().toLowerCase();
+  return (
+    message === "this operation was aborted" ||
+    message === "operation was aborted" ||
+    message.includes("operation was aborted") ||
+    message.includes("request was aborted")
+  );
+}
+
+function formatCapabilityFailureAttempt(attempt) {
+  return `${formatCapabilityAttemptRef(attempt)}: ${attempt.error}`;
+}
+
+function formatCapabilityFailureAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) {
+    return "unknown";
+  }
+  const aborted = attempts.filter(isAbortLikeFallbackAttempt);
+  if (aborted.length === 0) {
+    return attempts.map(formatCapabilityFailureAttempt).join(" | ");
+  }
+  if (aborted.length === attempts.length) {
+    const refs = aborted.map(formatCapabilityAttemptRef).join(", ");
+    return (
+      `${aborted.length} fallback(s) aborted after the request was cancelled or timed out: ` +
+      refs
+    );
+  }
+  const primary = attempts.filter((attempt) => !isAbortLikeFallbackAttempt(attempt));
+  const abortedRefs = aborted.map(formatCapabilityAttemptRef).join(", ");
+  return [
+    primary.map(formatCapabilityFailureAttempt).join(" | "),
+    `${aborted.length} fallback(s) aborted after the request was cancelled or timed out: ` +
+      abortedRefs,
+  ].join(" | ");
+}
+
+function throwCapabilityGenerationFailure(params = {}) {
+  const attempts = Array.isArray(params.attempts) ? params.attempts : [];
+  if (attempts.length <= 1 && params.lastError) {
+    throw params.lastError;
+  }
+  const summary = formatCapabilityFailureAttempts(attempts);
+  throw new Error(
+    `All ${params.capabilityLabel} models failed (${attempts.length}): ${summary}`,
+  );
+}
+
+function resolveCurrentDefaultProviderId(cfg) {
+  const configured = resolveAgentModelPrimaryValue(
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.model,
+  );
+  if (!configured) {
+    return "openai";
+  }
+  const slash = configured.indexOf("/");
+  if (slash <= 0) {
+    return "openai";
+  }
+  return normalizeOptionalString(configured.slice(0, slash)) || "openai";
+}
+
+function isCapabilityProviderConfigured(provider, cfg, agentDir) {
+  if (provider && typeof provider.isConfigured === "function") {
+    return provider.isConfigured({ cfg, agentDir });
+  }
+  const envVars = getProviderEnvVars(provider && provider.id);
+  return envVars.some((name) => normalizeOptionalString(process.env[name]));
+}
+
+function resolveAutoCapabilityFallbackRefs(params = {}) {
+  const providers =
+    typeof params.listProviders === "function" ? params.listProviders(params.cfg) || [] : [];
+  const providerDefaults = new Map();
+  for (const provider of providers) {
+    const providerId = normalizeOptionalString(provider && provider.id);
+    const modelId = normalizeOptionalString(provider && provider.defaultModel);
+    if (
+      !providerId ||
+      !modelId ||
+      providerDefaults.has(providerId) ||
+      !isCapabilityProviderConfigured(provider, params.cfg, params.agentDir)
+    ) {
+      continue;
+    }
+    const aliases = Array.isArray(provider.aliases)
+      ? provider.aliases.flatMap((alias) => {
+          const normalized = normalizeOptionalString(alias);
+          return normalized ? [normalized] : [];
+        })
+      : [];
+    providerDefaults.set(providerId, { ref: `${providerId}/${modelId}`, aliases });
+  }
+  const defaultProvider = resolveCurrentDefaultProviderId(params.cfg);
+  const providerIds = Array.from(providerDefaults.keys()).sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const matchesDefaultProvider = (providerId) => {
+    const entry = providerDefaults.get(providerId);
+    return providerId === defaultProvider || (entry && entry.aliases.includes(defaultProvider));
+  };
+  return [
+    ...providerIds.filter(matchesDefaultProvider),
+    ...providerIds.filter((providerId) => !matchesDefaultProvider(providerId)),
+  ].flatMap((providerId) => {
+    const entry = providerDefaults.get(providerId);
+    return entry ? [entry.ref] : [];
+  });
+}
+
+function resolveCapabilityModelCandidates(params = {}) {
+  const candidates = [];
+  const seen = new Set();
+  const parseModelRef =
+    typeof params.parseModelRef === "function" ? params.parseModelRef : parseGenerationModelRef;
+  const add = (raw) => {
+    const parsed = parseModelRef(raw);
+    if (!parsed) {
+      return;
+    }
+    const key = `${parsed.provider}/${parsed.model}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    candidates.push(parsed);
+  };
+
+  const override = parseModelRef(params.modelOverride);
+  if (override) {
+    return [override];
+  }
+
+  add(params.modelOverride);
+  add(resolveAgentModelPrimaryValue(params.modelConfig));
+  for (const fallback of resolveAgentModelFallbackValues(params.modelConfig)) {
+    add(fallback);
+  }
+  const autoProviderFallbackEnabled =
+    params.autoProviderFallback ??
+    !(
+      params.cfg &&
+      params.cfg.agents &&
+      params.cfg.agents.defaults &&
+      params.cfg.agents.defaults.mediaGenerationAutoProviderFallback === false
+    );
+  if (autoProviderFallbackEnabled && typeof params.listProviders === "function") {
+    for (const candidate of resolveAutoCapabilityFallbackRefs({
+      cfg: params.cfg || {},
+      agentDir: params.agentDir,
+      listProviders: params.listProviders,
+    })) {
+      add(candidate);
+    }
+  }
+  return candidates;
+}
+
+function buildNoCapabilityModelConfiguredMessage(params = {}) {
+  const getEnvVars =
+    typeof params.getProviderEnvVars === "function"
+      ? params.getProviderEnvVars
+      : getProviderEnvVars;
+  const providers = Array.isArray(params.providers) ? params.providers : [];
+  const sampleModel = providers.find(
+    (provider) =>
+      normalizeOptionalString(provider && provider.id) &&
+      normalizeOptionalString(provider && provider.defaultModel),
+  );
+  const sampleRef = sampleModel
+    ? `${sampleModel.id}/${sampleModel.defaultModel}`
+    : params.fallbackSampleRef || "<provider>/<model>";
+  const authHints = providers
+    .flatMap((provider) => {
+      const providerId = provider && provider.id;
+      const envVars = getEnvVars(providerId);
+      if (!Array.isArray(envVars) || envVars.length === 0) {
+        return [];
+      }
+      return [`${providerId}: ${envVars.join(" / ")}`];
+    })
+    .slice(0, 3);
+  return [
+    `No ${params.capabilityLabel} model configured. Set ` +
+      `agents.defaults.${params.modelConfigKey}.primary to a provider/model like ` +
+      `"${sampleRef}".`,
+    authHints.length > 0
+      ? "If you want a specific provider, also configure that provider's " +
+        `auth/API key first (${authHints.join("; ")}).`
+      : "If you want a specific provider, also configure that provider's auth/API key first.",
+  ].join(" ");
+}
+
+const UNSAFE_VIDEO_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeVideoGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_VIDEO_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listVideoGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getVideoGenerationProvider(providerId, cfg) {
+  const normalized = normalizeVideoGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listVideoGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeVideoGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeVideoGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+const videoGenerationCoreRuntime = {
+  buildNoCapabilityModelConfiguredMessage,
+  createSubsystemLogger,
+  describeFailoverError,
+  getProviderEnvVars,
+  getVideoGenerationProvider,
+  isFailoverError,
+  listVideoGenerationProviders,
+  parseVideoGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -52766,6 +53111,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/speech-core"
   ) {
     return speechCoreRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/video-generation-core" ||
+    request === "@openclaw/plugin-sdk/video-generation-core"
+  ) {
+    return videoGenerationCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-auth-api-key" ||

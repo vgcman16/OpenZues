@@ -29130,6 +29130,228 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_video_generation_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-video-generation-core.cjs"
+    runtime_entry.write_text(
+        """
+const video = require("openclaw/plugin-sdk/video-generation-core");
+const scopedVideo = require("@openclaw/plugin-sdk/video-generation-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.video_generation_core",
+      description: "Use OpenClaw video-generation-core SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let failureMessage = "";
+        try {
+          video.throwCapabilityGenerationFailure({
+            capabilityLabel: "video generation",
+            attempts: [
+              { provider: "minimax", model: "video-01", error: "rate limited" },
+              { provider: "openai", model: "sora", error: "not configured" }
+            ],
+            lastError: new Error("not configured")
+          });
+        } catch (err) {
+          failureMessage = String(err && err.message ? err.message : err);
+        }
+        const cfg = {
+          agents: {
+            defaults: {
+              model: "openai/gpt-5.4",
+              mediaGenerationAutoProviderFallback: true
+            }
+          },
+          plugins: { enabled: false }
+        };
+        const candidates = video.resolveCapabilityModelCandidates({
+          cfg,
+          modelConfig: {
+            primary: "minimax/video-01",
+            fallbacks: [" minimax/video-02 ", "bad", "openai/sora"]
+          },
+          parseModelRef: video.parseVideoGenerationModelRef
+        });
+        const overrideCandidates = video.resolveCapabilityModelCandidates({
+          cfg,
+          modelConfig: { primary: "minimax/video-01" },
+          modelOverride: "runway/gen-4",
+          parseModelRef: video.parseVideoGenerationModelRef
+        });
+        const noModelMessage = video.buildNoCapabilityModelConfiguredMessage({
+          capabilityLabel: "video generation",
+          modelConfigKey: "videoGeneration",
+          providers: [
+            { id: "minimax", defaultModel: "video-01" },
+            { id: "provider-without-default" }
+          ]
+        });
+        const failoverLike = {
+          name: "FailoverError",
+          message: "too many requests",
+          reason: "rate_limit",
+          status: 429,
+          code: "rate_limit",
+          provider: "minimax",
+          model: "video-01"
+        };
+        return {
+          keys: Object.keys(video).sort(),
+          scopedType: typeof scopedVideo.parseVideoGenerationModelRef,
+          refs: {
+            parsed: video.parseVideoGenerationModelRef(" minimax/video-01 "),
+            invalid: video.parseVideoGenerationModelRef("missing-slash")
+          },
+          models: {
+            primary: video.resolveAgentModelPrimaryValue({ primary: " minimax/video-01 " }),
+            fallback: video.resolveAgentModelFallbackValues({
+              fallbacks: ["minimax/video-02", "openai/sora"]
+            }),
+            candidates,
+            overrideCandidates
+          },
+          providers: {
+            listDisabled: video.listVideoGenerationProviders(cfg).length,
+            missing: video.getVideoGenerationProvider("missing", cfg) ?? null,
+            envVars: video.getProviderEnvVars("minimax")
+          },
+          messages: {
+            noModelMessage,
+            failureMessage
+          },
+          failover: {
+            isFailover: video.isFailoverError(failoverLike),
+            described: video.describeFailoverError(failoverLike)
+          },
+          logger: {
+            subsystem: video.createSubsystemLogger("video/generation").subsystem,
+            warnType: typeof video.createSubsystemLogger("video/generation").warn
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "video-generation-core-plugin",
+                    "name": "Video Generation Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-video-generation-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.video_generation_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.video_generation_core"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildNoCapabilityModelConfiguredMessage",
+            "createSubsystemLogger",
+            "describeFailoverError",
+            "getProviderEnvVars",
+            "getVideoGenerationProvider",
+            "isFailoverError",
+            "listVideoGenerationProviders",
+            "parseVideoGenerationModelRef",
+            "resolveAgentModelFallbackValues",
+            "resolveAgentModelPrimaryValue",
+            "resolveCapabilityModelCandidates",
+            "throwCapabilityGenerationFailure",
+        ],
+        "scopedType": "function",
+        "refs": {
+            "parsed": {"provider": "minimax", "model": "video-01"},
+            "invalid": None,
+        },
+        "models": {
+            "primary": "minimax/video-01",
+            "fallback": ["minimax/video-02", "openai/sora"],
+            "candidates": [
+                {"provider": "minimax", "model": "video-01"},
+                {"provider": "minimax", "model": "video-02"},
+                {"provider": "openai", "model": "sora"},
+            ],
+            "overrideCandidates": [{"provider": "runway", "model": "gen-4"}],
+        },
+        "providers": {
+            "listDisabled": 0,
+            "missing": None,
+            "envVars": ["MINIMAX_API_KEY"],
+        },
+        "messages": {
+            "noModelMessage": (
+                "No video generation model configured. Set "
+                'agents.defaults.videoGeneration.primary to a provider/model like '
+                '"minimax/video-01". If you want a specific provider, also '
+                "configure that provider's auth/API key first "
+                "(minimax: MINIMAX_API_KEY)."
+            ),
+            "failureMessage": (
+                "All video generation models failed (2): minimax/video-01: "
+                "rate limited | openai/sora: not configured"
+            ),
+        },
+        "failover": {
+            "isFailover": True,
+            "described": {
+                "message": "too many requests",
+                "reason": "rate_limit",
+                "status": 429,
+                "code": "rate_limit",
+                "provider": "minimax",
+                "model": "video-01",
+            },
+        },
+        "logger": {"subsystem": "video/generation", "warnType": "function"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_memory_core_host_runtime_files_helpers(
     tmp_path,
 ) -> None:
