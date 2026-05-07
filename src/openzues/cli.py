@@ -65115,6 +65115,1291 @@ const speechCoreRuntime = {
   truncateErrorDetail,
 };
 
+async function assertOkOrThrowHttpError(response, label) {
+  if (response && response.ok) {
+    return;
+  }
+  throw await createProviderHttpError(response, label, { statusPrefix: "HTTP " });
+}
+
+function resolveAudioTranscriptionUploadFileName(fileName, mime) {
+  const trimmed = normalizeOptionalString(fileName);
+  const baseName = trimmed ? path.basename(trimmed) : "audio";
+  const lowerMime = normalizeOptionalLowercaseString(mime);
+  if (/\.aac$/i.test(baseName)) {
+    return `${baseName.slice(0, -4) || "audio"}.m4a`;
+  }
+  if (!path.extname(baseName) && lowerMime === "audio/aac") {
+    return `${baseName || "audio"}.m4a`;
+  }
+  return baseName;
+}
+
+function buildAudioTranscriptionFormData(params = {}) {
+  const form = new FormData();
+  const buffer = Buffer.isBuffer(params.buffer) ? params.buffer : Buffer.from(params.buffer || []);
+  const bytes = new Uint8Array(buffer);
+  const blob = new Blob([bytes], {
+    type: params.mime || "application/octet-stream",
+  });
+  form.append("file", blob, resolveAudioTranscriptionUploadFileName(params.fileName, params.mime));
+  for (const [name, value] of Object.entries(params.fields || {})) {
+    const text = typeof value === "string" ? value.trim() : value == null ? "" : String(value);
+    if (text) {
+      form.append(name, text);
+    }
+  }
+  return form;
+}
+
+function createProviderOperationDeadline(params = {}) {
+  if (
+    typeof params.timeoutMs !== "number" ||
+    !Number.isFinite(params.timeoutMs) ||
+    params.timeoutMs <= 0
+  ) {
+    return { label: params.label };
+  }
+  const timeoutMs = Math.floor(params.timeoutMs);
+  return {
+    deadlineAtMs: Date.now() + timeoutMs,
+    label: params.label,
+    timeoutMs,
+  };
+}
+
+function resolveProviderOperationTimeoutMs(params = {}) {
+  const deadline = params.deadline || {};
+  const deadlineAtMs = deadline.deadlineAtMs;
+  if (typeof deadlineAtMs !== "number") {
+    return params.defaultTimeoutMs;
+  }
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`${deadline.label} timed out after ${deadline.timeoutMs}ms`);
+  }
+  return Math.max(1, Math.min(params.defaultTimeoutMs, remainingMs));
+}
+
+async function waitProviderOperationPollInterval(params = {}) {
+  const deadline = params.deadline || {};
+  const deadlineAtMs = deadline.deadlineAtMs;
+  if (typeof deadlineAtMs !== "number") {
+    await sleepMs(params.pollIntervalMs || 0);
+    return;
+  }
+  const remainingMs = deadlineAtMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new Error(`${deadline.label} timed out after ${deadline.timeoutMs}ms`);
+  }
+  await sleepMs(Math.min(params.pollIntervalMs || 0, remainingMs));
+}
+
+async function fetchWithTimeout(url, init = {}, timeoutMs = 60000, fetchFn = fetch) {
+  const controller = new AbortController();
+  const resolvedTimeoutMs = Math.max(1, Math.floor(timeoutMs || 1));
+  const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
+  try {
+    return await fetchFn(url, { ...(init || {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pollProviderOperationJson(params = {}) {
+  for (let attempt = 0; attempt < params.maxAttempts; attempt += 1) {
+    const response = await fetchWithTimeout(
+      params.url,
+      {
+        method: "GET",
+        headers: params.headers,
+      },
+      resolveProviderOperationTimeoutMs({
+        deadline: params.deadline,
+        defaultTimeoutMs: params.defaultTimeoutMs,
+      }),
+      params.fetchFn,
+    );
+    await assertOkOrThrowHttpError(response, params.requestFailedMessage);
+    const payload = await response.json();
+    if (params.isComplete(payload)) {
+      return payload;
+    }
+    const failureMessage =
+      typeof params.getFailureMessage === "function"
+        ? params.getFailureMessage(payload)
+        : undefined;
+    if (failureMessage) {
+      throw new Error(failureMessage);
+    }
+    await waitProviderOperationPollInterval({
+      deadline: params.deadline,
+      pollIntervalMs: params.pollIntervalMs,
+    });
+  }
+  throw new Error(params.timeoutMessage);
+}
+
+const OPENCLAW_ATTRIBUTION_PRODUCT = "OpenClaw";
+const OPENCLAW_ATTRIBUTION_ORIGINATOR = "openclaw";
+const LOCAL_ENDPOINT_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const OPENAI_RESPONSES_APIS = new Set([
+  "openai-responses",
+  "azure-openai-responses",
+  "openai-codex-responses",
+]);
+const OPENAI_RESPONSES_PROVIDERS = new Set(["openai", "azure-openai", "azure-openai-responses"]);
+const FORBIDDEN_PROVIDER_REQUEST_HEADER_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const FORBIDDEN_INSECURE_TLS_MESSAGE =
+  "Provider transport overrides do not allow insecureSkipVerify";
+const FORBIDDEN_RUNTIME_TRANSPORT_OVERRIDE_MESSAGE =
+  "Runtime auth request overrides do not allow proxy or TLS transport settings";
+
+function normalizeProviderId(provider) {
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  if (normalized === "modelstudio" || normalized === "qwencloud") {
+    return "qwen";
+  }
+  if (normalized === "z.ai" || normalized === "z-ai") {
+    return "zai";
+  }
+  if (normalized === "opencode-zen") {
+    return "opencode";
+  }
+  if (normalized === "opencode-go-auth") {
+    return "opencode-go";
+  }
+  if (normalized === "kimi" || normalized === "kimi-code" || normalized === "kimi-coding") {
+    return "kimi";
+  }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
+  if (normalized === "bytedance" || normalized === "doubao") {
+    return "volcengine";
+  }
+  return normalized;
+}
+
+function tryParseHostname(value) {
+  try {
+    return normalizeOptionalLowercaseString(new URL(value).hostname);
+  } catch {
+    return undefined;
+  }
+}
+
+function isSchemelessHostnameCandidate(value) {
+  return /^[a-z0-9.[\]-]+(?::\d+)?(?:[/?#].*)?$/i.test(value);
+}
+
+function resolveUrlHostname(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsedHostname = tryParseHostname(trimmed);
+  if (parsedHostname) {
+    return parsedHostname;
+  }
+  if (!isSchemelessHostnameCandidate(trimmed)) {
+    return undefined;
+  }
+  return tryParseHostname(`https://${trimmed}`);
+}
+
+function normalizeComparableBaseUrl(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsedValue =
+    tryParseHostname(trimmed) || !isSchemelessHostnameCandidate(trimmed)
+      ? trimmed
+      : `https://${trimmed}`;
+  try {
+    const url = new URL(parsedValue);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    url.hash = "";
+    url.search = "";
+    return normalizeOptionalLowercaseString(url.toString().replace(/\/+$/, ""));
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveKnownProviderEndpointClass(host, normalizedBaseUrl) {
+  if (host === "api.openai.com") {
+    return "openai-public";
+  }
+  if (host === "openrouter.ai" || host === "api.openrouter.ai") {
+    return "openrouter";
+  }
+  if (host === "api.anthropic.com") {
+    return "anthropic-public";
+  }
+  if (host === "api.moonshot.ai") {
+    return "moonshot-native";
+  }
+  if (host === "dashscope.aliyuncs.com" || host.endsWith(".dashscope.aliyuncs.com")) {
+    return "modelstudio-native";
+  }
+  if (host === "generativelanguage.googleapis.com") {
+    return "google-generative-ai";
+  }
+  if (host.endsWith("-aiplatform.googleapis.com")) {
+    return "google-vertex";
+  }
+  if (host === "api.x.ai") {
+    return "xai-native";
+  }
+  if (host === "api.z.ai") {
+    return "zai-native";
+  }
+  if (host === "api.groq.com") {
+    return "groq-native";
+  }
+  if (host === "api.mistral.ai") {
+    return "mistral-public";
+  }
+  if (host === "api.cerebras.ai") {
+    return "cerebras-native";
+  }
+  if (host === "api.deepseek.com") {
+    return "deepseek-native";
+  }
+  if (normalizedBaseUrl && normalizedBaseUrl.includes("/openai/deployments/")) {
+    return "azure-openai";
+  }
+  return undefined;
+}
+
+function isLocalEndpointHost(host) {
+  return (
+    LOCAL_ENDPOINT_HOSTS.has(host) ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  );
+}
+
+function resolveProviderEndpoint(baseUrl) {
+  if (typeof baseUrl !== "string" || !baseUrl.trim()) {
+    return { endpointClass: "default" };
+  }
+  const host = resolveUrlHostname(baseUrl);
+  if (!host) {
+    return { endpointClass: "invalid" };
+  }
+  const normalizedBaseUrl = normalizeComparableBaseUrl(baseUrl);
+  const knownEndpointClass = resolveKnownProviderEndpointClass(host, normalizedBaseUrl);
+  if (knownEndpointClass) {
+    const googleVertexRegion =
+      knownEndpointClass === "google-vertex"
+        ? host.slice(0, -"-aiplatform.googleapis.com".length)
+        : undefined;
+    return {
+      endpointClass: knownEndpointClass,
+      hostname: host,
+      ...(googleVertexRegion ? { googleVertexRegion } : {}),
+    };
+  }
+  if (isLocalEndpointHost(host)) {
+    return { endpointClass: "local", hostname: host };
+  }
+  return { endpointClass: "custom", hostname: host };
+}
+
+function resolveKnownProviderFamily(provider) {
+  switch (provider) {
+    case "openai":
+    case "openai-codex":
+    case "azure-openai":
+    case "azure-openai-responses":
+      return "openai-family";
+    default:
+      return provider || "unknown";
+  }
+}
+
+function isOpenAIResponsesApi(api) {
+  const normalizedApi = normalizeOptionalLowercaseString(api);
+  return normalizedApi !== undefined && OPENAI_RESPONSES_APIS.has(normalizedApi);
+}
+
+function resolveProviderAttributionIdentity(env = process.env) {
+  return {
+    product: OPENCLAW_ATTRIBUTION_PRODUCT,
+    version:
+      normalizeOptionalString(env.OPENCLAW_RUNTIME_VERSION) ||
+      normalizeOptionalString(env.OPENZUES_VERSION) ||
+      normalizeOptionalString(env.npm_package_version) ||
+      "0.0.0",
+  };
+}
+
+function formatOpenClawUserAgent(version) {
+  return `${OPENCLAW_ATTRIBUTION_ORIGINATOR}/${version}`;
+}
+
+function buildOpenRouterAttributionPolicy(env = process.env) {
+  const identity = resolveProviderAttributionIdentity(env);
+  return {
+    provider: "openrouter",
+    enabledByDefault: true,
+    verification: "vendor-documented",
+    hook: "request-headers",
+    docsUrl: "https://openrouter.ai/docs/app-attribution",
+    reviewNote: "Documented app attribution headers. Verified in OpenClaw runtime wrapper.",
+    ...identity,
+    headers: {
+      "HTTP-Referer": "https://openclaw.ai",
+      "X-OpenRouter-Title": identity.product,
+      "X-OpenRouter-Categories": "cli-agent",
+    },
+  };
+}
+
+function buildOpenAIAttributionPolicy(provider, env = process.env) {
+  const identity = resolveProviderAttributionIdentity(env);
+  const reviewNote =
+    provider === "openai-codex"
+      ? [
+          "OpenAI Codex ChatGPT-backed traffic supports the same hidden",
+          "originator/User-Agent attribution contract.",
+        ].join(" ")
+      : [
+          "OpenAI native traffic supports hidden originator/User-Agent attribution.",
+          "Verified against the Codex wire contract.",
+        ].join(" ");
+  return {
+    provider,
+    enabledByDefault: true,
+    verification: "vendor-hidden-api-spec",
+    hook: "request-headers",
+    reviewNote,
+    ...identity,
+    headers: {
+      originator: OPENCLAW_ATTRIBUTION_ORIGINATOR,
+      version: identity.version,
+      "User-Agent": formatOpenClawUserAgent(identity.version),
+    },
+  };
+}
+
+function buildSdkHookOnlyPolicy(provider, hook, reviewNote, env = process.env) {
+  return {
+    provider,
+    enabledByDefault: false,
+    verification: "vendor-sdk-hook-only",
+    hook,
+    reviewNote,
+    ...resolveProviderAttributionIdentity(env),
+  };
+}
+
+function listProviderAttributionPolicies(env = process.env) {
+  return [
+    buildOpenRouterAttributionPolicy(env),
+    buildOpenAIAttributionPolicy("openai", env),
+    buildOpenAIAttributionPolicy("openai-codex", env),
+    buildSdkHookOnlyPolicy(
+      "anthropic",
+      "default-headers",
+      "Anthropic JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "google",
+      "user-agent-extra",
+      [
+        "Google GenAI JS SDK exposes userAgentExtra/httpOptions, but provider-side",
+        "attribution is not yet verified.",
+      ].join(" "),
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "groq",
+      "default-headers",
+      "Groq JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "mistral",
+      "custom-user-agent",
+      "Mistral JS SDK exposes a custom userAgent option, but app attribution is not yet verified.",
+      env,
+    ),
+    buildSdkHookOnlyPolicy(
+      "together",
+      "default-headers",
+      "Together JS SDK exposes defaultHeaders, but app attribution is not yet verified.",
+      env,
+    ),
+  ];
+}
+
+function resolveProviderAttributionPolicy(provider, env = process.env) {
+  const normalized = normalizeProviderId(provider || "");
+  return listProviderAttributionPolicies(env).find((policy) => policy.provider === normalized);
+}
+
+function resolveProviderAttributionHeaders(provider, env = process.env) {
+  const policy = resolveProviderAttributionPolicy(provider, env);
+  if (!policy || policy.enabledByDefault !== true) {
+    return undefined;
+  }
+  return policy.headers;
+}
+
+function resolveProviderRequestPolicy(input = {}, env = process.env) {
+  const provider = normalizeProviderId(input.provider || "");
+  const policy = resolveProviderAttributionPolicy(provider, env);
+  const endpointResolution = resolveProviderEndpoint(input.baseUrl);
+  const endpointClass = endpointResolution.endpointClass;
+  const usesConfiguredBaseUrl = endpointClass !== "default";
+  const usesKnownNativeOpenAIEndpoint =
+    endpointClass === "openai-public" ||
+    endpointClass === "openai-codex" ||
+    endpointClass === "azure-openai";
+  const usesOpenAIPublicAttributionHost = endpointClass === "openai-public";
+  const usesOpenAICodexAttributionHost = endpointClass === "openai-codex";
+  const usesVerifiedOpenAIAttributionHost =
+    usesOpenAIPublicAttributionHost || usesOpenAICodexAttributionHost;
+  const usesExplicitProxyLikeEndpoint = usesConfiguredBaseUrl && !usesKnownNativeOpenAIEndpoint;
+  let attributionProvider;
+  if (provider === "openai" && usesOpenAIPublicAttributionHost) {
+    attributionProvider = "openai";
+  } else if (provider === "openai-codex" && usesOpenAICodexAttributionHost) {
+    attributionProvider = "openai-codex";
+  } else if (provider === "openrouter" && policy && policy.enabledByDefault) {
+    if (endpointClass === "openrouter" || endpointClass === "default") {
+      attributionProvider = "openrouter";
+    }
+  }
+  const attributionHeaders = attributionProvider
+    ? resolveProviderAttributionHeaders(attributionProvider, env)
+    : undefined;
+  return {
+    provider: provider || undefined,
+    policy,
+    endpointClass,
+    usesConfiguredBaseUrl,
+    knownProviderFamily: resolveKnownProviderFamily(provider || undefined),
+    attributionProvider,
+    attributionHeaders,
+    allowsHiddenAttribution:
+      attributionProvider !== undefined &&
+      policy &&
+      policy.verification === "vendor-hidden-api-spec",
+    usesKnownNativeOpenAIEndpoint,
+    usesKnownNativeOpenAIRoute:
+      endpointClass === "default" ? provider === "openai" : usesKnownNativeOpenAIEndpoint,
+    usesVerifiedOpenAIAttributionHost,
+    usesExplicitProxyLikeEndpoint,
+  };
+}
+
+function resolveProviderRequestAttributionHeaders(input = {}, env = process.env) {
+  return resolveProviderRequestPolicy(input, env).attributionHeaders;
+}
+
+function readCompatBoolean(compat, key) {
+  if (!compat || typeof compat !== "object") {
+    return undefined;
+  }
+  const value = compat[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function resolveProviderRequestCapabilities(input = {}, env = process.env) {
+  const policy = resolveProviderRequestPolicy(input, env);
+  const provider = policy.provider;
+  const api = normalizeOptionalLowercaseString(input.api);
+  const endpointClass = policy.endpointClass;
+  const isKnownNativeEndpoint = [
+    "anthropic-public",
+    "cerebras-native",
+    "chutes-native",
+    "deepseek-native",
+    "github-copilot-native",
+    "groq-native",
+    "mistral-public",
+    "moonshot-native",
+    "modelstudio-native",
+    "openai-public",
+    "openai-codex",
+    "opencode-native",
+    "azure-openai",
+    "openrouter",
+    "xai-native",
+    "zai-native",
+    "google-generative-ai",
+    "google-vertex",
+  ].includes(endpointClass);
+  const isResponsesApi = isOpenAIResponsesApi(api);
+  const promptCacheKeySupport = readCompatBoolean(input.compat, "supportsPromptCacheKey");
+  const shouldStripResponsesPromptCache =
+    promptCacheKeySupport === true
+      ? false
+      : promptCacheKeySupport === false
+        ? isResponsesApi
+        : isResponsesApi && policy.usesExplicitProxyLikeEndpoint;
+  return {
+    ...policy,
+    isKnownNativeEndpoint,
+    allowsOpenAIServiceTier:
+      (provider === "openai" && api === "openai-responses" && endpointClass === "openai-public") ||
+      (provider === "openai-codex" &&
+        (api === "openai-codex-responses" || api === "openai-responses") &&
+        endpointClass === "openai-codex"),
+    supportsOpenAIReasoningCompatPayload:
+      provider !== undefined &&
+      api !== undefined &&
+      !policy.usesExplicitProxyLikeEndpoint &&
+      (provider === "openai" ||
+        provider === "openai-codex" ||
+        provider === "azure-openai" ||
+        provider === "azure-openai-responses") &&
+      (api === "openai-completions" ||
+        api === "openai-responses" ||
+        api === "openai-codex-responses" ||
+        api === "azure-openai-responses"),
+    allowsAnthropicServiceTier:
+      provider === "anthropic" &&
+      api === "anthropic-messages" &&
+      (endpointClass === "default" || endpointClass === "anthropic-public"),
+    supportsResponsesStoreField:
+      readCompatBoolean(input.compat, "supportsStore") !== false && isResponsesApi,
+    allowsResponsesStore:
+      readCompatBoolean(input.compat, "supportsStore") !== false &&
+      provider !== undefined &&
+      isResponsesApi &&
+      OPENAI_RESPONSES_PROVIDERS.has(provider) &&
+      policy.usesKnownNativeOpenAIEndpoint,
+    shouldStripResponsesPromptCache,
+    supportsNativeStreamingUsageCompat:
+      endpointClass === "moonshot-native" || endpointClass === "modelstudio-native",
+    supportsOpenAICompletionsStreamingUsageCompat: false,
+  };
+}
+
+function describeProviderRequestRoutingPolicy(policy) {
+  if (!policy.attributionProvider) {
+    return "none";
+  }
+  switch (policy.policy && policy.policy.verification) {
+    case "vendor-hidden-api-spec":
+      return "hidden";
+    case "vendor-documented":
+      return "documented";
+    case "vendor-sdk-hook-only":
+      return "sdk-hook-only";
+    default:
+      return "none";
+  }
+}
+
+function describeProviderRequestRouteClass(policy) {
+  if (policy.endpointClass === "default") {
+    return "default";
+  }
+  if (policy.endpointClass === "invalid") {
+    return "invalid";
+  }
+  if (policy.endpointClass === "local") {
+    return "local";
+  }
+  if (policy.endpointClass === "custom" || policy.endpointClass === "openrouter") {
+    return "proxy-like";
+  }
+  return "native";
+}
+
+function describeProviderRequestRoutingSummary(input = {}, env = process.env) {
+  const policy = resolveProviderRequestPolicy(input, env);
+  const api = normalizeOptionalLowercaseString(input.api) || "unknown";
+  const provider = policy.provider || "unknown";
+  return [
+    `provider=${provider}`,
+    `api=${api}`,
+    `endpoint=${policy.endpointClass}`,
+    `route=${describeProviderRequestRouteClass(policy)}`,
+    `policy=${describeProviderRequestRoutingPolicy(policy)}`,
+  ].join(" ");
+}
+
+function normalizeBaseUrl(baseUrl, fallback) {
+  const raw =
+    (typeof baseUrl === "string" && baseUrl.trim()) ||
+    (typeof fallback === "string" && fallback.trim()) ||
+    "";
+  if (!raw) {
+    return undefined;
+  }
+  return raw.replace(/\/+$/, "");
+}
+
+function sanitizeConfiguredRequestString(value) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return normalizeOptionalString(value);
+}
+
+function sanitizeConfiguredProviderRequest(request) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) {
+    return undefined;
+  }
+  let headers;
+  if (request.headers && typeof request.headers === "object" && !Array.isArray(request.headers)) {
+    const nextHeaders = {};
+    for (const [key, value] of Object.entries(request.headers)) {
+      const sanitized = sanitizeConfiguredRequestString(value);
+      if (sanitized) {
+        nextHeaders[key] = sanitized;
+      }
+    }
+    if (Object.keys(nextHeaders).length > 0) {
+      headers = nextHeaders;
+    }
+  }
+  let auth;
+  const rawAuth = request.auth;
+  if (rawAuth && typeof rawAuth === "object" && !Array.isArray(rawAuth)) {
+    if (rawAuth.mode === "provider-default") {
+      auth = { mode: "provider-default" };
+    } else if (rawAuth.mode === "authorization-bearer") {
+      const token = sanitizeConfiguredRequestString(rawAuth.token);
+      if (token) {
+        auth = { mode: "authorization-bearer", token };
+      }
+    } else if (rawAuth.mode === "header") {
+      const headerName = sanitizeConfiguredRequestString(rawAuth.headerName);
+      const value = sanitizeConfiguredRequestString(rawAuth.value);
+      const prefix = sanitizeConfiguredRequestString(rawAuth.prefix);
+      if (headerName && value) {
+        auth = {
+          mode: "header",
+          headerName,
+          value,
+          ...(prefix ? { prefix } : {}),
+        };
+      }
+    }
+  }
+  const sanitizeTls = (tls) => {
+    if (!tls || typeof tls !== "object" || Array.isArray(tls)) {
+      return undefined;
+    }
+    const next = {};
+    for (const key of ["ca", "cert", "key", "passphrase", "serverName"]) {
+      const sanitized = sanitizeConfiguredRequestString(tls[key]);
+      if (sanitized) {
+        next[key] = sanitized;
+      }
+    }
+    if (tls.insecureSkipVerify === true) {
+      next.insecureSkipVerify = true;
+    } else if (tls.insecureSkipVerify === false) {
+      next.insecureSkipVerify = false;
+    }
+    return Object.keys(next).length > 0 ? next : undefined;
+  };
+  let proxy;
+  const rawProxy = request.proxy;
+  if (rawProxy && typeof rawProxy === "object" && !Array.isArray(rawProxy)) {
+    const tls = sanitizeTls(rawProxy.tls);
+    if (rawProxy.mode === "env-proxy") {
+      proxy = { mode: "env-proxy", ...(tls ? { tls } : {}) };
+    } else if (rawProxy.mode === "explicit-proxy") {
+      const url = sanitizeConfiguredRequestString(rawProxy.url);
+      if (url) {
+        proxy = { mode: "explicit-proxy", url, ...(tls ? { tls } : {}) };
+      }
+    }
+  }
+  const tls = sanitizeTls(request.tls);
+  if (!headers && !auth && !proxy && !tls) {
+    return undefined;
+  }
+  return {
+    ...(headers ? { headers } : {}),
+    ...(auth ? { auth } : {}),
+    ...(proxy ? { proxy } : {}),
+    ...(tls ? { tls } : {}),
+  };
+}
+
+function sanitizeConfiguredModelProviderRequest(request) {
+  const sanitized = sanitizeConfiguredProviderRequest(request);
+  const rawAllow = request && request.allowPrivateNetwork;
+  const allowPrivateNetwork = rawAllow === true ? true : rawAllow === false ? false : undefined;
+  if (!sanitized && allowPrivateNetwork === undefined) {
+    return undefined;
+  }
+  return {
+    ...(sanitized || {}),
+    ...(allowPrivateNetwork !== undefined ? { allowPrivateNetwork } : {}),
+  };
+}
+
+function mergeProviderRequestOverrides(...overrides) {
+  const merged = {};
+  let hasMerged = false;
+  for (const current of overrides) {
+    if (!current) {
+      continue;
+    }
+    hasMerged = true;
+    if (current.headers) {
+      merged.headers = Object.assign({}, merged.headers, current.headers);
+    }
+    if (current.auth) {
+      merged.auth = current.auth;
+    }
+    if (current.proxy) {
+      merged.proxy = current.proxy;
+    }
+    if (current.tls) {
+      merged.tls = current.tls;
+    }
+  }
+  return hasMerged ? merged : undefined;
+}
+
+function mergeModelProviderRequestOverrides(...overrides) {
+  let merged = mergeProviderRequestOverrides(...overrides);
+  for (const current of overrides) {
+    if (current && current.allowPrivateNetwork !== undefined) {
+      merged = merged || {};
+      merged.allowPrivateNetwork = current.allowPrivateNetwork;
+    }
+  }
+  return merged;
+}
+
+function mergeProviderRequestHeaders(...headerSets) {
+  let merged;
+  const headerNamesByLowerKey = new Map();
+  for (const headers of headerSets) {
+    if (!headers) {
+      continue;
+    }
+    merged = merged || {};
+    for (const [key, value] of Object.entries(headers)) {
+      const normalizedKey = normalizeLowercaseStringOrEmpty(key);
+      if (FORBIDDEN_PROVIDER_REQUEST_HEADER_KEYS.has(normalizedKey)) {
+        continue;
+      }
+      const previousKey = headerNamesByLowerKey.get(normalizedKey);
+      if (previousKey && previousKey !== key) {
+        delete merged[previousKey];
+      }
+      merged[key] = value;
+      headerNamesByLowerKey.set(normalizedKey, key);
+    }
+  }
+  return merged && Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function resolveTlsOverride(tls) {
+  if (!tls) {
+    return { configured: false };
+  }
+  if (tls.insecureSkipVerify === true) {
+    throw new Error(FORBIDDEN_INSECURE_TLS_MESSAGE);
+  }
+  const ca = normalizeOptionalString(tls.ca);
+  const cert = normalizeOptionalString(tls.cert);
+  const key = normalizeOptionalString(tls.key);
+  const passphrase = normalizeOptionalString(tls.passphrase);
+  const serverName = normalizeOptionalString(tls.serverName);
+  const rejectUnauthorized = tls.insecureSkipVerify === false ? true : undefined;
+  if (!ca && !cert && !key && !passphrase && !serverName && rejectUnauthorized === undefined) {
+    return { configured: false };
+  }
+  return {
+    configured: true,
+    ...(ca ? { ca } : {}),
+    ...(cert ? { cert } : {}),
+    ...(key ? { key } : {}),
+    ...(passphrase ? { passphrase } : {}),
+    ...(serverName ? { serverName } : {}),
+    ...(rejectUnauthorized !== undefined ? { rejectUnauthorized } : {}),
+  };
+}
+
+function resolveAuthOverride(params = {}) {
+  const auth = params.request && params.request.auth;
+  if (auth && auth.mode === "authorization-bearer") {
+    const value = normalizeOptionalString(auth.token);
+    if (value) {
+      return {
+        configured: true,
+        mode: "authorization-bearer",
+        headerName: "Authorization",
+        value,
+        injectAuthorizationHeader: true,
+      };
+    }
+  }
+  if (auth && auth.mode === "header") {
+    const headerName = normalizeOptionalString(auth.headerName);
+    const value = normalizeOptionalString(auth.value);
+    const prefix = normalizeOptionalString(auth.prefix);
+    if (headerName && value) {
+      return {
+        configured: true,
+        mode: "header",
+        headerName,
+        value,
+        ...(prefix ? { prefix } : {}),
+        injectAuthorizationHeader: false,
+      };
+    }
+  }
+  return {
+    configured: false,
+    mode: params.authHeader ? "authorization-bearer" : "provider-default",
+    injectAuthorizationHeader: params.authHeader === true,
+  };
+}
+
+function sanitizeRuntimeProviderRequestOverrides(request) {
+  if (!request) {
+    return undefined;
+  }
+  if (request.proxy || request.tls) {
+    throw new Error(FORBIDDEN_RUNTIME_TRANSPORT_OVERRIDE_MESSAGE);
+  }
+  const headers = request.headers;
+  const auth = request.auth;
+  if (!headers && !auth) {
+    return undefined;
+  }
+  return {
+    ...(headers ? { headers } : {}),
+    ...(auth ? { auth } : {}),
+  };
+}
+
+function resolveProxyOverride(request) {
+  const proxy = request && request.proxy;
+  if (!proxy) {
+    return { configured: false };
+  }
+  const tls = resolveTlsOverride(proxy.tls);
+  if (proxy.mode === "env-proxy") {
+    return {
+      configured: true,
+      mode: "env-proxy",
+      tls,
+    };
+  }
+  const proxyUrl = normalizeOptionalString(proxy.url);
+  if (!proxyUrl) {
+    return { configured: false };
+  }
+  return {
+    configured: true,
+    mode: "explicit-proxy",
+    proxyUrl,
+    tls,
+  };
+}
+
+function applyResolvedAuthHeader(headers, auth) {
+  if (!auth.configured) {
+    return headers;
+  }
+  const next = mergeProviderRequestHeaders(headers) || {};
+  const keysToDelete = new Set([normalizeLowercaseStringOrEmpty(auth.headerName)]);
+  if (auth.mode === "header") {
+    keysToDelete.add("authorization");
+  }
+  for (const key of Object.keys(next)) {
+    if (keysToDelete.has(normalizeLowercaseStringOrEmpty(key))) {
+      delete next[key];
+    }
+  }
+  next[auth.headerName] =
+    auth.mode === "authorization-bearer"
+      ? `Bearer ${auth.value}`
+      : `${auth.prefix || ""}${auth.value}`;
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function toTlsConnectOptions(tls) {
+  if (!tls || !tls.configured) {
+    return undefined;
+  }
+  const next = {};
+  if (tls.ca) {
+    next.ca = tls.ca;
+  }
+  if (tls.cert) {
+    next.cert = tls.cert;
+  }
+  if (tls.key) {
+    next.key = tls.key;
+  }
+  if (tls.passphrase) {
+    next.passphrase = tls.passphrase;
+  }
+  if (tls.serverName) {
+    next.servername = tls.serverName;
+  }
+  if (tls.rejectUnauthorized !== undefined) {
+    next.rejectUnauthorized = tls.rejectUnauthorized;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function buildProviderRequestDispatcherPolicy(request) {
+  const targetTls = toTlsConnectOptions(request.tls);
+  if (!request.proxy.configured) {
+    return targetTls ? { mode: "direct", connect: targetTls } : undefined;
+  }
+  const proxiedTls = toTlsConnectOptions(request.proxy.tls);
+  if (request.proxy.mode === "env-proxy") {
+    return {
+      mode: "env-proxy",
+      ...(targetTls ? { connect: { ...targetTls } } : {}),
+      ...(proxiedTls ? { proxyTls: { ...proxiedTls } } : {}),
+    };
+  }
+  return {
+    mode: "explicit-proxy",
+    proxyUrl: request.proxy.proxyUrl,
+    ...(proxiedTls ? { proxyTls: proxiedTls } : {}),
+  };
+}
+
+function buildProviderRequestTlsClientOptions(request) {
+  return toTlsConnectOptions(request.tls);
+}
+
+function isLoopbackProviderBaseUrl(baseUrl) {
+  if (!baseUrl) {
+    return false;
+  }
+  try {
+    const host = new URL(baseUrl).hostname.trim().toLowerCase().replace(/\.+$/, "");
+    return (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "127.0.0.1" ||
+      host === "::1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldAutoAllowLoopbackModelRequest(params = {}) {
+  return (
+    params.capability === "llm" &&
+    params.transport === "stream" &&
+    params.allowPrivateNetwork === undefined &&
+    (!params.request || params.request.allowPrivateNetwork === undefined) &&
+    isLoopbackProviderBaseUrl(params.baseUrl)
+  );
+}
+
+function resolveProviderRequestPolicyConfig(params = {}) {
+  const baseUrl = normalizeBaseUrl(params.baseUrl, params.defaultBaseUrl);
+  const capability = params.capability || "llm";
+  const transport = params.transport || "http";
+  const policyInput = {
+    provider: params.provider,
+    api: params.api,
+    baseUrl,
+    capability,
+    transport,
+  };
+  const policy = resolveProviderRequestPolicy(policyInput);
+  const capabilities = resolveProviderRequestCapabilities({
+    ...policyInput,
+    compat: params.compat,
+    modelId: params.modelId,
+  });
+  const auth = resolveAuthOverride({
+    authHeader: params.authHeader,
+    request: params.request,
+  });
+  const extraHeaders = applyResolvedAuthHeader(
+    mergeProviderRequestHeaders(
+      params.discoveredHeaders,
+      params.providerHeaders,
+      params.modelHeaders,
+      params.request && params.request.headers,
+    ),
+    auth,
+  );
+  const protectedAttributionKeys = new Set(
+    Object.keys(policy.attributionHeaders || {}).map((key) => normalizeLowercaseStringOrEmpty(key)),
+  );
+  const unprotectedCallerHeaders = params.callerHeaders
+    ? Object.fromEntries(
+        Object.entries(params.callerHeaders).filter(
+          ([key]) => !protectedAttributionKeys.has(normalizeLowercaseStringOrEmpty(key)),
+        ),
+      )
+    : undefined;
+  const mergedDefaults = mergeProviderRequestHeaders(extraHeaders, policy.attributionHeaders);
+  const headers =
+    params.precedence === "defaults-win"
+      ? mergeProviderRequestHeaders(unprotectedCallerHeaders, mergedDefaults)
+      : mergeProviderRequestHeaders(mergedDefaults, unprotectedCallerHeaders);
+  return {
+    api: params.api,
+    baseUrl,
+    headers,
+    extraHeaders: {
+      configured: Boolean(extraHeaders),
+      headers: extraHeaders,
+    },
+    auth,
+    proxy: resolveProxyOverride(params.request),
+    tls: resolveTlsOverride(params.request && params.request.tls),
+    policy,
+    capabilities,
+    allowPrivateNetwork:
+      params.allowPrivateNetwork ??
+      (params.request && params.request.allowPrivateNetwork) ??
+      shouldAutoAllowLoopbackModelRequest(params),
+  };
+}
+
+function resolveProviderRequestConfig(params = {}) {
+  const resolved = resolveProviderRequestPolicyConfig(params);
+  return {
+    api: resolved.api,
+    baseUrl: resolved.baseUrl,
+    headers: resolved.extraHeaders.headers,
+    extraHeaders: resolved.extraHeaders,
+    auth: resolved.auth,
+    proxy: resolved.proxy,
+    tls: resolved.tls,
+    policy: resolved.policy,
+  };
+}
+
+function resolveProviderRequestHeaders(params = {}) {
+  return resolveProviderRequestPolicyConfig({
+    provider: params.provider,
+    api: params.api,
+    baseUrl: params.baseUrl,
+    capability: params.capability,
+    transport: params.transport,
+    callerHeaders: params.callerHeaders,
+    providerHeaders: params.defaultHeaders,
+    precedence: params.precedence,
+    request: params.request,
+  }).headers;
+}
+
+const MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL = Symbol.for(
+  "openclaw.modelProviderRequestTransport",
+);
+
+function attachModelProviderRequestTransport(model, request) {
+  if (!request) {
+    return model;
+  }
+  return {
+    ...model,
+    [MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL]: request,
+  };
+}
+
+function getModelProviderRequestTransport(model) {
+  return model ? model[MODEL_PROVIDER_REQUEST_TRANSPORT_SYMBOL] : undefined;
+}
+
+function resolveProviderHttpRequestConfig(params = {}) {
+  const requestConfig = resolveProviderRequestPolicyConfig({
+    provider: params.provider || "",
+    baseUrl: params.baseUrl,
+    defaultBaseUrl: params.defaultBaseUrl,
+    capability: params.capability || "other",
+    transport: params.transport || "http",
+    callerHeaders: params.headers
+      ? Object.fromEntries(new Headers(params.headers).entries())
+      : undefined,
+    providerHeaders: params.defaultHeaders,
+    precedence: "caller-wins",
+    allowPrivateNetwork: params.allowPrivateNetwork,
+    api: params.api,
+    request: params.request,
+  });
+  const headers = new Headers(requestConfig.headers);
+  if (!requestConfig.baseUrl) {
+    throw new Error("Missing baseUrl: provide baseUrl or defaultBaseUrl");
+  }
+  return {
+    baseUrl: requestConfig.baseUrl,
+    allowPrivateNetwork: requestConfig.allowPrivateNetwork,
+    headers,
+    dispatcherPolicy: buildProviderRequestDispatcherPolicy(requestConfig),
+    requestConfig,
+  };
+}
+
+function sanitizeAuditContext(auditContext) {
+  const cleaned = auditContext
+    ? String(auditContext)
+        .replace(/[\x00-\x1f\x7f]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+  return cleaned ? cleaned.slice(0, 80) : undefined;
+}
+
+function resolveGuardedHttpTimeoutMs(timeoutMs) {
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return 60000;
+  }
+  return timeoutMs;
+}
+
+async function fetchWithTimeoutGuarded(url, init, timeoutMs, fetchFn, options = {}) {
+  return await fetchWithSsrFGuard({
+    url,
+    fetchImpl: fetchFn,
+    init,
+    timeoutMs: resolveGuardedHttpTimeoutMs(timeoutMs),
+    policy: options.ssrfPolicy,
+    lookupFn: options.lookupFn,
+    pinDns: options.pinDns,
+    dispatcherPolicy: options.dispatcherPolicy,
+    auditContext: sanitizeAuditContext(options.auditContext),
+    ...(options.mode ? { mode: options.mode } : {}),
+  });
+}
+
+function resolveGuardedPostRequestOptions(params = {}) {
+  if (
+    !params.allowPrivateNetwork &&
+    !params.dispatcherPolicy &&
+    params.pinDns === undefined &&
+    !params.auditContext &&
+    params.mode === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(params.allowPrivateNetwork ? { ssrfPolicy: { allowPrivateNetwork: true } } : {}),
+    ...(params.pinDns !== undefined ? { pinDns: params.pinDns } : {}),
+    ...(params.dispatcherPolicy ? { dispatcherPolicy: params.dispatcherPolicy } : {}),
+    ...(params.auditContext ? { auditContext: params.auditContext } : {}),
+    ...(params.mode !== undefined ? { mode: params.mode } : {}),
+  };
+}
+
+async function postTranscriptionRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: params.body,
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+async function postJsonRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: JSON.stringify(params.body),
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+async function postMultipartRequest(params = {}) {
+  return fetchWithTimeoutGuarded(
+    params.url,
+    {
+      method: "POST",
+      headers: params.headers,
+      body: params.body,
+    },
+    params.timeoutMs,
+    params.fetchFn,
+    resolveGuardedPostRequestOptions(params),
+  );
+}
+
+function requireTranscriptionText(value, missingMessage) {
+  const text = normalizeOptionalString(value);
+  if (!text) {
+    throw new Error(missingMessage);
+  }
+  return text;
+}
+
+const providerHttpRuntime = {
+  asBoolean,
+  asFiniteNumber,
+  asObject: speechCoreAsObject,
+  assertOkOrThrowHttpError,
+  assertOkOrThrowProviderError,
+  attachModelProviderRequestTransport,
+  buildAudioTranscriptionFormData,
+  buildProviderRequestDispatcherPolicy,
+  buildProviderRequestTlsClientOptions,
+  createProviderHttpError,
+  createProviderOperationDeadline,
+  describeProviderRequestRoutingSummary,
+  extractProviderErrorDetail,
+  extractProviderRequestId,
+  fetchWithTimeout,
+  fetchWithTimeoutGuarded,
+  formatProviderErrorPayload,
+  formatProviderHttpErrorMessage,
+  getModelProviderRequestTransport,
+  listProviderAttributionPolicies,
+  mergeModelProviderRequestOverrides,
+  mergeProviderRequestOverrides,
+  normalizeBaseUrl,
+  pollProviderOperationJson,
+  postJsonRequest,
+  postMultipartRequest,
+  postTranscriptionRequest,
+  readResponseTextLimited,
+  requireTranscriptionText,
+  resolveAudioTranscriptionUploadFileName,
+  resolveProviderAttributionHeaders,
+  resolveProviderAttributionIdentity,
+  resolveProviderAttributionPolicy,
+  resolveProviderEndpoint,
+  resolveProviderHttpRequestConfig,
+  resolveProviderOperationTimeoutMs,
+  resolveProviderRequestAttributionHeaders,
+  resolveProviderRequestCapabilities,
+  resolveProviderRequestConfig,
+  resolveProviderRequestHeaders,
+  resolveProviderRequestPolicy,
+  sanitizeConfiguredModelProviderRequest,
+  sanitizeConfiguredProviderRequest,
+  sanitizeRuntimeProviderRequestOverrides,
+  trimToUndefined: normalizeOptionalString,
+  truncateErrorDetail,
+  waitProviderOperationPollInterval,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -67212,6 +68497,7 @@ const genericSdk = new Proxy(
     ...providerWebSearchContractRuntime,
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
+    ...providerHttpRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
@@ -68715,6 +70001,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-transport-runtime"
   ) {
     return providerTransportRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-http" ||
+    request === "@openclaw/plugin-sdk/provider-http"
+  ) {
+    return providerHttpRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-reply-options-runtime" ||

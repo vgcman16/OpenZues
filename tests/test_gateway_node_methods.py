@@ -36764,6 +36764,438 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_http_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-provider-http.cjs"
+    runtime_entry.write_text(
+        """
+const providerHttp = require("openclaw/plugin-sdk/provider-http");
+const scopedProviderHttp = require("@openclaw/plugin-sdk/provider-http");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.providerHttp",
+      description: "Use OpenClaw provider-http SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let providerError = "";
+        let httpError = "";
+        let forbiddenTls = "";
+        try {
+          await providerHttp.assertOkOrThrowProviderError(
+            new Response(JSON.stringify({
+              error: { message: "rate limited", type: "rate_limit", code: "429" }
+            }), {
+              status: 429,
+              headers: { "x-request-id": "req-provider" }
+            }),
+            "Provider"
+          );
+        } catch (err) {
+          providerError = String(err && err.message ? err.message : err);
+        }
+        try {
+          await providerHttp.assertOkOrThrowHttpError(
+            new Response(JSON.stringify({
+              detail: { message: "bad gateway", type: "upstream", status: "E_UP" }
+            }), {
+              status: 502,
+              headers: { "request-id": "req-http" }
+            }),
+            "Provider request"
+          );
+        } catch (err) {
+          httpError = String(err && err.message ? err.message : err);
+        }
+        try {
+          providerHttp.resolveProviderHttpRequestConfig({
+            defaultBaseUrl: "https://api.example.test",
+            request: { tls: { insecureSkipVerify: true } }
+          });
+        } catch (err) {
+          forbiddenTls = String(err && err.message ? err.message : err);
+        }
+
+        const responseText = await providerHttp.readResponseTextLimited(
+          new Response("abcdef"),
+          4
+        );
+        const form = providerHttp.buildAudioTranscriptionFormData({
+          buffer: Buffer.from("abc"),
+          fileName: "../voice.aac",
+          mime: "audio/aac",
+          fields: { model: "whisper", empty: "   ", count: 2, enabled: true }
+        });
+        const file = form.get("file");
+        const deadline = providerHttp.createProviderOperationDeadline({
+          timeoutMs: 321.9,
+          label: "job"
+        });
+        const remaining = providerHttp.resolveProviderOperationTimeoutMs({
+          deadline,
+          defaultTimeoutMs: 1000
+        });
+        const openDeadline = providerHttp.createProviderOperationDeadline({
+          timeoutMs: 0,
+          label: "job"
+        });
+
+        const pollCalls = [];
+        const polled = await providerHttp.pollProviderOperationJson({
+          url: "https://api.example.test/jobs/1",
+          headers: new Headers({ "x-api": "key" }),
+          deadline: openDeadline,
+          defaultTimeoutMs: 5000,
+          fetchFn: async (url, init) => {
+            pollCalls.push({
+              url,
+              method: init.method,
+              header: init.headers.get("x-api")
+            });
+            return new Response(JSON.stringify(
+              pollCalls.length >= 2 ? { status: "done", value: 42 } : { status: "running" }
+            ), { status: 200 });
+          },
+          maxAttempts: 3,
+          pollIntervalMs: 0,
+          requestFailedMessage: "poll failed",
+          timeoutMessage: "poll timed out",
+          isComplete(payload) {
+            return payload.status === "done";
+          }
+        });
+
+        const postCalls = [];
+        const postResult = await providerHttp.postJsonRequest({
+          url: "https://api.example.test/create",
+          headers: new Headers({ "content-type": "application/json" }),
+          body: { name: "example" },
+          timeoutMs: 100,
+          fetchFn: async (url, init) => {
+            postCalls.push({
+              url,
+              method: init.method,
+              body: init.body,
+              contentType: init.headers.get("content-type")
+            });
+            return new Response(JSON.stringify({ ok: true }), { status: 200 });
+          },
+          pinDns: false,
+          auditContext: "  run\\ncontext  "
+        });
+
+        const headers = providerHttp.resolveProviderRequestHeaders({
+          provider: "openai",
+          api: "openai-responses",
+          callerHeaders: { "x-caller": "caller" },
+          defaultHeaders: { "x-default": "default" },
+          request: {
+            headers: { "x-request": "configured" },
+            auth: { mode: "authorization-bearer", token: " token-1 " }
+          }
+        });
+        const httpConfig = providerHttp.resolveProviderHttpRequestConfig({
+          provider: "custom",
+          api: "openai-completions",
+          baseUrl: " https://api.example.test/v1/ ",
+          defaultBaseUrl: "https://fallback.test",
+          headers: { "x-caller": "caller" },
+          defaultHeaders: { "x-default": "default" },
+          allowPrivateNetwork: true,
+          request: {
+            headers: { "x-request": "configured" },
+            auth: {
+              mode: "header",
+              headerName: "X-Auth",
+              value: " token-2 ",
+              prefix: "Token "
+            },
+            proxy: { mode: "env-proxy", tls: { serverName: "proxy.example.test" } },
+            tls: { serverName: "api.example.test", insecureSkipVerify: false }
+          }
+        });
+        const sanitized = providerHttp.sanitizeConfiguredModelProviderRequest({
+          headers: { "x-keep": " value ", "x-empty": "   " },
+          auth: { mode: "authorization-bearer", token: " token-3 " },
+          proxy: { mode: "explicit-proxy", url: " https://proxy.example.test " },
+          tls: { serverName: " api.example.test ", insecureSkipVerify: false },
+          allowPrivateNetwork: true
+        });
+        const policy = providerHttp.resolveProviderRequestPolicy({
+          provider: "openrouter",
+          api: "openai-completions"
+        });
+        const capabilities = providerHttp.resolveProviderRequestCapabilities({
+          provider: "openai",
+          api: "openai-responses",
+          baseUrl: "https://proxy.example.test/v1",
+          compat: { supportsPromptCacheKey: true }
+        });
+
+        return {
+          keys: Object.keys(providerHttp).filter((key) => [
+            "assertOkOrThrowHttpError",
+            "assertOkOrThrowProviderError",
+            "buildAudioTranscriptionFormData",
+            "createProviderHttpError",
+            "createProviderOperationDeadline",
+            "fetchWithTimeout",
+            "fetchWithTimeoutGuarded",
+            "formatProviderErrorPayload",
+            "normalizeBaseUrl",
+            "pollProviderOperationJson",
+            "postJsonRequest",
+            "resolveProviderHttpRequestConfig",
+            "resolveProviderRequestCapabilities",
+            "resolveProviderRequestHeaders",
+            "resolveProviderRequestPolicy",
+            "sanitizeConfiguredModelProviderRequest"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedProviderHttp.postJsonRequest,
+          errors: { providerError, httpError, forbiddenTls },
+          text: responseText,
+          form: {
+            fileName: file && file.name,
+            fileType: file && file.type,
+            model: form.get("model"),
+            count: form.get("count"),
+            enabled: form.get("enabled"),
+            hasEmpty: form.has("empty")
+          },
+          filenames: [
+            providerHttp.resolveAudioTranscriptionUploadFileName("clip.aac", "audio/aac"),
+            providerHttp.resolveAudioTranscriptionUploadFileName("clip", "audio/aac"),
+            providerHttp.resolveAudioTranscriptionUploadFileName(undefined, "audio/wav")
+          ],
+          deadline: {
+            timeoutMs: deadline.timeoutMs,
+            remainingPositive: remaining > 0 && remaining <= 1000,
+            open: openDeadline
+          },
+          poll: { polled, pollCalls },
+          post: {
+            postCalls,
+            payload: await postResult.response.json(),
+            finalUrl: postResult.finalUrl,
+            releaseType: typeof postResult.release
+          },
+          headers,
+          httpConfig: {
+            baseUrl: httpConfig.baseUrl,
+            allowPrivateNetwork: httpConfig.allowPrivateNetwork,
+            headers: Object.fromEntries(httpConfig.headers.entries()),
+            dispatcherPolicy: httpConfig.dispatcherPolicy,
+            auth: httpConfig.requestConfig.auth,
+            tls: httpConfig.requestConfig.tls,
+            proxy: httpConfig.requestConfig.proxy
+          },
+          sanitized,
+          policy: {
+            provider: policy.provider,
+            endpointClass: policy.endpointClass,
+            knownProviderFamily: policy.knownProviderFamily,
+            attributionProvider: policy.attributionProvider,
+            attributionTitle: policy.attributionHeaders &&
+              policy.attributionHeaders["X-OpenRouter-Title"]
+          },
+          capabilities: {
+            endpointClass: capabilities.endpointClass,
+            usesExplicitProxyLikeEndpoint: capabilities.usesExplicitProxyLikeEndpoint,
+            supportsResponsesStoreField: capabilities.supportsResponsesStoreField,
+            allowsResponsesStore: capabilities.allowsResponsesStore,
+            shouldStripResponsesPromptCache: capabilities.shouldStripResponsesPromptCache
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-http-plugin",
+                    "name": "Runtime Provider HTTP Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-http.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.providerHttp"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.providerHttp"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "assertOkOrThrowHttpError",
+        "assertOkOrThrowProviderError",
+        "buildAudioTranscriptionFormData",
+        "createProviderHttpError",
+        "createProviderOperationDeadline",
+        "fetchWithTimeout",
+        "fetchWithTimeoutGuarded",
+        "formatProviderErrorPayload",
+        "normalizeBaseUrl",
+        "pollProviderOperationJson",
+        "postJsonRequest",
+        "resolveProviderHttpRequestConfig",
+        "resolveProviderRequestCapabilities",
+        "resolveProviderRequestHeaders",
+        "resolveProviderRequestPolicy",
+        "sanitizeConfiguredModelProviderRequest",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["errors"] == {
+        "providerError": (
+            "Provider (429): rate limited "
+            "[type=rate_limit, code=429] [request_id=req-provider]"
+        ),
+        "httpError": (
+            "Provider request (HTTP 502): bad gateway "
+            "[type=upstream, code=E_UP] [request_id=req-http]"
+        ),
+        "forbiddenTls": "Provider transport overrides do not allow insecureSkipVerify",
+    }
+    assert payload["result"]["text"] == "abcd"
+    assert payload["result"]["form"] == {
+        "fileName": "voice.m4a",
+        "fileType": "audio/aac",
+        "model": "whisper",
+        "count": "2",
+        "enabled": "true",
+        "hasEmpty": False,
+    }
+    assert payload["result"]["filenames"] == ["clip.m4a", "clip.m4a", "audio"]
+    assert payload["result"]["deadline"] == {
+        "timeoutMs": 321,
+        "remainingPositive": True,
+        "open": {"label": "job"},
+    }
+    assert payload["result"]["poll"] == {
+        "polled": {"status": "done", "value": 42},
+        "pollCalls": [
+            {
+                "url": "https://api.example.test/jobs/1",
+                "method": "GET",
+                "header": "key",
+            },
+            {
+                "url": "https://api.example.test/jobs/1",
+                "method": "GET",
+                "header": "key",
+            },
+        ],
+    }
+    assert payload["result"]["post"] == {
+        "postCalls": [
+            {
+                "url": "https://api.example.test/create",
+                "method": "POST",
+                "body": '{"name":"example"}',
+                "contentType": "application/json",
+            }
+        ],
+        "payload": {"ok": True},
+        "finalUrl": "https://api.example.test/create",
+        "releaseType": "function",
+    }
+    assert payload["result"]["headers"] == {
+        "Authorization": "Bearer token-1",
+        "x-caller": "caller",
+        "x-default": "default",
+        "x-request": "configured",
+    }
+    assert payload["result"]["httpConfig"] == {
+        "baseUrl": "https://api.example.test/v1",
+        "allowPrivateNetwork": True,
+        "headers": {
+            "x-auth": "Tokentoken-2",
+            "x-caller": "caller",
+            "x-default": "default",
+            "x-request": "configured",
+        },
+        "dispatcherPolicy": {
+            "mode": "env-proxy",
+            "connect": {"servername": "api.example.test", "rejectUnauthorized": True},
+            "proxyTls": {"servername": "proxy.example.test"},
+        },
+        "auth": {
+            "configured": True,
+            "mode": "header",
+            "headerName": "X-Auth",
+            "value": "token-2",
+            "prefix": "Token",
+            "injectAuthorizationHeader": False,
+        },
+        "tls": {
+            "configured": True,
+            "serverName": "api.example.test",
+            "rejectUnauthorized": True,
+        },
+        "proxy": {
+            "configured": True,
+            "mode": "env-proxy",
+            "tls": {"configured": True, "serverName": "proxy.example.test"},
+        },
+    }
+    assert payload["result"]["sanitized"] == {
+        "headers": {"x-keep": "value"},
+        "auth": {"mode": "authorization-bearer", "token": "token-3"},
+        "proxy": {"mode": "explicit-proxy", "url": "https://proxy.example.test"},
+        "tls": {"serverName": "api.example.test", "insecureSkipVerify": False},
+        "allowPrivateNetwork": True,
+    }
+    assert payload["result"]["policy"] == {
+        "provider": "openrouter",
+        "endpointClass": "default",
+        "knownProviderFamily": "openrouter",
+        "attributionProvider": "openrouter",
+        "attributionTitle": "OpenClaw",
+    }
+    assert payload["result"]["capabilities"] == {
+        "endpointClass": "custom",
+        "usesExplicitProxyLikeEndpoint": True,
+        "supportsResponsesStoreField": True,
+        "allowsResponsesStore": False,
+        "shouldStripResponsesPromptCache": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
