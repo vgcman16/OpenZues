@@ -40827,6 +40827,90 @@ const videoGenerationCoreRuntime = {
   throwCapabilityGenerationFailure,
 };
 
+function parseImageGenerationModelRef(raw) {
+  return parseGenerationModelRef(raw);
+}
+
+function parseGeminiAuth(apiKey) {
+  const key = String(apiKey || "");
+  if (key.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(key);
+      if (parsed && typeof parsed.token === "string" && parsed.token) {
+        return {
+          headers: {
+            Authorization: `Bearer ${parsed.token}`,
+            "Content-Type": "application/json",
+          },
+        };
+      }
+    } catch (_error) {
+      // Fall through to API key auth, matching OpenClaw's permissive parser.
+    }
+  }
+  return {
+    headers: {
+      "x-goog-api-key": key,
+      "Content-Type": "application/json",
+    },
+  };
+}
+
+const UNSAFE_IMAGE_GENERATION_PROVIDER_IDS = new Set(["__proto__", "constructor", "prototype"]);
+
+function normalizeImageGenerationProviderId(id) {
+  const normalized = normalizeOptionalLowercaseString(id || "");
+  if (!normalized || UNSAFE_IMAGE_GENERATION_PROVIDER_IDS.has(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function listImageGenerationProviders(cfg) {
+  if (cfg && cfg.plugins && cfg.plugins.enabled === false) {
+    return [];
+  }
+  return [];
+}
+
+function getImageGenerationProvider(providerId, cfg) {
+  const normalized = normalizeImageGenerationProviderId(providerId);
+  if (!normalized) {
+    return undefined;
+  }
+  const providers = listImageGenerationProviders(cfg);
+  return providers.find((provider) => {
+    const id = normalizeImageGenerationProviderId(provider && provider.id);
+    if (id === normalized) {
+      return true;
+    }
+    return Array.isArray(provider && provider.aliases)
+      ? provider.aliases.some((alias) => normalizeImageGenerationProviderId(alias) === normalized)
+      : false;
+  });
+}
+
+const OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-2";
+
+const imageGenerationCoreRuntime = {
+  OPENAI_DEFAULT_IMAGE_MODEL,
+  buildNoCapabilityModelConfiguredMessage,
+  createSubsystemLogger,
+  describeFailoverError,
+  getImageGenerationProvider,
+  getProviderEnvVars,
+  isFailoverError,
+  listImageGenerationProviders,
+  normalizeGoogleModelId: normalizeGooglePreviewModelId,
+  parseGeminiAuth,
+  parseImageGenerationModelRef,
+  resolveAgentModelFallbackValues,
+  resolveAgentModelPrimaryValue,
+  resolveApiKeyForProvider,
+  resolveCapabilityModelCandidates,
+  throwCapabilityGenerationFailure,
+};
+
 const providerAuthApiKeyRuntime = {
   applyAuthProfileConfig,
   buildApiKeyCredential,
@@ -53105,6 +53189,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/image-generation-core.auth.runtime"
   ) {
     return imageGenerationCoreAuthRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/image-generation-core" ||
+    request === "@openclaw/plugin-sdk/image-generation-core"
+  ) {
+    return imageGenerationCoreRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/speech-core" ||

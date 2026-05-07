@@ -13533,6 +13533,234 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_image_generation_core_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-image-generation-core.cjs"
+    runtime_entry.write_text(
+        """
+const image = require("openclaw/plugin-sdk/image-generation-core");
+const scopedImage = require("@openclaw/plugin-sdk/image-generation-core");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.image_generation_core",
+      description: "Use OpenClaw image-generation-core SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        let failureMessage = "";
+        try {
+          image.throwCapabilityGenerationFailure({
+            capabilityLabel: "image generation",
+            attempts: [
+              { provider: "openai", model: "gpt-image-2", error: "quota" },
+              { provider: "google", model: "gemini", error: "auth" }
+            ],
+            lastError: new Error("auth")
+          });
+        } catch (err) {
+          failureMessage = String(err && err.message ? err.message : err);
+        }
+        const cfg = {
+          agents: { defaults: { mediaGenerationAutoProviderFallback: true } },
+          plugins: { enabled: false }
+        };
+        const candidates = image.resolveCapabilityModelCandidates({
+          cfg,
+          modelConfig: {
+            primary: "openai/gpt-image-2",
+            fallbacks: [" google/gemini-3-pro ", "bad", "openai/gpt-image-2"]
+          },
+          parseModelRef: image.parseImageGenerationModelRef
+        });
+        const noModelMessage = image.buildNoCapabilityModelConfiguredMessage({
+          capabilityLabel: "image generation",
+          modelConfigKey: "imageGeneration",
+          providers: [{ id: "openai", defaultModel: image.OPENAI_DEFAULT_IMAGE_MODEL }]
+        });
+        const failoverLike = {
+          name: "FailoverError",
+          message: "quota exceeded",
+          reason: "billing",
+          status: 402,
+          code: "billing",
+          provider: "openai",
+          model: "gpt-image-2"
+        };
+        return {
+          keys: Object.keys(image).sort(),
+          scopedType: typeof scopedImage.parseImageGenerationModelRef,
+          defaultModel: image.OPENAI_DEFAULT_IMAGE_MODEL,
+          refs: {
+            parsed: image.parseImageGenerationModelRef(" openai/gpt-image-2 "),
+            invalid: image.parseImageGenerationModelRef("missing-slash")
+          },
+          models: {
+            candidates,
+            google: image.normalizeGoogleModelId("gemini-3.1-flash-preview")
+          },
+          providers: {
+            listDisabled: image.listImageGenerationProviders(cfg).length,
+            missing: image.getImageGenerationProvider("missing", cfg) ?? null,
+            envVars: image.getProviderEnvVars("openai")
+          },
+          auth: {
+            apiKey: image.parseGeminiAuth("plain-key"),
+            oauth: image.parseGeminiAuth(JSON.stringify({ token: "oauth-token" })),
+            invalidJson: image.parseGeminiAuth("{not-json"),
+            resolved: await image.resolveApiKeyForProvider({ provider: "openai" })
+          },
+          messages: { noModelMessage, failureMessage },
+          failover: {
+            isFailover: image.isFailoverError(failoverLike),
+            described: image.describeFailoverError(failoverLike)
+          },
+          loggerType: typeof image.createSubsystemLogger("image/generation").info
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "image-generation-core-plugin",
+                    "name": "Image Generation Core Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-image-generation-core.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.image_generation_core"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.image_generation_core"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "OPENAI_DEFAULT_IMAGE_MODEL",
+            "buildNoCapabilityModelConfiguredMessage",
+            "createSubsystemLogger",
+            "describeFailoverError",
+            "getImageGenerationProvider",
+            "getProviderEnvVars",
+            "isFailoverError",
+            "listImageGenerationProviders",
+            "normalizeGoogleModelId",
+            "parseGeminiAuth",
+            "parseImageGenerationModelRef",
+            "resolveAgentModelFallbackValues",
+            "resolveAgentModelPrimaryValue",
+            "resolveApiKeyForProvider",
+            "resolveCapabilityModelCandidates",
+            "throwCapabilityGenerationFailure",
+        ],
+        "scopedType": "function",
+        "defaultModel": "gpt-image-2",
+        "refs": {
+            "parsed": {"provider": "openai", "model": "gpt-image-2"},
+            "invalid": None,
+        },
+        "models": {
+            "candidates": [
+                {"provider": "openai", "model": "gpt-image-2"},
+                {"provider": "google", "model": "gemini-3-pro"},
+            ],
+            "google": "gemini-3-flash-preview",
+        },
+        "providers": {
+            "listDisabled": 0,
+            "missing": None,
+            "envVars": ["OPENAI_API_KEY"],
+        },
+        "auth": {
+            "apiKey": {
+                "headers": {
+                    "x-goog-api-key": "plain-key",
+                    "Content-Type": "application/json",
+                }
+            },
+            "oauth": {
+                "headers": {
+                    "Authorization": "Bearer oauth-token",
+                    "Content-Type": "application/json",
+                }
+            },
+            "invalidJson": {
+                "headers": {
+                    "x-goog-api-key": "{not-json",
+                    "Content-Type": "application/json",
+                }
+            },
+            "resolved": None,
+        },
+        "messages": {
+            "noModelMessage": (
+                "No image generation model configured. Set "
+                'agents.defaults.imageGeneration.primary to a provider/model like '
+                '"openai/gpt-image-2". If you want a specific provider, also '
+                "configure that provider's auth/API key first "
+                "(openai: OPENAI_API_KEY)."
+            ),
+            "failureMessage": (
+                "All image generation models failed (2): openai/gpt-image-2: "
+                "quota | google/gemini: auth"
+            ),
+        },
+        "failover": {
+            "isFailover": True,
+            "described": {
+                "message": "quota exceeded",
+                "reason": "billing",
+                "status": 402,
+                "code": "billing",
+                "provider": "openai",
+                "model": "gpt-image-2",
+            },
+        },
+        "loggerType": "function",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_provider_auth_api_key_helpers(
     tmp_path,
 ) -> None:
