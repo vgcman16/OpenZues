@@ -24786,6 +24786,328 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_migration_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    migration_root = tmp_path / "migration-runtime-root"
+    runtime_entry = tmp_path / "runtime-plugin-migration-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const migration = require("openclaw/plugin-sdk/migration-runtime");
+const scopedMigration = require("@openclaw/plugin-sdk/migration-runtime");
+
+const root = {json.dumps(str(migration_root))};
+
+async function writeFile(filePath, contents) {{
+  await fs.mkdir(path.dirname(filePath), {{ recursive: true }});
+  await fs.writeFile(filePath, contents, "utf8");
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.migration_runtime",
+      description: "Use OpenClaw migration runtime SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        await fs.rm(root, {{ recursive: true, force: true }});
+        const reportDir = path.join(root, "report");
+        const sourceOne = path.join(root, "source-one", "AGENTS.md");
+        const sourceTwo = path.join(root, "source-two", "AGENTS.md");
+        const sourceThree = path.join(root, "source-three", "NOTES.md");
+        const targetOne = path.join(root, "target-one", "AGENTS.md");
+        const targetTwo = path.join(root, "target-two", "AGENTS.md");
+        const targetConflict = path.join(root, "target-conflict", "AGENTS.md");
+        await writeFile(sourceOne, "new one");
+        await writeFile(sourceTwo, "new two");
+        await writeFile(sourceThree, "archive me");
+        await writeFile(targetOne, "old one");
+        await writeFile(targetTwo, "old two");
+        await writeFile(targetConflict, "already here");
+
+        const originalNow = Date.now;
+        Date.now = () => 123;
+        let first;
+        let second;
+        try {{
+          first = await migration.copyMigrationFileItem({{
+            id: "first",
+            kind: "file",
+            action: "copy",
+            status: "planned",
+            source: sourceOne,
+            target: targetOne
+          }}, reportDir, {{ overwrite: true }});
+          second = await scopedMigration.copyMigrationFileItem({{
+            id: "second",
+            kind: "file",
+            action: "copy",
+            status: "planned",
+            source: sourceTwo,
+            target: targetTwo
+          }}, reportDir, {{ overwrite: true }});
+        }} finally {{
+          Date.now = originalNow;
+        }}
+
+        const conflict = await migration.copyMigrationFileItem({{
+          id: "conflict",
+          kind: "file",
+          action: "copy",
+          status: "planned",
+          source: sourceOne,
+          target: targetConflict
+        }}, reportDir);
+        const missing = await migration.copyMigrationFileItem({{
+          id: "missing",
+          kind: "file",
+          action: "copy",
+          status: "planned",
+          source: sourceOne
+        }}, reportDir);
+        const archived = await migration.archiveMigrationItem({{
+          id: "archive",
+          kind: "file",
+          action: "archive",
+          status: "planned",
+          source: sourceThree,
+          details: {{ archiveRelativePath: "../safe/NOTES.md" }}
+        }}, reportDir);
+
+        await migration.writeMigrationReport({{
+          providerId: "hermes",
+          source: path.join(root, "hermes"),
+          target: path.join(root, "openzues"),
+          summary: {{
+            total: 1,
+            planned: 0,
+            migrated: 1,
+            skipped: 0,
+            conflicts: 0,
+            errors: 0,
+            sensitive: 0
+          }},
+          items: [{{
+            id: "config:mcp-servers",
+            kind: "config",
+            action: "merge",
+            status: "migrated",
+            details: {{
+              value: {{
+                mcp: {{
+                  env: {{
+                    OPENAI_API_KEY: "short-dev-key",
+                    SAFE_FLAG: "visible"
+                  }},
+                  headers: {{
+                    Authorization: "Bearer short-dev-key",
+                    "x-api-key": "another-short-dev-key"
+                  }}
+                }}
+              }}
+            }}
+          }}],
+          reportDir
+        }}, {{ title: "Hermes Migration" }});
+
+        const fallbackConfig = {{
+          agents: {{ defaults: {{ model: {{ primary: "openai/base" }} }} }}
+        }};
+        let runtimeConfig = structuredClone(fallbackConfig);
+        let currentCalls = 0;
+        const wrapped = migration.withCachedMigrationConfigRuntime({{
+          config: {{
+            current() {{
+              currentCalls += 1;
+              return runtimeConfig;
+            }},
+            async mutateConfigFile(params) {{
+              const draft = structuredClone(runtimeConfig);
+              const result = await params.mutate(draft, {{
+                snapshot: {{}},
+                previousHash: null
+              }});
+              runtimeConfig = structuredClone(draft);
+              return {{
+                path: "/tmp/openclaw.json",
+                previousHash: null,
+                snapshot: {{}},
+                nextConfig: runtimeConfig,
+                afterWrite: {{ mode: "auto" }},
+                followUp: {{ mode: "auto", requiresRestart: false }},
+                result
+              }};
+            }},
+            async replaceConfigFile(params) {{
+              runtimeConfig = structuredClone(params.nextConfig);
+              return {{
+                path: "/tmp/openclaw.json",
+                previousHash: null,
+                snapshot: {{}},
+                nextConfig: runtimeConfig,
+                afterWrite: {{ mode: "auto" }},
+                followUp: {{ mode: "auto", requiresRestart: false }}
+              }};
+            }}
+          }}
+        }}, fallbackConfig);
+        const initialConfig = wrapped.config.current();
+        runtimeConfig = {{ agents: {{ defaults: {{ model: {{ primary: "openai/external" }} }} }} }};
+        await wrapped.config.mutateConfigFile({{
+          base: "runtime",
+          afterWrite: {{ mode: "auto" }},
+          mutate(draft) {{
+            draft.agents.defaults.model.primary = "openai/mutated";
+          }}
+        }});
+        const afterMutate = wrapped.config.current();
+        await wrapped.config.replaceConfigFile({{
+          nextConfig: {{ agents: {{ defaults: {{ model: {{ primary: "openai/replaced" }} }} }} }},
+          afterWrite: {{ mode: "auto" }}
+        }});
+        const afterReplace = wrapped.config.current();
+
+        const report = JSON.parse(await fs.readFile(path.join(reportDir, "report.json"), "utf8"));
+        const summary = await fs.readFile(path.join(reportDir, "summary.md"), "utf8");
+        const firstBackup = first.details.backupPath;
+        const secondBackup = second.details.backupPath;
+        return {{
+          keys: Object.keys(migration).sort(),
+          scopedSame: scopedMigration.copyMigrationFileItem === migration.copyMigrationFileItem,
+          copied: {{
+            firstStatus: first.status,
+            secondStatus: second.status,
+            backupParentsDifferent: path.dirname(firstBackup) !== path.dirname(secondBackup),
+            backupTexts: [
+              await fs.readFile(firstBackup, "utf8"),
+              await fs.readFile(secondBackup, "utf8")
+            ],
+            targetTexts: [
+              await fs.readFile(targetOne, "utf8"),
+              await fs.readFile(targetTwo, "utf8")
+            ]
+          }},
+          conflict: {{ status: conflict.status, reason: conflict.reason }},
+          missing: {{ status: missing.status, reason: missing.reason }},
+          archived: {{
+            status: archived.status,
+            text: await fs.readFile(archived.details.archivePath, "utf8"),
+            relativePath: archived.details.archiveRelativePath.split(path.sep).join("/")
+          }},
+          report: {{
+            redacted: report.items[0].details.value.mcp,
+            summaryIncludesTitle: summary.includes("# Hermes Migration"),
+            summaryIncludesMigrated: summary.includes("Migrated: 1")
+          }},
+          cache: {{
+            initial: initialConfig.agents.defaults.model.primary,
+            afterMutate: afterMutate.agents.defaults.model.primary,
+            afterReplace: afterReplace.agents.defaults.model.primary,
+            currentCalls
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "migration-runtime-plugin",
+                    "name": "Migration Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-migration-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.migration_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.migration_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "archiveMigrationItem",
+            "copyMigrationFileItem",
+            "withCachedMigrationConfigRuntime",
+            "writeMigrationReport",
+        ],
+        "scopedSame": True,
+        "copied": {
+            "firstStatus": "migrated",
+            "secondStatus": "migrated",
+            "backupParentsDifferent": True,
+            "backupTexts": ["old one", "old two"],
+            "targetTexts": ["new one", "new two"],
+        },
+        "conflict": {"status": "conflict", "reason": "target exists"},
+        "missing": {"status": "error", "reason": "missing source or target"},
+        "archived": {
+            "status": "migrated",
+            "text": "archive me",
+            "relativePath": "safe/NOTES.md",
+        },
+        "report": {
+            "redacted": {
+                "env": {
+                    "OPENAI_API_KEY": "[redacted]",
+                    "SAFE_FLAG": "visible",
+                },
+                "headers": {
+                    "Authorization": "[redacted]",
+                    "x-api-key": "[redacted]",
+                },
+            },
+            "summaryIncludesTitle": True,
+            "summaryIncludesMigrated": True,
+        },
+        "cache": {
+            "initial": "openai/base",
+            "afterMutate": "openai/mutated",
+            "afterReplace": "openai/replaced",
+            "currentCalls": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_conversation_binding_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -46832,6 +46832,323 @@ const deliveryQueueRuntime = {
   drainPendingDeliveries,
 };
 
+const MIGRATION_REASON_MISSING_SOURCE_OR_TARGET = "missing source or target";
+const MIGRATION_REASON_TARGET_EXISTS = "target exists";
+const REDACTED_MIGRATION_VALUE = "[redacted]";
+const MIGRATION_SECRET_KEY_MARKERS = [
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "bearertoken",
+  "clientsecret",
+  "cookie",
+  "credential",
+  "password",
+  "privatekey",
+  "refreshtoken",
+  "secret",
+];
+const MIGRATION_SECRET_VALUE_PATTERNS = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gu,
+  /\bsk-[A-Za-z0-9_-]{8,}\b/gu,
+  /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/gu,
+  /\bxox[abprs]-[A-Za-z0-9-]{8,}\b/gu,
+  /\bAIza[0-9A-Za-z_-]{12,}\b/gu,
+];
+
+function cloneMigrationValue(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function markMigrationItemConflict(item, reason) {
+  return { ...item, status: "conflict", reason };
+}
+
+function markMigrationItemError(item, reason) {
+  return { ...item, status: "error", reason };
+}
+
+function isMigrationRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeMigrationSecretKey(key) {
+  return String(key || "").toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
+}
+
+function isMigrationSecretKey(key) {
+  const normalized = normalizeMigrationSecretKey(key);
+  if (normalized === "token" || normalized.endsWith("token")) {
+    return true;
+  }
+  if (normalized === "auth" || normalized === "authorization") {
+    return true;
+  }
+  return MIGRATION_SECRET_KEY_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function isMigrationSecretReferenceLike(value) {
+  return (
+    isMigrationRecord(value) &&
+    value.source === "env" &&
+    typeof value.id === "string" &&
+    (value.provider === undefined || typeof value.provider === "string")
+  );
+}
+
+function redactMigrationString(value) {
+  let next = value;
+  for (const pattern of MIGRATION_SECRET_VALUE_PATTERNS) {
+    next = next.replace(pattern, REDACTED_MIGRATION_VALUE);
+  }
+  return next;
+}
+
+function redactMigrationValueInternal(value, seen) {
+  if (typeof value === "string") {
+    return redactMigrationString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactMigrationValueInternal(entry, seen));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (seen.has(value)) {
+    return REDACTED_MIGRATION_VALUE;
+  }
+  seen.add(value);
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isMigrationSecretKey(key) && !isMigrationSecretReferenceLike(entry)) {
+      next[key] = REDACTED_MIGRATION_VALUE;
+    } else {
+      next[key] = redactMigrationValueInternal(entry, seen);
+    }
+  }
+  return next;
+}
+
+function redactMigrationPlan(plan) {
+  return redactMigrationValueInternal(plan, new WeakSet());
+}
+
+async function migrationPathExists(filePath) {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isMigrationFileAlreadyExistsError(err) {
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      (err.code === "ERR_FS_CP_EEXIST" || err.code === "EEXIST"),
+  );
+}
+
+async function backupExistingMigrationTarget(target, reportDir) {
+  if (!(await migrationPathExists(target))) {
+    return undefined;
+  }
+  const backupRoot = path.join(reportDir, "item-backups");
+  await fs.promises.mkdir(backupRoot, { recursive: true });
+  const targetHash = crypto
+    .createHash("sha256")
+    .update(path.resolve(target))
+    .digest("hex")
+    .slice(0, 12);
+  const backupDir = await fs.promises.mkdtemp(
+    path.join(backupRoot, `${Date.now()}-${targetHash}-${path.basename(target)}-`),
+  );
+  const backupPath = path.join(backupDir, path.basename(target));
+  await fs.promises.cp(target, backupPath, { recursive: true, force: true });
+  return backupPath;
+}
+
+function readArchiveMigrationRelativePath(item) {
+  const detailPath = item.details && item.details.archiveRelativePath;
+  const raw = typeof detailPath === "string" && detailPath.trim() ? detailPath : undefined;
+  const fallback = item.source ? path.basename(item.source) : item.id;
+  const normalized = path
+    .normalize(raw || fallback)
+    .split(path.sep)
+    .filter((part) => part && part !== "." && part !== "..")
+    .join(path.sep);
+  return normalized || "item";
+}
+
+async function resolveUniqueArchiveMigrationPath(archiveRoot, relativePath) {
+  const parsed = path.parse(relativePath);
+  let candidate = path.join(archiveRoot, relativePath);
+  let index = 2;
+  while (await migrationPathExists(candidate)) {
+    const filename = `${parsed.name}-${index}${parsed.ext}`;
+    candidate = path.join(archiveRoot, parsed.dir, filename);
+    index += 1;
+  }
+  return candidate;
+}
+
+async function archiveMigrationItem(item, reportDir) {
+  if (!item.source) {
+    return markMigrationItemError(item, MIGRATION_REASON_MISSING_SOURCE_OR_TARGET);
+  }
+  try {
+    const sourceStat = await fs.promises.lstat(item.source);
+    if (sourceStat.isSymbolicLink()) {
+      return markMigrationItemError(item, "archive source is a symlink");
+    }
+    const archiveRoot = path.join(reportDir, "archive");
+    const relativePath = readArchiveMigrationRelativePath(item);
+    const archivePath = await resolveUniqueArchiveMigrationPath(archiveRoot, relativePath);
+    await fs.promises.mkdir(path.dirname(archivePath), { recursive: true });
+    await fs.promises.cp(item.source, archivePath, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      verbatimSymlinks: true,
+    });
+    return {
+      ...item,
+      status: "migrated",
+      target: archivePath,
+      details: { ...(item.details || {}), archivePath, archiveRelativePath: relativePath },
+    };
+  } catch (err) {
+    if (isMigrationFileAlreadyExistsError(err)) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function copyMigrationFileItem(item, reportDir, opts = {}) {
+  if (!item.source || !item.target) {
+    return markMigrationItemError(item, MIGRATION_REASON_MISSING_SOURCE_OR_TARGET);
+  }
+  try {
+    const targetExists = await migrationPathExists(item.target);
+    if (targetExists && !opts.overwrite) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    const backupPath = opts.overwrite
+      ? await backupExistingMigrationTarget(item.target, reportDir)
+      : undefined;
+    await fs.promises.mkdir(path.dirname(item.target), { recursive: true });
+    await fs.promises.cp(item.source, item.target, {
+      recursive: true,
+      force: Boolean(opts.overwrite),
+      errorOnExist: !opts.overwrite,
+    });
+    return {
+      ...item,
+      status: "migrated",
+      details: { ...(item.details || {}), ...(backupPath ? { backupPath } : {}) },
+    };
+  } catch (err) {
+    if (isMigrationFileAlreadyExistsError(err)) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function writeMigrationReport(result, opts = {}) {
+  if (!result.reportDir) {
+    return;
+  }
+  await fs.promises.mkdir(result.reportDir, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(result.reportDir, "report.json"),
+    `${JSON.stringify(redactMigrationPlan(result), null, 2)}\n`,
+    "utf8",
+  );
+  const lines = [
+    `# ${opts.title || "Migration Report"}`,
+    "",
+    `Source: ${result.source}`,
+    result.target ? `Target: ${result.target}` : undefined,
+    result.backupPath ? `Backup: ${result.backupPath}` : undefined,
+    "",
+    `Migrated: ${result.summary.migrated}`,
+    `Skipped: ${result.summary.skipped}`,
+    `Conflicts: ${result.summary.conflicts}`,
+    `Errors: ${result.summary.errors}`,
+    "",
+    ...(Array.isArray(result.items) ? result.items : []).map(
+      (item) => `- ${item.status}: ${item.id}${item.reason ? ` (${item.reason})` : ""}`,
+    ),
+  ].filter((line) => typeof line === "string");
+  await fs.promises.writeFile(
+    path.join(result.reportDir, "summary.md"),
+    `${lines.join("\n")}\n`,
+    "utf8",
+  );
+}
+
+function withCachedMigrationConfigRuntime(runtime, fallbackConfig) {
+  if (!runtime) {
+    return undefined;
+  }
+  const configApi = runtime.config;
+  if (
+    !configApi ||
+    typeof configApi.current !== "function" ||
+    typeof configApi.mutateConfigFile !== "function"
+  ) {
+    return runtime;
+  }
+  let cachedConfig;
+  const current = () => {
+    if (cachedConfig === undefined) {
+      cachedConfig = cloneMigrationValue(configApi.current() || fallbackConfig);
+    }
+    return cachedConfig;
+  };
+  return {
+    ...runtime,
+    config: {
+      ...runtime.config,
+      current,
+      mutateConfigFile: async (params) => {
+        const result = await configApi.mutateConfigFile({
+          ...params,
+          mutate: async (draft, context) => {
+            const mutationResult = await params.mutate(draft, context);
+            cachedConfig = cloneMigrationValue(draft);
+            return mutationResult;
+          },
+        });
+        cachedConfig = cloneMigrationValue(result.nextConfig);
+        return result;
+      },
+      ...(typeof configApi.replaceConfigFile === "function"
+        ? {
+            replaceConfigFile: async (params) => {
+              const result = await configApi.replaceConfigFile(params);
+              cachedConfig = cloneMigrationValue(result.nextConfig);
+              return result;
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+const migrationRuntime = {
+  archiveMigrationItem,
+  copyMigrationFileItem,
+  withCachedMigrationConfigRuntime,
+  writeMigrationReport,
+};
+
 const providerAuthResultRuntime = {
   buildAuthProfileId,
   buildOauthProviderAuthResult,
@@ -71661,6 +71978,7 @@ const genericSdk = new Proxy(
     ...sessionStoreRuntime,
     ...outboundRuntime,
     ...deliveryQueueRuntime,
+    ...migrationRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -72733,6 +73051,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/delivery-queue-runtime"
   ) {
     return deliveryQueueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/migration-runtime" ||
+    request === "@openclaw/plugin-sdk/migration-runtime"
+  ) {
+    return migrationRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
