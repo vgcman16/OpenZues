@@ -40533,6 +40533,138 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_open_prose_plugin_entry(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-open-prose.cjs"
+    runtime_entry.write_text(
+        """
+const openProse = require("openclaw/plugin-sdk/open-prose");
+const scopedOpenProse = require("@openclaw/plugin-sdk/open-prose");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.open_prose",
+      description: "Use OpenClaw open-prose plugin entry helper",
+      parameters: { type: "object" },
+      async execute() {
+        let configCalls = 0;
+        const schema = { type: "object", marker: "schema" };
+        const reload = { paths: ["open-prose.md"] };
+        const nodeHostCommands = [{ name: "open-prose.preview" }];
+        const securityAuditCollectors = [{ id: "open-prose.audit" }];
+        const register = () => {};
+        const entry = openProse.definePluginEntry({
+          id: "open-prose-test",
+          name: "Open Prose Test",
+          description: "Open prose exact runtime entry",
+          kind: "tool",
+          configSchema: () => {
+            configCalls += 1;
+            return schema;
+          },
+          reload,
+          nodeHostCommands,
+          securityAuditCollectors,
+          register
+        });
+        const configCallsBefore = configCalls;
+        const firstSchema = entry.configSchema;
+        const secondSchema = entry.configSchema;
+        return {
+          keys: Object.keys(openProse).sort(),
+          scopedSame:
+            scopedOpenProse.definePluginEntry === openProse.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            kind: entry.kind,
+            hasReload: entry.reload === reload,
+            nodeHostCommands: entry.nodeHostCommands,
+            securityAuditCollectors: entry.securityAuditCollectors,
+            registerSame: entry.register === register,
+            configCallsBefore,
+            configCallsAfter: configCalls,
+            cachedSchema: firstSchema === secondSchema && firstSchema.marker === "schema"
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-open-prose-plugin",
+                    "name": "Runtime Open Prose Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-open-prose.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.open_prose"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.open_prose"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["definePluginEntry"],
+        "scopedSame": True,
+        "entry": {
+            "id": "open-prose-test",
+            "name": "Open Prose Test",
+            "description": "Open prose exact runtime entry",
+            "kind": "tool",
+            "hasReload": True,
+            "nodeHostCommands": [{"name": "open-prose.preview"}],
+            "securityAuditCollectors": [{"id": "open-prose.audit"}],
+            "registerSame": True,
+            "configCallsBefore": 0,
+            "configCallsAfter": 1,
+            "cachedSchema": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

@@ -21775,6 +21775,11 @@ function definePluginEntry(options) {
     name: options.name,
     description: options.description,
     ...(options.kind ? { kind: options.kind } : {}),
+    ...(options.reload ? { reload: options.reload } : {}),
+    ...(options.nodeHostCommands ? { nodeHostCommands: options.nodeHostCommands } : {}),
+    ...(options.securityAuditCollectors
+      ? { securityAuditCollectors: options.securityAuditCollectors }
+      : {}),
     get configSchema() {
       return getConfigSchema();
     },
@@ -39988,6 +39993,10 @@ const providerEntryRuntime = {
   createProviderApiKeyAuthMethod,
   definePluginEntry,
   defineSingleProviderPluginEntry,
+};
+
+const openProseRuntime = {
+  definePluginEntry,
 };
 
 const providerEnableConfigRuntime = {
@@ -62193,6 +62202,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-enable-config"
   ) {
     return providerEnableConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/open-prose" ||
+    request === "@openclaw/plugin-sdk/open-prose"
+  ) {
+    return openProseRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-fetch-contract" ||
