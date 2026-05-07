@@ -41186,6 +41186,396 @@ module.exports = {{
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_facade_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    fake_binary = tmp_path / "setup-tool.exe"
+    fake_binary.write_text("", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-setup-facade.cjs"
+    runtime_entry.write_text(
+        f"""
+const setup = require("openclaw/plugin-sdk/setup");
+const scopedSetup = require("@openclaw/plugin-sdk/setup");
+
+const expectedKeys = [
+  "DEFAULT_ACCOUNT_ID",
+  "addWildcardAllowFrom",
+  "applyAccountNameToChannelSection",
+  "applySetupAccountConfigPatch",
+  "buildSingleChannelSecretPromptState",
+  "createAccountScopedAllowFromSection",
+  "createAccountScopedGroupAccessSection",
+  "createAllowFromSection",
+  "createAllowlistSetupWizardProxy",
+  "createCliPathTextInput",
+  "createDelegatedFinalize",
+  "createDelegatedPrepare",
+  "createDelegatedResolveConfigured",
+  "createDelegatedSetupWizardProxy",
+  "createDelegatedSetupWizardStatusResolvers",
+  "createDelegatedTextInputShouldPrompt",
+  "createDetectedBinaryStatus",
+  "createEnvPatchedAccountSetupAdapter",
+  "createLegacyCompatChannelDmPolicy",
+  "createNestedChannelAllowFromSetter",
+  "createNestedChannelDmPolicy",
+  "createNestedChannelDmPolicySetter",
+  "createNestedChannelParsedAllowFromPrompt",
+  "createPatchedAccountSetupAdapter",
+  "createPromptParsedAllowFromForAccount",
+  "createSetupInputPresenceValidator",
+  "createStandardChannelSetupStatus",
+  "createTopLevelChannelAllowFromSetter",
+  "createTopLevelChannelDmPolicy",
+  "createTopLevelChannelDmPolicySetter",
+  "createTopLevelChannelGroupPolicySetter",
+  "createTopLevelChannelParsedAllowFromPrompt",
+  "createZodSetupInputValidator",
+  "detectBinary",
+  "formatCliCommand",
+  "formatDocsLink",
+  "formatResolvedUnresolvedNote",
+  "hasConfiguredSecretInput",
+  "mergeAllowFromEntries",
+  "migrateBaseNameToDefaultAccount",
+  "moveSingleAccountChannelSectionToDefaultAccount",
+  "normalizeAccountId",
+  "normalizeAllowFromEntries",
+  "normalizeE164",
+  "normalizeSecretInputString",
+  "noteChannelLookupFailure",
+  "noteChannelLookupSummary",
+  "parseMentionOrPrefixedId",
+  "parseSetupEntriesAllowingWildcard",
+  "parseSetupEntriesWithParser",
+  "patchChannelConfigForAccount",
+  "patchNestedChannelConfigSection",
+  "patchScopedAccountConfig",
+  "patchTopLevelChannelConfigSection",
+  "pathExists",
+  "prepareScopedSetupConfig",
+  "promptAccountId",
+  "promptChannelAccessConfig",
+  "promptLegacyChannelAllowFrom",
+  "promptLegacyChannelAllowFromForAccount",
+  "promptParsedAllowFromForAccount",
+  "promptParsedAllowFromForScopedChannel",
+  "promptResolvedAllowFrom",
+  "promptSingleChannelSecretInput",
+  "resolveEntriesWithOptionalToken",
+  "resolveGroupAllowlistWithLookupNotes",
+  "resolveParsedAllowFromEntries",
+  "resolveSetupAccountId",
+  "runSingleChannelSecretStep",
+  "setAccountAllowFromForChannel",
+  "setAccountDmAllowFromForChannel",
+  "setAccountGroupPolicyForChannel",
+  "setChannelDmPolicyWithAllowFrom",
+  "setLegacyChannelDmPolicyWithAllowFrom",
+  "setNestedChannelAllowFrom",
+  "setNestedChannelDmPolicyWithAllowFrom",
+  "setSetupChannelEnabled",
+  "setTopLevelChannelAllowFrom",
+  "setTopLevelChannelDmPolicyWithAllowFrom",
+  "setTopLevelChannelGroupPolicy",
+  "splitSetupEntries"
+];
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.setupFacade",
+      description: "Use OpenClaw setup SDK facade shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const cfg = {{
+          channels: {{
+            discord: {{
+              name: "Legacy",
+              token: "old",
+              allowFrom: ["u1"],
+              rooms: {{ policy: "disabled", allowFrom: ["r1"] }}
+            }},
+            telegram: {{}}
+          }}
+        }};
+        const loadWizard = async () => ({{
+          status: {{
+            resolveConfigured: () => true,
+            resolveStatusLines: () => ["loaded"],
+            resolveSelectionHint: () => "hint",
+            resolveQuickstartScore: () => 4
+          }},
+          prepare: async () => "prepared",
+          finalize: async () => "done",
+          textInputs: [{{ inputKey: "cliPath", shouldPrompt: () => true }}]
+        }});
+        const notes = [];
+        const fallback = await setup.resolveGroupAllowlistWithLookupNotes({{
+          label: "Groups",
+          prompter: {{ note: async (message, title) => notes.push({{ message, title }}) }},
+          entries: ["bad"],
+          fallback: {{ entries: ["bad"], fallback: true }},
+          resolve: async () => {{ throw new Error("lookup failed"); }}
+        }});
+        const delegatedResolvers =
+          setup.createDelegatedSetupWizardStatusResolvers(loadWizard);
+        const binaryStatus = setup.createDetectedBinaryStatus({{
+          channelLabel: "Discord",
+          binaryLabel: "CLI",
+          configuredLabel: "ready",
+          unconfiguredLabel: "missing",
+          configuredHint: "ok",
+          unconfiguredHint: "install",
+          configuredScore: 8,
+          unconfiguredScore: 1,
+          resolveConfigured: () => true,
+          resolveBinaryPath: () => "ok-bin",
+          detectBinary: async (value) => value === "ok-bin"
+        }});
+        const topPolicy =
+          setup.createTopLevelChannelDmPolicySetter({{ channel: "discord" }});
+        const nestedPolicy = setup.createNestedChannelDmPolicy({{
+          label: "Rooms",
+          channel: "discord",
+          section: "rooms",
+          policyKey: "channels.discord.rooms.policy",
+          allowFromKey: "channels.discord.rooms.allowFrom",
+          getCurrent: (config) => config.channels.discord.rooms.policy,
+          enabled: true
+        }});
+        const allowFrom = setup.createAllowFromSection({{
+          message: "Allow",
+          placeholder: "ids",
+          invalidWithoutCredentialNote: "Need token",
+          parseId: (value) => value.startsWith("u") ? value : null,
+          apply: (params) => setup.setTopLevelChannelAllowFrom({{
+            cfg: params.cfg,
+            channel: "discord",
+            allowFrom: params.allowFrom,
+            enabled: true
+          }})
+        }});
+        const accessConfig = await setup.promptChannelAccessConfig({{
+          prompter: {{
+            confirm: async () => true,
+            select: async () => "allowlist",
+            text: async () => "g1, g2"
+          }},
+          label: "Groups"
+        }});
+        return {{
+          missing: expectedKeys.filter((key) => !(key in setup)),
+          scopedType: typeof scopedSetup.createDetectedBinaryStatus,
+          normalized: setup.normalizeAccountId("Team One!"),
+          command: setup.formatCliCommand(
+            "openclaw chat",
+            {{ OPENCLAW_PROFILE: "work" }}
+          ),
+          docs: setup.formatDocsLink("/setup", "Setup"),
+          binary: [
+            await setup.detectBinary({json.dumps(str(fake_binary))}),
+            await setup.detectBinary("")
+          ],
+          secret: {{
+            configured: setup.hasConfiguredSecretInput(" literal "),
+            normalized: setup.normalizeSecretInputString(" literal ")
+          }},
+          phone: setup.normalizeE164("whatsapp:+1 (234) 555-0000"),
+          pathExists: await setup.pathExists({json.dumps(str(fake_binary))}),
+          allowFrom: {{
+            wildcard: setup.addWildcardAllowFrom(["u1"]),
+            normalized: setup.normalizeAllowFromEntries([" U1 ", "U1", "*"]),
+            parsed: setup.resolveParsedAllowFromEntries({{
+              entries: ["u1", "bad"],
+              parseId: (entry) => entry.startsWith("u") ? entry : null
+            }}),
+            section: await allowFrom.resolveEntries({{ entries: ["u1", "bad"] }})
+          }},
+          config: {{
+            promoted: setup.moveSingleAccountChannelSectionToDefaultAccount({{
+              cfg,
+              channelKey: "discord"
+            }}),
+            named: setup.applyAccountNameToChannelSection({{
+              cfg,
+              channelKey: "telegram",
+              accountId: "default",
+              name: "Main"
+            }}),
+            patched: setup.applySetupAccountConfigPatch({{
+              cfg,
+              channelKey: "telegram",
+              accountId: "team",
+              patch: {{ botToken: "new" }}
+            }}),
+            top: topPolicy(cfg, "open"),
+            nested: nestedPolicy.setPolicy(cfg, "open")
+          }},
+          delegated: {{
+            configured: await setup.createDelegatedResolveConfigured(loadWizard)({{ cfg }}),
+            prepared: await setup.createDelegatedPrepare(loadWizard)({{ cfg }}),
+            finalized: await setup.createDelegatedFinalize(loadWizard)({{ cfg }}),
+            lines: await delegatedResolvers.resolveStatusLines({{ cfg }}),
+            hint: await delegatedResolvers.resolveSelectionHint({{ cfg }}),
+            score: await delegatedResolvers.resolveQuickstartScore({{ cfg }}),
+            shouldPrompt: await setup.createDelegatedTextInputShouldPrompt({{
+              loadWizard,
+              inputKey: "cliPath"
+            }})({{ cfg }})
+          }},
+          binaryStatus: {{
+            lines: await binaryStatus.resolveStatusLines({{ cfg, configured: true }}),
+            hint: await binaryStatus.resolveSelectionHint({{ cfg, configured: true }}),
+            score: await binaryStatus.resolveQuickstartScore({{ cfg, configured: true }})
+          }},
+          accessConfig,
+          fallback,
+          notes,
+          promptState: setup.buildSingleChannelSecretPromptState({{
+            accountConfigured: false,
+            hasConfigToken: false,
+            allowEnv: true,
+            envValue: "token"
+          }}),
+          note: setup.formatResolvedUnresolvedNote({{
+            resolved: ["U1"],
+            unresolved: ["bad"]
+          }})
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-facade-plugin",
+                    "name": "Runtime Setup Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-facade.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setupFacade"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setupFacade"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["missing"] == []
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["normalized"] == "team-one"
+    assert payload["result"]["command"] == "openclaw --profile work chat"
+    assert payload["result"]["docs"] == "Setup (https://docs.openclaw.ai/setup)"
+    assert payload["result"]["binary"] == [True, False]
+    assert payload["result"]["secret"] == {
+        "configured": True,
+        "normalized": "literal",
+    }
+    assert payload["result"]["phone"] == "+12345550000"
+    assert payload["result"]["pathExists"] is True
+    assert payload["result"]["allowFrom"] == {
+        "wildcard": ["u1", "*"],
+        "normalized": ["U1", "*"],
+        "parsed": [
+            {"input": "u1", "resolved": True, "id": "u1"},
+            {"input": "bad", "resolved": False, "id": None},
+        ],
+        "section": [
+            {"input": "u1", "resolved": True, "id": "u1"},
+            {"input": "bad", "resolved": False, "id": None},
+        ],
+    }
+    assert payload["result"]["config"]["promoted"]["channels"]["discord"]["accounts"][
+        "default"
+    ]["token"] == "old"
+    assert payload["result"]["config"]["named"]["channels"]["telegram"]["name"] == "Main"
+    assert payload["result"]["config"]["patched"]["channels"]["telegram"]["accounts"][
+        "team"
+    ]["botToken"] == "new"
+    assert payload["result"]["config"]["top"]["channels"]["discord"]["dmPolicy"] == "open"
+    assert payload["result"]["config"]["top"]["channels"]["discord"]["allowFrom"] == [
+        "u1",
+        "*",
+    ]
+    assert payload["result"]["config"]["nested"]["channels"]["discord"]["rooms"] == {
+        "policy": "open",
+        "allowFrom": ["r1", "*"],
+    }
+    assert payload["result"]["delegated"] == {
+        "configured": True,
+        "prepared": "prepared",
+        "finalized": "done",
+        "lines": ["loaded"],
+        "hint": "hint",
+        "score": 4,
+        "shouldPrompt": True,
+    }
+    assert payload["result"]["binaryStatus"] == {
+        "lines": ["Discord: ready", "CLI: found (ok-bin)"],
+        "hint": "ok",
+        "score": 8,
+    }
+    assert payload["result"]["accessConfig"] == {
+        "policy": "allowlist",
+        "entries": ["g1", "g2"],
+    }
+    assert payload["result"]["fallback"] == {
+        "entries": ["bad"],
+        "fallback": True,
+    }
+    assert payload["result"]["notes"] == [
+        {
+            "message": "Channel lookup failed; keeping entries as typed. Error: lookup failed",
+            "title": "Groups",
+        },
+        {
+            "message": "Unresolved (kept as typed): bad",
+            "title": "Groups",
+        },
+    ]
+    assert payload["result"]["promptState"] == {
+        "accountConfigured": False,
+        "hasConfigToken": False,
+        "canUseEnv": True,
+    }
+    assert payload["result"]["note"] == "Resolved: U1\nUnresolved (kept as typed): bad"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_setup_runtime_helpers(tmp_path) -> None:
     if shutil.which("node") is None:
         pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")

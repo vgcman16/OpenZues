@@ -37117,6 +37117,161 @@ function createSetupInputPresenceValidator(params = {}) {
   };
 }
 
+function createZodSetupInputValidator(params = {}) {
+  return (inputParams = {}) => {
+    if (params.schema && typeof params.schema.safeParse === "function") {
+      const parsed = params.schema.safeParse(inputParams.input);
+      if (!parsed || parsed.success === false) {
+        const issues = parsed && parsed.error && parsed.error.issues;
+        return (Array.isArray(issues) && issues[0] && issues[0].message) || "invalid input";
+      }
+      return typeof params.validate === "function"
+        ? params.validate({ ...inputParams, input: parsed.data })
+        : null;
+    }
+    return typeof params.validate === "function" ? params.validate(inputParams) : null;
+  };
+}
+
+function cloneSetupConfigValue(value) {
+  if (value && typeof value === "object") {
+    return JSON.parse(JSON.stringify(value));
+  }
+  return value;
+}
+
+const COMMON_SETUP_ACCOUNT_KEYS_TO_MOVE = new Set([
+  "accessToken",
+  "account",
+  "ackReaction",
+  "allowBots",
+  "allowFrom",
+  "allowlistOnly",
+  "appToken",
+  "authDir",
+  "autoJoin",
+  "autoJoinAllowlist",
+  "avatarUrl",
+  "blockStreaming",
+  "botToken",
+  "chunkMode",
+  "cliPath",
+  "code",
+  "dbPath",
+  "defaultTo",
+  "deviceId",
+  "deviceName",
+  "dmPolicy",
+  "encryption",
+  "groupAllowFrom",
+  "groupPolicy",
+  "homeserver",
+  "httpHost",
+  "httpPort",
+  "httpUrl",
+  "initialSyncLimit",
+  "mediaMaxMb",
+  "name",
+  "password",
+  "reactionNotifications",
+  "region",
+  "replyToMode",
+  "responsePrefix",
+  "service",
+  "signalNumber",
+  "startupVerification",
+  "startupVerificationCooldownHours",
+  "streaming",
+  "textChunkLimit",
+  "threadReplies",
+  "token",
+  "tokenFile",
+  "url",
+  "userId",
+  "webhookPath",
+  "webhookSecret",
+  "webhookUrl",
+]);
+
+function moveSingleAccountChannelSectionToDefaultAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  if (Object.keys(base).length === 0) {
+    return cfg;
+  }
+  const accounts = { ...resolveSetupChannelAccounts(base) };
+  const targetAccountId = normalizeAccountId(base.defaultAccount || DEFAULT_ACCOUNT_ID);
+  const targetAccount = {
+    ...(accounts[targetAccountId] && typeof accounts[targetAccountId] === "object"
+      ? accounts[targetAccountId]
+      : {}),
+  };
+  const nextBase = { ...base };
+  for (const [key, value] of Object.entries(base)) {
+    if (
+      key === "accounts" ||
+      key === "defaultAccount" ||
+      key === "enabled" ||
+      value === undefined ||
+      !COMMON_SETUP_ACCOUNT_KEYS_TO_MOVE.has(key)
+    ) {
+      continue;
+    }
+    targetAccount[key] = cloneSetupConfigValue(value);
+    delete nextBase[key];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...nextBase,
+        accounts: {
+          ...accounts,
+          [targetAccountId]: targetAccount,
+        },
+      },
+    },
+  };
+}
+
+function patchScopedAccountConfig(params = {}) {
+  return patchScopedSetupAccountConfig(params);
+}
+
+function applySetupAccountConfigPatch(params = {}) {
+  return patchScopedSetupAccountConfig({
+    cfg: params.cfg || {},
+    channelKey: params.channelKey,
+    accountId: params.accountId,
+    patch: params.patch || {},
+  });
+}
+
+function normalizeAllowFromEntries(entries, normalizeEntry) {
+  const normalized = normalizeStringEntries(entries || [])
+    .map((entry) => {
+      if (entry === "*") {
+        return "*";
+      }
+      if (typeof normalizeEntry !== "function") {
+        return entry;
+      }
+      return normalizeOptionalString(normalizeEntry(entry)) || "";
+    })
+    .filter(Boolean);
+  return [...new Set(normalized)];
+}
+
+function addWildcardAllowFrom(allowFrom) {
+  const next = normalizeAllowFromEntries(allowFrom || []);
+  if (!next.includes("*")) {
+    next.push("*");
+  }
+  return next;
+}
+
 function mergeAllowFromEntries(current, additions) {
   return [...new Set(normalizeStringEntries([...(current || []), ...(additions || [])]))];
 }
@@ -37237,6 +37392,248 @@ function setAccountGroupPolicyForChannel(params = {}) {
   });
 }
 
+function setAccountDmAllowFromForChannel(params = {}) {
+  return setAccountAllowFromForChannel(params);
+}
+
+function patchTopLevelChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? { ...channels[params.channel] }
+      : {};
+  for (const field of params.clearFields || []) {
+    delete channelConfig[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channel]: {
+        ...channelConfig,
+        ...(params.enabled ? { enabled: true } : {}),
+        ...(params.patch || {}),
+      },
+    },
+  };
+}
+
+function patchNestedChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? { ...channels[params.channel] }
+      : {};
+  const sectionConfig =
+    channelConfig[params.section] && typeof channelConfig[params.section] === "object"
+      ? { ...channelConfig[params.section] }
+      : {};
+  for (const field of params.clearFields || []) {
+    delete sectionConfig[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channel]: {
+        ...channelConfig,
+        ...(params.enabled ? { enabled: true } : {}),
+        [params.section]: {
+          ...sectionConfig,
+          ...(params.patch || {}),
+        },
+      },
+    },
+  };
+}
+
+function setTopLevelChannelAllowFrom(params = {}) {
+  return patchTopLevelChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    enabled: params.enabled,
+    patch: { allowFrom: params.allowFrom || [] },
+  });
+}
+
+function setNestedChannelAllowFrom(params = {}) {
+  return patchNestedChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+    patch: { allowFrom: params.allowFrom || [] },
+  });
+}
+
+function setTopLevelChannelDmPolicyWithAllowFrom(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? channels[params.channel]
+      : {};
+  const existingAllowFrom =
+    (typeof params.getAllowFrom === "function" && params.getAllowFrom(cfg)) ||
+    channelConfig.allowFrom;
+  const allowFrom =
+    params.dmPolicy === "open" ? addWildcardAllowFrom(existingAllowFrom || []) : undefined;
+  return patchTopLevelChannelConfigSection({
+    cfg,
+    channel: params.channel,
+    patch: {
+      dmPolicy: params.dmPolicy,
+      ...(allowFrom ? { allowFrom } : {}),
+    },
+  });
+}
+
+function setNestedChannelDmPolicyWithAllowFrom(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? channels[params.channel]
+      : {};
+  const sectionConfig =
+    channelConfig[params.section] && typeof channelConfig[params.section] === "object"
+      ? channelConfig[params.section]
+      : {};
+  const existingAllowFrom =
+    (typeof params.getAllowFrom === "function" && params.getAllowFrom(cfg)) ||
+    sectionConfig.allowFrom;
+  const allowFrom =
+    params.dmPolicy === "open" ? addWildcardAllowFrom(existingAllowFrom || []) : undefined;
+  return patchNestedChannelConfigSection({
+    cfg,
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+    patch: {
+      policy: params.dmPolicy,
+      ...(allowFrom ? { allowFrom } : {}),
+    },
+  });
+}
+
+function setTopLevelChannelGroupPolicy(params = {}) {
+  return patchTopLevelChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    enabled: params.enabled,
+    patch: { groupPolicy: params.groupPolicy },
+  });
+}
+
+function setChannelDmPolicyWithAllowFrom(params = {}) {
+  return setTopLevelChannelDmPolicyWithAllowFrom(params);
+}
+
+function setLegacyChannelDmPolicyWithAllowFrom(params = {}) {
+  return setChannelDmPolicyWithAllowFrom(params);
+}
+
+function createTopLevelChannelDmPolicySetter(params = {}) {
+  return (cfg, dmPolicy) =>
+    setTopLevelChannelDmPolicyWithAllowFrom({
+      cfg,
+      channel: params.channel,
+      dmPolicy,
+      getAllowFrom: params.getAllowFrom,
+    });
+}
+
+function createNestedChannelDmPolicySetter(params = {}) {
+  return (cfg, dmPolicy) =>
+    setNestedChannelDmPolicyWithAllowFrom({
+      cfg,
+      channel: params.channel,
+      section: params.section,
+      dmPolicy,
+      getAllowFrom: params.getAllowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createTopLevelChannelAllowFromSetter(params = {}) {
+  return (cfg, allowFrom) =>
+    setTopLevelChannelAllowFrom({
+      cfg,
+      channel: params.channel,
+      allowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createNestedChannelAllowFromSetter(params = {}) {
+  return (cfg, allowFrom) =>
+    setNestedChannelAllowFrom({
+      cfg,
+      channel: params.channel,
+      section: params.section,
+      allowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createTopLevelChannelGroupPolicySetter(params = {}) {
+  return (cfg, groupPolicy) =>
+    setTopLevelChannelGroupPolicy({
+      cfg,
+      channel: params.channel,
+      groupPolicy,
+      enabled: params.enabled,
+    });
+}
+
+function createNestedChannelDmPolicy(params = {}) {
+  return {
+    label: params.label,
+    channel: params.channel,
+    policyKey: params.policyKey,
+    allowFromKey: params.allowFromKey,
+    getCurrent: params.getCurrent,
+    setPolicy: createNestedChannelDmPolicySetter({
+      channel: params.channel,
+      section: params.section,
+      getAllowFrom: params.getAllowFrom,
+      enabled: params.enabled,
+    }),
+    ...(params.promptAllowFrom ? { promptAllowFrom: params.promptAllowFrom } : {}),
+  };
+}
+
+function resolveParsedAllowFromEntries(params = {}) {
+  return (params.entries || []).map((entry) => {
+    const id = params.parseId(entry);
+    return {
+      input: entry,
+      resolved: Boolean(id),
+      id: id || null,
+    };
+  });
+}
+
+function createAllowFromSection(params = {}) {
+  return {
+    ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
+    ...(params.helpLines ? { helpLines: params.helpLines } : {}),
+    ...(params.credentialInputKey ? { credentialInputKey: params.credentialInputKey } : {}),
+    message: params.message,
+    placeholder: params.placeholder,
+    invalidWithoutCredentialNote: params.invalidWithoutCredentialNote,
+    ...(params.parseInputs ? { parseInputs: params.parseInputs } : {}),
+    parseId: params.parseId,
+    resolveEntries:
+      params.resolveEntries ||
+      (async ({ entries } = {}) =>
+        resolveParsedAllowFromEntries({ entries: entries || [], parseId: params.parseId })),
+    apply: params.apply,
+  };
+}
+
 function createAccountScopedAllowFromSection(params = {}) {
   return {
     ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
@@ -37327,6 +37724,25 @@ async function noteChannelLookupFailure(params = {}) {
   }
 }
 
+async function resolveGroupAllowlistWithLookupNotes(params = {}) {
+  try {
+    return await params.resolve();
+  } catch (error) {
+    await noteChannelLookupFailure({
+      prompter: params.prompter,
+      label: params.label,
+      error,
+    });
+    await noteChannelLookupSummary({
+      prompter: params.prompter,
+      label: params.label,
+      resolvedSections: [],
+      unresolved: params.entries || [],
+    });
+    return params.fallback;
+  }
+}
+
 async function resolveEntriesWithOptionalToken(params = {}) {
   const token = normalizeOptionalString(params.token);
   if (!token) {
@@ -37351,6 +37767,31 @@ async function promptResolvedAllowFrom(params = {}) {
     params.existing,
     results.map((result) => result.id).filter(Boolean),
   );
+}
+
+async function promptAccountId(params = {}) {
+  const existingIds =
+    typeof params.listAccountIds === "function" ? params.listAccountIds(params.cfg || {}) : [];
+  const initial = params.currentId || params.defaultAccountId || DEFAULT_ACCOUNT_ID;
+  const choice = await params.prompter.select({
+    message: `${params.label} account`,
+    options: [
+      ...existingIds.map((id) => ({
+        value: id,
+        label: id === DEFAULT_ACCOUNT_ID ? "default (primary)" : id,
+      })),
+      { value: "__new__", label: "Add a new account" },
+    ],
+    initialValue: initial,
+  });
+  if (choice !== "__new__") {
+    return normalizeAccountId(choice);
+  }
+  const entered = await params.prompter.text({
+    message: `New ${params.label} account id`,
+    validate: (value) => (normalizeOptionalString(value) ? undefined : "Required"),
+  });
+  return normalizeAccountId(entered);
 }
 
 async function promptParsedAllowFromForAccount(params = {}) {
@@ -37381,6 +37822,121 @@ async function promptParsedAllowFromForAccount(params = {}) {
       ? params.mergeEntries({ existing, parsed: parsed.entries })
       : mergeAllowFromEntries(undefined, parsed.entries);
   return await params.applyAllowFrom({ cfg: params.cfg, accountId, allowFrom: unique });
+}
+
+function createPromptParsedAllowFromForAccount(params = {}) {
+  return async ({ cfg, prompter, accountId } = {}) =>
+    await promptParsedAllowFromForAccount({
+      cfg,
+      accountId,
+      defaultAccountId:
+        typeof params.defaultAccountId === "function"
+          ? params.defaultAccountId(cfg)
+          : params.defaultAccountId,
+      prompter,
+      noteTitle: params.noteTitle,
+      noteLines: params.noteLines,
+      message: params.message,
+      placeholder: params.placeholder,
+      parseEntries: params.parseEntries,
+      getExistingAllowFrom: params.getExistingAllowFrom,
+      mergeEntries: params.mergeEntries,
+      applyAllowFrom: params.applyAllowFrom,
+    });
+}
+
+async function promptParsedAllowFromForScopedChannel(params = {}) {
+  return await promptParsedAllowFromForAccount({
+    cfg: params.cfg,
+    accountId: params.accountId,
+    defaultAccountId: params.defaultAccountId,
+    prompter: params.prompter,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: params.getExistingAllowFrom,
+    applyAllowFrom: ({ cfg, accountId, allowFrom }) =>
+      setAccountAllowFromForChannel({
+        cfg,
+        channel: params.channel,
+        accountId,
+        allowFrom,
+      }),
+  });
+}
+
+function createTopLevelChannelParsedAllowFromPrompt(params = {}) {
+  const setAllowFrom = createTopLevelChannelAllowFromSetter({
+    channel: params.channel,
+    enabled: params.enabled,
+  });
+  return createPromptParsedAllowFromForAccount({
+    defaultAccountId: params.defaultAccountId,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: ({ cfg }) =>
+      (typeof params.getExistingAllowFrom === "function" && params.getExistingAllowFrom(cfg)) ||
+      (((cfg.channels || {})[params.channel] || {}).allowFrom || []),
+    mergeEntries: params.mergeEntries,
+    applyAllowFrom: ({ cfg, allowFrom }) => setAllowFrom(cfg, allowFrom),
+  });
+}
+
+function createNestedChannelParsedAllowFromPrompt(params = {}) {
+  const setAllowFrom = createNestedChannelAllowFromSetter({
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+  });
+  return createPromptParsedAllowFromForAccount({
+    defaultAccountId: params.defaultAccountId,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: ({ cfg }) => {
+      const channelConfig = (cfg.channels || {})[params.channel] || {};
+      const sectionConfig = channelConfig[params.section] || {};
+      return (
+        (typeof params.getExistingAllowFrom === "function" &&
+          params.getExistingAllowFrom(cfg)) ||
+        sectionConfig.allowFrom ||
+        []
+      );
+    },
+    mergeEntries: params.mergeEntries,
+    applyAllowFrom: ({ cfg, allowFrom }) => setAllowFrom(cfg, allowFrom),
+  });
+}
+
+async function promptLegacyChannelAllowFrom(params = {}) {
+  const allowFrom = await promptResolvedAllowFrom({
+    prompter: params.prompter,
+    existing: params.existing || [],
+    token: params.token,
+    message: params.message,
+    placeholder: params.placeholder,
+    label: params.noteTitle,
+    parseInputs: splitSetupEntries,
+    parseId: params.parseId,
+    invalidWithoutTokenNote: params.invalidWithoutTokenNote,
+    resolveEntries: params.resolveEntries,
+  });
+  return setChannelDmPolicyWithAllowFrom({
+    cfg: setTopLevelChannelAllowFrom({
+      cfg: params.cfg,
+      channel: params.channel,
+      allowFrom,
+    }),
+    channel: params.channel,
+    dmPolicy: "allowlist",
+  });
 }
 
 async function promptLegacyChannelAllowFromForAccount(params = {}) {
@@ -37453,6 +38009,27 @@ function createDelegatedTextInputShouldPrompt(params = {}) {
     return input && typeof input.shouldPrompt === "function"
       ? await input.shouldPrompt(inputParams)
       : false;
+  };
+}
+
+function createDelegatedResolveConfigured(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return await wizard.status.resolveConfigured(params);
+  };
+}
+
+function createDelegatedPrepare(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return wizard.prepare ? await wizard.prepare(params) : undefined;
+  };
+}
+
+function createDelegatedFinalize(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return wizard.finalize ? await wizard.finalize(params) : undefined;
   };
 }
 
@@ -37531,6 +38108,156 @@ function createAllowlistSetupWizardProxy(params = {}) {
       });
     },
   });
+}
+
+function createDetectedBinaryStatus(params = {}) {
+  const detect = params.detectBinary || detectBinary;
+  return {
+    configuredLabel: params.configuredLabel,
+    unconfiguredLabel: params.unconfiguredLabel,
+    configuredHint: params.configuredHint,
+    unconfiguredHint: params.unconfiguredHint,
+    configuredScore: params.configuredScore,
+    unconfiguredScore: params.unconfiguredScore,
+    resolveConfigured: params.resolveConfigured || (() => false),
+    async resolveStatusLines({ cfg, accountId, configured } = {}) {
+      const binaryPath = params.resolveBinaryPath({ cfg, accountId });
+      const detected = await detect(binaryPath);
+      return [
+        `${params.channelLabel}: ${configured ? params.configuredLabel : params.unconfiguredLabel}`,
+        `${params.binaryLabel}: ${detected ? "found" : "missing"} (${binaryPath})`,
+      ];
+    },
+    async resolveSelectionHint({ cfg, accountId } = {}) {
+      const detected = await detect(params.resolveBinaryPath({ cfg, accountId }));
+      return detected ? params.configuredHint : params.unconfiguredHint;
+    },
+    async resolveQuickstartScore({ cfg, accountId } = {}) {
+      const detected = await detect(params.resolveBinaryPath({ cfg, accountId }));
+      return detected ? params.configuredScore : params.unconfiguredScore;
+    },
+  };
+}
+
+function parseChannelAccessEntries(raw) {
+  return String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function promptChannelAccessConfig(params = {}) {
+  const hasEntries = (params.currentEntries || []).length > 0;
+  const wants = await params.prompter.confirm({
+    message: params.updatePrompt
+      ? `Update ${params.label} access?`
+      : `Configure ${params.label} access?`,
+    initialValue: params.defaultPrompt ?? !hasEntries,
+  });
+  if (!wants) {
+    return null;
+  }
+  const options = [{ value: "allowlist", label: "Allowlist (recommended)" }];
+  if (params.allowOpen !== false) {
+    options.push({ value: "open", label: "Open (allow all channels)" });
+  }
+  if (params.allowDisabled !== false) {
+    options.push({ value: "disabled", label: "Disabled (block all channels)" });
+  }
+  const policy = await params.prompter.select({
+    message: `${params.label} access`,
+    options,
+    initialValue: params.currentPolicy || "allowlist",
+  });
+  if (policy !== "allowlist" || params.skipAllowlistEntries) {
+    return { policy, entries: [] };
+  }
+  const raw = await params.prompter.text({
+    message: `${params.label} allowlist (comma-separated)`,
+    placeholder: params.placeholder,
+    initialValue:
+      params.currentEntries && params.currentEntries.length > 0
+        ? params.currentEntries.join(", ")
+        : undefined,
+  });
+  return { policy, entries: parseChannelAccessEntries(raw) };
+}
+
+function buildSingleChannelSecretPromptState(params = {}) {
+  return {
+    accountConfigured: Boolean(params.accountConfigured),
+    hasConfigToken: Boolean(params.hasConfigToken),
+    canUseEnv:
+      Boolean(params.allowEnv) &&
+      Boolean(normalizeOptionalString(params.envValue)) &&
+      !params.hasConfigToken,
+  };
+}
+
+async function promptSingleChannelSecretInput(params = {}) {
+  const state = buildSingleChannelSecretPromptState({
+    accountConfigured: params.accountConfigured,
+    hasConfigToken: params.hasConfigToken,
+    allowEnv: params.allowEnv,
+    envValue: params.envValue,
+  });
+  if (state.canUseEnv) {
+    const keepEnv = await params.prompter.confirm({
+      message: params.envPrompt,
+      initialValue: true,
+    });
+    if (keepEnv) {
+      return { action: "use-env" };
+    }
+  }
+  if (params.hasConfigToken && params.accountConfigured) {
+    const keep = await params.prompter.confirm({
+      message: params.keepPrompt,
+      initialValue: true,
+    });
+    if (keep) {
+      return { action: "keep" };
+    }
+  }
+  const value = await params.prompter.text({
+    message: params.inputPrompt,
+    validate: (input) => (normalizeOptionalString(input) ? undefined : "Required"),
+  });
+  return {
+    action: "set",
+    value: normalizeOptionalString(value),
+    resolvedValue: normalizeOptionalString(value),
+  };
+}
+
+async function runSingleChannelSecretStep(params = {}) {
+  if (!params.accountConfigured && typeof params.onMissingConfigured === "function") {
+    await params.onMissingConfigured();
+  }
+  const result = await promptSingleChannelSecretInput(params);
+  if (result.action === "use-env" && typeof params.applyUseEnv === "function") {
+    return { cfg: await params.applyUseEnv(params.cfg), action: result.action };
+  }
+  if (result.action === "set" && typeof params.applySet === "function") {
+    return {
+      cfg: await params.applySet(params.cfg, result.value, result.resolvedValue),
+      action: result.action,
+      resolvedValue: result.resolvedValue,
+    };
+  }
+  return { cfg: params.cfg, action: result.action, resolvedValue: result.resolvedValue };
+}
+
+function formatResolvedUnresolvedNote(params = {}) {
+  const lines = [
+    params.resolved && params.resolved.length > 0
+      ? `Resolved: ${params.resolved.join(", ")}`
+      : undefined,
+    params.unresolved && params.unresolved.length > 0
+      ? `Unresolved (kept as typed): ${params.unresolved.join(", ")}`
+      : undefined,
+  ].filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
 function createLegacyCompatChannelDmPolicy(params = {}) {
@@ -65098,6 +65825,90 @@ const setupToolsRuntime = {
   resolveBrewPathDirs,
 };
 
+const setupFacadeRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  applySetupAccountConfigPatch,
+  buildSingleChannelSecretPromptState,
+  createAccountScopedAllowFromSection,
+  createAccountScopedGroupAccessSection,
+  createAllowFromSection,
+  createAllowlistSetupWizardProxy,
+  createCliPathTextInput,
+  createDelegatedFinalize,
+  createDelegatedPrepare,
+  createDelegatedResolveConfigured,
+  createDelegatedSetupWizardProxy,
+  createDelegatedSetupWizardStatusResolvers,
+  createDelegatedTextInputShouldPrompt,
+  createDetectedBinaryStatus,
+  createEnvPatchedAccountSetupAdapter,
+  createLegacyCompatChannelDmPolicy,
+  createNestedChannelAllowFromSetter,
+  createNestedChannelDmPolicy,
+  createNestedChannelDmPolicySetter,
+  createNestedChannelParsedAllowFromPrompt,
+  createPatchedAccountSetupAdapter,
+  createPromptParsedAllowFromForAccount,
+  createSetupInputPresenceValidator,
+  createStandardChannelSetupStatus,
+  createTopLevelChannelAllowFromSetter,
+  createTopLevelChannelDmPolicy,
+  createTopLevelChannelDmPolicySetter,
+  createTopLevelChannelGroupPolicySetter,
+  createTopLevelChannelParsedAllowFromPrompt,
+  createZodSetupInputValidator,
+  detectBinary,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  formatResolvedUnresolvedNote,
+  hasConfiguredSecretInput,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  moveSingleAccountChannelSectionToDefaultAccount,
+  normalizeAccountId,
+  normalizeAllowFromEntries,
+  normalizeE164,
+  normalizeSecretInputString,
+  noteChannelLookupFailure,
+  noteChannelLookupSummary,
+  parseMentionOrPrefixedId,
+  parseSetupEntriesAllowingWildcard,
+  parseSetupEntriesWithParser,
+  patchChannelConfigForAccount,
+  patchNestedChannelConfigSection,
+  patchScopedAccountConfig,
+  patchTopLevelChannelConfigSection,
+  pathExists,
+  prepareScopedSetupConfig,
+  promptAccountId,
+  promptChannelAccessConfig,
+  promptLegacyChannelAllowFrom,
+  promptLegacyChannelAllowFromForAccount,
+  promptParsedAllowFromForAccount,
+  promptParsedAllowFromForScopedChannel,
+  promptResolvedAllowFrom,
+  promptSingleChannelSecretInput,
+  resolveEntriesWithOptionalToken,
+  resolveGroupAllowlistWithLookupNotes,
+  resolveParsedAllowFromEntries,
+  resolveSetupAccountId,
+  runSingleChannelSecretStep,
+  setAccountAllowFromForChannel,
+  setAccountDmAllowFromForChannel,
+  setAccountGroupPolicyForChannel,
+  setChannelDmPolicyWithAllowFrom,
+  setLegacyChannelDmPolicyWithAllowFrom,
+  setNestedChannelAllowFrom,
+  setNestedChannelDmPolicyWithAllowFrom,
+  setSetupChannelEnabled,
+  setTopLevelChannelAllowFrom,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  setTopLevelChannelGroupPolicy,
+  splitSetupEntries,
+};
+
 const markdownTableRuntime = {
   convertMarkdownTables,
   resolveMarkdownTableMode,
@@ -82353,6 +83164,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/optional-channel-setup"
   ) {
     return optionalChannelSetupRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/setup" ||
+    request === "@openclaw/plugin-sdk/setup"
+  ) {
+    return setupFacadeRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/setup-runtime" ||
