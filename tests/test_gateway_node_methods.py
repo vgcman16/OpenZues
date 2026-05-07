@@ -38577,6 +38577,176 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_runtime_block_chunker(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-runtime-block-chunker.cjs"
+    runtime_entry.write_text(
+        """
+const agent = require("openclaw/plugin-sdk/agent-runtime");
+
+function drain(chunker, force = false) {
+  const chunks = [];
+  chunker.drain({ force, emit: (chunk) => chunks.push(chunk) });
+  return chunks;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_block_chunker",
+      description: "Use OpenClaw agent-runtime EmbeddedBlockChunker",
+      parameters: { type: "object" },
+      execute() {
+        const paragraph = new agent.EmbeddedBlockChunker({
+          minChars: 30,
+          maxChars: 200,
+          breakPreference: "paragraph",
+          flushOnParagraph: true
+        });
+        paragraph.append("First paragraph.\\n\\nSecond paragraph.\\n\\nThird paragraph.");
+
+        const force = new agent.EmbeddedBlockChunker({
+          minChars: 100,
+          maxChars: 200,
+          breakPreference: "paragraph",
+          flushOnParagraph: true
+        });
+        force.append("First paragraph.\\n \\nSecond paragraph.");
+
+        const clamp = new agent.EmbeddedBlockChunker({
+          minChars: 1,
+          maxChars: 10,
+          breakPreference: "paragraph",
+          flushOnParagraph: true
+        });
+        clamp.append("abcdefghijKLMNOP");
+
+        const fence = new agent.EmbeddedBlockChunker({
+          minChars: 1,
+          maxChars: 40,
+          breakPreference: "paragraph"
+        });
+        fence.append([
+          "Intro",
+          "```js",
+          "console.log('x')",
+          "```",
+          "",
+          "After first line",
+          "After second line"
+        ].join("\\n"));
+        const fenceChunks = drain(fence);
+
+        const reset = new agent.EmbeddedBlockChunker({ minChars: 1, maxChars: 10 });
+        reset.append("hello");
+        const beforeReset = reset.hasBuffered();
+        reset.reset();
+
+        return {
+          keys: Object.keys(agent).filter((key) => key === "EmbeddedBlockChunker"),
+          paragraph: {
+            chunks: drain(paragraph),
+            buffered: paragraph.bufferedText
+          },
+          force: {
+            before: drain(force),
+            after: drain(force, true),
+            buffered: force.bufferedText
+          },
+          clamp: {
+            chunks: drain(clamp),
+            buffered: clamp.bufferedText
+          },
+          fence: {
+            chunk: fenceChunks[0],
+            buffered: fence.bufferedText
+          },
+          reset: {
+            beforeReset,
+            afterReset: reset.hasBuffered(),
+            buffered: reset.bufferedText
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-block-chunker-plugin",
+                    "name": "Runtime Agent Block Chunker Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-block-chunker.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_block_chunker"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.agent_block_chunker"})
+
+    result = payload["result"]
+    assert payload["ok"] is True
+    assert result["keys"] == ["EmbeddedBlockChunker"]
+    assert result["paragraph"] == {
+        "chunks": ["First paragraph.\n\nSecond paragraph."],
+        "buffered": "Third paragraph.",
+    }
+    assert result["force"] == {
+        "before": [],
+        "after": ["First paragraph.\n \nSecond paragraph."],
+        "buffered": "",
+    }
+    assert result["clamp"] == {"chunks": ["abcdefghij"], "buffered": "KLMNOP"}
+    assert "console.log" in result["fence"]["chunk"]
+    assert result["fence"]["chunk"].endswith("```")
+    assert "After first line" not in result["fence"]["chunk"]
+    assert result["fence"]["buffered"].startswith("After first line")
+    assert result["reset"] == {
+        "beforeReset": True,
+        "afterReset": False,
+        "buffered": "",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
