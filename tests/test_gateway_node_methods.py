@@ -31682,6 +31682,2738 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_api_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-api.cjs"
+    runtime_entry.write_text(
+        """
+const testApi = require("openclaw/plugin-sdk/plugin-test-api");
+const scopedTestApi = require("@openclaw/plugin-sdk/plugin-test-api");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_api",
+      description: "Use OpenClaw plugin-test-api SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registeredTools = [];
+        const pluginApi = testApi.createTestPluginApi({
+          id: "custom-plugin",
+          name: "Custom Plugin",
+          config: { enabled: true },
+          registerTool(tool) {
+            registeredTools.push(tool.name);
+          },
+          resolvePath(input) {
+            return `root:${input}`;
+          }
+        });
+        pluginApi.registerTool({ name: "demo.tool" });
+        const injection = await pluginApi.enqueueNextTurnInjection({
+          sessionKey: "agent:main:main",
+          text: "next"
+        });
+        return {
+          keys: Object.keys(testApi).sort(),
+          scopedSame:
+            scopedTestApi.createTestPluginApi === testApi.createTestPluginApi,
+          base: {
+            id: pluginApi.id,
+            name: pluginApi.name,
+            source: pluginApi.source,
+            registrationMode: pluginApi.registrationMode,
+            config: pluginApi.config,
+            runtimeType: typeof pluginApi.runtime,
+            loggerTypes: [
+              typeof pluginApi.logger.info,
+              typeof pluginApi.logger.warn,
+              typeof pluginApi.logger.error,
+              typeof pluginApi.logger.debug
+            ],
+            noops: [
+              typeof pluginApi.registerHook,
+              typeof pluginApi.registerHttpRoute,
+              typeof pluginApi.registerChannel,
+              typeof pluginApi.registerGatewayMethod,
+              typeof pluginApi.registerCli,
+              typeof pluginApi.registerProvider,
+              typeof pluginApi.registerMemoryCapability,
+              typeof pluginApi.on
+            ]
+          },
+          registeredTools,
+          injection,
+          resolvedPath: pluginApi.resolvePath("data/file.txt"),
+          runContext: {
+            set: pluginApi.setRunContext({ runId: "r1" }),
+            get: pluginApi.getRunContext() ?? null
+          },
+          scheduler: pluginApi.registerSessionSchedulerJob({ id: "job" }) ?? null
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-api-plugin",
+                    "name": "Runtime Plugin Test API Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-api.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_api"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_test_api"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["createTestPluginApi"],
+        "scopedSame": True,
+        "base": {
+            "id": "custom-plugin",
+            "name": "Custom Plugin",
+            "source": "test",
+            "registrationMode": "full",
+            "config": {"enabled": True},
+            "runtimeType": "object",
+            "loggerTypes": ["function", "function", "function", "function"],
+            "noops": [
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+                "function",
+            ],
+        },
+        "registeredTools": ["demo.tool"],
+        "injection": {
+            "enqueued": False,
+            "id": "",
+            "sessionKey": "agent:main:main",
+        },
+        "resolvedPath": "root:data/file.txt",
+        "runContext": {"set": False, "get": None},
+        "scheduler": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_contracts_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/plugin-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/plugin-test-contracts");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_contracts",
+      description: "Use OpenClaw plugin-test-contracts SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const fixture = contracts.createPluginRegistryFixture({ feature: true });
+        contracts.registerVirtualTestPlugin({
+          registry: fixture.registry,
+          config: fixture.config,
+          id: "demo",
+          name: "Demo Plugin",
+          contracts: { tools: ["demo.tool"] },
+          register(pluginApi) {
+            pluginApi.registerTool({ name: "demo.tool" });
+            pluginApi.registerProvider({ id: "demo-provider" });
+          }
+        });
+        const providers = await contracts.registerProviders({
+          register(providerApi) {
+            providerApi.registerProvider({ id: "p1" });
+          }
+        });
+        const provider = contracts.requireProvider(providers, "p1");
+        let sideEffectError = "";
+        try {
+          contracts.assertNoImportTimeSideEffects({
+            moduleId: "demo-module",
+            forbiddenSeam: "network",
+            calls: [["fetch", "https://example.test"]],
+            why: "imports must stay pure",
+            fixHint: "move work into register()"
+          });
+        } catch (error) {
+          sideEffectError = error.message;
+        }
+        const registered = [];
+        const previousDescribe = globalThis.describe;
+        const previousIt = globalThis.it;
+        globalThis.describe = (name, callback) => {
+          registered.push(`describe:${name}`);
+          callback();
+        };
+        globalThis.it = (name, callback) => {
+          registered.push(`it:${name}`);
+          callback();
+        };
+        try {
+          contracts.describePackageManifestContract({ pluginId: "demo" });
+          contracts.describePluginRegistrationContract(
+            contracts.pluginRegistrationContractCases.openai
+          );
+        } finally {
+          if (previousDescribe === undefined) {
+            delete globalThis.describe;
+          } else {
+            globalThis.describe = previousDescribe;
+          }
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+        let syncLoadError = "";
+        try {
+          contracts.loadBundledPluginPublicSurfaceSync({
+            pluginId: "demo",
+            artifactBasename: "api.js"
+          });
+        } catch (error) {
+          syncLoadError = error.message;
+        }
+        const smoke = await contracts.runDirectImportSmoke(
+          "console.log('contract-smoke')"
+        );
+        return {
+          keys: Object.keys(contracts).sort(),
+          scopedSame:
+            scopedContracts.createPluginRegistryFixture ===
+            contracts.createPluginRegistryFixture,
+          fixture: {
+            config: fixture.config,
+            plugins: fixture.registry.registry.plugins.map((entry) => ({
+              id: entry.id,
+              name: entry.name,
+              source: entry.source,
+              contracts: entry.contracts
+            })),
+            tools: fixture.registry.registry.tools.map((entry) => ({
+              pluginId: entry.pluginId,
+              name: entry.tool.name
+            })),
+            providers: fixture.registry.registry.providers.map((entry) => entry.id)
+          },
+          providers: providers.map((entry) => entry.id),
+          provider,
+          unique: contracts.uniqueSortedStrings(["b", "a", "b"]),
+          basename: contracts.getPublicArtifactBasename("dist/extensions/slack/api.js"),
+          guardedHasApi:
+            contracts.GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES.includes("api.js"),
+          sidecarHasRuntime:
+            contracts.BUNDLED_RUNTIME_SIDECAR_BASENAMES.includes("runtime-api.js"),
+          sideEffectError,
+          registered,
+          syncLoadError,
+          smoke: smoke.trim()
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-contracts-plugin",
+                    "name": "Runtime Plugin Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-contracts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_contracts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.plugin_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "BUNDLED_RUNTIME_SIDECAR_BASENAMES",
+        "GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES",
+        "assertNoImportTimeSideEffects",
+        "createPluginRegistryFixture",
+        "describePackageManifestContract",
+        "describePluginRegistrationContract",
+        "getPublicArtifactBasename",
+        "loadBundledPluginPublicSurface",
+        "loadBundledPluginPublicSurfaceSync",
+        "pluginRegistrationContractCases",
+        "registerProviders",
+        "registerTestPlugin",
+        "registerVirtualTestPlugin",
+        "requireProvider",
+        "resolveWorkspacePackagePublicModuleUrl",
+        "runDirectImportSmoke",
+        "uniqueSortedStrings",
+    ]
+    assert result["scopedSame"] is True
+    assert result["fixture"] == {
+        "config": {"feature": True},
+        "plugins": [
+            {
+                "id": "demo",
+                "name": "Demo Plugin",
+                "source": "/virtual/demo/index.ts",
+                "contracts": {"tools": ["demo.tool"]},
+            }
+        ],
+        "tools": [{"pluginId": "demo", "name": "demo.tool"}],
+        "providers": ["demo-provider"],
+    }
+    assert result["providers"] == ["p1"]
+    assert result["provider"] == {"id": "p1"}
+    assert result["unique"] == ["a", "b"]
+    assert result["basename"] == "api.js"
+    assert result["guardedHasApi"] is True
+    assert result["sidecarHasRuntime"] is True
+    assert result["sideEffectError"].startswith(
+        "[runtime contract] demo-module touched network during module import."
+    )
+    assert "why this is banned: imports must stay pure" in result["sideEffectError"]
+    assert result["registered"][0] == "describe:demo package manifest contract"
+    assert "describe:openai plugin registration contract" in result["registered"]
+    assert "it:keeps bundled provider ownership explicit" in result["registered"]
+    assert result["syncLoadError"] == (
+        "Synchronous bundled plugin public-surface loading is not available here"
+    )
+    assert result["smoke"] == "contract-smoke"
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_test_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-test-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const testRuntime = require("openclaw/plugin-sdk/plugin-test-runtime");
+const scopedRuntime = require("@openclaw/plugin-sdk/plugin-test-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_test_runtime",
+      description: "Use OpenClaw plugin-test-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const env = testRuntime.createRuntimeEnv();
+        env.log("hello");
+        let exitError = "";
+        try {
+          env.exit(3);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const nonExit = testRuntime.createNonExitingRuntimeEnv();
+        nonExit.exit(0);
+
+        const captured = testRuntime.createCapturedPluginRegistration({
+          id: "captured",
+          name: "Captured",
+          config: { enabled: true }
+        });
+        captured.api.registerProvider({ id: "provider-a", label: "Provider A" });
+        captured.api.registerImageGenerationProvider({ id: "image-a" });
+        captured.api.registerTool({ name: "captured.tool" });
+        const scheduled = captured.api.registerSessionSchedulerJob({
+          id: "job-a",
+          sessionKey: "agent:main:main",
+          kind: "interval"
+        });
+
+        const capturedViaHelper = testRuntime.capturePluginRegistration({
+          register(pluginApi) {
+            pluginApi.registerProvider({ id: "provider-b" });
+          }
+        });
+        const single = await testRuntime.registerSingleProviderPlugin({
+          register(pluginApi) {
+            pluginApi.registerProvider({ id: "single-provider" });
+          }
+        });
+        const collections = await testRuntime.registerProviderPlugin({
+          id: "provider-plugin",
+          name: "Provider Plugin",
+          plugin: {
+            register(pluginApi) {
+              pluginApi.registerProvider({ id: "multi-provider" });
+              pluginApi.registerSpeechProvider({ id: "speech-provider" });
+            }
+          }
+        });
+        const providers = await testRuntime.registerProviderPlugins(
+          { register(pluginApi) { pluginApi.registerProvider({ id: "p1" }); } },
+          { register(pluginApi) { pluginApi.registerProvider({ id: "p2" }); } }
+        );
+        const required = testRuntime.requireRegisteredProvider(providers, "p2");
+
+        const registry = testRuntime.createPluginRegistry({
+          logger: { info() {}, warn() {}, error() {}, debug() {} },
+          runtime: {}
+        });
+        const record = testRuntime.createPluginRecord({
+          id: "demo",
+          name: "Demo Plugin",
+          source: "/demo/index.ts"
+        });
+        registry.registry.plugins.push(record);
+        const registryApi = registry.createApi(record, { config: { demo: true } });
+        registryApi.registerProvider({ id: "demo-provider" });
+        registryApi.registerTool({ name: "demo.tool" });
+
+        const empty = testRuntime.createEmptyPluginRegistry();
+        const channelPlugin = testRuntime.createOutboundTestPlugin({
+          id: "demo-channel",
+          outbound: { sendMessage: async () => ({ messageId: "m1" }) }
+        });
+        const channelRegistry = testRuntime.createTestRegistry([
+          { pluginId: "demo-channel", plugin: channelPlugin, source: "test" }
+        ]);
+        testRuntime.addTestHook({
+          registry: channelRegistry,
+          pluginId: "demo-channel",
+          hookName: "message_received",
+          handler: () => "handled",
+          priority: 2
+        });
+        testRuntime.setActivePluginRegistry(channelRegistry);
+        const activeRegistry = testRuntime.getActivePluginRegistry();
+        testRuntime.releasePinnedPluginChannelRegistry(channelRegistry);
+        testRuntime.resetPluginRuntimeStateForTest();
+
+        const provider = {
+          id: "wizard-provider",
+          label: "Wizard Provider",
+          auth: [{ id: "api", label: "API key", hint: "API hint" }],
+          wizard: {
+            setup: {
+              choiceLabel: "Setup Wizard",
+              groupLabel: "Wizard Group",
+              groupHint: "Wizard hint"
+            },
+            modelPicker: { label: "Wizard Model", hint: "Model hint" }
+          }
+        };
+        const restoreProviderResolver =
+          testRuntime.setProviderWizardProvidersResolverForTest(() => [provider]);
+        const wizardOptions = testRuntime.resolveProviderWizardOptions({});
+        const modelEntries = testRuntime.resolveProviderModelPickerEntries({});
+        const choice = testRuntime.resolveProviderPluginChoice({
+          providers: [provider],
+          choice: "provider-plugin:wizard-provider:api"
+        });
+        restoreProviderResolver();
+
+        const queued = testRuntime.createQueuedWizardPrompter({
+          selectValues: ["selected"],
+          textValues: ["typed"],
+          confirmValues: [true]
+        });
+        const selected = await testRuntime.selectFirstWizardOption({
+          options: [{ value: "first" }]
+        });
+        const configureResult = await testRuntime.runSetupWizardConfigure({
+          prompter: queued.prompter,
+          cfg: { existing: true },
+          forceAllowFrom: true,
+          configure: async (args) => ({
+            cfg: args.cfg,
+            forceAllowFrom: args.forceAllowFrom,
+            shouldPromptAccountIds: args.shouldPromptAccountIds
+          })
+        });
+        const prepareResult = await testRuntime.runSetupWizardPrepare({
+          accountId: "acct",
+          prepare: (args) => ({
+            accountId: args.accountId,
+            textType: typeof args.prompter.text
+          })
+        });
+        const allowFromResult = await testRuntime.resolveSetupWizardAllowFromEntries({
+          entries: ["channel:C1"],
+          resolveEntries: (args) => args.entries
+        });
+        const groupResult = await testRuntime.resolveSetupWizardGroupAllowlist({
+          entries: ["group:G1"],
+          resolveAllowlist: (args) => args.entries
+        });
+        const setupAdapter = testRuntime.createPluginSetupWizardAdapter({
+          id: "setup-plugin",
+          config: {},
+          setupWizard: {
+            status: async () => ({ status: "ready" }),
+            configure: async () => ({ configured: true })
+          }
+        });
+        const setupStatus = await setupAdapter.getStatus({
+          cfg: {},
+          accountId: "default",
+          credentialValues: {},
+          runtime: nonExit,
+          prompter: queued.prompter
+        });
+        const setupConfigured = await setupAdapter.configure({
+          cfg: {},
+          runtime: nonExit,
+          prompter: queued.prompter,
+          options: {},
+          accountOverrides: {},
+          shouldPromptAccountIds: false,
+          forceAllowFrom: false
+        });
+
+        const mockRegistry = testRuntime.createMockPluginRegistry([
+          { hookName: "message_received", handler: () => "mocked" }
+        ]);
+        const builtApi = testRuntime.buildPluginApi({
+          id: "built",
+          name: "Built",
+          source: "test",
+          config: {},
+          runtime: {},
+          logger: { info() {}, warn() {}, error() {}, debug() {} },
+          resolvePath: (input) => `built:${input}`,
+          handlers: {
+            registerProvider(provider) {
+              captured.providers.push(provider);
+            }
+          }
+        });
+        builtApi.registerProvider({ id: "built-provider" });
+        const flow = testRuntime.createRuntimeTaskFlow();
+        const boundFlow = flow.bindSession({ sessionKey: "agent:main:main" });
+
+        return {
+          keys: Object.keys(testRuntime).sort(),
+          scopedSame:
+            scopedRuntime.createRuntimeEnv === testRuntime.createRuntimeEnv,
+          env: {
+            logCalls: env.log.calls.length,
+            exitError,
+            nonExitCalls: nonExit.exit.calls.length
+          },
+          captured: {
+            providers: captured.providers.map((entry) => entry.id),
+            imageProviders:
+              captured.imageGenerationProviders.map((entry) => entry.id),
+            tools: captured.tools.map((entry) => entry.name),
+            scheduled
+          },
+          capturedViaHelper: capturedViaHelper.providers.map((entry) => entry.id),
+          providerHelpers: {
+            single,
+            collections: {
+              providers: collections.providers.map((entry) => entry.id),
+              speechProviders: collections.speechProviders.map((entry) => entry.id)
+            },
+            providers: providers.map((entry) => entry.id),
+            required
+          },
+          registry: {
+            plugins: registry.registry.plugins.map((entry) => entry.id),
+            providers: registry.registry.providers.map((entry) => entry.id),
+            tools: registry.registry.tools.map((entry) => entry.tool.name),
+            emptyTools: empty.tools.length
+          },
+          channel: {
+            channels: channelRegistry.channels.length,
+            hooks: channelRegistry.typedHooks.length,
+            activeSame: activeRegistry === channelRegistry
+          },
+          providerWizard: {
+            options: wizardOptions,
+            modelEntries,
+            choice: choice
+              ? { provider: choice.provider.id, method: choice.method.id }
+              : null
+          },
+          setup: {
+            selected,
+            configureResult,
+            prepareResult,
+            allowFromResult,
+            groupResult,
+            setupStatus,
+            setupConfigured,
+            queuedCalls: {
+              select: queued.select.calls.length,
+              text: queued.text.calls.length,
+              confirm: queued.confirm.calls.length
+            }
+          },
+          runtime: {
+            mockPlugins: mockRegistry.plugins.map((entry) => entry.id),
+            builtResolved: builtApi.resolvePath("file.txt"),
+            builtProviders: captured.providers.map((entry) => entry.id),
+            boundSessionKey: boundFlow.sessionKey,
+            facadeIds: testRuntime.listImportedBundledPluginFacadeIds()
+          },
+          contracts: {
+            providerIds:
+              testRuntime.pluginRegistrationContractRegistry.find(
+                (entry) => entry.pluginId === "openai"
+              ).providerIds,
+            providerContractIds:
+              testRuntime.resolveProviderContractProvidersForPluginIds([
+                "openai"
+              ]).map((entry) => entry.id),
+            loadError:
+              testRuntime.providerContractLoadError("demo", new Error("boom"))
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-test-runtime-plugin",
+                    "name": "Runtime Plugin Test Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-test-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_test_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_test_runtime"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "addTestHook",
+        "buildPluginApi",
+        "buildProviderPluginMethodChoice",
+        "capturePluginRegistration",
+        "createCapturedPluginRegistration",
+        "createEmptyPluginRegistry",
+        "createMockPluginRegistry",
+        "createNonExitingRuntimeEnv",
+        "createNonExitingTypedRuntimeEnv",
+        "createOutboundTestPlugin",
+        "createPluginRecord",
+        "createPluginRegistry",
+        "createPluginSetupWizardAdapter",
+        "createPluginSetupWizardConfigure",
+        "createPluginSetupWizardStatus",
+        "createQueuedWizardPrompter",
+        "createRuntimeEnv",
+        "createRuntimeTaskFlow",
+        "createSetupWizardAdapter",
+        "createTestRegistry",
+        "createTestWizardPrompter",
+        "createTypedRuntimeEnv",
+        "getActivePluginRegistry",
+        "initializeGlobalHookRunner",
+        "listImportedBundledPluginFacadeIds",
+        "loadPluginManifestRegistry",
+        "pluginRegistrationContractRegistry",
+        "promptSetupWizardAllowFrom",
+        "providerContractLoadError",
+        "registerProviderPlugin",
+        "registerProviderPlugins",
+        "registerSingleProviderPlugin",
+        "releasePinnedPluginChannelRegistry",
+        "requireRegisteredProvider",
+        "resetFacadeRuntimeStateForTest",
+        "resetGlobalHookRunner",
+        "resetPluginRuntimeStateForTest",
+        "resolveBundledExplicitProviderContractsFromPublicArtifacts",
+        "resolveBundledExplicitWebFetchProvidersFromPublicArtifacts",
+        "resolveBundledExplicitWebSearchProvidersFromPublicArtifacts",
+        "resolveProviderContractProvidersForPluginIds",
+        "resolveProviderModelPickerEntries",
+        "resolveProviderPluginChoice",
+        "resolveProviderWizardOptions",
+        "resolveSetupWizardAllowFromEntries",
+        "resolveSetupWizardGroupAllowlist",
+        "resolveWebFetchProviderContractEntriesForPluginId",
+        "resolveWebSearchProviderContractEntriesForPluginId",
+        "runProviderCatalog",
+        "runSetupWizardConfigure",
+        "runSetupWizardFinalize",
+        "runSetupWizardPrepare",
+        "selectFirstWizardOption",
+        "setActivePluginRegistry",
+        "setDefaultChannelPluginRegistryForTests",
+        "setProviderWizardProvidersResolverForTest",
+    ]
+    assert result["scopedSame"] is True
+    assert result["env"] == {
+        "logCalls": 1,
+        "exitError": "exit 3",
+        "nonExitCalls": 1,
+    }
+    assert result["captured"]["providers"] == ["provider-a", "built-provider"]
+    assert result["captured"]["imageProviders"] == ["image-a"]
+    assert result["captured"]["tools"] == ["captured.tool"]
+    assert result["captured"]["scheduled"]["id"] == "job-a"
+    assert result["capturedViaHelper"] == ["provider-b"]
+    assert result["providerHelpers"]["single"] == {"id": "single-provider"}
+    assert result["providerHelpers"]["collections"] == {
+        "providers": ["multi-provider"],
+        "speechProviders": ["speech-provider"],
+    }
+    assert result["providerHelpers"]["providers"] == ["p1", "p2"]
+    assert result["providerHelpers"]["required"] == {"id": "p2"}
+    assert result["registry"] == {
+        "plugins": ["demo"],
+        "providers": ["demo-provider"],
+        "tools": ["demo.tool"],
+        "emptyTools": 0,
+    }
+    assert result["channel"] == {
+        "channels": 1,
+        "hooks": 1,
+        "activeSame": True,
+    }
+    assert result["providerWizard"]["options"][0]["value"] == "wizard-provider"
+    assert result["providerWizard"]["modelEntries"] == [
+        {
+            "value": "wizard-provider",
+            "label": "Wizard Model",
+            "hint": "Model hint",
+        }
+    ]
+    assert result["providerWizard"]["choice"] == {
+        "provider": "wizard-provider",
+        "method": "api",
+    }
+    assert result["setup"]["selected"] == "first"
+    assert result["setup"]["configureResult"] == {
+        "cfg": {"existing": True},
+        "forceAllowFrom": True,
+        "shouldPromptAccountIds": False,
+    }
+    assert result["setup"]["prepareResult"] == {
+        "accountId": "acct",
+        "textType": "function",
+    }
+    assert result["setup"]["allowFromResult"] == ["channel:C1"]
+    assert result["setup"]["groupResult"] == ["group:G1"]
+    assert result["setup"]["setupStatus"] == {"status": "ready"}
+    assert result["setup"]["setupConfigured"] == {"configured": True}
+    assert result["runtime"] == {
+        "mockPlugins": ["test-plugin"],
+        "builtResolved": "built:file.txt",
+        "builtProviders": ["provider-a", "built-provider"],
+        "boundSessionKey": "agent:main:main",
+        "facadeIds": [],
+    }
+    assert result["contracts"] == {
+        "providerIds": ["openai", "openai-codex"],
+        "providerContractIds": ["openai", "openai-codex"],
+        "loadError": {
+            "pluginId": "demo",
+            "ok": False,
+            "error": "boom",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_test_contracts_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-provider-test-contracts.cjs"
+    runtime_entry.write_text(
+        """
+const contracts = require("openclaw/plugin-sdk/provider-test-contracts");
+const scopedContracts = require("@openclaw/plugin-sdk/provider-test-contracts");
+
+function createMockFn() {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return fn;
+  };
+  fn.calls = [];
+  fn.mockClear = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockReset = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockResolvedValue = (value) => {
+    fn.resolvedValue = value;
+    return fn;
+  };
+  fn.mockResolvedValueOnce = (value) => {
+    fn.onceValues.push(value);
+    return fn;
+  };
+  fn.onceValues = [];
+  return fn;
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_test_contracts",
+      description: "Use OpenClaw provider-test-contracts SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const registered = [];
+        const previousDescribe = globalThis.describe;
+        const previousIt = globalThis.it;
+        globalThis.describe = (name, callback) => {
+          registered.push(`describe:${name}`);
+          callback();
+        };
+        globalThis.it = (name, callback) => {
+          registered.push(`it:${name}`);
+          callback();
+        };
+        const provider = {
+          id: "demo-provider",
+          label: "Demo Provider",
+          docsPath: "/providers/demo",
+          aliases: ["demo"],
+          envVars: ["DEMO_API_KEY"],
+          auth: [
+            {
+              id: "api-key",
+              label: "API key",
+              hint: "Paste the API key",
+              run: async () => ({ profiles: [] }),
+              wizard: {
+                choiceId: "demo-provider-api-key",
+                modelAllowlist: {
+                  allowedKeys: ["demo/a"],
+                  initialSelections: ["demo/a"]
+                }
+              }
+            }
+          ],
+          wizard: {
+            setup: { methodId: "api-key", choiceId: "demo-provider-setup" },
+            modelPicker: { methodId: "api-key" }
+          }
+        };
+        const webProvider = {
+          id: "demo-web",
+          label: "Demo Web",
+          hint: "Search and fetch web content",
+          placeholder: "sk-demo",
+          signupUrl: "https://example.test/signup",
+          docsUrl: "https://example.test/docs",
+          envVars: ["DEMO_WEB_KEY"],
+          credentialPath: "plugins.demo.webKey",
+          inactiveSecretPaths: ["plugins.demo.webKey"],
+          createTool: () => ({ name: "demo.web" }),
+          setCredentialValue: (cfg, value) => { cfg.key = value; },
+          getCredentialValue: (cfg) => cfg.key,
+          setConfiguredCredentialValue: (cfg, value) => { cfg.configured = value; },
+          getConfiguredCredentialValue: (cfg) => cfg.configured,
+          applySelectionConfig: () => ({
+            plugins: { entries: { "demo-plugin": { enabled: true } } }
+          }),
+          runSetup: async () => ({ ok: true })
+        };
+        try {
+          contracts.installProviderPluginContractSuite({ provider });
+          contracts.installWebSearchProviderContractSuite({
+            provider: webProvider,
+            credentialValue: "web-key"
+          });
+          contracts.installWebFetchProviderContractSuite({
+            provider: webProvider,
+            credentialValue: "web-key",
+            pluginId: "demo-plugin"
+          });
+          contracts.describeProviderContracts("openai");
+          contracts.describeWebSearchProviderContracts("firecrawl");
+          contracts.describeWebFetchProviderContracts("firecrawl");
+          contracts.describeProviderWizardSetupOptionsContract();
+          contracts.describeProviderWizardChoiceResolutionContract();
+          contracts.describeProviderWizardModelPickerContract();
+          contracts.describeOpenAIProviderRuntimeContract(async () => ({
+            default: { register() {} }
+          }));
+          contracts.describeGithubCopilotProviderDiscoveryContract({
+            load: async () => ({ default: { register() {} } }),
+            registerRuntimeModuleId: "demo-runtime"
+          });
+          contracts.describeOpenAICodexProviderAuthContract(async () => ({
+            default: { register() {} }
+          }));
+        } finally {
+          if (previousDescribe === undefined) {
+            delete globalThis.describe;
+          } else {
+            globalThis.describe = previousDescribe;
+          }
+          if (previousIt === undefined) {
+            delete globalThis.it;
+          } else {
+            globalThis.it = previousIt;
+          }
+        }
+
+        const legacyConfig = contracts.createLegacyProviderConfig({
+          providerId: "demo",
+          api: "openai-responses",
+          modelId: "demo-model",
+          modelName: "Demo Model"
+        });
+        const fallbacksConfig = contracts.createConfigWithFallbacks();
+        const replayProvider = await contracts.expectPassthroughReplayPolicy({
+          modelId: "demo-model",
+          providerId: "demo-provider",
+          sanitizeThoughtSignatures: true,
+          plugin: {
+            register(pluginApi) {
+              pluginApi.registerProvider({
+                id: "demo-provider",
+                buildReplayPolicy: () => ({
+                  applyAssistantFirstOrderingFix: false,
+                  validateGeminiTurns: false,
+                  validateAnthropicTurns: false,
+                  sanitizeThoughtSignatures: {
+                    allowBase64Only: true,
+                    includeCamelCase: true
+                  }
+                })
+              });
+            }
+          }
+        });
+        const configStream = contracts.createCapturedThinkingConfigStream();
+        const payloads = [];
+        configStream.streamFn(
+          { id: "demo-model" },
+          {},
+          { onPayload: (payload) => payloads.push(payload) }
+        );
+        contracts.expectOpenClawLiveTranscriptMarker("OpenClaw is listening");
+        await contracts.waitForLiveExpectation(() => true, 1);
+        const chunks = [];
+        await contracts.streamAudioForLiveTest({
+          audio: Buffer.from("abcdef"),
+          sendAudio: (chunk) => chunks.push(chunk.toString()),
+          chunkSize: 2,
+          delayMs: 0
+        });
+        const liveSession = {
+          connect: async () => {},
+          sendAudio: () => liveSession.onTranscript("OpenClaw"),
+          close: () => {}
+        };
+        const liveResult = await contracts.runRealtimeSttLiveTest({
+          provider: {
+            createSession(callbacks) {
+              liveSession.onTranscript = callbacks.onTranscript;
+              return liveSession;
+            }
+          },
+          providerConfig: {},
+          audio: Buffer.from("audio"),
+          chunkSize: 5,
+          delayMs: 0,
+          timeoutMs: 1
+        });
+        const musicProvider = {
+          id: "music-demo",
+          capabilities: {
+            generate: { enabled: true },
+            edit: { enabled: true, maxInputImages: 1 }
+          }
+        };
+        const videoProvider = {
+          id: "video-demo",
+          capabilities: {
+            generate: { enabled: true },
+            imageToVideo: { enabled: true, maxInputImages: 1 },
+            videoToVideo: { enabled: true, maxInputVideos: 1 }
+          }
+        };
+        contracts.expectExplicitMusicGenerationCapabilities(musicProvider);
+        contracts.expectExplicitVideoGenerationCapabilities(videoProvider);
+        const applyConfig = (cfg) => ({
+          ...cfg,
+          agents: {
+            defaults: {
+              ...cfg.agents?.defaults,
+              model: cfg.agents?.defaults?.model?.primary
+                ? cfg.agents.defaults.model
+                : { primary: "demo/model", fallbacks: cfg.agents?.defaults?.model?.fallbacks },
+              models: {
+                ...cfg.agents?.defaults?.models,
+                "demo/model": {
+                  ...(cfg.agents?.defaults?.models?.["demo/model"] || {}),
+                }
+              }
+            }
+          },
+          models: {
+            providers: {
+              demo: {
+                ...(cfg.models?.providers?.demo || {}),
+                baseUrl: "https://api.demo.test",
+                api: "openai-responses"
+              }
+            }
+          }
+        });
+        contracts.expectProviderOnboardPrimaryModel({
+          applyConfig,
+          modelRef: "demo/model"
+        });
+        contracts.expectProviderOnboardPrimaryAndFallbacks({
+          applyConfig,
+          modelRef: "demo/model"
+        });
+        contracts.expectProviderOnboardPreservesPrimary({
+          applyProviderConfig: applyConfig,
+          primaryModelRef: "existing/model"
+        });
+        contracts.expectProviderOnboardAllowlistAlias({
+          applyProviderConfig: applyConfig,
+          modelRef: "demo/model",
+          alias: "demo-alias"
+        });
+        const merged = contracts.expectProviderOnboardMergedLegacyConfig({
+          applyProviderConfig: applyConfig,
+          providerId: "demo",
+          providerApi: "openai-responses",
+          baseUrl: "https://api.demo.test",
+          legacyApi: "openai-completions"
+        });
+        const mocks = {
+          resolveApiKeyForProviderMock: createMockFn(),
+          postJsonRequestMock: createMockFn(),
+          fetchWithTimeoutMock: createMockFn(),
+          assertOkOrThrowHttpErrorMock: createMockFn(),
+          resolveProviderHttpRequestConfigMock: createMockFn()
+        };
+        contracts.mockSuccessfulDashscopeVideoTask(mocks, {
+          requestId: "req-x",
+          taskId: "task-x",
+          videoUrl: "https://example.test/video.mp4"
+        });
+        mocks.fetchWithTimeoutMock(
+          "https://dashscope-intl.aliyuncs.com/api/v1/tasks/task-x",
+          { method: "GET" },
+          120000,
+          fetch
+        );
+        contracts.expectDashscopeVideoTaskPoll(mocks.fetchWithTimeoutMock, {
+          taskId: "task-x"
+        });
+        const pollCallsBeforeReset = mocks.fetchWithTimeoutMock.calls.length;
+        const videoResult = {
+          videos: [{ mimeType: "video/mp4" }],
+          metadata: {
+            requestId: "req-x",
+            taskId: "task-x",
+            taskStatus: "SUCCEEDED"
+          }
+        };
+        contracts.expectSuccessfulDashscopeVideoResult(videoResult, {
+          requestId: "req-x",
+          taskId: "task-x"
+        });
+        contracts.resetDashscopeVideoProviderMocks(mocks);
+        let syncLoadError = "";
+        try {
+          contracts.loadBundledPluginPublicSurfaceSync({
+            pluginId: "demo",
+            artifactBasename: "api.js"
+          });
+        } catch (error) {
+          syncLoadError = error.message;
+        }
+
+        return {
+          keys: Object.keys(contracts).sort(),
+          scopedSame:
+            scopedContracts.installProviderPluginContractSuite ===
+            contracts.installProviderPluginContractSuite,
+          registered,
+          legacyConfig,
+          fallbacks: fallbacksConfig.agents.defaults.model.fallbacks,
+          replayProviderId: replayProvider.id,
+          capturedPayload: configStream.getCapturedPayload(),
+          payloads,
+          normalized: contracts.normalizeTranscriptForMatch("Open Claw! 2026"),
+          markerMatches:
+            contracts.OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE.test("openclaw"),
+          chunks,
+          liveResult,
+          merged,
+          dashscope: {
+            postResolved: mocks.postJsonRequestMock.resolvedValue.response
+              ? true
+              : false,
+            pollCalls: pollCallsBeforeReset,
+            resetPostCalls: mocks.postJsonRequestMock.calls.length
+          },
+          syncLoadError,
+          catalogEntries:
+            contracts.expectedOpenaiPluginCodexCatalogEntriesWithGpt55.length
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-test-contracts-plugin",
+                    "name": "Runtime Provider Test Contracts Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-test-contracts.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.provider_test_contracts"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_test_contracts"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "EXPECTED_FALLBACKS",
+        "OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE",
+        "createCapturedThinkingConfigStream",
+        "createConfigWithFallbacks",
+        "createLegacyProviderConfig",
+        "describeAnthropicProviderRuntimeContract",
+        "describeCloudflareAiGatewayProviderDiscoveryContract",
+        "describeGithubCopilotProviderAuthContract",
+        "describeGithubCopilotProviderDiscoveryContract",
+        "describeGithubCopilotProviderRuntimeContract",
+        "describeGoogleProviderRuntimeContract",
+        "describeMinimaxProviderDiscoveryContract",
+        "describeModelStudioProviderDiscoveryContract",
+        "describeOpenAICodexProviderAuthContract",
+        "describeOpenAIProviderRuntimeContract",
+        "describeOpenRouterProviderRuntimeContract",
+        "describeProviderContracts",
+        "describeProviderWizardChoiceResolutionContract",
+        "describeProviderWizardModelPickerContract",
+        "describeProviderWizardSetupOptionsContract",
+        "describeSglangProviderDiscoveryContract",
+        "describeVeniceProviderRuntimeContract",
+        "describeVllmProviderDiscoveryContract",
+        "describeWebFetchProviderContracts",
+        "describeWebSearchProviderContracts",
+        "describeZAIProviderRuntimeContract",
+        "expectAugmentedCodexCatalog",
+        "expectCodexMissingAuthHint",
+        "expectDashscopeVideoTaskPoll",
+        "expectExplicitMusicGenerationCapabilities",
+        "expectExplicitVideoGenerationCapabilities",
+        "expectOpenClawLiveTranscriptMarker",
+        "expectPassthroughReplayPolicy",
+        "expectProviderOnboardAllowlistAlias",
+        "expectProviderOnboardMergedLegacyConfig",
+        "expectProviderOnboardPreservesPrimary",
+        "expectProviderOnboardPrimaryAndFallbacks",
+        "expectProviderOnboardPrimaryModel",
+        "expectSuccessfulDashscopeVideoResult",
+        "expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55",
+        "expectedOpenaiPluginCodexCatalogEntriesWithGpt55",
+        "importProviderRuntimeCatalogModule",
+        "installProviderPluginContractSuite",
+        "installWebFetchProviderContractSuite",
+        "installWebSearchProviderContractSuite",
+        "loadBundledPluginPublicSurface",
+        "loadBundledPluginPublicSurfaceSync",
+        "mockSuccessfulDashscopeVideoTask",
+        "normalizeTranscriptForMatch",
+        "resetDashscopeVideoProviderMocks",
+        "runRealtimeSttLiveTest",
+        "streamAudioForLiveTest",
+        "synthesizeElevenLabsLiveSpeech",
+        "waitForLiveExpectation",
+    ]
+    assert result["scopedSame"] is True
+    assert "it:satisfies the base provider plugin contract" in result["registered"]
+    assert "it:satisfies the base web search provider contract" in result["registered"]
+    assert "it:satisfies the base web fetch provider contract" in result["registered"]
+    assert "describe:openai provider contract registry load" in result["registered"]
+    assert "describe:provider wizard setup options contract" in result["registered"]
+    assert "describe:openai provider runtime contract" in result["registered"]
+    assert "describe:github-copilot provider discovery contract" in result["registered"]
+    assert "describe:openai-codex provider auth contract" in result["registered"]
+    assert result["legacyConfig"]["models"]["providers"]["demo"]["models"][0]["id"] == (
+        "demo-model"
+    )
+    assert result["fallbacks"] == ["anthropic/claude-opus-4-5"]
+    assert result["replayProviderId"] == "demo-provider"
+    assert result["capturedPayload"] == {
+        "config": {"thinkingConfig": {"thinkingBudget": -1}}
+    }
+    assert result["payloads"] == [
+        {"config": {"thinkingConfig": {"thinkingBudget": -1}}}
+    ]
+    assert result["normalized"] == "openclaw2026"
+    assert result["markerMatches"] is True
+    assert result["chunks"] == ["ab", "cd", "ef"]
+    assert result["liveResult"] == {
+        "transcripts": ["OpenClaw"],
+        "partials": [],
+        "errors": [],
+    }
+    assert result["merged"]["baseUrl"] == "https://api.demo.test"
+    assert result["dashscope"] == {
+        "postResolved": True,
+        "pollCalls": 1,
+        "resetPostCalls": 0,
+    }
+    assert result["syncLoadError"] == (
+        "Synchronous bundled plugin public-surface loading is not available here"
+    )
+    assert result["catalogEntries"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_env_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-env.cjs"
+    runtime_entry.write_text(
+        """
+const path = require("node:path");
+const env = require("openclaw/plugin-sdk/test-env");
+const scopedEnv = require("@openclaw/plugin-sdk/test-env");
+
+async function readIncoming(req) {
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk.toString("utf8")));
+    req.on("end", () => resolve(chunks.join("")));
+    req.on("error", reject);
+  });
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_env",
+      description: "Use OpenClaw test-env SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        process.env.OPENZUES_TEST_ENV = "before";
+        const snapshot = env.captureEnv(["OPENZUES_TEST_ENV"]);
+        process.env.OPENZUES_TEST_ENV = "changed";
+        snapshot.restore();
+        const afterRestore = process.env.OPENZUES_TEST_ENV;
+        const withEnvValue = env.withEnv(
+          { OPENZUES_TEST_ENV: "inside", OPENZUES_REMOVE_ME: undefined },
+          () => process.env.OPENZUES_TEST_ENV
+        );
+        const afterWithEnv = process.env.OPENZUES_TEST_ENV;
+        const asyncValue = await env.withEnvAsync(
+          { OPENZUES_TEST_ENV: "async" },
+          async () => process.env.OPENZUES_TEST_ENV
+        );
+        const liveEnabled = env.isLiveTestEnabled(["OPENZUES_LIVE_EXTRA"], {
+          OPENZUES_LIVE_EXTRA: "yes"
+        });
+        const profileMode = env.isLiveProfileKeyModeEnabled({
+          OPENCLAW_LIVE_REQUIRE_PROFILE_KEYS: "1"
+        });
+        const usageFetch = env.createProviderUsageFetch(async (url, init) =>
+          env.makeResponse(201, { url, method: init?.method || "GET" })
+        );
+        usageFetch.preconnect("https://example.test");
+        const usageResponse = await usageFetch("https://example.test/usage", {
+          method: "POST"
+        });
+        const usageJson = await usageResponse.json();
+        const authCapture = env.createAuthCaptureJsonFetch({ ok: true });
+        await authCapture.fetchFn("https://example.test/auth", {
+          headers: { authorization: "Bearer token" }
+        });
+        const requestCapture = env.createRequestCaptureJsonFetch({ ok: true });
+        await requestCapture.fetchFn(new URL("https://example.test/request"), {
+          method: "PUT",
+          body: "payload"
+        });
+        const jsonResponse = env.jsonResponse({ hello: "world" }, 202);
+        const mockResponse = env.createMockServerResponse();
+        mockResponse.setHeader("X-Test", "yes");
+        mockResponse.end("done");
+        const incomingText = await readIncoming(
+          env.createMockIncomingRequest(["hello", " ", "world"])
+        );
+        let serverBase = "";
+        await env.withServer((req, res) => {
+          res.end(req.url);
+        }, async (baseUrl) => {
+          serverBase = baseUrl;
+        });
+        const tempDirResult = await env.withTempDir(
+          "openzues-test-env-",
+          async (dir) => path.basename(dir).startsWith("openzues-test-env-")
+        );
+        const stateDirResult = await env.withStateDirEnv(
+          "openzues-state-env-",
+          async ({ stateDir }) => process.env.OPENCLAW_STATE_DIR === stateDir
+        );
+        const tempHome = await env.createTempHomeEnv("openzues-home-env-");
+        const tempHomeOk = process.env.OPENCLAW_STATE_DIR.startsWith(tempHome.home);
+        await tempHome.restore();
+        const withTempHomeResult = await env.withTempHome(async (home) =>
+          process.env.OPENCLAW_STATE_DIR.startsWith(home)
+        );
+        const pixels = Buffer.alloc(16);
+        env.fillPixel(pixels, 0, 0, 2, 255, 0, 0, 255);
+        const png = env.encodePngRgba(pixels, 2, 2);
+        const modelMap = Array.from(
+          env.parseProviderModelMap("openai/gpt-5.5,google/gemini").entries()
+        );
+        const csvFilter = Array.from(env.parseCsvFilter("Beta,alpha")).sort();
+        const videoModels = Array.from(
+          env.resolveConfiguredLiveVideoModels({
+            agents: {
+              defaults: {
+                videoGenerationModel: {
+                  primary: "openai/sora-2",
+                  fallbacks: ["google/veo-3"]
+                }
+              }
+            }
+          }).entries()
+        );
+        const musicModels = Array.from(
+          env.resolveConfiguredLiveMusicModels({
+            agents: { defaults: { musicGenerationModel: "google/lyria" } }
+          }).entries()
+        );
+        return {
+          keys: Object.keys(env).sort(),
+          scopedSame: scopedEnv.withEnv === env.withEnv,
+          env: {
+            afterRestore,
+            withEnvValue,
+            afterWithEnv,
+            asyncValue,
+            truthy: [env.isTruthyEnvValue("yes"), env.isTruthyEnvValue("0")],
+            liveEnabled,
+            profileMode,
+            shellKeys: env.getShellEnvAppliedKeys()
+          },
+          fetch: {
+            acceptsDispatcher: usageFetch.__openclawAcceptsDispatcher,
+            usageStatus: usageResponse.status,
+            usageJson,
+            auth: authCapture.getAuthHeader(),
+            request: requestCapture.getRequest()
+          },
+          http: {
+            jsonStatus: jsonResponse.status,
+            json: await jsonResponse.json(),
+            requestUrl: env.requestUrl(new URL("https://example.test/path")),
+            requestBodyText: [
+              env.requestBodyText("body"),
+              env.requestBodyText(undefined)
+            ],
+            mockHeader: mockResponse.getHeader("x-test"),
+            mockBody: mockResponse.body,
+            incomingText,
+            serverBaseStarts: serverBase.startsWith("http://127.0.0.1:")
+          },
+          temp: {
+            tempDirResult,
+            stateDirResult,
+            tempHomeOk,
+            withTempHomeResult
+          },
+          live: {
+            prompt: env.createSingleUserPromptMessage("hello")[0],
+            assistantText: env.extractNonEmptyAssistantText([
+              { type: "text", text: " hi " },
+              { type: "image", text: "ignored" },
+              { type: "text", text: "there" }
+            ]),
+            keys: env.collectProviderApiKeys("openai", {
+              env: {
+                OPENAI_API_KEYS: "a,b",
+                OPENAI_API_KEY_2: "c",
+                OPENAI_API_KEY: "a"
+              }
+            }),
+            errors: [
+              env.isModelNotFoundErrorMessage("model not found"),
+              env.isAuthErrorMessage("invalid api key"),
+              env.isBillingErrorMessage("402 payment required"),
+              env.isOverloadedErrorMessage("server overloaded"),
+              env.isServerErrorMessage("500 internal server error"),
+              env.isTimeoutErrorMessage("request timed out")
+            ]
+          },
+          media: {
+            pngHeader: Array.from(png.subarray(0, 8)),
+            csvFilter,
+            modelMap,
+            redacted: env.redactLiveApiKey("sk-1234567890abcdef"),
+            videoDefault: env.DEFAULT_LIVE_VIDEO_MODELS.openai,
+            musicDefault: env.DEFAULT_LIVE_MUSIC_MODELS.google,
+            videoModels,
+            musicModels,
+            videoAuthStore: env.resolveLiveVideoAuthStore({
+              requireProfileKeys: false,
+              hasLiveKeys: true
+            }),
+            musicAuthStore: env.resolveLiveMusicAuthStore({
+              requireProfileKeys: true,
+              hasLiveKeys: true
+            }) ?? null,
+            resolution: env.resolveLiveVideoResolution({
+              providerId: "minimax",
+              modelRef: "minimax/video"
+            }),
+            imageLane: env.canRunBufferBackedImageToVideoLiveLane({
+              providerId: "vydra",
+              modelRef: "vydra/veo"
+            }),
+            videoLane: env.canRunBufferBackedVideoToVideoLiveLane({
+              providerId: "fal",
+              modelRef: "fal/reference-to-video"
+            }),
+            duration: env.normalizeVideoGenerationDuration({
+              durationSeconds: 7,
+              provider: {
+                capabilities: {
+                  generate: { supportedDurationSeconds: [4, 8] }
+                }
+              }
+            }),
+            modelRef: env.parseVideoGenerationModelRef("openai/sora")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-env-plugin",
+                    "name": "Runtime Test Env Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-env.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_env"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_env"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "DEFAULT_LIVE_MUSIC_MODELS",
+        "DEFAULT_LIVE_VIDEO_MODELS",
+        "canRunBufferBackedImageToVideoLiveLane",
+        "canRunBufferBackedVideoToVideoLiveLane",
+        "captureEnv",
+        "collectProviderApiKeys",
+        "createAuthCaptureJsonFetch",
+        "createMockIncomingRequest",
+        "createMockServerResponse",
+        "createProviderUsageFetch",
+        "createRequestCaptureJsonFetch",
+        "createSingleUserPromptMessage",
+        "createTempHomeEnv",
+        "encodePngRgba",
+        "extractNonEmptyAssistantText",
+        "fillPixel",
+        "getShellEnvAppliedKeys",
+        "installPinnedHostnameTestHooks",
+        "isAuthErrorMessage",
+        "isBillingErrorMessage",
+        "isLiveProfileKeyModeEnabled",
+        "isLiveTestEnabled",
+        "isModelNotFoundErrorMessage",
+        "isOverloadedErrorMessage",
+        "isServerErrorMessage",
+        "isTimeoutErrorMessage",
+        "isTruthyEnvValue",
+        "jsonResponse",
+        "makeResponse",
+        "maybeLoadShellEnvForGenerationProviders",
+        "mockPinnedHostnameResolution",
+        "normalizeVideoGenerationDuration",
+        "parseCsvFilter",
+        "parseProviderModelMap",
+        "parseVideoGenerationModelRef",
+        "redactLiveApiKey",
+        "requestBodyText",
+        "requestUrl",
+        "resolveConfiguredLiveMusicModels",
+        "resolveConfiguredLiveVideoModels",
+        "resolveLiveMusicAuthStore",
+        "resolveLiveVideoAuthStore",
+        "resolveLiveVideoResolution",
+        "useFrozenTime",
+        "useRealTime",
+        "withEnv",
+        "withEnvAsync",
+        "withFetchPreconnect",
+        "withServer",
+        "withStateDirEnv",
+        "withTempDir",
+        "withTempHome",
+    ]
+    assert result["scopedSame"] is True
+    assert result["env"] == {
+        "afterRestore": "before",
+        "withEnvValue": "inside",
+        "afterWithEnv": "before",
+        "asyncValue": "async",
+        "truthy": [True, False],
+        "liveEnabled": True,
+        "profileMode": True,
+        "shellKeys": [],
+    }
+    assert result["fetch"]["acceptsDispatcher"] is True
+    assert result["fetch"]["usageStatus"] == 201
+    assert result["fetch"]["usageJson"] == {
+        "url": "https://example.test/usage",
+        "method": "POST",
+    }
+    assert result["fetch"]["auth"] == "Bearer token"
+    assert result["fetch"]["request"]["url"] == "https://example.test/request"
+    assert result["fetch"]["request"]["init"]["method"] == "PUT"
+    assert result["http"] == {
+        "jsonStatus": 202,
+        "json": {"hello": "world"},
+        "requestUrl": "https://example.test/path",
+        "requestBodyText": ["body", "{}"],
+        "mockHeader": "yes",
+        "mockBody": "done",
+        "incomingText": "hello world",
+        "serverBaseStarts": True,
+    }
+    assert result["temp"] == {
+        "tempDirResult": True,
+        "stateDirResult": True,
+        "tempHomeOk": True,
+        "withTempHomeResult": True,
+    }
+    assert result["live"]["prompt"]["role"] == "user"
+    assert result["live"]["prompt"]["content"] == "hello"
+    assert result["live"]["assistantText"] == "hi there"
+    assert result["live"]["keys"] == ["a", "b", "c"]
+    assert result["live"]["errors"] == [True, True, True, True, True, True]
+    assert result["media"]["pngHeader"] == [137, 80, 78, 71, 13, 10, 26, 10]
+    assert result["media"]["csvFilter"] == ["alpha", "beta"]
+    assert result["media"]["modelMap"] == [
+        ["openai", "openai/gpt-5.5"],
+        ["google", "google/gemini"],
+    ]
+    assert result["media"]["redacted"] == "sk-12345...cdef"
+    assert result["media"]["videoDefault"] == "openai/sora-2"
+    assert result["media"]["musicDefault"] == "google/lyria-3-clip-preview"
+    assert result["media"]["videoModels"] == [
+        ["openai", "openai/sora-2"],
+        ["google", "google/veo-3"],
+    ]
+    assert result["media"]["musicModels"] == [["google", "google/lyria"]]
+    assert result["media"]["videoAuthStore"] == {"version": 1, "profiles": {}}
+    assert result["media"]["musicAuthStore"] is None
+    assert result["media"]["resolution"] == "768P"
+    assert result["media"]["imageLane"] is False
+    assert result["media"]["videoLane"] is True
+    assert result["media"]["duration"] == 8
+    assert result["media"]["modelRef"] == {"provider": "openai", "model": "sora"}
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_fixtures_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-fixtures.cjs"
+    runtime_entry.write_text(
+        """
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+const fixtures = require("openclaw/plugin-sdk/test-fixtures");
+const scopedFixtures = require("@openclaw/plugin-sdk/test-fixtures");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_fixtures",
+      description: "Use OpenClaw test-fixtures SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const capture = fixtures.createCliRuntimeCapture();
+        capture.defaultRuntime.log("hello", "world");
+        capture.defaultRuntime.error("bad");
+        capture.defaultRuntime.writeStdout("stdout\\n");
+        capture.defaultRuntime.writeJson({ ok: true }, 0);
+        let exitError = "";
+        try {
+          capture.defaultRuntime.exit(7);
+        } catch (error) {
+          exitError = error.message;
+        }
+        const firstJson = fixtures.firstWrittenJsonArg(
+          capture.defaultRuntime.writeJson
+        );
+        const logSpy = fixtures.spyRuntimeLogs(capture.defaultRuntime);
+        capture.defaultRuntime.log("hidden");
+        logSpy.mockRestore();
+        const errorSpy = fixtures.spyRuntimeErrors(capture.defaultRuntime);
+        capture.defaultRuntime.error("hidden-error");
+        errorSpy.mockRestore();
+        const jsonSpy = fixtures.spyRuntimeJson(capture.defaultRuntime);
+        capture.defaultRuntime.writeJson({ hidden: true });
+        jsonSpy.mockRestore();
+        const beforeReset = {
+          logs: [...capture.runtimeLogs],
+          errors: [...capture.runtimeErrors],
+          logSpyCalls: logSpy.mock.calls.length,
+          errorSpyCalls: errorSpy.mock.calls.length,
+          jsonSpyCalls: jsonSpy.mock.calls.length
+        };
+        capture.resetRuntimeCapture();
+
+        const sandbox = fixtures.createSandboxTestContext({
+          overrides: { sessionKey: "sandbox:custom" },
+          dockerOverrides: { network: "bridge" }
+        });
+        const browser = fixtures.createSandboxBrowserConfig({
+          enabled: true,
+          cdpPort: 9333
+        });
+        const prune = fixtures.createSandboxPruneConfig({ idleHours: 12 });
+        const ssh = fixtures.createSandboxSshConfig("C:/repo", {
+          command: "plink"
+        });
+        const userMessage = fixtures.makeAgentUserMessage({ content: "hi" });
+        const assistantMessage = fixtures.makeAgentAssistantMessage({
+          content: [{ type: "text", text: "ok" }]
+        });
+        const castMessage = fixtures.castAgentMessage({ role: "tool" });
+        fixtures.resetSystemEventsForTest();
+        const systemEvents = fixtures.peekSystemEvents("agent:main:main");
+        const terminal = fixtures.sanitizeTerminalText("a\\n\\t\\u001b[31mb");
+        const cases = fixtures.typedCases([{ id: "a" }, { id: "b" }]);
+        const token = "a".repeat(48);
+        fixtures.expectGeneratedTokenPersistedToGatewayAuth({
+          generatedToken: token,
+          authToken: token,
+          persistedConfig: { gateway: { auth: { mode: "token", token } } }
+        });
+        const skillDir = path.join(__dirname, "fixture-skill");
+        await fixtures.writeSkill({
+          dir: skillDir,
+          name: "demo-skill",
+          description: "Demo skill",
+          body: "# Demo\\n"
+        });
+        const freshPath = path.join(__dirname, "fresh-module.mjs");
+        fs.writeFileSync(freshPath, "export const value = 42;\\n", "utf8");
+        const fresh = await fixtures.importFreshModule(
+          pathToFileURL(__filename).href,
+          "./fresh-module.mjs"
+        );
+
+        return {
+          keys: Object.keys(fixtures).sort(),
+          scopedSame:
+            scopedFixtures.createCliRuntimeCapture ===
+            fixtures.createCliRuntimeCapture,
+          capture: {
+            firstJson,
+            exitError,
+            beforeReset,
+            afterReset: {
+              logs: capture.runtimeLogs.length,
+              errors: capture.runtimeErrors.length
+            }
+          },
+          sandbox: {
+            context: {
+              enabled: sandbox.enabled,
+              sessionKey: sandbox.sessionKey,
+              dockerNetwork: sandbox.docker.network
+            },
+            browser: {
+              enabled: browser.enabled,
+              cdpPort: browser.cdpPort
+            },
+            prune,
+            ssh
+          },
+          messages: {
+            userMessage,
+            assistantMessage,
+            castMessage
+          },
+          misc: {
+            systemEvents,
+            terminal,
+            countLines: fixtures.countLines("a\\nb\\n"),
+            balanced: [
+              fixtures.hasBalancedFences("```\\ncode\\n```"),
+              fixtures.hasBalancedFences("```\\ncode")
+            ],
+            cases,
+            skillExists: fs.existsSync(path.join(skillDir, "SKILL.md")),
+            freshValue: fresh.value
+          },
+          paths: {
+            rootDir: fixtures.BUNDLED_PLUGIN_ROOT_DIR,
+            prefix: fixtures.BUNDLED_PLUGIN_PATH_PREFIX,
+            glob: fixtures.BUNDLED_PLUGIN_TEST_GLOB,
+            root: fixtures.bundledPluginRoot("slack"),
+            file: fixtures.bundledPluginFile("slack", "api.js"),
+            dirPrefix: fixtures.bundledPluginDirPrefix("slack", "src"),
+            rootAt: fixtures.bundledPluginRootAt("repo", "slack"),
+            fileAt: fixtures.bundledPluginFileAt("repo", "slack", "api.js"),
+            distRoot: fixtures.bundledDistPluginRoot("slack"),
+            distFile: fixtures.bundledDistPluginFile("slack", "api.js"),
+            distRootAt: fixtures.bundledDistPluginRootAt("repo", "slack"),
+            distFileAt: fixtures.bundledDistPluginFileAt(
+              "repo",
+              "slack",
+              "api.js"
+            ),
+            installed: fixtures.installedPluginRoot("repo", "slack"),
+            installSpec: fixtures.repoInstallSpec("slack")
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-fixtures-plugin",
+                    "name": "Runtime Test Fixtures Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-fixtures.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_fixtures"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.test_fixtures"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "BUNDLED_PLUGIN_PATH_PREFIX",
+        "BUNDLED_PLUGIN_ROOT_DIR",
+        "BUNDLED_PLUGIN_TEST_GLOB",
+        "bundledDistPluginFile",
+        "bundledDistPluginFileAt",
+        "bundledDistPluginRoot",
+        "bundledDistPluginRootAt",
+        "bundledPluginDirPrefix",
+        "bundledPluginFile",
+        "bundledPluginFileAt",
+        "bundledPluginRoot",
+        "bundledPluginRootAt",
+        "castAgentMessage",
+        "countLines",
+        "createCliRuntimeCapture",
+        "createSandboxBrowserConfig",
+        "createSandboxPruneConfig",
+        "createSandboxSshConfig",
+        "createSandboxTestContext",
+        "expectGeneratedTokenPersistedToGatewayAuth",
+        "firstWrittenJsonArg",
+        "hasBalancedFences",
+        "importFreshModule",
+        "installedPluginRoot",
+        "makeAgentAssistantMessage",
+        "makeAgentUserMessage",
+        "peekSystemEvents",
+        "repoInstallSpec",
+        "resetSystemEventsForTest",
+        "sanitizeTerminalText",
+        "spyRuntimeErrors",
+        "spyRuntimeJson",
+        "spyRuntimeLogs",
+        "typedCases",
+        "writeSkill",
+    ]
+    assert result["scopedSame"] is True
+    assert result["capture"]["firstJson"] == {"ok": True}
+    assert result["capture"]["exitError"] == "__exit__:7"
+    assert result["capture"]["beforeReset"]["logs"][:3] == [
+        "hello world",
+        "stdout",
+        '{"ok":true}',
+    ]
+    assert result["capture"]["beforeReset"]["errors"] == ["bad"]
+    assert result["capture"]["beforeReset"]["logSpyCalls"] == 1
+    assert result["capture"]["beforeReset"]["errorSpyCalls"] == 1
+    assert result["capture"]["beforeReset"]["jsonSpyCalls"] == 1
+    assert result["capture"]["afterReset"] == {"logs": 0, "errors": 0}
+    assert result["sandbox"]["context"] == {
+        "enabled": True,
+        "sessionKey": "sandbox:custom",
+        "dockerNetwork": "bridge",
+    }
+    assert result["sandbox"]["browser"] == {"enabled": True, "cdpPort": 9333}
+    assert result["sandbox"]["prune"]["idleHours"] == 12
+    assert result["sandbox"]["ssh"]["command"] == "plink"
+    assert result["messages"]["userMessage"]["role"] == "user"
+    assert result["messages"]["assistantMessage"]["role"] == "assistant"
+    assert result["messages"]["assistantMessage"]["usage"] == {
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+    }
+    assert result["messages"]["castMessage"] == {"role": "tool"}
+    assert result["misc"] == {
+        "systemEvents": [],
+        "terminal": "a\\n\\tb",
+        "countLines": 3,
+        "balanced": [True, False],
+        "cases": [{"id": "a"}, {"id": "b"}],
+        "skillExists": True,
+        "freshValue": 42,
+    }
+    assert result["paths"] == {
+        "rootDir": "extensions",
+        "prefix": "extensions/",
+        "glob": "extensions/**/*.test.ts",
+        "root": "extensions/slack",
+        "file": "extensions/slack/api.js",
+        "dirPrefix": "extensions/slack/src/",
+        "rootAt": "repo/extensions/slack",
+        "fileAt": "repo/extensions/slack/api.js",
+        "distRoot": "dist/extensions/slack",
+        "distFile": "dist/extensions/slack/api.js",
+        "distRootAt": "repo/dist/extensions/slack",
+        "distFileAt": "repo/dist/extensions/slack/api.js",
+        "installed": "repo/extensions/slack",
+        "installSpec": "./extensions/slack",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_test_node_mocks_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-test-node-mocks.cjs"
+    runtime_entry.write_text(
+        """
+const mocks = require("openclaw/plugin-sdk/test-node-mocks");
+const scopedMocks = require("@openclaw/plugin-sdk/test-node-mocks");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.test_node_mocks",
+      description: "Use OpenClaw test-node-mocks SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const actual = {
+          readFileSync: () => "actual",
+          watch: () => "watch"
+        };
+        const readFileSync = () => "mock";
+        const merged = await mocks.mockNodeBuiltinModule(async () => actual, {
+          readFileSync
+        });
+        const homedir = () => "/tmp/home";
+        const mirrored = await mocks.mockNodeBuiltinModule(
+          async () => ({ tmpdir: () => "/tmp" }),
+          (real) => ({
+            homedir,
+            fromActual: real.tmpdir()
+          }),
+          { mirrorToDefault: true }
+        );
+        const preserved = await mocks.mockNodeBuiltinModule(
+          async () => ({
+            readFileSync: () => "actual",
+            default: {
+              readFileSync: () => "actual-default",
+              statSync: () => "stat"
+            }
+          }),
+          { readFileSync },
+          { mirrorToDefault: true }
+        );
+
+        let spawnArgs = [];
+        const childSpawn = await mocks.mockNodeChildProcessSpawnSync((...args) => {
+          spawnArgs = args;
+          return { status: 0, stdout: "ok" };
+        });
+        const spawnResult = childSpawn.spawnSync("cmd", ["a"], {
+          cwd: "C:/repo"
+        });
+
+        let execArgs = [];
+        let execCallback = "";
+        function execFile(...args) {
+          execArgs = args.map((arg) =>
+            typeof arg === "function" ? "callback" : arg
+          );
+          const callback = args.find((arg) => typeof arg === "function");
+          if (callback) {
+            callback(null, "out", "");
+          }
+          return { pid: 42 };
+        }
+        const childExec = await mocks.mockNodeChildProcessExecFile(execFile);
+        const execReturn = childExec.execFile(
+          "cmd",
+          ["b"],
+          { windowsHide: true },
+          (_error, stdout) => {
+            execCallback = stdout;
+          }
+        );
+
+        return {
+          keys: Object.keys(mocks).sort(),
+          scopedSame:
+            scopedMocks.mockNodeBuiltinModule === mocks.mockNodeBuiltinModule,
+          merged: {
+            readFileSync: merged.readFileSync(),
+            watch: merged.watch(),
+            hasDefault: Object.prototype.hasOwnProperty.call(merged, "default")
+          },
+          mirrored: {
+            homedir: mirrored.homedir(),
+            fromActual: mirrored.fromActual,
+            defaultHomedir: mirrored.default.homedir(),
+            defaultFromActual: mirrored.default.fromActual,
+            defaultTmpdir: mirrored.default.tmpdir()
+          },
+          preserved: {
+            readFileSync: preserved.readFileSync(),
+            defaultReadFileSync: preserved.default.readFileSync(),
+            defaultStatSync: preserved.default.statSync()
+          },
+          spawn: {
+            result: spawnResult,
+            args: spawnArgs,
+            hasExecFile: typeof childSpawn.execFile === "function"
+          },
+          execFile: {
+            returnValue: execReturn,
+            args: execArgs,
+            callback: execCallback,
+            hasSpawnSync: typeof childExec.spawnSync === "function"
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-test-node-mocks-plugin",
+                    "name": "Runtime Test Node Mocks Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-test-node-mocks.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.test_node_mocks"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.test_node_mocks"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "mockNodeBuiltinModule",
+        "mockNodeChildProcessExecFile",
+        "mockNodeChildProcessSpawnSync",
+    ]
+    assert result["scopedSame"] is True
+    assert result["merged"] == {
+        "readFileSync": "mock",
+        "watch": "watch",
+        "hasDefault": False,
+    }
+    assert result["mirrored"] == {
+        "homedir": "/tmp/home",
+        "fromActual": "/tmp",
+        "defaultHomedir": "/tmp/home",
+        "defaultFromActual": "/tmp",
+        "defaultTmpdir": "/tmp",
+    }
+    assert result["preserved"] == {
+        "readFileSync": "mock",
+        "defaultReadFileSync": "mock",
+        "defaultStatSync": "stat",
+    }
+    assert result["spawn"] == {
+        "result": {"status": 0, "stdout": "ok"},
+        "args": ["cmd", ["a"], {"cwd": "C:/repo"}],
+        "hasExecFile": True,
+    }
+    assert result["execFile"] == {
+        "returnValue": {"pid": 42},
+        "args": ["cmd", ["b"], {"windowsHide": True}, "callback"],
+        "callback": "out",
+        "hasSpawnSync": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_provider_http_test_mocks_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-provider-http-test-mocks.cjs"
+    runtime_entry.write_text(
+        """
+let cleanupCallback = null;
+globalThis.afterEach = (fn) => {
+  cleanupCallback = fn;
+};
+
+const helpers = require("openclaw/plugin-sdk/provider-http-test-mocks");
+const scopedHelpers = require("@openclaw/plugin-sdk/provider-http-test-mocks");
+const providerHttp = require("openclaw/plugin-sdk/provider-http");
+const providerAuth = require("openclaw/plugin-sdk/provider-auth-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.provider_http_test_mocks",
+      description: "Use OpenClaw provider-http-test-mocks SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const mocks = helpers.getProviderHttpMocks();
+        helpers.installProviderHttpMockCleanup();
+        const apiKey = await providerAuth.resolveApiKeyForProvider({
+          providerId: "demo"
+        });
+        const sanitized = providerHttp.sanitizeConfiguredModelProviderRequest({
+          request: { headers: { "X-Test": "yes" } }
+        });
+        const config = providerHttp.resolveProviderHttpRequestConfig({
+          defaultBaseUrl: "https://api.example.test",
+          defaultHeaders: { "X-Default": "yes" },
+          allowPrivateNetwork: true
+        });
+        mocks.fetchWithTimeoutMock.mockImplementation(
+          async (url, init, timeoutMs) =>
+            new Response(
+              JSON.stringify({
+                status:
+                  mocks.fetchWithTimeoutMock.mock.calls.length < 2
+                    ? "running"
+                    : "done",
+                url,
+                method: init.method,
+                timeoutMs
+              }),
+              { headers: { "content-type": "application/json" } }
+            )
+        );
+        const poll = await providerHttp.pollProviderOperationJson({
+          url: "https://api.example.test/tasks/1",
+          headers: { "X-Poll": "yes" },
+          maxAttempts: 3,
+          defaultTimeoutMs: 123,
+          requestFailedMessage: "poll failed",
+          timeoutMessage: "timed out",
+          isComplete: (payload) => payload.status === "done",
+          getFailureMessage: (payload) => payload.error
+        });
+        await providerHttp.assertOkOrThrowHttpError(
+          new Response("ok"),
+          "http label"
+        );
+        await providerHttp.assertOkOrThrowProviderError(
+          new Response("ok"),
+          "provider label"
+        );
+        mocks.postJsonRequestMock.mockImplementation(async (params) => ({
+          ok: true,
+          url: params.url,
+          body: params.body
+        }));
+        const post = await providerHttp.postJsonRequest({
+          url: "https://api.example.test/post",
+          body: { ok: true }
+        });
+        const beforeCleanup = {
+          apiKeyCalls: mocks.resolveApiKeyForProviderMock.mock.calls.length,
+          fetchCalls: mocks.fetchWithTimeoutMock.mock.calls.length,
+          pollCalls: mocks.pollProviderOperationJsonMock.mock.calls.length,
+          postCalls: mocks.postJsonRequestMock.mock.calls.length,
+          assertHttpCalls: mocks.assertOkOrThrowHttpErrorMock.mock.calls.length,
+          assertProviderCalls:
+            mocks.assertOkOrThrowProviderErrorMock.mock.calls.length,
+          sanitizeCalls:
+            mocks.sanitizeConfiguredModelProviderRequestMock.mock.calls.length,
+          configCalls:
+            mocks.resolveProviderHttpRequestConfigMock.mock.calls.length
+        };
+        if (cleanupCallback) {
+          cleanupCallback();
+        }
+        const afterCleanup = {
+          apiKeyCalls: mocks.resolveApiKeyForProviderMock.mock.calls.length,
+          fetchCalls: mocks.fetchWithTimeoutMock.mock.calls.length,
+          pollCalls: mocks.pollProviderOperationJsonMock.mock.calls.length,
+          postCalls: mocks.postJsonRequestMock.mock.calls.length,
+          assertHttpCalls: mocks.assertOkOrThrowHttpErrorMock.mock.calls.length,
+          assertProviderCalls:
+            mocks.assertOkOrThrowProviderErrorMock.mock.calls.length,
+          sanitizeCalls:
+            mocks.sanitizeConfiguredModelProviderRequestMock.mock.calls.length,
+          configCalls:
+            mocks.resolveProviderHttpRequestConfigMock.mock.calls.length
+        };
+
+        return {
+          keys: Object.keys(helpers).sort(),
+          mockKeys: Object.keys(mocks).sort(),
+          scopedSame:
+            scopedHelpers.getProviderHttpMocks === helpers.getProviderHttpMocks,
+          sameMocks: {
+            auth:
+              providerAuth.resolveApiKeyForProvider ===
+              mocks.resolveApiKeyForProviderMock,
+            post: providerHttp.postJsonRequest === mocks.postJsonRequestMock,
+            fetch:
+              providerHttp.fetchWithTimeout === mocks.fetchWithTimeoutMock,
+            poll:
+              providerHttp.pollProviderOperationJson ===
+              mocks.pollProviderOperationJsonMock
+          },
+          apiKey,
+          sanitized,
+          config: {
+            baseUrl: config.baseUrl,
+            allowPrivateNetwork: config.allowPrivateNetwork,
+            headers: Array.from(config.headers.entries()),
+            dispatcherPolicy: config.dispatcherPolicy ?? null
+          },
+          poll,
+          post,
+          beforeCleanup,
+          afterCleanup,
+          cleanupRegistered: typeof cleanupCallback === "function"
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-provider-http-test-mocks-plugin",
+                    "name": "Runtime Provider HTTP Test Mocks Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-provider-http-test-mocks.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.provider_http_test_mocks"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.provider_http_test_mocks"}
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "getProviderHttpMocks",
+        "installProviderHttpMockCleanup",
+    ]
+    assert result["mockKeys"] == [
+        "assertOkOrThrowHttpErrorMock",
+        "assertOkOrThrowProviderErrorMock",
+        "fetchWithTimeoutMock",
+        "pollProviderOperationJsonMock",
+        "postJsonRequestMock",
+        "resolveApiKeyForProviderMock",
+        "resolveProviderHttpRequestConfigMock",
+        "sanitizeConfiguredModelProviderRequestMock",
+    ]
+    assert result["scopedSame"] is True
+    assert result["sameMocks"] == {
+        "auth": True,
+        "post": True,
+        "fetch": True,
+        "poll": True,
+    }
+    assert result["apiKey"] == {"apiKey": "provider-key"}
+    assert result["sanitized"] == {"request": {"headers": {"X-Test": "yes"}}}
+    assert result["config"] == {
+        "baseUrl": "https://api.example.test",
+        "allowPrivateNetwork": True,
+        "headers": [["x-default", "yes"]],
+        "dispatcherPolicy": None,
+    }
+    assert result["poll"] == {
+        "status": "done",
+        "url": "https://api.example.test/tasks/1",
+        "method": "GET",
+        "timeoutMs": 123,
+    }
+    assert result["post"] == {
+        "ok": True,
+        "url": "https://api.example.test/post",
+        "body": {"ok": True},
+    }
+    assert result["beforeCleanup"] == {
+        "apiKeyCalls": 1,
+        "fetchCalls": 2,
+        "pollCalls": 1,
+        "postCalls": 1,
+        "assertHttpCalls": 3,
+        "assertProviderCalls": 1,
+        "sanitizeCalls": 1,
+        "configCalls": 1,
+    }
+    assert result["afterCleanup"] == {
+        "apiKeyCalls": 0,
+        "fetchCalls": 0,
+        "pollCalls": 0,
+        "postCalls": 0,
+        "assertHttpCalls": 0,
+        "assertProviderCalls": 0,
+        "sanitizeCalls": 0,
+        "configCalls": 0,
+    }
+    assert result["cleanupRegistered"] is True
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_testing_compat_barrel(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-testing-compat.cjs"
+    runtime_entry.write_text(
+        """
+const testing = require("openclaw/plugin-sdk/testing");
+const scopedTesting = require("@openclaw/plugin-sdk/testing");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.testing_compat",
+      description: "Use OpenClaw testing compatibility SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const capture = testing.createCliRuntimeCapture();
+        capture.defaultRuntime.log("hello");
+        const registry = testing.createEmptyPluginRegistry();
+        testing.addTestHook({
+          registry,
+          pluginId: "demo",
+          hookName: "beforeTool",
+          handler: () => "ok",
+          priority: 2
+        });
+        const outboundPlugin = testing.createOutboundTestPlugin({
+          id: "demo",
+          outbound: { send: async () => ({ ok: true }) }
+        });
+        const captured = testing.capturePluginRegistration({
+          register(api) {
+            api.registerProvider({ id: "provider-demo" });
+            api.registerTool({ name: "tool.demo" });
+          }
+        });
+        const runtime = testing.createRuntimeEnv({ throwOnExit: false });
+        runtime.log("hi");
+        const exitResult = runtime.exit(3);
+        const choice = await testing.selectFirstWizardOption({
+          options: [{ value: "first" }, { value: "second" }]
+        });
+        const flow = testing
+          .createRuntimeTaskFlow()
+          .bindSession({ sessionKey: "agent:main:main" })
+          .createManaged({ flowId: "flow-1", status: "running" });
+        let duplicateError = "";
+        try {
+          testing.assertUniqueValues(["a", "b", "a"], "demo value");
+        } catch (error) {
+          duplicateError = error.message;
+        }
+
+        return {
+          keysPresent: [
+            "BUNDLED_RUNTIME_SIDECAR_PATHS",
+            "addTestHook",
+            "assertUniqueValues",
+            "capturePluginRegistration",
+            "createCliRuntimeCapture",
+            "createEmptyPluginRegistry",
+            "createOutboundTestPlugin",
+            "createRuntimeEnv",
+            "createRuntimeTaskFlow",
+            "isAtLeast",
+            "parseMinHostVersionRequirement",
+            "parseSemver",
+            "selectFirstWizardOption",
+            "withEnv"
+          ].every((key) => Object.prototype.hasOwnProperty.call(testing, key)),
+          scopedSame:
+            scopedTesting.createEmptyPluginRegistry ===
+            testing.createEmptyPluginRegistry,
+          semver: {
+            parsed: testing.parseSemver("v1.2.3"),
+            atLeast: [
+              testing.isAtLeast(
+                { major: 1, minor: 2, patch: 3 },
+                { major: 1, minor: 2, patch: 0 }
+              ),
+              testing.isAtLeast(
+                { major: 1, minor: 1, patch: 9 },
+                { major: 1, minor: 2, patch: 0 }
+              )
+            ],
+            minHost: testing.parseMinHostVersionRequirement(
+              ">=1.2.3-beta+build"
+            ),
+            legacyMinHost: testing.parseMinHostVersionRequirement("1.2.3", {
+              allowLegacyBareSemver: true
+            })
+          },
+          unique: {
+            ok: testing.assertUniqueValues(["a", "b"], "demo value"),
+            duplicateError,
+            sidecarCount: testing.BUNDLED_RUNTIME_SIDECAR_PATHS.length,
+            sidecarFirst: testing.BUNDLED_RUNTIME_SIDECAR_PATHS[0] || null
+          },
+          registry: {
+            typedHooks: registry.typedHooks.map((hook) => ({
+              pluginId: hook.pluginId,
+              hookName: hook.hookName,
+              priority: hook.priority,
+              source: hook.source
+            })),
+            providers: captured.providers.map((provider) => provider.id),
+            tools: captured.tools.map((tool) => tool.name),
+            outboundMeta: {
+              id: outboundPlugin.id,
+              label: outboundPlugin.meta.label,
+              chatTypes: outboundPlugin.capabilities.chatTypes
+            }
+          },
+          runtime: {
+            captureLog: capture.runtimeLogs[0],
+            logCalls: runtime.log.mock.calls.length,
+            exitCalls: runtime.exit.mock.calls.length,
+            exitReturnedUndefined: exitResult === undefined
+          },
+          wizard: { choice },
+          flow
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-testing-compat-plugin",
+                    "name": "Runtime Testing Compat Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-testing-compat.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.testing_compat"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.testing_compat"})
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keysPresent"] is True
+    assert result["scopedSame"] is True
+    assert result["semver"] == {
+        "parsed": {"major": 1, "minor": 2, "patch": 3},
+        "atLeast": [True, False],
+        "minHost": {"raw": ">=1.2.3-beta+build", "minimumLabel": "1.2.3-beta+build"},
+        "legacyMinHost": {"raw": "1.2.3", "minimumLabel": "1.2.3"},
+    }
+    assert result["unique"]["ok"] == ["a", "b"]
+    assert result["unique"]["duplicateError"] == "Duplicate demo value: a"
+    assert result["unique"]["sidecarCount"] >= 1
+    assert isinstance(result["unique"]["sidecarFirst"], str)
+    assert result["registry"] == {
+        "typedHooks": [
+            {
+                "pluginId": "demo",
+                "hookName": "beforeTool",
+                "priority": 2,
+                "source": "test",
+            }
+        ],
+        "providers": ["provider-demo"],
+        "tools": ["tool.demo"],
+        "outboundMeta": {
+            "id": "demo",
+            "label": "demo",
+            "chatTypes": ["direct"],
+        },
+    }
+    assert result["runtime"] == {
+        "captureLog": "hello",
+        "logCalls": 1,
+        "exitCalls": 1,
+        "exitReturnedUndefined": True,
+    }
+    assert result["wizard"] == {"choice": "first"}
+    assert result["flow"] == {
+        "flowId": "flow-1",
+        "status": "running",
+        "sessionKey": "agent:main:main",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_targets_helpers(
     tmp_path,
 ) -> None:
@@ -38451,6 +41183,396 @@ module.exports = {{
         "openAfterFirstRelease": True,
         "closedAfterSecondRelease": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_setup_facade_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    fake_binary = tmp_path / "setup-tool.exe"
+    fake_binary.write_text("", encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-setup-facade.cjs"
+    runtime_entry.write_text(
+        f"""
+const setup = require("openclaw/plugin-sdk/setup");
+const scopedSetup = require("@openclaw/plugin-sdk/setup");
+
+const expectedKeys = [
+  "DEFAULT_ACCOUNT_ID",
+  "addWildcardAllowFrom",
+  "applyAccountNameToChannelSection",
+  "applySetupAccountConfigPatch",
+  "buildSingleChannelSecretPromptState",
+  "createAccountScopedAllowFromSection",
+  "createAccountScopedGroupAccessSection",
+  "createAllowFromSection",
+  "createAllowlistSetupWizardProxy",
+  "createCliPathTextInput",
+  "createDelegatedFinalize",
+  "createDelegatedPrepare",
+  "createDelegatedResolveConfigured",
+  "createDelegatedSetupWizardProxy",
+  "createDelegatedSetupWizardStatusResolvers",
+  "createDelegatedTextInputShouldPrompt",
+  "createDetectedBinaryStatus",
+  "createEnvPatchedAccountSetupAdapter",
+  "createLegacyCompatChannelDmPolicy",
+  "createNestedChannelAllowFromSetter",
+  "createNestedChannelDmPolicy",
+  "createNestedChannelDmPolicySetter",
+  "createNestedChannelParsedAllowFromPrompt",
+  "createPatchedAccountSetupAdapter",
+  "createPromptParsedAllowFromForAccount",
+  "createSetupInputPresenceValidator",
+  "createStandardChannelSetupStatus",
+  "createTopLevelChannelAllowFromSetter",
+  "createTopLevelChannelDmPolicy",
+  "createTopLevelChannelDmPolicySetter",
+  "createTopLevelChannelGroupPolicySetter",
+  "createTopLevelChannelParsedAllowFromPrompt",
+  "createZodSetupInputValidator",
+  "detectBinary",
+  "formatCliCommand",
+  "formatDocsLink",
+  "formatResolvedUnresolvedNote",
+  "hasConfiguredSecretInput",
+  "mergeAllowFromEntries",
+  "migrateBaseNameToDefaultAccount",
+  "moveSingleAccountChannelSectionToDefaultAccount",
+  "normalizeAccountId",
+  "normalizeAllowFromEntries",
+  "normalizeE164",
+  "normalizeSecretInputString",
+  "noteChannelLookupFailure",
+  "noteChannelLookupSummary",
+  "parseMentionOrPrefixedId",
+  "parseSetupEntriesAllowingWildcard",
+  "parseSetupEntriesWithParser",
+  "patchChannelConfigForAccount",
+  "patchNestedChannelConfigSection",
+  "patchScopedAccountConfig",
+  "patchTopLevelChannelConfigSection",
+  "pathExists",
+  "prepareScopedSetupConfig",
+  "promptAccountId",
+  "promptChannelAccessConfig",
+  "promptLegacyChannelAllowFrom",
+  "promptLegacyChannelAllowFromForAccount",
+  "promptParsedAllowFromForAccount",
+  "promptParsedAllowFromForScopedChannel",
+  "promptResolvedAllowFrom",
+  "promptSingleChannelSecretInput",
+  "resolveEntriesWithOptionalToken",
+  "resolveGroupAllowlistWithLookupNotes",
+  "resolveParsedAllowFromEntries",
+  "resolveSetupAccountId",
+  "runSingleChannelSecretStep",
+  "setAccountAllowFromForChannel",
+  "setAccountDmAllowFromForChannel",
+  "setAccountGroupPolicyForChannel",
+  "setChannelDmPolicyWithAllowFrom",
+  "setLegacyChannelDmPolicyWithAllowFrom",
+  "setNestedChannelAllowFrom",
+  "setNestedChannelDmPolicyWithAllowFrom",
+  "setSetupChannelEnabled",
+  "setTopLevelChannelAllowFrom",
+  "setTopLevelChannelDmPolicyWithAllowFrom",
+  "setTopLevelChannelGroupPolicy",
+  "splitSetupEntries"
+];
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.setupFacade",
+      description: "Use OpenClaw setup SDK facade shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const cfg = {{
+          channels: {{
+            discord: {{
+              name: "Legacy",
+              token: "old",
+              allowFrom: ["u1"],
+              rooms: {{ policy: "disabled", allowFrom: ["r1"] }}
+            }},
+            telegram: {{}}
+          }}
+        }};
+        const loadWizard = async () => ({{
+          status: {{
+            resolveConfigured: () => true,
+            resolveStatusLines: () => ["loaded"],
+            resolveSelectionHint: () => "hint",
+            resolveQuickstartScore: () => 4
+          }},
+          prepare: async () => "prepared",
+          finalize: async () => "done",
+          textInputs: [{{ inputKey: "cliPath", shouldPrompt: () => true }}]
+        }});
+        const notes = [];
+        const fallback = await setup.resolveGroupAllowlistWithLookupNotes({{
+          label: "Groups",
+          prompter: {{ note: async (message, title) => notes.push({{ message, title }}) }},
+          entries: ["bad"],
+          fallback: {{ entries: ["bad"], fallback: true }},
+          resolve: async () => {{ throw new Error("lookup failed"); }}
+        }});
+        const delegatedResolvers =
+          setup.createDelegatedSetupWizardStatusResolvers(loadWizard);
+        const binaryStatus = setup.createDetectedBinaryStatus({{
+          channelLabel: "Discord",
+          binaryLabel: "CLI",
+          configuredLabel: "ready",
+          unconfiguredLabel: "missing",
+          configuredHint: "ok",
+          unconfiguredHint: "install",
+          configuredScore: 8,
+          unconfiguredScore: 1,
+          resolveConfigured: () => true,
+          resolveBinaryPath: () => "ok-bin",
+          detectBinary: async (value) => value === "ok-bin"
+        }});
+        const topPolicy =
+          setup.createTopLevelChannelDmPolicySetter({{ channel: "discord" }});
+        const nestedPolicy = setup.createNestedChannelDmPolicy({{
+          label: "Rooms",
+          channel: "discord",
+          section: "rooms",
+          policyKey: "channels.discord.rooms.policy",
+          allowFromKey: "channels.discord.rooms.allowFrom",
+          getCurrent: (config) => config.channels.discord.rooms.policy,
+          enabled: true
+        }});
+        const allowFrom = setup.createAllowFromSection({{
+          message: "Allow",
+          placeholder: "ids",
+          invalidWithoutCredentialNote: "Need token",
+          parseId: (value) => value.startsWith("u") ? value : null,
+          apply: (params) => setup.setTopLevelChannelAllowFrom({{
+            cfg: params.cfg,
+            channel: "discord",
+            allowFrom: params.allowFrom,
+            enabled: true
+          }})
+        }});
+        const accessConfig = await setup.promptChannelAccessConfig({{
+          prompter: {{
+            confirm: async () => true,
+            select: async () => "allowlist",
+            text: async () => "g1, g2"
+          }},
+          label: "Groups"
+        }});
+        return {{
+          missing: expectedKeys.filter((key) => !(key in setup)),
+          scopedType: typeof scopedSetup.createDetectedBinaryStatus,
+          normalized: setup.normalizeAccountId("Team One!"),
+          command: setup.formatCliCommand(
+            "openclaw chat",
+            {{ OPENCLAW_PROFILE: "work" }}
+          ),
+          docs: setup.formatDocsLink("/setup", "Setup"),
+          binary: [
+            await setup.detectBinary({json.dumps(str(fake_binary))}),
+            await setup.detectBinary("")
+          ],
+          secret: {{
+            configured: setup.hasConfiguredSecretInput(" literal "),
+            normalized: setup.normalizeSecretInputString(" literal ")
+          }},
+          phone: setup.normalizeE164("whatsapp:+1 (234) 555-0000"),
+          pathExists: await setup.pathExists({json.dumps(str(fake_binary))}),
+          allowFrom: {{
+            wildcard: setup.addWildcardAllowFrom(["u1"]),
+            normalized: setup.normalizeAllowFromEntries([" U1 ", "U1", "*"]),
+            parsed: setup.resolveParsedAllowFromEntries({{
+              entries: ["u1", "bad"],
+              parseId: (entry) => entry.startsWith("u") ? entry : null
+            }}),
+            section: await allowFrom.resolveEntries({{ entries: ["u1", "bad"] }})
+          }},
+          config: {{
+            promoted: setup.moveSingleAccountChannelSectionToDefaultAccount({{
+              cfg,
+              channelKey: "discord"
+            }}),
+            named: setup.applyAccountNameToChannelSection({{
+              cfg,
+              channelKey: "telegram",
+              accountId: "default",
+              name: "Main"
+            }}),
+            patched: setup.applySetupAccountConfigPatch({{
+              cfg,
+              channelKey: "telegram",
+              accountId: "team",
+              patch: {{ botToken: "new" }}
+            }}),
+            top: topPolicy(cfg, "open"),
+            nested: nestedPolicy.setPolicy(cfg, "open")
+          }},
+          delegated: {{
+            configured: await setup.createDelegatedResolveConfigured(loadWizard)({{ cfg }}),
+            prepared: await setup.createDelegatedPrepare(loadWizard)({{ cfg }}),
+            finalized: await setup.createDelegatedFinalize(loadWizard)({{ cfg }}),
+            lines: await delegatedResolvers.resolveStatusLines({{ cfg }}),
+            hint: await delegatedResolvers.resolveSelectionHint({{ cfg }}),
+            score: await delegatedResolvers.resolveQuickstartScore({{ cfg }}),
+            shouldPrompt: await setup.createDelegatedTextInputShouldPrompt({{
+              loadWizard,
+              inputKey: "cliPath"
+            }})({{ cfg }})
+          }},
+          binaryStatus: {{
+            lines: await binaryStatus.resolveStatusLines({{ cfg, configured: true }}),
+            hint: await binaryStatus.resolveSelectionHint({{ cfg, configured: true }}),
+            score: await binaryStatus.resolveQuickstartScore({{ cfg, configured: true }})
+          }},
+          accessConfig,
+          fallback,
+          notes,
+          promptState: setup.buildSingleChannelSecretPromptState({{
+            accountConfigured: false,
+            hasConfigToken: false,
+            allowEnv: true,
+            envValue: "token"
+          }}),
+          note: setup.formatResolvedUnresolvedNote({{
+            resolved: ["U1"],
+            unresolved: ["bad"]
+          }})
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-setup-facade-plugin",
+                    "name": "Runtime Setup Facade Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-setup-facade.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.setupFacade"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.setupFacade"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["missing"] == []
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["normalized"] == "team-one"
+    assert payload["result"]["command"] == "openclaw --profile work chat"
+    assert payload["result"]["docs"] == "Setup (https://docs.openclaw.ai/setup)"
+    assert payload["result"]["binary"] == [True, False]
+    assert payload["result"]["secret"] == {
+        "configured": True,
+        "normalized": "literal",
+    }
+    assert payload["result"]["phone"] == "+12345550000"
+    assert payload["result"]["pathExists"] is True
+    assert payload["result"]["allowFrom"] == {
+        "wildcard": ["u1", "*"],
+        "normalized": ["U1", "*"],
+        "parsed": [
+            {"input": "u1", "resolved": True, "id": "u1"},
+            {"input": "bad", "resolved": False, "id": None},
+        ],
+        "section": [
+            {"input": "u1", "resolved": True, "id": "u1"},
+            {"input": "bad", "resolved": False, "id": None},
+        ],
+    }
+    assert payload["result"]["config"]["promoted"]["channels"]["discord"]["accounts"][
+        "default"
+    ]["token"] == "old"
+    assert payload["result"]["config"]["named"]["channels"]["telegram"]["name"] == "Main"
+    assert payload["result"]["config"]["patched"]["channels"]["telegram"]["accounts"][
+        "team"
+    ]["botToken"] == "new"
+    assert payload["result"]["config"]["top"]["channels"]["discord"]["dmPolicy"] == "open"
+    assert payload["result"]["config"]["top"]["channels"]["discord"]["allowFrom"] == [
+        "u1",
+        "*",
+    ]
+    assert payload["result"]["config"]["nested"]["channels"]["discord"]["rooms"] == {
+        "policy": "open",
+        "allowFrom": ["r1", "*"],
+    }
+    assert payload["result"]["delegated"] == {
+        "configured": True,
+        "prepared": "prepared",
+        "finalized": "done",
+        "lines": ["loaded"],
+        "hint": "hint",
+        "score": 4,
+        "shouldPrompt": True,
+    }
+    assert payload["result"]["binaryStatus"] == {
+        "lines": ["Discord: ready", "CLI: found (ok-bin)"],
+        "hint": "ok",
+        "score": 8,
+    }
+    assert payload["result"]["accessConfig"] == {
+        "policy": "allowlist",
+        "entries": ["g1", "g2"],
+    }
+    assert payload["result"]["fallback"] == {
+        "entries": ["bad"],
+        "fallback": True,
+    }
+    assert payload["result"]["notes"] == [
+        {
+            "message": "Channel lookup failed; keeping entries as typed. Error: lookup failed",
+            "title": "Groups",
+        },
+        {
+            "message": "Unresolved (kept as typed): bad",
+            "title": "Groups",
+        },
+    ]
+    assert payload["result"]["promptState"] == {
+        "accountConfigured": False,
+        "hasConfigToken": False,
+        "canUseEnv": True,
+    }
+    assert payload["result"]["note"] == "Resolved: U1\nUnresolved (kept as typed): bad"
 
 
 @pytest.mark.asyncio

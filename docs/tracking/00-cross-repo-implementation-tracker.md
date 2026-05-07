@@ -20,7 +20,7 @@ Hermes or Warp integration.
 
 | Scope | Percent | Status | Source |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
+| Repo-wide OpenClaw parity in OpenZues | ~99.9% | Active, broad parity still open; evidence band ~80-99.99991% | `docs/openclaw-parity-progress.md`, `docs/openclaw-parity-unresolved-seams.md` |
 | Active gateway/session/tool-contract path | ~99.9% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Chat/session contract subfamily | ~98.3% | Near-complete bounded local path | `docs/openclaw-parity-progress.md` |
 | Runtime/CLI/doctor native bridge | ~99.9% | Mostly landed; packaging and installed plugin depth remain | `docs/openclaw-parity-progress.md` |
@@ -29,8 +29,8 @@ Hermes or Warp integration.
 
 ## Current Worktree Boundary
 
-The imported plugin SDK channel-target-testing facade slice is checkpointed in
-`e6307d8a`.
+The imported plugin SDK setup facade slice is checkpointed in `ec94f934`, and
+the exact `config-types` type-only barrel was reverified on 2026-05-07.
 Any follow-up changes should target the next queue head only:
 
 - `src/openzues/schemas.py`
@@ -62,12 +62,36 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
 | OZ-RM-001 | Sandboxed remote inbound provider media staging | Checkpointed and pushed in `2e6a3ed8` | Repo-wide +0.1%, chat/session +0.1%, gateway session/tool +0.1% | Done; continue `OZ-RT-001` |
 | OZ-RT-001 | Runtime-control hard gaps | Checkpointed in `8a0e6ac6` | Repo-wide +0.1%, active gateway/method +0.1% | Small base-method sweep done; rotate to provider/runtime breadth |
 | OZ-PKG-001 | Packaging/distribution breadth | Update status package-manager dependency posture checkpointed in `f1ac67da` | Repo-wide +0.1%, runtime/CLI/doctor +0.1% | Continue release/update/package breadth |
-| OZ-PLUGIN-001 | Real installed plugin module import/activation | Channel target testing SDK shim checkpointed in `e6307d8a` | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-test-helpers` alias |
+| OZ-PLUGIN-001 | Real installed plugin module import/activation | Setup SDK facade checkpointed in `ec94f934`; `config-types` reverified as type-only | Repo-wide +0.1%, plugin metadata/runtime +0.1% | Continue exact `channel-runtime` facade |
 | OZ-CANVAS-001 | Media/voice/web/canvas breadth | Canvas shortcode normalization checkpointed in `c34e4a77` | Repo-wide +0.1%, browser/canvas/nodes/voice +0.1% | Continue media/canvas/provider breadth |
 | OZ-COMP-001 | Companion apps/nodes parity | QR JSON setup-code contract checkpointed in `b79b87c3` | Repo-wide +0.1%, companion/setup breadth +0.1% | Continue companion QR/setup-code human/remote breadth |
 | OZ-PROV-001 | Provider-native outbound/inbound breadth | Feishu/Lark post/rich-text embedded media hydration checkpointed in `ed3aedb5` | Repo-wide +0.1%, provider-native breadth +0.1% | Rotate to `OZ-PLUGIN-001` |
 
 ## Active Slice Detail
+
+- [x] `OZ-PLUGIN-00298` Imported setup facade shim
+  - Source: `openclaw-main/src/plugin-sdk/setup.ts`,
+    `openclaw-main/src/channels/plugins/setup-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-helpers.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-binary.ts`,
+    `openclaw-main/src/channels/plugins/setup-wizard-proxy.ts`,
+    `openclaw-main/src/channels/plugins/setup-group-access.ts`, and
+    `openclaw-main/src/plugin-sdk/resolution-notes.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `setup` and receive the exact public setup barrel for account
+    setup patching, wizard section builders, delegated setup proxies,
+    setup-tools helpers, binary status helpers, access prompting,
+    config/secret/path helpers, and resolved/unresolved note formatting.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `ec94f934`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused setup facade proof (`1 passed`),
+    adjacent setup proof (`4 passed, 1117 deselected`), adjacent
+    imported-plugin proof (`309 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-00206` Imported messaging-targets helper shim
   - Source: `openclaw-main/src/plugin-sdk/messaging-targets.ts` and
@@ -2176,10 +2200,11 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     tests, ruff, mypy
   - Status: checkpointed in `fceeecc8`
   - Weight: 1
-  - Last verified: 2026-05-06, focused type-only SDK barrel proof (`1
-    passed`), adjacent SDK helper proof (`3 passed, 981 deselected`),
-    adjacent imported-plugin proof (`172 passed, 812 deselected`), `ruff
-    check`, and `mypy`.
+  - Last verified: 2026-05-07, focused type-only SDK barrel proof (`1
+    passed`) reverified the exact `config-types` queue head as type-only;
+    original adjacent SDK helper proof (`3 passed, 981 deselected`), adjacent
+    imported-plugin proof (`172 passed, 812 deselected`), `ruff check`, and
+    `mypy` remain from checkpoint `fceeecc8`.
 
 - [x] `OZ-PLUGIN-001YL` Imported cli-backend helper shim
   - Source: `openclaw-main/src/plugin-sdk/cli-backend.ts`,
@@ -6078,6 +6103,245 @@ Known untracked temp/log artifacts are unrelated and must remain unstaged.
     (`1 passed`), adjacent channel target proof (`3 passed, 1107 deselected`),
     adjacent imported-plugin proof (`298 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00288` Imported channel-test-helpers facade shim
+  - Source: `openclaw-main/src/plugin-sdk/channel-test-helpers.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/directory.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/directory-ids.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/channel-contract-suites.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/outbound-delivery.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/plugin-runtime-mock.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/send-config.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/start-account-context.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/start-account-lifecycle.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/status-issues.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/subagent-hooks.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/bundled-channel-entry.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/envelope-timestamp.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/pairing-reply.ts`, and
+    `openclaw-main/src/test-utils/channel-plugins.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `channel-test-helpers` and receive the public channel testing
+    barrel for directory assertions, channel plugin/action/setup/status
+    contract suites, test registries, outbound plugin builders, hook handler
+    maps, send-config assertions, account lifecycle helpers, bundled entry
+    assertions, envelope timestamp formatting, pairing reply checks, and
+    lightweight plugin runtime mocks without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `67872a14`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused channel-test-helpers proof
+    (`1 passed`), adjacent channel helper proof (`4 passed, 1107 deselected`),
+    adjacent imported-plugin proof (`299 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00289` Imported plugin-test-api facade shim
+  - Source: `openclaw-main/src/plugin-sdk/plugin-test-api.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `plugin-test-api` and receive `createTestPluginApi` with upstream
+    no-op registration defaults, logger/runtime/config defaults, async
+    next-turn injection fallback, run-context and session-scheduler no-ops,
+    path resolution identity behavior, and caller override handling without
+    importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `db9e84ac`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-test-api proof (`1 passed`),
+    adjacent plugin-test-api proof (`2 passed, 1110 deselected`), adjacent
+    imported-plugin proof (`300 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00290` Imported plugin-test-contracts facade shim
+  - Source: `openclaw-main/src/plugin-sdk/plugin-test-contracts.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/contracts-testkit.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/import-side-effects.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/direct-smoke.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/package-manifest-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/plugin-registration-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/plugin-registration-contract-cases.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/public-artifacts.ts`, and
+    `openclaw-main/src/plugin-sdk/test-helpers/public-surface-loader.ts`
+  - References: none
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `plugin-test-contracts` and receive registry fixtures,
+    virtual/test plugin registration, provider capture/lookup, import
+    side-effect assertions, direct import smoke execution, package and
+    registration contract registration, public artifact guards, public-surface
+    loader helpers, and bundled plugin registration case maps without
+    importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `086382f8`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-test-contracts proof
+    (`1 passed`), adjacent plugin-test-contracts/plugin-test-api proof
+    (`2 passed, 1111 deselected`), adjacent imported-plugin proof
+    (`301 passed, 812 deselected`), `ruff check`, `mypy`, and
+    `git diff --check`.
+
+- [x] `OZ-PLUGIN-00291` Imported plugin-test-runtime facade shim
+  - Source: `openclaw-main/src/plugin-sdk/plugin-test-runtime.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `plugin-test-runtime` and receive the aggregate public runtime
+    test helper barrel for plugin registries, captured registration, provider
+    registration helpers, runtime env mocks, setup wizard helper runners,
+    provider wizard option resolution, hook registry helpers, provider
+    contract lookup, and lightweight task-flow binding without importing the
+    TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `084da020`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused plugin-test-runtime proof
+    (`1 passed`), adjacent plugin-test-runtime/plugin-test-contracts/
+    plugin-test-api proof (`3 passed, 1111 deselected`), adjacent
+    imported-plugin proof (`302 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00292` Imported provider-test-contracts facade shim
+  - Source: `openclaw-main/src/plugin-sdk/provider-test-contracts.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/provider-contract-suites.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/provider-contract.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/provider-replay-policy.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/stt-live-audio.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `provider-test-contracts` and receive provider plugin/web
+    search/web fetch contract suites, provider registry describers,
+    wizard/runtime/discovery/auth describers, onboard config assertions,
+    replay-policy assertions, captured thinking stream hooks, STT live-audio
+    helpers, Dashscope video test helpers, media capability assertions,
+    provider catalog constants, and public-surface loaders without importing
+    the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `7494160a`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-test-contracts proof
+    (`1 passed`), adjacent provider-test-contracts/plugin-test-runtime/
+    plugin-test-contracts proof (`3 passed, 1112 deselected`), adjacent
+    imported-plugin proof (`303 passed, 812 deselected`), `ruff check`,
+    `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00293` Imported test-env facade shim
+  - Source: `openclaw-main/src/plugin-sdk/test-env.ts`,
+    `openclaw-main/src/test-utils/env.ts`,
+    `openclaw-main/src/test-utils/provider-usage-fetch.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/http-test-server.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/mock-incoming-request.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-env` and receive env scoping, live-test helpers, provider
+    key collection, error classifiers, shell-env posture, PNG helpers, media
+    live model parsing/defaults, video duration/model helpers, HTTP
+    request/response helpers, provider usage fetch mocks, temp/state/home
+    fixtures, fetch preconnect mocks, mock incoming request/response helpers,
+    and local HTTP server fixtures without importing the TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e2368bf5`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused test-env proof (`1 passed`),
+    adjacent test-env/provider-test-contracts/plugin-test-runtime proof
+    (`3 passed, 1113 deselected`), adjacent imported-plugin proof (`304
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00294` Imported test-fixtures facade shim
+  - Source: `openclaw-main/src/plugin-sdk/test-fixtures.ts`,
+    `openclaw-main/src/cli/test-runtime-capture.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/bundled-plugin-paths.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/import-fresh.ts`,
+    `openclaw-main/src/agents/sandbox/test-fixtures.ts`,
+    `openclaw-main/src/agents/test-helpers/agent-message-fixtures.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-fixtures` and receive CLI runtime capture/spies, sandbox
+    context/browser/prune/SSH fixtures, skill writers, agent message fixtures,
+    fixture-local system-event peeks/reset, terminal sanitizing, chunk/fence
+    helpers, generated-token assertions, typed cases, bundled plugin path
+    helpers, and fresh dynamic import helpers without importing the TypeScript
+    runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `aa63f674`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused test-fixtures proof (`1 passed`),
+    system-event runtime regression proof (`1 passed`), adjacent
+    test-fixtures/test-env/provider-test-contracts proof (`3 passed, 1114
+    deselected`), adjacent imported-plugin proof (`305 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00295` Imported test-node-mocks facade shim
+  - Source: `openclaw-main/src/plugin-sdk/test-node-mocks.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/node-builtin-mocks.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/node-builtin-mocks.test.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `test-node-mocks` and receive Node builtin module override
+    merging, factory overrides, optional default-export mirroring, and
+    child_process `spawnSync`/`execFile` mock helpers without importing the
+    TypeScript runtime.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `b5b60a9e`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused test-node-mocks proof (`1 passed`),
+    adjacent test-node-mocks/test-fixtures/test-env proof (`3 passed, 1115
+    deselected`), adjacent imported-plugin proof (`306 passed, 812
+    deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00296` Imported provider-http-test-mocks facade shim
+  - Source: `openclaw-main/src/plugin-sdk/provider-http-test-mocks.ts`,
+    `openclaw-main/src/plugin-sdk/test-helpers/provider-http-mocks.ts`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `provider-http-test-mocks`, get provider HTTP mock registry and
+    cleanup helper exports, and see `provider-http`/`provider-auth-runtime`
+    resolve to the helper-owned mocks after the helper barrel is imported.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `462e8f82`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused provider-http-test-mocks proof (`1
+    passed`), adjacent provider-http-test-mocks/test-node-mocks/test-fixtures
+    proof (`3 passed, 1116 deselected`), adjacent imported-plugin proof (`307
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] `OZ-PLUGIN-00297` Imported testing compatibility facade shim
+  - Source: `openclaw-main/src/plugin-sdk/testing.ts`,
+    `openclaw-main/src/infra/runtime-guard.ts`,
+    `openclaw-main/src/plugins/min-host-version.ts`,
+    `openclaw-main/src/plugins/runtime-sidecar-paths.ts`,
+    `openclaw-main/scripts/lib/bundled-runtime-sidecar-paths.json`
+  - References: `openclaw-main/src/plugins/contracts/plugin-sdk-subpaths.test.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Contract: native installed plugin runtimes can require scoped and
+    unscoped `testing` and receive the broad deprecated compatibility test
+    barrel for CLI/env/temp fixtures, plugin registry/runtime helpers, setup
+    wizard helpers, provider contract helpers, semver/min-host parsing,
+    bundled runtime sidecar path uniqueness, and task-flow helpers.
+  - Evidence required: focused gateway method test, adjacent plugin invoke
+    tests, ruff, mypy
+  - Status: checkpointed in `e6747208`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused testing compatibility proof (`1
+    passed`), adjacent testing/provider-http-test-mocks/test-node-mocks proof
+    (`3 passed, 1117 deselected`), adjacent imported-plugin proof (`308
+    passed, 812 deselected`), `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] `OZ-PLUGIN-001SE` Imported account-core/account-resolution shim
   - Source: `openclaw-main/src/plugin-sdk/account-core.ts`,

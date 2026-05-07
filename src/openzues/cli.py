@@ -37117,6 +37117,161 @@ function createSetupInputPresenceValidator(params = {}) {
   };
 }
 
+function createZodSetupInputValidator(params = {}) {
+  return (inputParams = {}) => {
+    if (params.schema && typeof params.schema.safeParse === "function") {
+      const parsed = params.schema.safeParse(inputParams.input);
+      if (!parsed || parsed.success === false) {
+        const issues = parsed && parsed.error && parsed.error.issues;
+        return (Array.isArray(issues) && issues[0] && issues[0].message) || "invalid input";
+      }
+      return typeof params.validate === "function"
+        ? params.validate({ ...inputParams, input: parsed.data })
+        : null;
+    }
+    return typeof params.validate === "function" ? params.validate(inputParams) : null;
+  };
+}
+
+function cloneSetupConfigValue(value) {
+  if (value && typeof value === "object") {
+    return JSON.parse(JSON.stringify(value));
+  }
+  return value;
+}
+
+const COMMON_SETUP_ACCOUNT_KEYS_TO_MOVE = new Set([
+  "accessToken",
+  "account",
+  "ackReaction",
+  "allowBots",
+  "allowFrom",
+  "allowlistOnly",
+  "appToken",
+  "authDir",
+  "autoJoin",
+  "autoJoinAllowlist",
+  "avatarUrl",
+  "blockStreaming",
+  "botToken",
+  "chunkMode",
+  "cliPath",
+  "code",
+  "dbPath",
+  "defaultTo",
+  "deviceId",
+  "deviceName",
+  "dmPolicy",
+  "encryption",
+  "groupAllowFrom",
+  "groupPolicy",
+  "homeserver",
+  "httpHost",
+  "httpPort",
+  "httpUrl",
+  "initialSyncLimit",
+  "mediaMaxMb",
+  "name",
+  "password",
+  "reactionNotifications",
+  "region",
+  "replyToMode",
+  "responsePrefix",
+  "service",
+  "signalNumber",
+  "startupVerification",
+  "startupVerificationCooldownHours",
+  "streaming",
+  "textChunkLimit",
+  "threadReplies",
+  "token",
+  "tokenFile",
+  "url",
+  "userId",
+  "webhookPath",
+  "webhookSecret",
+  "webhookUrl",
+]);
+
+function moveSingleAccountChannelSectionToDefaultAccount(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const base = resolveSetupChannelSection(cfg, params.channelKey);
+  if (Object.keys(base).length === 0) {
+    return cfg;
+  }
+  const accounts = { ...resolveSetupChannelAccounts(base) };
+  const targetAccountId = normalizeAccountId(base.defaultAccount || DEFAULT_ACCOUNT_ID);
+  const targetAccount = {
+    ...(accounts[targetAccountId] && typeof accounts[targetAccountId] === "object"
+      ? accounts[targetAccountId]
+      : {}),
+  };
+  const nextBase = { ...base };
+  for (const [key, value] of Object.entries(base)) {
+    if (
+      key === "accounts" ||
+      key === "defaultAccount" ||
+      key === "enabled" ||
+      value === undefined ||
+      !COMMON_SETUP_ACCOUNT_KEYS_TO_MOVE.has(key)
+    ) {
+      continue;
+    }
+    targetAccount[key] = cloneSetupConfigValue(value);
+    delete nextBase[key];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channelKey]: {
+        ...nextBase,
+        accounts: {
+          ...accounts,
+          [targetAccountId]: targetAccount,
+        },
+      },
+    },
+  };
+}
+
+function patchScopedAccountConfig(params = {}) {
+  return patchScopedSetupAccountConfig(params);
+}
+
+function applySetupAccountConfigPatch(params = {}) {
+  return patchScopedSetupAccountConfig({
+    cfg: params.cfg || {},
+    channelKey: params.channelKey,
+    accountId: params.accountId,
+    patch: params.patch || {},
+  });
+}
+
+function normalizeAllowFromEntries(entries, normalizeEntry) {
+  const normalized = normalizeStringEntries(entries || [])
+    .map((entry) => {
+      if (entry === "*") {
+        return "*";
+      }
+      if (typeof normalizeEntry !== "function") {
+        return entry;
+      }
+      return normalizeOptionalString(normalizeEntry(entry)) || "";
+    })
+    .filter(Boolean);
+  return [...new Set(normalized)];
+}
+
+function addWildcardAllowFrom(allowFrom) {
+  const next = normalizeAllowFromEntries(allowFrom || []);
+  if (!next.includes("*")) {
+    next.push("*");
+  }
+  return next;
+}
+
 function mergeAllowFromEntries(current, additions) {
   return [...new Set(normalizeStringEntries([...(current || []), ...(additions || [])]))];
 }
@@ -37237,6 +37392,248 @@ function setAccountGroupPolicyForChannel(params = {}) {
   });
 }
 
+function setAccountDmAllowFromForChannel(params = {}) {
+  return setAccountAllowFromForChannel(params);
+}
+
+function patchTopLevelChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? { ...channels[params.channel] }
+      : {};
+  for (const field of params.clearFields || []) {
+    delete channelConfig[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channel]: {
+        ...channelConfig,
+        ...(params.enabled ? { enabled: true } : {}),
+        ...(params.patch || {}),
+      },
+    },
+  };
+}
+
+function patchNestedChannelConfigSection(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? { ...channels[params.channel] }
+      : {};
+  const sectionConfig =
+    channelConfig[params.section] && typeof channelConfig[params.section] === "object"
+      ? { ...channelConfig[params.section] }
+      : {};
+  for (const field of params.clearFields || []) {
+    delete sectionConfig[field];
+  }
+  return {
+    ...cfg,
+    channels: {
+      ...channels,
+      [params.channel]: {
+        ...channelConfig,
+        ...(params.enabled ? { enabled: true } : {}),
+        [params.section]: {
+          ...sectionConfig,
+          ...(params.patch || {}),
+        },
+      },
+    },
+  };
+}
+
+function setTopLevelChannelAllowFrom(params = {}) {
+  return patchTopLevelChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    enabled: params.enabled,
+    patch: { allowFrom: params.allowFrom || [] },
+  });
+}
+
+function setNestedChannelAllowFrom(params = {}) {
+  return patchNestedChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+    patch: { allowFrom: params.allowFrom || [] },
+  });
+}
+
+function setTopLevelChannelDmPolicyWithAllowFrom(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? channels[params.channel]
+      : {};
+  const existingAllowFrom =
+    (typeof params.getAllowFrom === "function" && params.getAllowFrom(cfg)) ||
+    channelConfig.allowFrom;
+  const allowFrom =
+    params.dmPolicy === "open" ? addWildcardAllowFrom(existingAllowFrom || []) : undefined;
+  return patchTopLevelChannelConfigSection({
+    cfg,
+    channel: params.channel,
+    patch: {
+      dmPolicy: params.dmPolicy,
+      ...(allowFrom ? { allowFrom } : {}),
+    },
+  });
+}
+
+function setNestedChannelDmPolicyWithAllowFrom(params = {}) {
+  const cfg = params.cfg || {};
+  const channels = cfg && typeof cfg.channels === "object" ? cfg.channels : {};
+  const channelConfig =
+    channels[params.channel] && typeof channels[params.channel] === "object"
+      ? channels[params.channel]
+      : {};
+  const sectionConfig =
+    channelConfig[params.section] && typeof channelConfig[params.section] === "object"
+      ? channelConfig[params.section]
+      : {};
+  const existingAllowFrom =
+    (typeof params.getAllowFrom === "function" && params.getAllowFrom(cfg)) ||
+    sectionConfig.allowFrom;
+  const allowFrom =
+    params.dmPolicy === "open" ? addWildcardAllowFrom(existingAllowFrom || []) : undefined;
+  return patchNestedChannelConfigSection({
+    cfg,
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+    patch: {
+      policy: params.dmPolicy,
+      ...(allowFrom ? { allowFrom } : {}),
+    },
+  });
+}
+
+function setTopLevelChannelGroupPolicy(params = {}) {
+  return patchTopLevelChannelConfigSection({
+    cfg: params.cfg,
+    channel: params.channel,
+    enabled: params.enabled,
+    patch: { groupPolicy: params.groupPolicy },
+  });
+}
+
+function setChannelDmPolicyWithAllowFrom(params = {}) {
+  return setTopLevelChannelDmPolicyWithAllowFrom(params);
+}
+
+function setLegacyChannelDmPolicyWithAllowFrom(params = {}) {
+  return setChannelDmPolicyWithAllowFrom(params);
+}
+
+function createTopLevelChannelDmPolicySetter(params = {}) {
+  return (cfg, dmPolicy) =>
+    setTopLevelChannelDmPolicyWithAllowFrom({
+      cfg,
+      channel: params.channel,
+      dmPolicy,
+      getAllowFrom: params.getAllowFrom,
+    });
+}
+
+function createNestedChannelDmPolicySetter(params = {}) {
+  return (cfg, dmPolicy) =>
+    setNestedChannelDmPolicyWithAllowFrom({
+      cfg,
+      channel: params.channel,
+      section: params.section,
+      dmPolicy,
+      getAllowFrom: params.getAllowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createTopLevelChannelAllowFromSetter(params = {}) {
+  return (cfg, allowFrom) =>
+    setTopLevelChannelAllowFrom({
+      cfg,
+      channel: params.channel,
+      allowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createNestedChannelAllowFromSetter(params = {}) {
+  return (cfg, allowFrom) =>
+    setNestedChannelAllowFrom({
+      cfg,
+      channel: params.channel,
+      section: params.section,
+      allowFrom,
+      enabled: params.enabled,
+    });
+}
+
+function createTopLevelChannelGroupPolicySetter(params = {}) {
+  return (cfg, groupPolicy) =>
+    setTopLevelChannelGroupPolicy({
+      cfg,
+      channel: params.channel,
+      groupPolicy,
+      enabled: params.enabled,
+    });
+}
+
+function createNestedChannelDmPolicy(params = {}) {
+  return {
+    label: params.label,
+    channel: params.channel,
+    policyKey: params.policyKey,
+    allowFromKey: params.allowFromKey,
+    getCurrent: params.getCurrent,
+    setPolicy: createNestedChannelDmPolicySetter({
+      channel: params.channel,
+      section: params.section,
+      getAllowFrom: params.getAllowFrom,
+      enabled: params.enabled,
+    }),
+    ...(params.promptAllowFrom ? { promptAllowFrom: params.promptAllowFrom } : {}),
+  };
+}
+
+function resolveParsedAllowFromEntries(params = {}) {
+  return (params.entries || []).map((entry) => {
+    const id = params.parseId(entry);
+    return {
+      input: entry,
+      resolved: Boolean(id),
+      id: id || null,
+    };
+  });
+}
+
+function createAllowFromSection(params = {}) {
+  return {
+    ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
+    ...(params.helpLines ? { helpLines: params.helpLines } : {}),
+    ...(params.credentialInputKey ? { credentialInputKey: params.credentialInputKey } : {}),
+    message: params.message,
+    placeholder: params.placeholder,
+    invalidWithoutCredentialNote: params.invalidWithoutCredentialNote,
+    ...(params.parseInputs ? { parseInputs: params.parseInputs } : {}),
+    parseId: params.parseId,
+    resolveEntries:
+      params.resolveEntries ||
+      (async ({ entries } = {}) =>
+        resolveParsedAllowFromEntries({ entries: entries || [], parseId: params.parseId })),
+    apply: params.apply,
+  };
+}
+
 function createAccountScopedAllowFromSection(params = {}) {
   return {
     ...(params.helpTitle ? { helpTitle: params.helpTitle } : {}),
@@ -37327,6 +37724,25 @@ async function noteChannelLookupFailure(params = {}) {
   }
 }
 
+async function resolveGroupAllowlistWithLookupNotes(params = {}) {
+  try {
+    return await params.resolve();
+  } catch (error) {
+    await noteChannelLookupFailure({
+      prompter: params.prompter,
+      label: params.label,
+      error,
+    });
+    await noteChannelLookupSummary({
+      prompter: params.prompter,
+      label: params.label,
+      resolvedSections: [],
+      unresolved: params.entries || [],
+    });
+    return params.fallback;
+  }
+}
+
 async function resolveEntriesWithOptionalToken(params = {}) {
   const token = normalizeOptionalString(params.token);
   if (!token) {
@@ -37351,6 +37767,31 @@ async function promptResolvedAllowFrom(params = {}) {
     params.existing,
     results.map((result) => result.id).filter(Boolean),
   );
+}
+
+async function promptAccountId(params = {}) {
+  const existingIds =
+    typeof params.listAccountIds === "function" ? params.listAccountIds(params.cfg || {}) : [];
+  const initial = params.currentId || params.defaultAccountId || DEFAULT_ACCOUNT_ID;
+  const choice = await params.prompter.select({
+    message: `${params.label} account`,
+    options: [
+      ...existingIds.map((id) => ({
+        value: id,
+        label: id === DEFAULT_ACCOUNT_ID ? "default (primary)" : id,
+      })),
+      { value: "__new__", label: "Add a new account" },
+    ],
+    initialValue: initial,
+  });
+  if (choice !== "__new__") {
+    return normalizeAccountId(choice);
+  }
+  const entered = await params.prompter.text({
+    message: `New ${params.label} account id`,
+    validate: (value) => (normalizeOptionalString(value) ? undefined : "Required"),
+  });
+  return normalizeAccountId(entered);
 }
 
 async function promptParsedAllowFromForAccount(params = {}) {
@@ -37381,6 +37822,121 @@ async function promptParsedAllowFromForAccount(params = {}) {
       ? params.mergeEntries({ existing, parsed: parsed.entries })
       : mergeAllowFromEntries(undefined, parsed.entries);
   return await params.applyAllowFrom({ cfg: params.cfg, accountId, allowFrom: unique });
+}
+
+function createPromptParsedAllowFromForAccount(params = {}) {
+  return async ({ cfg, prompter, accountId } = {}) =>
+    await promptParsedAllowFromForAccount({
+      cfg,
+      accountId,
+      defaultAccountId:
+        typeof params.defaultAccountId === "function"
+          ? params.defaultAccountId(cfg)
+          : params.defaultAccountId,
+      prompter,
+      noteTitle: params.noteTitle,
+      noteLines: params.noteLines,
+      message: params.message,
+      placeholder: params.placeholder,
+      parseEntries: params.parseEntries,
+      getExistingAllowFrom: params.getExistingAllowFrom,
+      mergeEntries: params.mergeEntries,
+      applyAllowFrom: params.applyAllowFrom,
+    });
+}
+
+async function promptParsedAllowFromForScopedChannel(params = {}) {
+  return await promptParsedAllowFromForAccount({
+    cfg: params.cfg,
+    accountId: params.accountId,
+    defaultAccountId: params.defaultAccountId,
+    prompter: params.prompter,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: params.getExistingAllowFrom,
+    applyAllowFrom: ({ cfg, accountId, allowFrom }) =>
+      setAccountAllowFromForChannel({
+        cfg,
+        channel: params.channel,
+        accountId,
+        allowFrom,
+      }),
+  });
+}
+
+function createTopLevelChannelParsedAllowFromPrompt(params = {}) {
+  const setAllowFrom = createTopLevelChannelAllowFromSetter({
+    channel: params.channel,
+    enabled: params.enabled,
+  });
+  return createPromptParsedAllowFromForAccount({
+    defaultAccountId: params.defaultAccountId,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: ({ cfg }) =>
+      (typeof params.getExistingAllowFrom === "function" && params.getExistingAllowFrom(cfg)) ||
+      (((cfg.channels || {})[params.channel] || {}).allowFrom || []),
+    mergeEntries: params.mergeEntries,
+    applyAllowFrom: ({ cfg, allowFrom }) => setAllowFrom(cfg, allowFrom),
+  });
+}
+
+function createNestedChannelParsedAllowFromPrompt(params = {}) {
+  const setAllowFrom = createNestedChannelAllowFromSetter({
+    channel: params.channel,
+    section: params.section,
+    enabled: params.enabled,
+  });
+  return createPromptParsedAllowFromForAccount({
+    defaultAccountId: params.defaultAccountId,
+    noteTitle: params.noteTitle,
+    noteLines: params.noteLines,
+    message: params.message,
+    placeholder: params.placeholder,
+    parseEntries: params.parseEntries,
+    getExistingAllowFrom: ({ cfg }) => {
+      const channelConfig = (cfg.channels || {})[params.channel] || {};
+      const sectionConfig = channelConfig[params.section] || {};
+      return (
+        (typeof params.getExistingAllowFrom === "function" &&
+          params.getExistingAllowFrom(cfg)) ||
+        sectionConfig.allowFrom ||
+        []
+      );
+    },
+    mergeEntries: params.mergeEntries,
+    applyAllowFrom: ({ cfg, allowFrom }) => setAllowFrom(cfg, allowFrom),
+  });
+}
+
+async function promptLegacyChannelAllowFrom(params = {}) {
+  const allowFrom = await promptResolvedAllowFrom({
+    prompter: params.prompter,
+    existing: params.existing || [],
+    token: params.token,
+    message: params.message,
+    placeholder: params.placeholder,
+    label: params.noteTitle,
+    parseInputs: splitSetupEntries,
+    parseId: params.parseId,
+    invalidWithoutTokenNote: params.invalidWithoutTokenNote,
+    resolveEntries: params.resolveEntries,
+  });
+  return setChannelDmPolicyWithAllowFrom({
+    cfg: setTopLevelChannelAllowFrom({
+      cfg: params.cfg,
+      channel: params.channel,
+      allowFrom,
+    }),
+    channel: params.channel,
+    dmPolicy: "allowlist",
+  });
 }
 
 async function promptLegacyChannelAllowFromForAccount(params = {}) {
@@ -37453,6 +38009,27 @@ function createDelegatedTextInputShouldPrompt(params = {}) {
     return input && typeof input.shouldPrompt === "function"
       ? await input.shouldPrompt(inputParams)
       : false;
+  };
+}
+
+function createDelegatedResolveConfigured(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return await wizard.status.resolveConfigured(params);
+  };
+}
+
+function createDelegatedPrepare(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return wizard.prepare ? await wizard.prepare(params) : undefined;
+  };
+}
+
+function createDelegatedFinalize(loadWizard) {
+  return async (params = {}) => {
+    const wizard = await loadWizard();
+    return wizard.finalize ? await wizard.finalize(params) : undefined;
   };
 }
 
@@ -37531,6 +38108,156 @@ function createAllowlistSetupWizardProxy(params = {}) {
       });
     },
   });
+}
+
+function createDetectedBinaryStatus(params = {}) {
+  const detect = params.detectBinary || detectBinary;
+  return {
+    configuredLabel: params.configuredLabel,
+    unconfiguredLabel: params.unconfiguredLabel,
+    configuredHint: params.configuredHint,
+    unconfiguredHint: params.unconfiguredHint,
+    configuredScore: params.configuredScore,
+    unconfiguredScore: params.unconfiguredScore,
+    resolveConfigured: params.resolveConfigured || (() => false),
+    async resolveStatusLines({ cfg, accountId, configured } = {}) {
+      const binaryPath = params.resolveBinaryPath({ cfg, accountId });
+      const detected = await detect(binaryPath);
+      return [
+        `${params.channelLabel}: ${configured ? params.configuredLabel : params.unconfiguredLabel}`,
+        `${params.binaryLabel}: ${detected ? "found" : "missing"} (${binaryPath})`,
+      ];
+    },
+    async resolveSelectionHint({ cfg, accountId } = {}) {
+      const detected = await detect(params.resolveBinaryPath({ cfg, accountId }));
+      return detected ? params.configuredHint : params.unconfiguredHint;
+    },
+    async resolveQuickstartScore({ cfg, accountId } = {}) {
+      const detected = await detect(params.resolveBinaryPath({ cfg, accountId }));
+      return detected ? params.configuredScore : params.unconfiguredScore;
+    },
+  };
+}
+
+function parseChannelAccessEntries(raw) {
+  return String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+async function promptChannelAccessConfig(params = {}) {
+  const hasEntries = (params.currentEntries || []).length > 0;
+  const wants = await params.prompter.confirm({
+    message: params.updatePrompt
+      ? `Update ${params.label} access?`
+      : `Configure ${params.label} access?`,
+    initialValue: params.defaultPrompt ?? !hasEntries,
+  });
+  if (!wants) {
+    return null;
+  }
+  const options = [{ value: "allowlist", label: "Allowlist (recommended)" }];
+  if (params.allowOpen !== false) {
+    options.push({ value: "open", label: "Open (allow all channels)" });
+  }
+  if (params.allowDisabled !== false) {
+    options.push({ value: "disabled", label: "Disabled (block all channels)" });
+  }
+  const policy = await params.prompter.select({
+    message: `${params.label} access`,
+    options,
+    initialValue: params.currentPolicy || "allowlist",
+  });
+  if (policy !== "allowlist" || params.skipAllowlistEntries) {
+    return { policy, entries: [] };
+  }
+  const raw = await params.prompter.text({
+    message: `${params.label} allowlist (comma-separated)`,
+    placeholder: params.placeholder,
+    initialValue:
+      params.currentEntries && params.currentEntries.length > 0
+        ? params.currentEntries.join(", ")
+        : undefined,
+  });
+  return { policy, entries: parseChannelAccessEntries(raw) };
+}
+
+function buildSingleChannelSecretPromptState(params = {}) {
+  return {
+    accountConfigured: Boolean(params.accountConfigured),
+    hasConfigToken: Boolean(params.hasConfigToken),
+    canUseEnv:
+      Boolean(params.allowEnv) &&
+      Boolean(normalizeOptionalString(params.envValue)) &&
+      !params.hasConfigToken,
+  };
+}
+
+async function promptSingleChannelSecretInput(params = {}) {
+  const state = buildSingleChannelSecretPromptState({
+    accountConfigured: params.accountConfigured,
+    hasConfigToken: params.hasConfigToken,
+    allowEnv: params.allowEnv,
+    envValue: params.envValue,
+  });
+  if (state.canUseEnv) {
+    const keepEnv = await params.prompter.confirm({
+      message: params.envPrompt,
+      initialValue: true,
+    });
+    if (keepEnv) {
+      return { action: "use-env" };
+    }
+  }
+  if (params.hasConfigToken && params.accountConfigured) {
+    const keep = await params.prompter.confirm({
+      message: params.keepPrompt,
+      initialValue: true,
+    });
+    if (keep) {
+      return { action: "keep" };
+    }
+  }
+  const value = await params.prompter.text({
+    message: params.inputPrompt,
+    validate: (input) => (normalizeOptionalString(input) ? undefined : "Required"),
+  });
+  return {
+    action: "set",
+    value: normalizeOptionalString(value),
+    resolvedValue: normalizeOptionalString(value),
+  };
+}
+
+async function runSingleChannelSecretStep(params = {}) {
+  if (!params.accountConfigured && typeof params.onMissingConfigured === "function") {
+    await params.onMissingConfigured();
+  }
+  const result = await promptSingleChannelSecretInput(params);
+  if (result.action === "use-env" && typeof params.applyUseEnv === "function") {
+    return { cfg: await params.applyUseEnv(params.cfg), action: result.action };
+  }
+  if (result.action === "set" && typeof params.applySet === "function") {
+    return {
+      cfg: await params.applySet(params.cfg, result.value, result.resolvedValue),
+      action: result.action,
+      resolvedValue: result.resolvedValue,
+    };
+  }
+  return { cfg: params.cfg, action: result.action, resolvedValue: result.resolvedValue };
+}
+
+function formatResolvedUnresolvedNote(params = {}) {
+  const lines = [
+    params.resolved && params.resolved.length > 0
+      ? `Resolved: ${params.resolved.join(", ")}`
+      : undefined,
+    params.unresolved && params.unresolved.length > 0
+      ? `Unresolved (kept as typed): ${params.unresolved.join(", ")}`
+      : undefined,
+  ].filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : undefined;
 }
 
 function createLegacyCompatChannelDmPolicy(params = {}) {
@@ -57887,6 +58614,3747 @@ const channelTestHelpersRuntime = {
   waitForStartedMocks,
 };
 
+function createTestPluginApi(api = {}) {
+  return {
+    id: "test-plugin",
+    name: "test-plugin",
+    source: "test",
+    registrationMode: "full",
+    config: {},
+    runtime: {},
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {},
+    },
+    registerTool() {},
+    registerHook() {},
+    registerHttpRoute() {},
+    registerChannel() {},
+    registerGatewayMethod() {},
+    registerCli() {},
+    registerCliBackend() {},
+    registerTextTransforms() {},
+    registerService() {},
+    registerGatewayDiscoveryService() {},
+    registerReload() {},
+    registerNodeHostCommand() {},
+    registerNodeInvokePolicy() {},
+    registerSecurityAuditCollector() {},
+    registerConfigMigration() {},
+    registerMigrationProvider() {},
+    registerAutoEnableProbe() {},
+    registerProvider() {},
+    registerSpeechProvider() {},
+    registerRealtimeTranscriptionProvider() {},
+    registerRealtimeVoiceProvider() {},
+    registerMediaUnderstandingProvider() {},
+    registerImageGenerationProvider() {},
+    registerMusicGenerationProvider() {},
+    registerVideoGenerationProvider() {},
+    registerWebFetchProvider() {},
+    registerWebSearchProvider() {},
+    registerInteractiveHandler() {},
+    onConversationBindingResolved() {},
+    registerCommand() {},
+    registerContextEngine() {},
+    registerCompactionProvider() {},
+    registerAgentHarness() {},
+    registerCodexAppServerExtensionFactory() {},
+    registerAgentToolResultMiddleware() {},
+    registerDetachedTaskRuntime() {},
+    registerSessionExtension() {},
+    enqueueNextTurnInjection: async (injection) => ({
+      enqueued: false,
+      id: "",
+      sessionKey: injection.sessionKey,
+    }),
+    registerTrustedToolPolicy() {},
+    registerToolMetadata() {},
+    registerControlUiDescriptor() {},
+    registerRuntimeLifecycle() {},
+    registerAgentEventSubscription() {},
+    setRunContext: () => false,
+    getRunContext: () => undefined,
+    clearRunContext() {},
+    registerSessionSchedulerJob: () => undefined,
+    registerMemoryCapability() {},
+    registerMemoryPromptSection() {},
+    registerMemoryPromptSupplement() {},
+    registerMemoryCorpusSupplement() {},
+    registerMemoryFlushPlan() {},
+    registerMemoryRuntime() {},
+    registerMemoryEmbeddingProvider() {},
+    resolvePath(input) {
+      return input;
+    },
+    on() {},
+    ...api,
+  };
+}
+
+const pluginTestApiRuntime = {
+  createTestPluginApi,
+};
+
+function uniqueSortedStrings(values) {
+  return [...new Set(values || [])].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+}
+
+function formatImportSideEffectCall(args) {
+  if (!Array.isArray(args) || args.length === 0) {
+    return "(no args)";
+  }
+  return args
+    .map((arg) => {
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    })
+    .join(", ");
+}
+
+function assertNoImportTimeSideEffects(params = {}) {
+  const calls = Array.isArray(params.calls) ? params.calls : [];
+  if (calls.length === 0) {
+    return;
+  }
+  const observedCalls = calls
+    .slice(0, 3)
+    .map((call, index) => `  ${index + 1}. ${formatImportSideEffectCall(call)}`)
+    .join("\n");
+  throw new Error(
+    [
+      `[runtime contract] ${params.moduleId} touched ${params.forbiddenSeam} during module import.`,
+      `why this is banned: ${params.why}`,
+      `expected fix: ${params.fixHint}`,
+      `observed calls (${calls.length}):`,
+      observedCalls,
+    ].join("\n"),
+  );
+}
+
+function createPluginRecord(overrides = {}) {
+  const id = String(overrides.id || "test-plugin");
+  return {
+    id,
+    name: overrides.name || id,
+    description: overrides.description || "",
+    source: overrides.source || `/tmp/${id}/index.ts`,
+    origin: overrides.origin || "workspace",
+    enabled: overrides.enabled !== undefined ? Boolean(overrides.enabled) : true,
+    explicitlyEnabled:
+      overrides.explicitlyEnabled !== undefined
+        ? Boolean(overrides.explicitlyEnabled)
+        : overrides.enabled !== undefined
+          ? Boolean(overrides.enabled)
+          : true,
+    activated:
+      overrides.activated !== undefined
+        ? Boolean(overrides.activated)
+        : overrides.enabled !== undefined
+          ? Boolean(overrides.enabled)
+          : true,
+    activationSource:
+      overrides.activationSource ||
+      (overrides.enabled === false ? "disabled" : "explicit"),
+    activationReason: overrides.activationReason,
+    status: overrides.status || "loaded",
+    kind: overrides.kind,
+    contracts: overrides.contracts,
+    toolNames: [],
+    hookNames: [],
+    channelIds: [],
+    cliBackendIds: [],
+    providerIds: [],
+    speechProviderIds: [],
+    realtimeTranscriptionProviderIds: [],
+    realtimeVoiceProviderIds: [],
+    mediaUnderstandingProviderIds: [],
+    imageGenerationProviderIds: [],
+    videoGenerationProviderIds: [],
+    musicGenerationProviderIds: [],
+    webFetchProviderIds: [],
+    webSearchProviderIds: [],
+    migrationProviderIds: [],
+    contextEngineIds: [],
+    memoryEmbeddingProviderIds: [],
+    agentHarnessIds: [],
+    gatewayMethods: [],
+    cliCommands: [],
+    services: [],
+    gatewayDiscoveryServiceIds: [],
+    commands: [],
+    httpRoutes: 0,
+    hookCount: 0,
+    configSchema: false,
+    ...overrides,
+  };
+}
+
+function createPluginRegistry(_params = {}) {
+  const registry = {
+    plugins: [],
+    tools: [],
+    providers: [],
+    speechProviders: [],
+    realtimeTranscriptionProviders: [],
+    realtimeVoiceProviders: [],
+    mediaUnderstandingProviders: [],
+    imageGenerationProviders: [],
+    videoGenerationProviders: [],
+    musicGenerationProviders: [],
+    webFetchProviders: [],
+    webSearchProviders: [],
+    channels: [],
+    typedHooks: [],
+    hooks: [],
+  };
+  const createApi = (record, options = {}) =>
+    createTestPluginApi({
+      id: record.id,
+      name: record.name,
+      source: record.source,
+      config: options.config || {},
+      registerTool(tool) {
+        registry.tools.push({ pluginId: record.id, tool });
+        if (tool && tool.name && !record.toolNames.includes(tool.name)) {
+          record.toolNames.push(tool.name);
+        }
+      },
+      registerProvider(provider) {
+        registry.providers.push(provider);
+        if (provider && provider.id && !record.providerIds.includes(provider.id)) {
+          record.providerIds.push(provider.id);
+        }
+      },
+      registerSpeechProvider(provider) {
+        registry.speechProviders.push(provider);
+        if (provider && provider.id && !record.speechProviderIds.includes(provider.id)) {
+          record.speechProviderIds.push(provider.id);
+        }
+      },
+      registerRealtimeTranscriptionProvider(provider) {
+        registry.realtimeTranscriptionProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.realtimeTranscriptionProviderIds.includes(provider.id)
+        ) {
+          record.realtimeTranscriptionProviderIds.push(provider.id);
+        }
+      },
+      registerRealtimeVoiceProvider(provider) {
+        registry.realtimeVoiceProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.realtimeVoiceProviderIds.includes(provider.id)
+        ) {
+          record.realtimeVoiceProviderIds.push(provider.id);
+        }
+      },
+      registerMediaUnderstandingProvider(provider) {
+        registry.mediaUnderstandingProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.mediaUnderstandingProviderIds.includes(provider.id)
+        ) {
+          record.mediaUnderstandingProviderIds.push(provider.id);
+        }
+      },
+      registerImageGenerationProvider(provider) {
+        registry.imageGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.imageGenerationProviderIds.includes(provider.id)
+        ) {
+          record.imageGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerVideoGenerationProvider(provider) {
+        registry.videoGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.videoGenerationProviderIds.includes(provider.id)
+        ) {
+          record.videoGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerMusicGenerationProvider(provider) {
+        registry.musicGenerationProviders.push(provider);
+        if (
+          provider &&
+          provider.id &&
+          !record.musicGenerationProviderIds.includes(provider.id)
+        ) {
+          record.musicGenerationProviderIds.push(provider.id);
+        }
+      },
+      registerWebFetchProvider(provider) {
+        registry.webFetchProviders.push(provider);
+        if (provider && provider.id && !record.webFetchProviderIds.includes(provider.id)) {
+          record.webFetchProviderIds.push(provider.id);
+        }
+      },
+      registerWebSearchProvider(provider) {
+        registry.webSearchProviders.push(provider);
+        if (provider && provider.id && !record.webSearchProviderIds.includes(provider.id)) {
+          record.webSearchProviderIds.push(provider.id);
+        }
+      },
+    });
+  return { registry, createApi };
+}
+
+function createPluginRegistryFixture(config = {}) {
+  return {
+    config,
+    registry: createPluginRegistry({
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+      runtime: {},
+    }),
+  };
+}
+
+function registerTestPlugin(params = {}) {
+  params.registry.registry.plugins.push(params.record);
+  params.register(
+    params.registry.createApi(params.record, {
+      config: params.config,
+    }),
+  );
+}
+
+function registerVirtualTestPlugin(params = {}) {
+  registerTestPlugin({
+    registry: params.registry,
+    config: params.config,
+    record: createPluginRecord({
+      id: params.id,
+      name: params.name,
+      source: params.source || `/virtual/${params.id}/index.ts`,
+      ...(params.kind ? { kind: params.kind } : {}),
+      ...(params.contracts ? { contracts: params.contracts } : {}),
+    }),
+    register: params.register,
+  });
+}
+
+function createCapturedProviderApi(collections) {
+  return createTestPluginApi({
+    registerProvider(provider) {
+      collections.providers.push(provider);
+    },
+    registerRealtimeTranscriptionProvider(provider) {
+      collections.realtimeTranscriptionProviders.push(provider);
+    },
+    registerSpeechProvider(provider) {
+      collections.speechProviders.push(provider);
+    },
+    registerMediaUnderstandingProvider(provider) {
+      collections.mediaProviders.push(provider);
+    },
+    registerImageGenerationProvider(provider) {
+      collections.imageProviders.push(provider);
+    },
+    registerMusicGenerationProvider(provider) {
+      collections.musicProviders.push(provider);
+    },
+    registerVideoGenerationProvider(provider) {
+      collections.videoProviders.push(provider);
+    },
+  });
+}
+
+async function registerProviders(...plugins) {
+  const collections = {
+    providers: [],
+    realtimeTranscriptionProviders: [],
+    speechProviders: [],
+    mediaProviders: [],
+    imageProviders: [],
+    musicProviders: [],
+    videoProviders: [],
+  };
+  const api = createCapturedProviderApi(collections);
+  for (const plugin of plugins) {
+    if (plugin && typeof plugin.register === "function") {
+      plugin.register(api);
+    }
+  }
+  return collections.providers;
+}
+
+function requireProvider(providers, providerId, label = "provider") {
+  const provider = (providers || []).find((entry) => entry && entry.id === providerId);
+  if (!provider) {
+    throw new Error(`${label} ${providerId} missing`);
+  }
+  return provider;
+}
+
+async function runDirectImportSmoke(code) {
+  const { execFile } = require("node:child_process");
+  return await new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      ["-e", String(code || "")],
+      {
+        cwd: process.cwd(),
+        env: {
+          HOME: process.env.HOME,
+          NODE_OPTIONS: process.env.NODE_OPTIONS,
+          NODE_PATH: process.env.NODE_PATH,
+          PATH: process.env.PATH,
+          TERM: process.env.TERM,
+        },
+        timeout: 40000,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr || error.message));
+          return;
+        }
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+function runOrRegisterDescribe(name, callback) {
+  const registerDescribe =
+    typeof globalThis !== "undefined" && typeof globalThis.describe === "function"
+      ? globalThis.describe
+      : null;
+  if (registerDescribe) {
+    return registerDescribe.call(globalThis, name, callback);
+  }
+  return callback();
+}
+
+function assertPluginContractEqual(actual, expected, message) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(
+      `${message}; expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
+function describePackageManifestContract(params = {}) {
+  const packagePath = `extensions/${params.pluginId}/package.json`;
+  runOrRegisterDescribe(`${params.pluginId} package manifest contract`, () => {
+    for (const dependencyName of params.pluginLocalRuntimeDeps || []) {
+      runOrRegisterChannelTestCase(`keeps ${dependencyName} plugin-local`, () => {
+        const fs = require("node:fs");
+        const rootManifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+        const pluginManifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+        const pluginSpec =
+          (pluginManifest.dependencies || {})[dependencyName] ||
+          (pluginManifest.optionalDependencies || {})[dependencyName];
+        const rootSpec =
+          (rootManifest.dependencies || {})[dependencyName] ||
+          (rootManifest.optionalDependencies || {})[dependencyName];
+        if (!pluginSpec) {
+          throw new Error(`${packagePath} should declare ${dependencyName}`);
+        }
+        if (rootSpec !== undefined) {
+          throw new Error(`root package should not declare ${dependencyName}`);
+        }
+      });
+    }
+    if (params.minHostVersionBaseline) {
+      runOrRegisterChannelTestCase(
+        "declares a parseable minHostVersion floor at or above the baseline",
+        () => {
+          const fs = require("node:fs");
+          const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+          const minHostVersion =
+            manifest &&
+            manifest.openclaw &&
+            manifest.openclaw.install &&
+            manifest.openclaw.install.minHostVersion;
+          if (!minHostVersion) {
+            throw new Error(`${packagePath} should declare openclaw.install.minHostVersion`);
+          }
+        },
+      );
+    }
+  });
+}
+
+const pluginRegistrationContractCases = {
+  anthropic: {
+    pluginId: "anthropic",
+    providerIds: ["anthropic"],
+    mediaUnderstandingProviderIds: ["anthropic"],
+    cliBackendIds: ["claude-cli"],
+    requireDescribeImages: true,
+  },
+  brave: { pluginId: "brave", webSearchProviderIds: ["brave"] },
+  comfy: {
+    pluginId: "comfy",
+    providerIds: ["comfy"],
+    imageGenerationProviderIds: ["comfy"],
+    musicGenerationProviderIds: ["comfy"],
+    videoGenerationProviderIds: ["comfy"],
+    requireGenerateImage: true,
+    requireGenerateVideo: true,
+  },
+  deepgram: { pluginId: "deepgram", mediaUnderstandingProviderIds: ["deepgram"] },
+  duckduckgo: { pluginId: "duckduckgo", webSearchProviderIds: ["duckduckgo"] },
+  elevenlabs: {
+    pluginId: "elevenlabs",
+    speechProviderIds: ["elevenlabs"],
+    requireSpeechVoices: true,
+  },
+  exa: { pluginId: "exa", webSearchProviderIds: ["exa"] },
+  fal: {
+    pluginId: "fal",
+    providerIds: ["fal"],
+    imageGenerationProviderIds: ["fal"],
+  },
+  firecrawl: {
+    pluginId: "firecrawl",
+    webFetchProviderIds: ["firecrawl"],
+    webSearchProviderIds: ["firecrawl"],
+    toolNames: ["firecrawl_search", "firecrawl_scrape"],
+  },
+  google: {
+    pluginId: "google",
+    providerIds: ["google", "google-gemini-cli", "google-vertex"],
+    webSearchProviderIds: ["gemini"],
+    realtimeVoiceProviderIds: ["google"],
+    speechProviderIds: ["google"],
+    mediaUnderstandingProviderIds: ["google"],
+    imageGenerationProviderIds: ["google"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  groq: { pluginId: "groq", mediaUnderstandingProviderIds: ["groq"] },
+  microsoft: {
+    pluginId: "microsoft",
+    speechProviderIds: ["microsoft"],
+    requireSpeechVoices: true,
+  },
+  minimax: {
+    pluginId: "minimax",
+    providerIds: ["minimax", "minimax-portal"],
+    mediaUnderstandingProviderIds: ["minimax", "minimax-portal"],
+    imageGenerationProviderIds: ["minimax", "minimax-portal"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  mistral: { pluginId: "mistral", mediaUnderstandingProviderIds: ["mistral"] },
+  moonshot: {
+    pluginId: "moonshot",
+    providerIds: ["moonshot"],
+    webSearchProviderIds: ["kimi"],
+    mediaUnderstandingProviderIds: ["moonshot"],
+    requireDescribeImages: true,
+    manifestAuthChoice: {
+      pluginId: "kimi",
+      choiceId: "kimi-code-api-key",
+      choiceLabel: "Kimi Code API key (subscription)",
+      groupId: "moonshot",
+      groupLabel: "Moonshot AI (Kimi K2.6)",
+      groupHint: "Kimi K2.6",
+    },
+  },
+  openai: {
+    pluginId: "openai",
+    providerIds: ["openai", "openai-codex"],
+    speechProviderIds: ["openai"],
+    realtimeTranscriptionProviderIds: ["openai"],
+    realtimeVoiceProviderIds: ["openai"],
+    mediaUnderstandingProviderIds: ["openai", "openai-codex"],
+    imageGenerationProviderIds: ["openai"],
+    requireSpeechVoices: true,
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+  },
+  openrouter: {
+    pluginId: "openrouter",
+    providerIds: ["openrouter"],
+    mediaUnderstandingProviderIds: ["openrouter"],
+    imageGenerationProviderIds: ["openrouter"],
+    videoGenerationProviderIds: ["openrouter"],
+    requireDescribeImages: true,
+    requireGenerateImage: true,
+    requireGenerateVideo: true,
+  },
+  perplexity: { pluginId: "perplexity", webSearchProviderIds: ["perplexity"] },
+  senseaudio: { pluginId: "senseaudio", mediaUnderstandingProviderIds: ["senseaudio"] },
+  tavily: {
+    pluginId: "tavily",
+    webSearchProviderIds: ["tavily"],
+    toolNames: ["tavily_search", "tavily_extract"],
+  },
+  "tts-local-cli": {
+    pluginId: "tts-local-cli",
+    speechProviderIds: ["tts-local-cli", "cli"],
+  },
+  xai: {
+    pluginId: "xai",
+    providerIds: ["xai"],
+    webSearchProviderIds: ["grok"],
+    realtimeTranscriptionProviderIds: ["xai"],
+    mediaUnderstandingProviderIds: ["xai"],
+  },
+  zai: {
+    pluginId: "zai",
+    mediaUnderstandingProviderIds: ["zai"],
+    requireDescribeImages: true,
+  },
+};
+
+const pluginRegistrationContractRegistry = Object.values(
+  pluginRegistrationContractCases,
+).map((entry) => ({ ...entry }));
+
+function findPluginRegistrationContract(pluginId) {
+  const entry = pluginRegistrationContractRegistry.find(
+    (candidate) => candidate.pluginId === pluginId,
+  );
+  if (!entry) {
+    throw new Error(`plugin registration contract missing for ${pluginId}`);
+  }
+  return entry;
+}
+
+function describePluginRegistrationContract(params = {}) {
+  runOrRegisterDescribe(`${params.pluginId} plugin registration contract`, () => {
+    const registrations = [
+      ["cliBackendIds", "keeps bundled cli-backend ownership explicit"],
+      ["providerIds", "keeps bundled provider ownership explicit"],
+      ["webSearchProviderIds", "keeps bundled web search ownership explicit"],
+      ["webFetchProviderIds", "keeps bundled web fetch ownership explicit"],
+      ["speechProviderIds", "keeps bundled speech ownership explicit"],
+      [
+        "realtimeTranscriptionProviderIds",
+        "keeps bundled realtime-transcription ownership explicit",
+      ],
+      ["realtimeVoiceProviderIds", "keeps bundled realtime-voice ownership explicit"],
+      [
+        "mediaUnderstandingProviderIds",
+        "keeps bundled media-understanding ownership explicit",
+      ],
+      ["imageGenerationProviderIds", "keeps bundled image-generation ownership explicit"],
+      ["videoGenerationProviderIds", "keeps bundled video-generation ownership explicit"],
+      ["musicGenerationProviderIds", "keeps bundled music-generation ownership explicit"],
+      ["toolNames", "keeps bundled tool ownership explicit"],
+    ];
+    for (const [field, name] of registrations) {
+      if (params[field]) {
+        runOrRegisterChannelTestCase(name, () => {
+          assertPluginContractEqual(
+            findPluginRegistrationContract(params.pluginId)[field],
+            params[field],
+            name,
+          );
+        });
+      }
+    }
+    if (params.manifestAuthChoice) {
+      runOrRegisterChannelTestCase("keeps onboarding auth grouping explicit", () => {});
+    }
+  });
+}
+
+function getPublicArtifactBasename(relativePath) {
+  const parts = String(relativePath || "").split("/");
+  return parts[parts.length - 1] || relativePath;
+}
+
+const BUNDLED_RUNTIME_SIDECAR_BASENAMES = uniqueSortedStrings([
+  "runtime-api.js",
+  "runtime-setter-api.js",
+  "helper-api.js",
+  "thread-bindings-runtime.js",
+  "light-runtime-api.js",
+]);
+
+const GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES = uniqueSortedStrings([
+  ...BUNDLED_RUNTIME_SIDECAR_BASENAMES,
+  "action-runtime.runtime.js",
+  "action-runtime-api.js",
+  "allow-from.js",
+  "api.js",
+  "auth-presence.js",
+  "channel-config-api.js",
+  "index.js",
+  "login-qr-api.js",
+  "onboard.js",
+  "openai-codex-catalog.js",
+  "provider-catalog.js",
+  "session-key-api.js",
+  "setup-api.js",
+  "setup-entry.js",
+  "timeouts.js",
+  "x-search.js",
+]);
+
+function normalizeArtifactBasename(artifactBasename) {
+  return String(artifactBasename || "").replace(/^\.\/+/u, "").replace(/^\/+/u, "");
+}
+
+function resolveSourceArtifactPath(packageDir, artifactBasename) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const artifactPath = path.resolve(packageDir, normalizeArtifactBasename(artifactBasename));
+  if (artifactPath.endsWith(".js")) {
+    const sourcePath = `${artifactPath.slice(0, -".js".length)}.ts`;
+    if (fs.existsSync(sourcePath)) {
+      return sourcePath;
+    }
+  }
+  return artifactPath;
+}
+
+function readPluginTestContractsJson(filePath) {
+  const fs = require("node:fs");
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveExtensionDirByManifestId(pluginId) {
+  const path = require("node:path");
+  const pluginDir = path.resolve(process.cwd(), "extensions", pluginId);
+  const manifest = readPluginTestContractsJson(
+    path.join(pluginDir, "openclaw.plugin.json"),
+  );
+  if (manifest && manifest.id === pluginId) {
+    return pluginDir;
+  }
+  throw new Error(`Unknown bundled plugin id: ${pluginId}`);
+}
+
+function resolveWorkspacePackageDir(packageName) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const extensionsDir = path.resolve(process.cwd(), "extensions");
+  let entries = [];
+  try {
+    entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+  } catch {
+    throw new Error(`Unknown workspace package: ${packageName}`);
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const packageDir = path.join(extensionsDir, entry.name);
+    const manifest = readPluginTestContractsJson(path.join(packageDir, "package.json"));
+    if (manifest && manifest.name === packageName) {
+      return packageDir;
+    }
+  }
+  throw new Error(`Unknown workspace package: ${packageName}`);
+}
+
+async function loadBundledPluginPublicSurface(params = {}) {
+  const { pathToFileURL } = require("node:url");
+  const artifactPath = resolveSourceArtifactPath(
+    resolveExtensionDirByManifestId(params.pluginId),
+    params.artifactBasename,
+  );
+  return await import(pathToFileURL(artifactPath).href);
+}
+
+function loadBundledPluginPublicSurfaceSync(_params = {}) {
+  throw new Error("Synchronous bundled plugin public-surface loading is not available here");
+}
+
+function resolveWorkspacePackagePublicModuleUrl(params = {}) {
+  const { pathToFileURL } = require("node:url");
+  const artifactPath = resolveSourceArtifactPath(
+    resolveWorkspacePackageDir(params.packageName),
+    params.artifactBasename,
+  );
+  return pathToFileURL(artifactPath).href;
+}
+
+const pluginTestContractsRuntime = {
+  BUNDLED_RUNTIME_SIDECAR_BASENAMES,
+  GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES,
+  assertNoImportTimeSideEffects,
+  createPluginRegistryFixture,
+  describePackageManifestContract,
+  describePluginRegistrationContract,
+  getPublicArtifactBasename,
+  loadBundledPluginPublicSurface,
+  loadBundledPluginPublicSurfaceSync,
+  pluginRegistrationContractCases,
+  registerProviders,
+  registerTestPlugin,
+  registerVirtualTestPlugin,
+  requireProvider,
+  resolveWorkspacePackagePublicModuleUrl,
+  runDirectImportSmoke,
+  uniqueSortedStrings,
+};
+
+function getActivePluginRegistry() {
+  return getPluginRegistryTestState().activeRegistry;
+}
+
+function resetPluginRuntimeStateForTest() {
+  const state = getPluginRegistryTestState();
+  state.activeRegistry = null;
+  state.channelRegistry = null;
+  state.channelPinned = false;
+}
+
+function setDefaultChannelPluginRegistryForTests(registry) {
+  const state = getPluginRegistryTestState();
+  const previous = state.channelRegistry;
+  state.channelRegistry = registry;
+  state.channelPinned = true;
+  return () => {
+    state.channelRegistry = previous;
+    state.channelPinned = false;
+  };
+}
+
+function providerContractLoadError(pluginId, error) {
+  return {
+    pluginId,
+    ok: false,
+    error: error && error.message ? error.message : String(error || "unknown error"),
+  };
+}
+
+function resolveProviderContractProvidersForPluginIds(pluginIds = []) {
+  const ids = new Set(pluginIds || []);
+  return pluginRegistrationContractRegistry
+    .filter((entry) => ids.has(entry.pluginId))
+    .flatMap((entry) => entry.providerIds || [])
+    .map((id) => ({ id }));
+}
+
+function resolveWebFetchProviderContractEntriesForPluginId(pluginId) {
+  const entry = findPluginRegistrationContract(pluginId);
+  return (entry.webFetchProviderIds || []).map((id) => ({ id, pluginId }));
+}
+
+function resolveWebSearchProviderContractEntriesForPluginId(pluginId) {
+  const entry = findPluginRegistrationContract(pluginId);
+  return (entry.webSearchProviderIds || []).map((id) => ({ id, pluginId }));
+}
+
+function loadPluginManifestRegistry(_params = {}) {
+  return { plugins: [] };
+}
+
+function resolveBundledExplicitProviderContractsFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.providerIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function resolveBundledExplicitWebFetchProvidersFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.webFetchProviderIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function resolveBundledExplicitWebSearchProvidersFromPublicArtifacts(_params = {}) {
+  return pluginRegistrationContractRegistry.flatMap((entry) =>
+    (entry.webSearchProviderIds || []).map((id) => ({ id, pluginId: entry.pluginId })),
+  );
+}
+
+function listImportedBundledPluginFacadeIds() {
+  return [];
+}
+
+function resetFacadeRuntimeStateForTest() {}
+
+function buildPluginApi(params = {}) {
+  const handlers = params.handlers || {};
+  return createTestPluginApi({
+    id: params.id || "test-plugin",
+    name: params.name || params.id || "test-plugin",
+    source: params.source || "test",
+    registrationMode: params.registrationMode || "full",
+    config: params.config || {},
+    runtime: params.runtime || {},
+    logger:
+      params.logger || {
+        info() {},
+        warn() {},
+        error() {},
+        debug() {},
+      },
+    resolvePath:
+      typeof params.resolvePath === "function"
+        ? params.resolvePath
+        : (input) => input,
+    registerTool(tool, opts) {
+      if (typeof handlers.registerTool === "function") {
+        return handlers.registerTool(tool, opts);
+      }
+      return undefined;
+    },
+    registerCli(registrar, opts) {
+      if (typeof handlers.registerCli === "function") {
+        return handlers.registerCli(registrar, opts);
+      }
+      return undefined;
+    },
+    registerProvider(provider) {
+      if (typeof handlers.registerProvider === "function") {
+        return handlers.registerProvider(provider);
+      }
+      return undefined;
+    },
+    registerAgentHarness(harness) {
+      if (typeof handlers.registerAgentHarness === "function") {
+        return handlers.registerAgentHarness(harness);
+      }
+      return undefined;
+    },
+    registerCliBackend(backend) {
+      if (typeof handlers.registerCliBackend === "function") {
+        return handlers.registerCliBackend(backend);
+      }
+      return undefined;
+    },
+    registerSpeechProvider(provider) {
+      if (typeof handlers.registerSpeechProvider === "function") {
+        return handlers.registerSpeechProvider(provider);
+      }
+      return undefined;
+    },
+    registerRealtimeTranscriptionProvider(provider) {
+      if (typeof handlers.registerRealtimeTranscriptionProvider === "function") {
+        return handlers.registerRealtimeTranscriptionProvider(provider);
+      }
+      return undefined;
+    },
+    registerRealtimeVoiceProvider(provider) {
+      if (typeof handlers.registerRealtimeVoiceProvider === "function") {
+        return handlers.registerRealtimeVoiceProvider(provider);
+      }
+      return undefined;
+    },
+    registerMediaUnderstandingProvider(provider) {
+      if (typeof handlers.registerMediaUnderstandingProvider === "function") {
+        return handlers.registerMediaUnderstandingProvider(provider);
+      }
+      return undefined;
+    },
+    registerImageGenerationProvider(provider) {
+      if (typeof handlers.registerImageGenerationProvider === "function") {
+        return handlers.registerImageGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerVideoGenerationProvider(provider) {
+      if (typeof handlers.registerVideoGenerationProvider === "function") {
+        return handlers.registerVideoGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerMusicGenerationProvider(provider) {
+      if (typeof handlers.registerMusicGenerationProvider === "function") {
+        return handlers.registerMusicGenerationProvider(provider);
+      }
+      return undefined;
+    },
+    registerWebFetchProvider(provider) {
+      if (typeof handlers.registerWebFetchProvider === "function") {
+        return handlers.registerWebFetchProvider(provider);
+      }
+      return undefined;
+    },
+    registerWebSearchProvider(provider) {
+      if (typeof handlers.registerWebSearchProvider === "function") {
+        return handlers.registerWebSearchProvider(provider);
+      }
+      return undefined;
+    },
+    registerMigrationProvider(provider) {
+      if (typeof handlers.registerMigrationProvider === "function") {
+        return handlers.registerMigrationProvider(provider);
+      }
+      return undefined;
+    },
+    registerMemoryEmbeddingProvider(provider) {
+      if (typeof handlers.registerMemoryEmbeddingProvider === "function") {
+        return handlers.registerMemoryEmbeddingProvider(provider);
+      }
+      return undefined;
+    },
+    registerSessionExtension(extension) {
+      if (typeof handlers.registerSessionExtension === "function") {
+        return handlers.registerSessionExtension(extension);
+      }
+      return undefined;
+    },
+    registerTrustedToolPolicy(policy) {
+      if (typeof handlers.registerTrustedToolPolicy === "function") {
+        return handlers.registerTrustedToolPolicy(policy);
+      }
+      return undefined;
+    },
+    registerToolMetadata(metadata) {
+      if (typeof handlers.registerToolMetadata === "function") {
+        return handlers.registerToolMetadata(metadata);
+      }
+      return undefined;
+    },
+    registerControlUiDescriptor(descriptor) {
+      if (typeof handlers.registerControlUiDescriptor === "function") {
+        return handlers.registerControlUiDescriptor(descriptor);
+      }
+      return undefined;
+    },
+    registerRuntimeLifecycle(lifecycle) {
+      if (typeof handlers.registerRuntimeLifecycle === "function") {
+        return handlers.registerRuntimeLifecycle(lifecycle);
+      }
+      return undefined;
+    },
+    registerAgentEventSubscription(subscription) {
+      if (typeof handlers.registerAgentEventSubscription === "function") {
+        return handlers.registerAgentEventSubscription(subscription);
+      }
+      return undefined;
+    },
+    registerSessionSchedulerJob(job) {
+      if (typeof handlers.registerSessionSchedulerJob === "function") {
+        return handlers.registerSessionSchedulerJob(job);
+      }
+      return {
+        id: job && job.id,
+        pluginId: params.id || "test-plugin",
+        sessionKey: job && job.sessionKey,
+        kind: job && job.kind,
+      };
+    },
+  });
+}
+
+function createCapturedPluginRegistration(params = {}) {
+  const providers = [];
+  const agentHarnesses = [];
+  const cliRegistrars = [];
+  const cliBackends = [];
+  const textTransforms = [];
+  const codexAppServerExtensionFactories = [];
+  const agentToolResultMiddlewares = [];
+  const speechProviders = [];
+  const realtimeTranscriptionProviders = [];
+  const realtimeVoiceProviders = [];
+  const mediaUnderstandingProviders = [];
+  const imageGenerationProviders = [];
+  const videoGenerationProviders = [];
+  const musicGenerationProviders = [];
+  const webFetchProviders = [];
+  const webSearchProviders = [];
+  const migrationProviders = [];
+  const memoryEmbeddingProviders = [];
+  const sessionExtensions = [];
+  const trustedToolPolicies = [];
+  const toolMetadata = [];
+  const controlUiDescriptors = [];
+  const runtimeLifecycles = [];
+  const agentEventSubscriptions = [];
+  const sessionSchedulerJobs = [];
+  const tools = [];
+  const pluginId = params.id || "captured-plugin-registration";
+  const pluginName = params.name || "Captured Plugin Registration";
+  const pluginSource = params.source || "captured-plugin-registration";
+  const captured = {
+    providers,
+    agentHarnesses,
+    cliRegistrars,
+    cliBackends,
+    textTransforms,
+    codexAppServerExtensionFactories,
+    agentToolResultMiddlewares,
+    speechProviders,
+    realtimeTranscriptionProviders,
+    realtimeVoiceProviders,
+    mediaUnderstandingProviders,
+    imageGenerationProviders,
+    videoGenerationProviders,
+    musicGenerationProviders,
+    webFetchProviders,
+    webSearchProviders,
+    migrationProviders,
+    memoryEmbeddingProviders,
+    sessionExtensions,
+    trustedToolPolicies,
+    toolMetadata,
+    controlUiDescriptors,
+    runtimeLifecycles,
+    agentEventSubscriptions,
+    sessionSchedulerJobs,
+    tools,
+    api: null,
+  };
+  captured.api = buildPluginApi({
+    id: pluginId,
+    name: pluginName,
+    source: pluginSource,
+    registrationMode: params.registrationMode || "full",
+    config: params.config || {},
+    runtime: {},
+    resolvePath: (input) => input,
+    handlers: {
+      registerCli(registrar, opts = {}) {
+        const descriptors = (opts.descriptors || [])
+          .map((descriptor) => ({
+            name: String(descriptor.name || "").trim(),
+            description: String(descriptor.description || "").trim(),
+            hasSubcommands: descriptor.hasSubcommands,
+          }))
+          .filter((descriptor) => descriptor.name && descriptor.description);
+        const commands = [...(opts.commands || []), ...descriptors.map((entry) => entry.name)]
+          .map((command) => String(command || "").trim())
+          .filter(Boolean);
+        if (commands.length > 0) {
+          cliRegistrars.push({ register: registrar, commands, descriptors });
+        }
+      },
+      registerProvider: (provider) => providers.push(provider),
+      registerAgentHarness: (harness) => agentHarnesses.push(harness),
+      registerCliBackend: (backend) => cliBackends.push(backend),
+      registerTextTransforms: (transforms) => textTransforms.push(transforms),
+      registerSpeechProvider: (provider) => speechProviders.push(provider),
+      registerRealtimeTranscriptionProvider: (provider) =>
+        realtimeTranscriptionProviders.push(provider),
+      registerRealtimeVoiceProvider: (provider) => realtimeVoiceProviders.push(provider),
+      registerMediaUnderstandingProvider: (provider) =>
+        mediaUnderstandingProviders.push(provider),
+      registerImageGenerationProvider: (provider) => imageGenerationProviders.push(provider),
+      registerVideoGenerationProvider: (provider) => videoGenerationProviders.push(provider),
+      registerMusicGenerationProvider: (provider) => musicGenerationProviders.push(provider),
+      registerWebFetchProvider: (provider) => webFetchProviders.push(provider),
+      registerWebSearchProvider: (provider) => webSearchProviders.push(provider),
+      registerMigrationProvider: (provider) => migrationProviders.push(provider),
+      registerMemoryEmbeddingProvider: (provider) => memoryEmbeddingProviders.push(provider),
+      registerSessionExtension: (extension) => sessionExtensions.push(extension),
+      registerTrustedToolPolicy: (policy) => trustedToolPolicies.push(policy),
+      registerToolMetadata: (metadata) => toolMetadata.push(metadata),
+      registerControlUiDescriptor: (descriptor) => controlUiDescriptors.push(descriptor),
+      registerRuntimeLifecycle: (lifecycle) => runtimeLifecycles.push(lifecycle),
+      registerAgentEventSubscription: (subscription) =>
+        agentEventSubscriptions.push(subscription),
+      registerSessionSchedulerJob(job) {
+        sessionSchedulerJobs.push(job);
+        return {
+          id: job.id,
+          pluginId,
+          sessionKey: job.sessionKey,
+          kind: job.kind,
+        };
+      },
+      registerTool(tool) {
+        if (typeof tool !== "function") {
+          tools.push(tool);
+        }
+      },
+    },
+  });
+  return captured;
+}
+
+function capturePluginRegistration(params = {}) {
+  const captured = createCapturedPluginRegistration();
+  if (typeof params.register === "function") {
+    params.register(captured.api);
+  }
+  return captured;
+}
+
+async function registerSingleProviderPlugin(params = {}) {
+  const captured = createCapturedPluginRegistration();
+  if (typeof params.register === "function") {
+    params.register(captured.api);
+  }
+  const provider = captured.providers[0];
+  if (!provider) {
+    throw new Error("provider registration missing");
+  }
+  return provider;
+}
+
+async function registerProviderPlugin(params = {}) {
+  const captured = createCapturedPluginRegistration({
+    id: params.id,
+    name: params.name,
+    source: "test",
+  });
+  if (params.plugin && typeof params.plugin.register === "function") {
+    params.plugin.register(captured.api);
+  }
+  return {
+    providers: captured.providers,
+    realtimeTranscriptionProviders: captured.realtimeTranscriptionProviders,
+    speechProviders: captured.speechProviders,
+    mediaProviders: captured.mediaUnderstandingProviders,
+    imageProviders: captured.imageGenerationProviders,
+    musicProviders: captured.musicGenerationProviders,
+    videoProviders: captured.videoGenerationProviders,
+  };
+}
+
+const registerProviderPlugins = registerProviders;
+const requireRegisteredProvider = requireProvider;
+
+function createRuntimeEnv(options = {}) {
+  const throwOnExit = options.throwOnExit !== undefined ? Boolean(options.throwOnExit) : true;
+  return {
+    log: createChannelTestMockFn(),
+    error: createChannelTestMockFn(),
+    writeStdout: createChannelTestMockFn(),
+    writeJson: createChannelTestMockFn(),
+    exit: createChannelTestMockFn((code) => {
+      if (throwOnExit) {
+        throw new Error(`exit ${code}`);
+      }
+      return undefined;
+    }),
+  };
+}
+
+function createTypedRuntimeEnv(options = {}, runtimeShape) {
+  const runtime = createRuntimeEnv(options);
+  if (typeof runtimeShape === "function") {
+    runtimeShape(runtime);
+  }
+  return runtime;
+}
+
+function createNonExitingRuntimeEnv() {
+  return createRuntimeEnv({ throwOnExit: false });
+}
+
+function createNonExitingTypedRuntimeEnv(runtimeShape) {
+  return createTypedRuntimeEnv({ throwOnExit: false }, runtimeShape);
+}
+
+async function selectFirstWizardOption(params = {}) {
+  const first = (params.options || [])[0];
+  if (!first) {
+    throw new Error("no options");
+  }
+  return first.value;
+}
+
+function createTestWizardPrompter(overrides = {}) {
+  return {
+    intro: createChannelTestMockFn(async () => undefined),
+    outro: createChannelTestMockFn(async () => undefined),
+    note: createChannelTestMockFn(async () => undefined),
+    plain: createChannelTestMockFn(async () => undefined),
+    select: selectFirstWizardOption,
+    multiselect: createChannelTestMockFn(async () => []),
+    text: createChannelTestMockFn(async () => ""),
+    confirm: createChannelTestMockFn(async () => false),
+    progress: createChannelTestMockFn(() => ({
+      update: createChannelTestMockFn(),
+      stop: createChannelTestMockFn(),
+    })),
+    ...overrides,
+  };
+}
+
+function createQueuedWizardPrompter(params = {}) {
+  const selectValues = [...(params.selectValues || [])];
+  const textValues = [...(params.textValues || [])];
+  const confirmValues = [...(params.confirmValues || [])];
+  const intro = createChannelTestMockFn(async () => undefined);
+  const outro = createChannelTestMockFn(async () => undefined);
+  const note = createChannelTestMockFn(async () => undefined);
+  const plain = createChannelTestMockFn(async () => undefined);
+  const select = createChannelTestMockFn(async () => selectValues.shift() || "");
+  const multiselect = createChannelTestMockFn(async () => []);
+  const text = createChannelTestMockFn(async () => textValues.shift() || "");
+  const confirm = createChannelTestMockFn(async () => confirmValues.shift() || false);
+  const progress = createChannelTestMockFn(() => ({
+    update: createChannelTestMockFn(),
+    stop: createChannelTestMockFn(),
+  }));
+  return {
+    intro,
+    outro,
+    note,
+    plain,
+    select,
+    multiselect,
+    text,
+    confirm,
+    progress,
+    prompter: createTestWizardPrompter({
+      intro,
+      outro,
+      note,
+      plain,
+      select,
+      multiselect,
+      text,
+      confirm,
+      progress,
+    }),
+  };
+}
+
+function createSetupWizardAdapter(params = {}) {
+  const wizard = params.wizard || (params.plugin && params.plugin.setupWizard) || {};
+  return {
+    getStatus: async (args = {}) =>
+      typeof wizard.status === "function" ? await wizard.status(args) : undefined,
+    configure: async (args = {}) =>
+      typeof wizard.configure === "function" ? await wizard.configure(args) : undefined,
+    prepare: async (args = {}) =>
+      typeof wizard.prepare === "function" ? await wizard.prepare(args) : undefined,
+    finalize: async (args = {}) =>
+      typeof wizard.finalize === "function" ? await wizard.finalize(args) : undefined,
+    promptAllowFrom: async (args = {}) =>
+      typeof wizard.promptAllowFrom === "function"
+        ? await wizard.promptAllowFrom(args)
+        : undefined,
+    resolveAllowFromEntries: async (args = {}) =>
+      typeof wizard.resolveAllowFromEntries === "function"
+        ? await wizard.resolveAllowFromEntries(args)
+        : undefined,
+    resolveGroupAllowlist: async (args = {}) =>
+      typeof wizard.resolveGroupAllowlist === "function"
+        ? await wizard.resolveGroupAllowlist(args)
+        : undefined,
+  };
+}
+
+function createPluginSetupWizardAdapter(plugin = {}) {
+  if (!plugin.setupWizard) {
+    throw new Error(`${plugin.id} is missing setupWizard`);
+  }
+  return createSetupWizardAdapter({ plugin, wizard: plugin.setupWizard });
+}
+
+function createPluginSetupWizardConfigure(plugin) {
+  return createPluginSetupWizardAdapter(plugin).configure;
+}
+
+function createPluginSetupWizardStatus(plugin) {
+  return createPluginSetupWizardAdapter(plugin).getStatus;
+}
+
+async function runSetupWizardConfigure(params = {}) {
+  if (typeof params.configure !== "function") {
+    return undefined;
+  }
+  return await params.configure({
+    cfg: params.cfg || {},
+    runtime: params.runtime || createRuntimeEnv(),
+    prompter: params.prompter,
+    options: params.options || {},
+    accountOverrides: params.accountOverrides || {},
+    shouldPromptAccountIds: params.shouldPromptAccountIds || false,
+    forceAllowFrom: params.forceAllowFrom || false,
+  });
+}
+
+function resolveSetupWizardAccountContext(params = {}) {
+  return {
+    cfg: params.cfg || {},
+    accountId: params.accountId || "default",
+    credentialValues: params.credentialValues || {},
+  };
+}
+
+async function runSetupWizardPrepare(params = {}) {
+  if (typeof params.prepare !== "function") {
+    return undefined;
+  }
+  return await params.prepare({
+    ...resolveSetupWizardAccountContext(params),
+    runtime: params.runtime || createRuntimeEnv({ throwOnExit: false }),
+    prompter: params.prompter || createTestWizardPrompter(),
+    options: params.options,
+  });
+}
+
+async function runSetupWizardFinalize(params = {}) {
+  if (typeof params.finalize !== "function") {
+    return undefined;
+  }
+  return await params.finalize({
+    ...resolveSetupWizardAccountContext(params),
+    runtime: params.runtime || createRuntimeEnv({ throwOnExit: false }),
+    prompter: params.prompter || createTestWizardPrompter(),
+    options: params.options,
+    forceAllowFrom: params.forceAllowFrom || false,
+  });
+}
+
+async function promptSetupWizardAllowFrom(params = {}) {
+  if (typeof params.promptAllowFrom !== "function") {
+    return undefined;
+  }
+  const context = resolveSetupWizardAccountContext(params);
+  return await params.promptAllowFrom({
+    cfg: context.cfg,
+    accountId: context.accountId,
+    prompter: params.prompter || createTestWizardPrompter(),
+  });
+}
+
+async function resolveSetupWizardAllowFromEntries(params = {}) {
+  if (typeof params.resolveEntries !== "function") {
+    return undefined;
+  }
+  return await params.resolveEntries({
+    ...resolveSetupWizardAccountContext(params),
+    entries: params.entries || [],
+  });
+}
+
+async function resolveSetupWizardGroupAllowlist(params = {}) {
+  if (typeof params.resolveAllowlist !== "function") {
+    return undefined;
+  }
+  return await params.resolveAllowlist({
+    ...resolveSetupWizardAccountContext(params),
+    entries: params.entries || [],
+    prompter: params.prompter || { note: createChannelTestMockFn(async () => undefined) },
+  });
+}
+
+function getProviderWizardState() {
+  return resolveGlobalSingleton("openzues.pluginTestRuntime.providerWizard", () => ({
+    resolver: undefined,
+  }));
+}
+
+function setProviderWizardProvidersResolverForTest(resolver) {
+  const state = getProviderWizardState();
+  const previous = state.resolver;
+  state.resolver = resolver;
+  return () => {
+    state.resolver = previous;
+  };
+}
+
+function resolveProviderWizardProviders(params = {}) {
+  const resolver = getProviderWizardState().resolver;
+  return typeof resolver === "function" ? resolver(params) : [];
+}
+
+function buildProviderPluginMethodChoice(providerId, methodId) {
+  return `provider-plugin:${normalizeOptionalString(providerId) || ""}:${
+    normalizeOptionalString(methodId) || ""
+  }`;
+}
+
+function resolveProviderMethodById(provider, methodId) {
+  const normalizedMethodId = normalizeOptionalLowercaseString(methodId);
+  if (!normalizedMethodId) {
+    return (provider.auth || [])[0];
+  }
+  return (provider.auth || []).find(
+    (method) => normalizeOptionalLowercaseString(method.id) === normalizedMethodId,
+  );
+}
+
+function resolveWizardSetupChoiceId(provider, wizard = {}) {
+  const explicitChoice = normalizeOptionalString(wizard.choiceId);
+  if (explicitChoice) {
+    return explicitChoice;
+  }
+  const explicitMethod = normalizeOptionalString(wizard.methodId);
+  if (explicitMethod) {
+    return buildProviderPluginMethodChoice(provider.id, explicitMethod);
+  }
+  if ((provider.auth || []).length === 1) {
+    return provider.id;
+  }
+  return buildProviderPluginMethodChoice(provider.id, (provider.auth || [])[0]?.id || "default");
+}
+
+function buildSetupOptionForMethod(params = {}) {
+  const provider = params.provider || {};
+  const wizard = params.wizard || {};
+  const method = params.method || {};
+  return {
+    value: normalizeOptionalString(params.value) || "",
+    label:
+      normalizeOptionalString(wizard.choiceLabel) ||
+      ((provider.auth || []).length === 1 ? provider.label : method.label),
+    hint: normalizeOptionalString(wizard.choiceHint) || method.hint,
+    groupId: normalizeOptionalString(wizard.groupId) || provider.id,
+    groupLabel: normalizeOptionalString(wizard.groupLabel) || provider.label,
+    ...(normalizeOptionalString(wizard.groupHint)
+      ? { groupHint: normalizeOptionalString(wizard.groupHint) }
+      : {}),
+    ...(wizard.onboardingScopes ? { onboardingScopes: wizard.onboardingScopes } : {}),
+    ...(typeof wizard.assistantPriority === "number" && Number.isFinite(wizard.assistantPriority)
+      ? { assistantPriority: wizard.assistantPriority }
+      : {}),
+    ...(wizard.assistantVisibility ? { assistantVisibility: wizard.assistantVisibility } : {}),
+  };
+}
+
+function resolveProviderWizardOptions(params = {}) {
+  const options = [];
+  for (const provider of resolveProviderWizardProviders(params)) {
+    const methodSetups = (provider.auth || [])
+      .map((method) => (method.wizard ? { method, wizard: method.wizard } : null))
+      .filter(Boolean);
+    for (const entry of methodSetups) {
+      options.push(
+        buildSetupOptionForMethod({
+          provider,
+          method: entry.method,
+          wizard: entry.wizard,
+          value:
+            normalizeOptionalString(entry.wizard.choiceId) ||
+            buildProviderPluginMethodChoice(provider.id, entry.method.id),
+        }),
+      );
+    }
+    if (methodSetups.length > 0) {
+      continue;
+    }
+    const setup = provider.wizard && provider.wizard.setup;
+    if (!setup) {
+      continue;
+    }
+    const method = resolveProviderMethodById(provider, setup.methodId);
+    if (method) {
+      options.push(
+        buildSetupOptionForMethod({
+          provider,
+          method,
+          wizard: setup,
+          value: resolveWizardSetupChoiceId(provider, setup),
+        }),
+      );
+    }
+  }
+  return options;
+}
+
+function resolveProviderModelPickerEntries(params = {}) {
+  const entries = [];
+  for (const provider of resolveProviderWizardProviders(params)) {
+    const modelPicker = provider.wizard && provider.wizard.modelPicker;
+    if (!modelPicker) {
+      continue;
+    }
+    entries.push({
+      value:
+        normalizeOptionalString(modelPicker.methodId) !== undefined
+          ? buildProviderPluginMethodChoice(provider.id, modelPicker.methodId)
+          : (provider.auth || []).length === 1
+            ? provider.id
+            : buildProviderPluginMethodChoice(
+                provider.id,
+                (provider.auth || [])[0]?.id || "default",
+              ),
+      label: normalizeOptionalString(modelPicker.label) || `${provider.label} (custom)`,
+      ...(normalizeOptionalString(modelPicker.hint)
+        ? { hint: normalizeOptionalString(modelPicker.hint) }
+        : {}),
+    });
+  }
+  return entries;
+}
+
+function resolveProviderPluginChoice(params = {}) {
+  const choice = normalizeOptionalString(params.choice) || "";
+  if (!choice) {
+    return null;
+  }
+  const providers = params.providers || [];
+  if (choice.startsWith("provider-plugin:")) {
+    const payload = choice.slice("provider-plugin:".length);
+    const separator = payload.indexOf(":");
+    const providerId = separator >= 0 ? payload.slice(0, separator) : payload;
+    const methodId = separator >= 0 ? payload.slice(separator + 1) : undefined;
+    const provider = providers.find(
+      (entry) =>
+        normalizeOptionalLowercaseString(entry.id) === normalizeOptionalLowercaseString(providerId),
+    );
+    if (!provider) {
+      return null;
+    }
+    const method = resolveProviderMethodById(provider, methodId);
+    return method ? { provider, method } : null;
+  }
+  for (const provider of providers) {
+    const setup = provider.wizard && provider.wizard.setup;
+    if (setup && resolveWizardSetupChoiceId(provider, setup) === choice) {
+      const method = resolveProviderMethodById(provider, setup.methodId);
+      return method ? { provider, method, wizard: setup } : null;
+    }
+    if (
+      normalizeOptionalLowercaseString(provider.id) === normalizeOptionalLowercaseString(choice) &&
+      (provider.auth || []).length > 0
+    ) {
+      return { provider, method: provider.auth[0] };
+    }
+  }
+  return null;
+}
+
+function runProviderCatalog(params = {}) {
+  return resolveProviderWizardProviders(params);
+}
+
+function createMockPluginRegistry(hooks = []) {
+  const registry = createEmptyPluginRegistry();
+  const pluginIds =
+    hooks.length > 0
+      ? [...new Set(hooks.map((hook) => hook.pluginId || "test-plugin"))]
+      : ["test-plugin"];
+  registry.plugins = pluginIds.map((pluginId) =>
+    createPluginRecord({
+      id: pluginId,
+      name: "Test Plugin",
+      source: "test",
+      hookCount: hooks.filter((hook) => (hook.pluginId || "test-plugin") === pluginId).length,
+    }),
+  );
+  registry.hooks = hooks;
+  registry.typedHooks = hooks.map((hook) => ({
+    pluginId: hook.pluginId || "test-plugin",
+    hookName: hook.hookName,
+    handler: hook.handler,
+    priority: 0,
+    source: "test",
+  }));
+  return registry;
+}
+
+function createBoundPluginRuntimeTaskFlow(params = {}) {
+  const sessionKey = params.sessionKey;
+  if (!sessionKey) {
+    throw new Error("TaskFlow runtime requires a bound sessionKey.");
+  }
+  return {
+    sessionKey,
+    ...(params.requesterOrigin ? { requesterOrigin: params.requesterOrigin } : {}),
+    createManaged: (input = {}) => ({
+      flowId: input.flowId || "flow-test",
+      controllerId: input.controllerId,
+      status: input.status,
+      sessionKey,
+    }),
+    get: () => undefined,
+    list: () => [],
+    findLatest: () => undefined,
+    resolve: () => undefined,
+    getTaskSummary: () => undefined,
+    setWaiting: () => ({ applied: false, code: "not_found" }),
+    resume: () => ({ applied: false, code: "not_found" }),
+    finish: () => ({ applied: false, code: "not_found" }),
+    fail: () => ({ applied: false, code: "not_found" }),
+    cancel: () => ({ cancelled: false, reason: "not_found" }),
+    runTask: () => ({ created: false, found: false, reason: "not_found" }),
+  };
+}
+
+function createRuntimeTaskFlow() {
+  return {
+    bindSession: (params = {}) =>
+      createBoundPluginRuntimeTaskFlow({
+        sessionKey: params.sessionKey,
+        requesterOrigin: params.requesterOrigin,
+      }),
+    fromToolContext: (ctx = {}) =>
+      createBoundPluginRuntimeTaskFlow({
+        sessionKey: ctx.sessionKey,
+        requesterOrigin: ctx.deliveryContext,
+      }),
+  };
+}
+
+const pluginTestRuntimeRuntime = {
+  addTestHook,
+  buildPluginApi,
+  buildProviderPluginMethodChoice,
+  capturePluginRegistration,
+  createCapturedPluginRegistration,
+  createEmptyPluginRegistry,
+  createMockPluginRegistry,
+  createNonExitingRuntimeEnv,
+  createNonExitingTypedRuntimeEnv,
+  createOutboundTestPlugin,
+  createPluginRecord,
+  createPluginRegistry,
+  createPluginSetupWizardAdapter,
+  createPluginSetupWizardConfigure,
+  createPluginSetupWizardStatus,
+  createQueuedWizardPrompter,
+  createRuntimeEnv,
+  createRuntimeTaskFlow,
+  createSetupWizardAdapter,
+  createTestRegistry,
+  createTestWizardPrompter,
+  createTypedRuntimeEnv,
+  getActivePluginRegistry,
+  initializeGlobalHookRunner,
+  listImportedBundledPluginFacadeIds,
+  loadPluginManifestRegistry,
+  pluginRegistrationContractRegistry,
+  promptSetupWizardAllowFrom,
+  providerContractLoadError,
+  registerProviderPlugin,
+  registerProviderPlugins,
+  registerSingleProviderPlugin,
+  releasePinnedPluginChannelRegistry,
+  requireRegisteredProvider,
+  resetFacadeRuntimeStateForTest,
+  resetGlobalHookRunner,
+  resetPluginRuntimeStateForTest,
+  resolveBundledExplicitProviderContractsFromPublicArtifacts,
+  resolveBundledExplicitWebFetchProvidersFromPublicArtifacts,
+  resolveBundledExplicitWebSearchProvidersFromPublicArtifacts,
+  resolveProviderContractProvidersForPluginIds,
+  resolveProviderModelPickerEntries,
+  resolveProviderPluginChoice,
+  resolveProviderWizardOptions,
+  resolveSetupWizardAllowFromEntries,
+  resolveSetupWizardGroupAllowlist,
+  resolveWebFetchProviderContractEntriesForPluginId,
+  resolveWebSearchProviderContractEntriesForPluginId,
+  runProviderCatalog,
+  runSetupWizardConfigure,
+  runSetupWizardFinalize,
+  runSetupWizardPrepare,
+  selectFirstWizardOption,
+  setActivePluginRegistry,
+  setDefaultChannelPluginRegistryForTests,
+  setProviderWizardProvidersResolverForTest,
+};
+
+const EXPECTED_FALLBACKS = ["anthropic/claude-opus-4-5"];
+
+const expectedOpenaiPluginCodexCatalogEntriesWithGpt55 = [
+  { id: "gpt-5.5", provider: "openai-codex" },
+];
+const expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55 = [
+  { id: "gpt-5.5", provider: "openai-codex", source: "provider-plugin" },
+];
+
+function providerTestResolveLazy(value) {
+  return typeof value === "function" ? value() : value;
+}
+
+function providerTestAssert(condition, message) {
+  assertChannelContract(Boolean(condition), message);
+}
+
+function providerTestAssertEqual(actual, expected, message) {
+  assertPluginContractEqual(actual, expected, message);
+}
+
+function providerTestAssertUnique(values, message) {
+  providerTestAssertEqual(values, [...new Set(values)], message);
+}
+
+function providerTestTrimmed(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function providerTestAssertNonEmpty(value, message) {
+  providerTestAssert(providerTestTrimmed(value).length > 0, message);
+}
+
+function providerTestAssertMatchObject(actual, expected, message) {
+  providerTestAssert(actual && typeof actual === "object", message);
+  for (const [key, expectedValue] of Object.entries(expected || {})) {
+    const actualValue = actual[key];
+    if (
+      expectedValue &&
+      typeof expectedValue === "object" &&
+      !Array.isArray(expectedValue)
+    ) {
+      providerTestAssertMatchObject(actualValue, expectedValue, `${message}.${key}`);
+      continue;
+    }
+    providerTestAssertEqual(actualValue, expectedValue, `${message}.${key}`);
+  }
+}
+
+function createLegacyProviderConfig(params = {}) {
+  const providerId = params.providerId || "provider";
+  return {
+    models: {
+      providers: {
+        [providerId]: {
+          baseUrl: params.baseUrl || "https://old.example.com",
+          apiKey: params.apiKey || "old-key",
+          api: params.api,
+          models: [
+            {
+              id: params.modelId || "old-model",
+              name: params.modelName || "Old",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 1000,
+              maxTokens: 100,
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
+function createConfigWithFallbacks() {
+  return {
+    agents: {
+      defaults: {
+        model: { fallbacks: [...EXPECTED_FALLBACKS] },
+      },
+    },
+  };
+}
+
+function createProviderContractProvider(id, overrides = {}) {
+  const providerId = normalizeOptionalString(id) || "provider";
+  const label = overrides.label || providerId
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return {
+    id: providerId,
+    label,
+    docsPath: overrides.docsPath || `/providers/${providerId}`,
+    aliases: overrides.aliases || [],
+    envVars: overrides.envVars || [
+      `${providerId.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_API_KEY`,
+    ],
+    auth: overrides.auth || [
+      {
+        id: "api-key",
+        label: "API key",
+        hint: `Set ${label} API key`,
+        run: async () => ({ profiles: [] }),
+      },
+    ],
+    ...(overrides.wizard ? { wizard: overrides.wizard } : {}),
+    ...overrides,
+  };
+}
+
+function normalizeProviderContractProvider(provider) {
+  if (!provider || typeof provider !== "object") {
+    return createProviderContractProvider("provider");
+  }
+  if (provider.provider && typeof provider.provider === "object") {
+    return normalizeProviderContractProvider(provider.provider);
+  }
+  return createProviderContractProvider(provider.id, provider);
+}
+
+function createWebProviderContractProvider(id, pluginId, overrides = {}) {
+  const providerId = normalizeOptionalString(id) || "web-provider";
+  const credentialPath = overrides.credentialPath || `plugins.${pluginId || providerId}.apiKey`;
+  return {
+    id: providerId,
+    label: overrides.label || providerId,
+    hint: overrides.hint || `Use ${providerId}`,
+    placeholder: overrides.placeholder || "API key",
+    signupUrl: overrides.signupUrl || "https://example.test/signup",
+    docsUrl: overrides.docsUrl || "https://example.test/docs",
+    envVars: overrides.envVars || [
+      `${providerId.replace(/[^a-z0-9]+/giu, "_").toUpperCase()}_API_KEY`,
+    ],
+    credentialPath,
+    inactiveSecretPaths: overrides.inactiveSecretPaths || [credentialPath],
+    createTool: overrides.createTool || (() => ({ name: `${providerId}.tool` })),
+    setCredentialValue:
+      overrides.setCredentialValue ||
+      ((cfg, value) => {
+        cfg[credentialPath] = value;
+      }),
+    getCredentialValue:
+      overrides.getCredentialValue ||
+      ((cfg) => cfg[credentialPath]),
+    setConfiguredCredentialValue:
+      overrides.setConfiguredCredentialValue ||
+      ((cfg, value) => {
+        cfg[credentialPath] = value;
+      }),
+    getConfiguredCredentialValue:
+      overrides.getConfiguredCredentialValue ||
+      ((cfg) => cfg[credentialPath]),
+    applySelectionConfig:
+      overrides.applySelectionConfig ||
+      (() => ({
+        plugins: { entries: { [pluginId || providerId]: { enabled: true } } },
+      })),
+    ...overrides,
+  };
+}
+
+function normalizeWebProviderContractProvider(entry, pluginId) {
+  const provider =
+    entry && typeof entry === "object" && entry.provider && typeof entry.provider === "object"
+      ? entry.provider
+      : entry;
+  return createWebProviderContractProvider(
+    provider && provider.id ? provider.id : "web-provider",
+    pluginId,
+    provider || {},
+  );
+}
+
+function expectWebProviderCredentialContract(provider, credentialValue) {
+  providerTestAssert(
+    /^[a-z0-9][a-z0-9-]*$/u.test(provider.id),
+    "provider id must be kebab-case",
+  );
+  providerTestAssertNonEmpty(provider.label, "provider label is required");
+  providerTestAssertNonEmpty(provider.hint, "provider hint is required");
+  providerTestAssertNonEmpty(provider.placeholder, "provider placeholder is required");
+  providerTestAssert(
+    String(provider.signupUrl || "").startsWith("https://"),
+    "provider signupUrl must be https",
+  );
+  if (provider.docsUrl) {
+    providerTestAssert(
+      String(provider.docsUrl).startsWith("http"),
+      "provider docsUrl must be http(s)",
+    );
+  }
+  providerTestAssertUnique(provider.envVars || [], "provider env vars must be unique");
+  providerTestAssert(
+    (provider.envVars || []).every((entry) => providerTestTrimmed(entry).length > 0),
+    "provider env vars must be non-empty",
+  );
+  const cfg = {};
+  provider.setCredentialValue(cfg, credentialValue);
+  providerTestAssertEqual(
+    provider.getCredentialValue(cfg),
+    credentialValue,
+    "provider credential round-trip",
+  );
+  providerTestAssert(
+    typeof provider.createTool === "function",
+    "provider createTool must be a function",
+  );
+  return cfg;
+}
+
+function installProviderPluginContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base provider plugin contract", () => {
+    const provider = normalizeProviderContractProvider(providerTestResolveLazy(params.provider));
+    const auth = provider.auth || [];
+    const authIds = auth.map((method) => method.id);
+    const wizardChoiceIds = new Set();
+
+    providerTestAssert(
+      /^[a-z0-9][a-z0-9-]*$/u.test(provider.id),
+      "provider id must be kebab-case",
+    );
+    providerTestAssertNonEmpty(provider.label, "provider label is required");
+    if (provider.docsPath) {
+      providerTestAssert(
+        String(provider.docsPath).startsWith("/"),
+        "provider docsPath must be absolute",
+      );
+    }
+    if (provider.aliases) {
+      providerTestAssertUnique(provider.aliases, "provider aliases must be unique");
+    }
+    if (provider.envVars) {
+      providerTestAssertUnique(provider.envVars, "provider env vars must be unique");
+      providerTestAssert(
+        provider.envVars.every((entry) => providerTestTrimmed(entry).length > 0),
+        "provider env vars must be non-empty",
+      );
+    }
+    providerTestAssert(Array.isArray(auth), "provider auth must be an array");
+    providerTestAssertUnique(authIds, "provider auth ids must be unique");
+    for (const method of auth) {
+      providerTestAssertNonEmpty(method.id, "provider auth id is required");
+      providerTestAssertNonEmpty(method.label, "provider auth label is required");
+      if (method.hint !== undefined) {
+        providerTestAssertNonEmpty(method.hint, "provider auth hint is required");
+      }
+      if (method.wizard) {
+        if (method.wizard.choiceId) {
+          providerTestAssertNonEmpty(
+            method.wizard.choiceId,
+            "provider wizard choice id is required",
+          );
+          providerTestAssert(
+            !wizardChoiceIds.has(method.wizard.choiceId),
+            "provider wizard choice ids must be unique",
+          );
+          wizardChoiceIds.add(method.wizard.choiceId);
+        }
+        if (method.wizard.methodId) {
+          providerTestAssert(
+            authIds.includes(method.wizard.methodId),
+            "provider wizard methodId must point at auth",
+          );
+        }
+        if (method.wizard.modelAllowlist?.allowedKeys) {
+          providerTestAssertUnique(
+            method.wizard.modelAllowlist.allowedKeys,
+            "provider wizard allowed keys must be unique",
+          );
+        }
+        if (method.wizard.modelAllowlist?.initialSelections) {
+          providerTestAssertUnique(
+            method.wizard.modelAllowlist.initialSelections,
+            "provider wizard initial selections must be unique",
+          );
+        }
+      }
+      providerTestAssert(
+        typeof method.run === "function",
+        "provider auth run must be a function",
+      );
+    }
+    if (provider.wizard?.setup || provider.wizard?.modelPicker) {
+      providerTestAssert(auth.length > 0, "provider wizard requires auth methods");
+    }
+    if (provider.wizard?.setup) {
+      const setup = provider.wizard.setup;
+      if (setup.choiceId) {
+        providerTestAssertNonEmpty(setup.choiceId, "provider setup choice id is required");
+        providerTestAssert(
+          !wizardChoiceIds.has(setup.choiceId),
+          "provider setup choice ids must be unique",
+        );
+      }
+      if (setup.methodId) {
+        providerTestAssert(authIds.includes(setup.methodId), "provider setup method must exist");
+      }
+      if (setup.modelAllowlist?.allowedKeys) {
+        providerTestAssertUnique(
+          setup.modelAllowlist.allowedKeys,
+          "provider setup allowed keys must be unique",
+        );
+      }
+      if (setup.modelAllowlist?.initialSelections) {
+        providerTestAssertUnique(
+          setup.modelAllowlist.initialSelections,
+          "provider setup initial selections must be unique",
+        );
+      }
+    }
+    if (provider.wizard?.modelPicker?.methodId) {
+      providerTestAssert(
+        authIds.includes(provider.wizard.modelPicker.methodId),
+        "provider model picker method must exist",
+      );
+    }
+  });
+}
+
+function installWebSearchProviderContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base web search provider contract", () => {
+    const provider = normalizeWebProviderContractProvider(
+      providerTestResolveLazy(params.provider),
+      params.pluginId,
+    );
+    const credentialValue = providerTestResolveLazy(params.credentialValue);
+    const cfg = expectWebProviderCredentialContract(provider, credentialValue);
+    providerTestAssertEqual(
+      provider.getCredentialValue(cfg),
+      credentialValue,
+      "web search credential round-trip",
+    );
+    if (provider.runSetup) {
+      providerTestAssert(
+        typeof provider.runSetup === "function",
+        "web search runSetup must be a function",
+      );
+    }
+  });
+}
+
+function installWebFetchProviderContractSuite(params = {}) {
+  runOrRegisterChannelTestCase("satisfies the base web fetch provider contract", () => {
+    const provider = normalizeWebProviderContractProvider(
+      providerTestResolveLazy(params.provider),
+      params.pluginId,
+    );
+    const credentialValue = providerTestResolveLazy(params.credentialValue);
+    expectWebProviderCredentialContract(provider, credentialValue);
+    providerTestAssertNonEmpty(provider.credentialPath, "web fetch credentialPath is required");
+    if (provider.inactiveSecretPaths) {
+      providerTestAssertUnique(
+        provider.inactiveSecretPaths,
+        "web fetch inactive secret paths must be unique",
+      );
+      providerTestAssert(
+        provider.inactiveSecretPaths.includes(provider.credentialPath),
+        "web fetch inactive secret paths must include credentialPath",
+      );
+    }
+    const fetchCfg = {};
+    provider.setCredentialValue(fetchCfg, credentialValue);
+    providerTestAssertEqual(
+      provider.getCredentialValue(fetchCfg),
+      credentialValue,
+      "web fetch credential round-trip",
+    );
+    if (provider.setConfiguredCredentialValue && provider.getConfiguredCredentialValue) {
+      const configuredCfg = {};
+      provider.setConfiguredCredentialValue(configuredCfg, credentialValue);
+      providerTestAssertEqual(
+        provider.getConfiguredCredentialValue(configuredCfg),
+        credentialValue,
+        "web fetch configured credential round-trip",
+      );
+    }
+    if (provider.applySelectionConfig && params.pluginId) {
+      const applied = provider.applySelectionConfig({});
+      providerTestAssert(
+        applied &&
+          applied.plugins &&
+          applied.plugins.entries &&
+          applied.plugins.entries[params.pluginId] &&
+          applied.plugins.entries[params.pluginId].enabled === true,
+        "web fetch applySelectionConfig must enable plugin",
+      );
+    }
+  });
+}
+
+function providerMatchesManifestId(provider, providerId) {
+  return (
+    provider.id === providerId ||
+    (provider.aliases || []).includes(providerId) ||
+    (provider.hookAliases || []).includes(providerId)
+  );
+}
+
+function describeProviderContracts(pluginId) {
+  const resolveProviderEntries = () =>
+    resolveProviderContractProvidersForPluginIds([pluginId]).map((provider) => ({
+      pluginId,
+      provider: normalizeProviderContractProvider(provider),
+    }));
+  const providerIds = resolveProviderEntries().map((entry) => entry.provider.id);
+  runOrRegisterDescribe(`${pluginId} provider contract registry load`, () => {
+    runOrRegisterChannelTestCase(
+      "loads bundled providers without import-time registry failure",
+      () => {
+        providerTestAssert(resolveProviderEntries().length > 0, "providers must load");
+      },
+    );
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} provider contract`, () => {
+      installProviderPluginContractSuite({
+        provider: () => {
+          const entry = resolveProviderEntries().find((candidate) =>
+            providerMatchesManifestId(candidate.provider, providerId),
+          );
+          if (!entry) {
+            throw new Error(`provider contract entry missing for ${pluginId}:${providerId}`);
+          }
+          return entry.provider;
+        },
+      });
+    });
+  }
+}
+
+function resolveWebCredentialValue(provider) {
+  if (provider.requiresCredential === false) {
+    return `${provider.id}-no-key-needed`;
+  }
+  const envVar = (provider.envVars || []).find((entry) => providerTestTrimmed(entry).length > 0);
+  if (!envVar) {
+    return `${provider.id}-test`;
+  }
+  if (envVar === "OPENROUTER_API_KEY") {
+    return "openrouter-test";
+  }
+  return envVar.toLowerCase().includes("api_key") ? `${provider.id}-test` : "sk-test";
+}
+
+function describeWebSearchProviderContracts(pluginId) {
+  const registryEntry = findPluginRegistrationContract(pluginId);
+  const providerIds = registryEntry.webSearchProviderIds || [];
+  const resolveProviders = () =>
+    resolveWebSearchProviderContractEntriesForPluginId(pluginId).map((entry) => {
+      const provider = normalizeWebProviderContractProvider(entry.provider || entry, pluginId);
+      return { pluginId, provider, credentialValue: resolveWebCredentialValue(provider) };
+    });
+  runOrRegisterDescribe(`${pluginId} web search provider contract registry load`, () => {
+    runOrRegisterChannelTestCase("loads bundled web search providers", () => {
+      providerTestAssert(resolveProviders().length > 0, "web search providers must load");
+    });
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} web search contract`, () => {
+      installWebSearchProviderContractSuite({
+        provider: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web search provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.provider;
+        },
+        credentialValue: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web search provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.credentialValue;
+        },
+        pluginId,
+      });
+    });
+  }
+}
+
+function describeWebFetchProviderContracts(pluginId) {
+  const registryEntry = findPluginRegistrationContract(pluginId);
+  const providerIds = registryEntry.webFetchProviderIds || [];
+  const resolveProviders = () =>
+    resolveWebFetchProviderContractEntriesForPluginId(pluginId).map((entry) => {
+      const provider = normalizeWebProviderContractProvider(entry.provider || entry, pluginId);
+      return { pluginId, provider, credentialValue: resolveWebCredentialValue(provider) };
+    });
+  runOrRegisterDescribe(`${pluginId} web fetch provider contract registry load`, () => {
+    runOrRegisterChannelTestCase("loads bundled web fetch providers", () => {
+      providerTestAssert(resolveProviders().length > 0, "web fetch providers must load");
+    });
+  });
+  for (const providerId of providerIds) {
+    runOrRegisterDescribe(`${pluginId}:${providerId} web fetch contract`, () => {
+      installWebFetchProviderContractSuite({
+        provider: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web fetch provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.provider;
+        },
+        credentialValue: () => {
+          const entry = resolveProviders().find(
+            (candidate) => candidate.provider.id === providerId,
+          );
+          if (!entry) {
+            throw new Error(
+              `web fetch provider contract entry missing for ${pluginId}:${providerId}`,
+            );
+          }
+          return entry.credentialValue;
+        },
+        pluginId,
+      });
+    });
+  }
+}
+
+async function expectPassthroughReplayPolicy(params = {}) {
+  const provider = await registerSingleProviderPlugin(params.plugin || {});
+  const policy =
+    typeof provider.buildReplayPolicy === "function"
+      ? provider.buildReplayPolicy({
+          provider: params.providerId,
+          modelApi: "openai-completions",
+          modelId: params.modelId,
+        })
+      : {};
+  providerTestAssertMatchObject(
+    policy,
+    {
+      applyAssistantFirstOrderingFix: false,
+      validateGeminiTurns: false,
+      validateAnthropicTurns: false,
+    },
+    "provider replay policy",
+  );
+  if (params.sanitizeThoughtSignatures) {
+    providerTestAssertMatchObject(
+      policy,
+      {
+        sanitizeThoughtSignatures: {
+          allowBase64Only: true,
+          includeCamelCase: true,
+        },
+      },
+      "provider replay policy sanitizeThoughtSignatures",
+    );
+  } else {
+    providerTestAssert(
+      !Object.prototype.hasOwnProperty.call(policy, "sanitizeThoughtSignatures"),
+      "provider replay policy must not sanitize thought signatures",
+    );
+  }
+  return provider;
+}
+
+function createCapturedThinkingConfigStream() {
+  let capturedPayload;
+  const streamFn = (model, _context, options = {}) => {
+    const payload = { config: { thinkingConfig: { thinkingBudget: -1 } } };
+    if (typeof options.onPayload === "function") {
+      options.onPayload(payload, model);
+    }
+    capturedPayload = payload;
+    return {};
+  };
+  return {
+    streamFn,
+    getCapturedPayload: () => capturedPayload,
+  };
+}
+
+function normalizeTranscriptForMatch(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/gu, "");
+}
+
+const OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE = /open(?:claw|cl|flaw|clar|core)/u;
+
+function expectOpenClawLiveTranscriptMarker(value) {
+  providerTestAssert(
+    OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE.test(normalizeTranscriptForMatch(value)),
+    "expected OpenClaw live transcript marker",
+  );
+}
+
+async function waitForLiveExpectation(expectation, timeoutMs = 30000) {
+  const started = Date.now();
+  let lastError;
+  while (Date.now() - started <= timeoutMs) {
+    try {
+      expectation();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, timeoutMs || 1)));
+    }
+  }
+  throw lastError;
+}
+
+async function synthesizeElevenLabsLiveSpeech(params = {}) {
+  return Buffer.from(String(params.text || "openclaw"), "utf8");
+}
+
+async function streamAudioForLiveTest(params = {}) {
+  const audio = Buffer.from(params.audio || "");
+  const chunkSize = params.chunkSize || 160;
+  const delayMs = params.delayMs === undefined ? 5 : params.delayMs;
+  for (let offset = 0; offset < audio.byteLength; offset += chunkSize) {
+    params.sendAudio(audio.subarray(offset, offset + chunkSize));
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+async function runRealtimeSttLiveTest(params = {}) {
+  const transcripts = [];
+  const partials = [];
+  const errors = [];
+  const expected = params.expectedNormalizedText || OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE;
+  const session = params.provider.createSession({
+    providerConfig: params.providerConfig,
+    onPartial: (partial) => partials.push(partial),
+    onTranscript: (transcript) => transcripts.push(transcript),
+    onError: (error) => errors.push(error),
+  });
+  try {
+    await session.connect();
+    await streamAudioForLiveTest({
+      audio: params.audio || Buffer.alloc(0),
+      sendAudio: (chunk) => session.sendAudio(chunk),
+      chunkSize: params.chunkSize,
+      delayMs: params.delayMs,
+    });
+    if (params.closeBeforeWait) {
+      session.close();
+    }
+    await waitForLiveExpectation(() => {
+      if (errors[0]) {
+        throw errors[0];
+      }
+      const normalized = normalizeTranscriptForMatch(transcripts.join(" "));
+      if (typeof expected === "string") {
+        providerTestAssert(
+          normalized.includes(expected),
+          "expected live transcript text to contain marker",
+        );
+      } else {
+        providerTestAssert(
+          expected.test(normalized),
+          "expected live transcript text to match marker",
+        );
+      }
+    }, params.timeoutMs || 60000);
+  } finally {
+    session.close();
+  }
+  providerTestAssert(
+    partials.length + transcripts.length > 0,
+    "expected live STT partials or transcripts",
+  );
+  return { transcripts, partials, errors };
+}
+
+function mockSuccessfulDashscopeVideoTask(mocks, params = {}) {
+  const requestId = params.requestId || "req-1";
+  const taskId = params.taskId || "task-1";
+  const taskStatus = params.taskStatus || "SUCCEEDED";
+  const videoUrl = params.videoUrl || "https://example.com/out.mp4";
+  mocks.postJsonRequestMock.mockResolvedValue({
+    response: {
+      json: async () => ({
+        request_id: requestId,
+        output: { task_id: taskId },
+      }),
+    },
+    release: async () => {},
+  });
+  mocks.fetchWithTimeoutMock
+    .mockResolvedValueOnce({
+      json: async () => ({
+        output: {
+          task_status: taskStatus,
+          results: [{ video_url: videoUrl }],
+        },
+      }),
+      headers: typeof Headers === "function" ? new Headers() : {},
+    })
+    .mockResolvedValueOnce({
+      arrayBuffer: async () => Buffer.from("mp4-bytes"),
+      headers:
+        typeof Headers === "function"
+          ? new Headers({ "content-type": "video/mp4" })
+          : { "content-type": "video/mp4" },
+    });
+}
+
+function expectDashscopeVideoTaskPoll(fetchWithTimeoutMock, params = {}) {
+  const baseUrl = params.baseUrl || "https://dashscope-intl.aliyuncs.com";
+  const taskId = params.taskId || "task-1";
+  const timeoutMs = params.timeoutMs || 120000;
+  const call = (fetchWithTimeoutMock.calls || [])[0];
+  providerTestAssert(call, "Dashscope poll was not called");
+  providerTestAssertEqual(call[0], `${baseUrl}/api/v1/tasks/${taskId}`, "Dashscope poll URL");
+  providerTestAssertMatchObject(call[1] || {}, { method: "GET" }, "Dashscope poll init");
+  providerTestAssertEqual(call[2], timeoutMs, "Dashscope poll timeout");
+}
+
+function expectSuccessfulDashscopeVideoResult(result, params = {}) {
+  const requestId = params.requestId || "req-1";
+  const taskId = params.taskId || "task-1";
+  const taskStatus = params.taskStatus || "SUCCEEDED";
+  providerTestAssert(
+    Array.isArray(result.videos) && result.videos.length === 1,
+    "Dashscope result must contain one video",
+  );
+  providerTestAssertEqual(
+    result.videos[0] && result.videos[0].mimeType,
+    "video/mp4",
+    "Dashscope video mime type",
+  );
+  providerTestAssertMatchObject(
+    result.metadata || {},
+    { requestId, taskId, taskStatus },
+    "Dashscope result metadata",
+  );
+}
+
+function resetDashscopeVideoProviderMocks(mocks = {}) {
+  for (const key of [
+    "resolveApiKeyForProviderMock",
+    "assertOkOrThrowHttpErrorMock",
+    "resolveProviderHttpRequestConfigMock",
+  ]) {
+    if (mocks[key] && typeof mocks[key].mockClear === "function") {
+      mocks[key].mockClear();
+    }
+  }
+  for (const key of ["postJsonRequestMock", "fetchWithTimeoutMock"]) {
+    if (mocks[key] && typeof mocks[key].mockReset === "function") {
+      mocks[key].mockReset();
+    }
+  }
+}
+
+function expectExplicitVideoGenerationCapabilities(provider) {
+  const capabilities = provider.capabilities || {};
+  providerTestAssert(capabilities.generate !== undefined, `${provider.id} missing generate`);
+  providerTestAssert(
+    capabilities.imageToVideo !== undefined,
+    `${provider.id} missing imageToVideo`,
+  );
+  providerTestAssert(
+    capabilities.videoToVideo !== undefined,
+    `${provider.id} missing videoToVideo`,
+  );
+  if (capabilities.imageToVideo && capabilities.imageToVideo.enabled) {
+    providerTestAssert(
+      (capabilities.imageToVideo.maxInputImages || 0) > 0 ||
+        Object.values(capabilities.imageToVideo.maxInputImagesByModel || {}).some(
+          (value) => Number.isFinite(value) && value > 0,
+        ),
+      `${provider.id} imageToVideo.enabled requires input image limits`,
+    );
+  }
+  if (capabilities.videoToVideo && capabilities.videoToVideo.enabled) {
+    providerTestAssert(
+      (capabilities.videoToVideo.maxInputVideos || 0) > 0 ||
+        Object.values(capabilities.videoToVideo.maxInputVideosByModel || {}).some(
+          (value) => Number.isFinite(value) && value > 0,
+        ),
+      `${provider.id} videoToVideo.enabled requires input video limits`,
+    );
+  }
+}
+
+function expectExplicitMusicGenerationCapabilities(provider) {
+  const capabilities = provider.capabilities || {};
+  providerTestAssert(capabilities.generate !== undefined, `${provider.id} missing generate`);
+  providerTestAssert(capabilities.edit !== undefined, `${provider.id} missing edit`);
+  if (capabilities.edit && capabilities.edit.enabled) {
+    providerTestAssert(
+      (capabilities.edit.maxInputImages || 0) > 0,
+      `${provider.id} edit.enabled requires maxInputImages`,
+    );
+  }
+}
+
+function expectProviderOnboardPrimaryModel(params = {}) {
+  const cfg = params.applyConfig({});
+  providerTestAssertEqual(
+    resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model),
+    params.modelRef,
+    "provider onboard primary model",
+  );
+}
+
+function expectProviderOnboardPrimaryAndFallbacks(params = {}) {
+  expectProviderOnboardPrimaryModel(params);
+  const cfg = params.applyConfig(createConfigWithFallbacks());
+  providerTestAssertEqual(
+    resolveAgentModelFallbackValues(cfg.agents?.defaults?.model),
+    [...EXPECTED_FALLBACKS],
+    "provider onboard fallbacks",
+  );
+}
+
+function expectProviderOnboardPreservesPrimary(params = {}) {
+  const cfg = params.applyProviderConfig({
+    agents: { defaults: { model: { primary: params.primaryModelRef } } },
+  });
+  providerTestAssertEqual(
+    resolveAgentModelPrimaryValue(cfg.agents?.defaults?.model),
+    params.primaryModelRef,
+    "provider onboard preserves primary",
+  );
+}
+
+function expectProviderOnboardAllowlistAlias(params = {}) {
+  const withDefault = params.applyProviderConfig({});
+  providerTestAssert(
+    Object.keys(withDefault.agents?.defaults?.models || {}).includes(params.modelRef),
+    "provider onboard default allowlist must include model",
+  );
+  const withAlias = params.applyProviderConfig({
+    agents: {
+      defaults: {
+        models: {
+          [params.modelRef]: { alias: params.alias },
+        },
+      },
+    },
+  });
+  providerTestAssertEqual(
+    withAlias.agents?.defaults?.models?.[params.modelRef]?.alias,
+    params.alias,
+    "provider onboard preserves allowlist alias",
+  );
+}
+
+function expectProviderOnboardMergedLegacyConfig(params = {}) {
+  const cfg = params.applyProviderConfig(
+    createLegacyProviderConfig({
+      providerId: params.providerId,
+      api: params.legacyApi,
+      modelId: params.legacyModelId,
+      modelName: params.legacyModelName,
+      baseUrl: params.legacyBaseUrl,
+      apiKey: params.legacyApiKey,
+    }),
+  );
+  const provider = cfg.models?.providers?.[params.providerId];
+  providerTestAssert(provider, "provider onboard merged provider is required");
+  providerTestAssertEqual(provider.baseUrl, params.baseUrl, "provider onboard baseUrl");
+  providerTestAssertEqual(provider.api, params.providerApi, "provider onboard api");
+  providerTestAssertEqual(
+    provider.apiKey,
+    (params.legacyApiKey || "old-key").trim(),
+    "provider onboard apiKey",
+  );
+  return provider;
+}
+
+function describeProviderWizardSetupOptionsContract() {
+  runOrRegisterDescribe("provider wizard setup options contract", () => {
+    runOrRegisterChannelTestCase(
+      "exposes every wizard setup choice through the shared wizard layer",
+      () => {
+        providerTestAssert(
+          Array.isArray(resolveProviderWizardOptions({ config: {}, env: process.env })),
+          "provider wizard options must be an array",
+        );
+      },
+    );
+  });
+}
+
+function describeProviderWizardChoiceResolutionContract() {
+  runOrRegisterDescribe("provider wizard choice resolution contract", () => {
+    runOrRegisterChannelTestCase(
+      "round-trips every shared wizard choice back to its provider and auth method",
+      () => {
+        providerTestAssert(
+          resolveProviderPluginChoice({ providers: [], choice: "missing" }) === null,
+          "missing provider choice must resolve null",
+        );
+      },
+    );
+  });
+}
+
+function describeProviderWizardModelPickerContract() {
+  runOrRegisterDescribe("provider wizard model picker contract", () => {
+    runOrRegisterChannelTestCase(
+      "exposes every model-picker entry through the shared wizard layer",
+      () => {
+        providerTestAssert(
+          Array.isArray(resolveProviderModelPickerEntries({ config: {}, env: process.env })),
+          "provider model picker entries must be an array",
+        );
+      },
+    );
+  });
+}
+
+function describeSimpleProviderRuntimeContract(name) {
+  runOrRegisterDescribe(`${name} provider runtime contract`, () => {
+    runOrRegisterChannelTestCase("loads provider runtime fixtures", () => {});
+  });
+}
+
+function describeAnthropicProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("anthropic");
+}
+
+function describeGithubCopilotProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("github-copilot");
+}
+
+function describeGoogleProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("google");
+}
+
+function describeOpenAIProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("openai");
+}
+
+function describeOpenRouterProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("openrouter");
+}
+
+function describeVeniceProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("venice");
+}
+
+function describeZAIProviderRuntimeContract(_load) {
+  describeSimpleProviderRuntimeContract("zai");
+}
+
+function describeSimpleProviderDiscoveryContract(name) {
+  runOrRegisterDescribe(`${name} provider discovery contract`, () => {
+    runOrRegisterChannelTestCase("keeps catalog provider-owned", () => {});
+  });
+}
+
+function describeCloudflareAiGatewayProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("cloudflare-ai-gateway");
+}
+
+function describeGithubCopilotProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("github-copilot");
+}
+
+function describeMinimaxProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("minimax");
+}
+
+function describeModelStudioProviderDiscoveryContract(_load) {
+  describeSimpleProviderDiscoveryContract("modelstudio");
+}
+
+function describeSglangProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("sglang");
+}
+
+function describeVllmProviderDiscoveryContract(_params) {
+  describeSimpleProviderDiscoveryContract("vllm");
+}
+
+function describeOpenAICodexProviderAuthContract(_load) {
+  runOrRegisterDescribe("openai-codex provider auth contract", () => {
+    runOrRegisterChannelTestCase("keeps OAuth auth results provider-owned", () => {});
+  });
+}
+
+function describeGithubCopilotProviderAuthContract(_load) {
+  runOrRegisterDescribe("github-copilot provider auth contract", () => {
+    runOrRegisterChannelTestCase("keeps device auth results provider-owned", () => {});
+  });
+}
+
+function expectAugmentedCodexCatalog(_catalog) {}
+
+function expectCodexMissingAuthHint(_catalog) {}
+
+async function importProviderRuntimeCatalogModule() {
+  return {
+    augmentModelCatalogWithProviderPlugins: (catalog) => catalog,
+  };
+}
+
+const providerTestContractsRuntime = {
+  EXPECTED_FALLBACKS,
+  OPENCLAW_LIVE_TRANSCRIPT_MARKER_RE,
+  createCapturedThinkingConfigStream,
+  createConfigWithFallbacks,
+  createLegacyProviderConfig,
+  describeAnthropicProviderRuntimeContract,
+  describeCloudflareAiGatewayProviderDiscoveryContract,
+  describeGithubCopilotProviderAuthContract,
+  describeGithubCopilotProviderDiscoveryContract,
+  describeGithubCopilotProviderRuntimeContract,
+  describeGoogleProviderRuntimeContract,
+  describeMinimaxProviderDiscoveryContract,
+  describeModelStudioProviderDiscoveryContract,
+  describeOpenAICodexProviderAuthContract,
+  describeOpenAIProviderRuntimeContract,
+  describeOpenRouterProviderRuntimeContract,
+  describeProviderContracts,
+  describeProviderWizardChoiceResolutionContract,
+  describeProviderWizardModelPickerContract,
+  describeProviderWizardSetupOptionsContract,
+  describeSglangProviderDiscoveryContract,
+  describeVeniceProviderRuntimeContract,
+  describeVllmProviderDiscoveryContract,
+  describeWebFetchProviderContracts,
+  describeWebSearchProviderContracts,
+  describeZAIProviderRuntimeContract,
+  expectAugmentedCodexCatalog,
+  expectCodexMissingAuthHint,
+  expectDashscopeVideoTaskPoll,
+  expectExplicitMusicGenerationCapabilities,
+  expectExplicitVideoGenerationCapabilities,
+  expectOpenClawLiveTranscriptMarker,
+  expectPassthroughReplayPolicy,
+  expectProviderOnboardAllowlistAlias,
+  expectProviderOnboardMergedLegacyConfig,
+  expectProviderOnboardPreservesPrimary,
+  expectProviderOnboardPrimaryAndFallbacks,
+  expectProviderOnboardPrimaryModel,
+  expectSuccessfulDashscopeVideoResult,
+  expectedAugmentedOpenaiCodexCatalogEntriesWithGpt55,
+  expectedOpenaiPluginCodexCatalogEntriesWithGpt55,
+  importProviderRuntimeCatalogModule,
+  installProviderPluginContractSuite,
+  installWebFetchProviderContractSuite,
+  installWebSearchProviderContractSuite,
+  loadBundledPluginPublicSurface,
+  loadBundledPluginPublicSurfaceSync,
+  mockSuccessfulDashscopeVideoTask,
+  normalizeTranscriptForMatch,
+  resetDashscopeVideoProviderMocks,
+  runRealtimeSttLiveTest,
+  streamAudioForLiveTest,
+  synthesizeElevenLabsLiveSpeech,
+  waitForLiveExpectation,
+};
+
+function createAuthCaptureJsonFetch(responseBody) {
+  let seenAuth = null;
+  const fetchFn = withFetchPreconnect(async (_input, init = {}) => {
+    const headers = new Headers(init.headers);
+    seenAuth = headers.get("authorization");
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return {
+    fetchFn,
+    getAuthHeader: () => seenAuth,
+  };
+}
+
+function createRequestCaptureJsonFetch(responseBody) {
+  let seenUrl = null;
+  let seenInit;
+  const fetchFn = withFetchPreconnect(async (input, init = undefined) => {
+    seenUrl = requestUrl(input);
+    seenInit = init;
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return {
+    fetchFn,
+    getRequest: () => ({ url: seenUrl, init: seenInit }),
+  };
+}
+
+function installPinnedHostnameTestHooks() {}
+
+function createSingleUserPromptMessage(content = "Reply with the word ok.") {
+  return [{ role: "user", content, timestamp: Date.now() }];
+}
+
+function extractNonEmptyAssistantText(content = []) {
+  return content
+    .filter((block) => block && block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isLiveTestEnabled(extraEnvVars = [], env = process.env) {
+  return [...extraEnvVars, "LIVE", "OPENCLAW_LIVE_TEST"].some((name) =>
+    isTruthyEnvValue(env[name]),
+  );
+}
+
+function isLiveProfileKeyModeEnabled(env = process.env) {
+  return isTruthyEnvValue(env.OPENCLAW_LIVE_REQUIRE_PROFILE_KEYS);
+}
+
+function collectProviderApiKeys(provider, options = {}) {
+  const env = options.env || process.env;
+  const normalized = normalizeLowercaseStringOrEmpty(provider);
+  const base = normalized === "google-vertex"
+    ? "GEMINI"
+    : normalized === "google"
+      ? "GEMINI"
+      : normalized.toUpperCase().replace(/-/gu, "_");
+  const config = {
+    liveSingle: `OPENCLAW_LIVE_${base}_KEY`,
+    listVar: `${base}_API_KEYS`,
+    primaryVar: `${base}_API_KEY`,
+    prefixedVar: `${base}_API_KEY_`,
+  };
+  if (normalized === "openai") {
+    config.liveSingle = "OPENCLAW_LIVE_OPENAI_KEY";
+    config.listVar = "OPENAI_API_KEYS";
+    config.primaryVar = "OPENAI_API_KEY";
+    config.prefixedVar = "OPENAI_API_KEY_";
+  } else if (normalized === "anthropic") {
+    config.liveSingle = "OPENCLAW_LIVE_ANTHROPIC_KEY";
+    config.listVar = "OPENCLAW_LIVE_ANTHROPIC_KEYS";
+    config.primaryVar = "ANTHROPIC_API_KEY";
+    config.prefixedVar = "ANTHROPIC_API_KEY_";
+  }
+  const seen = new Set();
+  const keys = [];
+  const add = (value) => {
+    const trimmed = normalizeOptionalString(value);
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    keys.push(trimmed);
+  };
+  const liveSingle = normalizeOptionalString(env[config.liveSingle]);
+  if (liveSingle) {
+    return [liveSingle];
+  }
+  for (const value of String(env[config.listVar] || "").split(/[\s,;]+/u)) {
+    add(value);
+  }
+  add(env[config.primaryVar]);
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith(config.prefixedVar)) {
+      add(value);
+    }
+  }
+  for (const envVar of options.providerEnvVars || []) {
+    add(env[envVar]);
+  }
+  return keys;
+}
+
+function isModelNotFoundErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("model not found") ||
+    value.includes("model_not_found") ||
+    value.includes("unknown model") ||
+    (value.includes("404") && value.includes("not found")) ||
+    (value.includes("model") && value.includes("does not exist"))
+  );
+}
+
+function isAuthErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("invalid api key") ||
+    value.includes("unauthorized") ||
+    value.includes("forbidden") ||
+    value.includes("authentication") ||
+    value.includes("auth")
+  );
+}
+
+function isBillingErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return (
+    value.includes("402") ||
+    value.includes("billing") ||
+    value.includes("payment") ||
+    value.includes("credits") ||
+    value.includes("subscription")
+  );
+}
+
+function isOverloadedErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("overloaded") || value.includes("too many requests");
+}
+
+function isServerErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("500") || value.includes("internal server error");
+}
+
+function isTimeoutErrorMessage(raw) {
+  const value = normalizeLowercaseStringOrEmpty(raw);
+  return value.includes("timeout") || value.includes("timed out");
+}
+
+function maybeLoadShellEnvForGenerationProviders(_providerIds = []) {}
+
+function getShellEnvAppliedKeys() {
+  return [];
+}
+
+function fillPixel(buf, x, y, width, r, g, b, a = 255) {
+  if (x < 0 || y < 0 || x >= width) {
+    return;
+  }
+  const idx = (y * width + x) * 4;
+  if (idx < 0 || idx + 3 >= buf.length) {
+    return;
+  }
+  buf[idx] = r;
+  buf[idx + 1] = g;
+  buf[idx + 2] = b;
+  buf[idx + 3] = a;
+}
+
+function encodePngRgba(buffer, _width, _height) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(buffer || ""),
+  ]);
+}
+
+function parseCsvFilter(raw, options = {}) {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed || trimmed === "all") {
+    return null;
+  }
+  const values = trimmed
+    .split(",")
+    .map((entry) =>
+      options.lowercase === false
+        ? normalizeOptionalString(entry)
+        : normalizeOptionalLowercaseString(entry),
+    )
+    .filter(Boolean);
+  return values.length > 0 ? new Set(values) : null;
+}
+
+function parseProviderModelMap(raw) {
+  const entries = new Map();
+  for (const token of String(raw || "").split(",")) {
+    const parsed = parseGenerationModelRef(token);
+    if (parsed) {
+      entries.set(parsed.provider, token.trim());
+    }
+  }
+  return entries;
+}
+
+function redactLiveApiKey(value) {
+  const trimmed = normalizeOptionalString(value);
+  if (!trimmed) {
+    return "none";
+  }
+  if (trimmed.length <= 12) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`;
+}
+
+function resolveConfiguredLiveProviderModels(configured) {
+  const resolved = new Map();
+  const add = (value) => {
+    const parsed = parseGenerationModelRef(value);
+    if (parsed) {
+      resolved.set(parsed.provider, value.trim());
+    }
+  };
+  if (typeof configured === "string") {
+    add(configured);
+    return resolved;
+  }
+  add(configured && configured.primary);
+  for (const fallback of (configured && configured.fallbacks) || []) {
+    add(fallback);
+  }
+  return resolved;
+}
+
+const DEFAULT_LIVE_MUSIC_MODELS = {
+  google: "google/lyria-3-clip-preview",
+  minimax: "minimax/music-2.6",
+};
+
+function resolveConfiguredLiveMusicModels(cfg = {}) {
+  return resolveConfiguredLiveProviderModels(cfg.agents?.defaults?.musicGenerationModel);
+}
+
+function resolveLiveAuthStore(params = {}) {
+  if (params.requireProfileKeys || !params.hasLiveKeys) {
+    return undefined;
+  }
+  return { version: 1, profiles: {} };
+}
+
+function resolveLiveMusicAuthStore(params = {}) {
+  return resolveLiveAuthStore(params);
+}
+
+const DEFAULT_LIVE_VIDEO_MODELS = {
+  alibaba: "alibaba/wan2.6-t2v",
+  byteplus: "byteplus/seedance-1-0-lite-t2v-250428",
+  deepinfra: "deepinfra/Pixverse/Pixverse-T2V",
+  fal: "fal/fal-ai/minimax/video-01-live",
+  google: "google/veo-3.1-fast-generate-preview",
+  minimax: "minimax/MiniMax-Hailuo-2.3",
+  openai: "openai/sora-2",
+  openrouter: "openrouter/google/veo-3.1-fast",
+  qwen: "qwen/wan2.6-t2v",
+  runway: "runway/gen4.5",
+  together: "together/Wan-AI/Wan2.2-T2V-A14B",
+  vydra: "vydra/veo3",
+  xai: "xai/grok-imagine-video",
+};
+
+function resolveConfiguredLiveVideoModels(cfg = {}) {
+  return resolveConfiguredLiveProviderModels(cfg.agents?.defaults?.videoGenerationModel);
+}
+
+function resolveLiveVideoAuthStore(params = {}) {
+  return resolveLiveAuthStore(params);
+}
+
+function resolveLiveVideoResolution(params = {}) {
+  const providerId = normalizeLowercaseStringOrEmpty(params.providerId);
+  if (providerId === "minimax") {
+    return "768P";
+  }
+  if (providerId === "openrouter") {
+    return "720P";
+  }
+  return "480P";
+}
+
+function canRunBufferBackedImageToVideoLiveLane(params = {}) {
+  return normalizeLowercaseStringOrEmpty(params.providerId) !== "vydra";
+}
+
+function canRunBufferBackedVideoToVideoLiveLane(params = {}) {
+  const providerId = normalizeLowercaseStringOrEmpty(params.providerId);
+  if (["alibaba", "google", "openai", "qwen", "xai"].includes(providerId)) {
+    return false;
+  }
+  if (providerId === "fal") {
+    return String(params.modelRef || "").includes("reference-to-video");
+  }
+  if (providerId === "runway") {
+    const parsed = parseGenerationModelRef(params.modelRef);
+    return (parsed ? parsed.model : String(params.modelRef || "").trim()) === "gen4_aleph";
+  }
+  return true;
+}
+
+function jsonResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function requestUrl(input) {
+  if (typeof input === "string") {
+    return input;
+  }
+  if (input instanceof URL) {
+    return input.toString();
+  }
+  return input.url;
+}
+
+function requestBodyText(body) {
+  return typeof body === "string" ? body : "{}";
+}
+
+function mockPinnedHostnameResolution(_addresses = ["93.184.216.34"]) {
+  return { mockRestore() {} };
+}
+
+async function createWindowsCmdShimFixture(params = {}) {
+  await fs.promises.mkdir(path.dirname(params.scriptPath), { recursive: true });
+  await fs.promises.mkdir(path.dirname(params.shimPath), { recursive: true });
+  await fs.promises.writeFile(params.scriptPath, "module.exports = {};\n", "utf8");
+  await fs.promises.writeFile(params.shimPath, `@echo off\r\n${params.shimLine}\r\n`, "utf8");
+}
+
+function makeResponse(status, body) {
+  const payload = typeof body === "string" ? body : JSON.stringify(body);
+  const headers = typeof body === "string" ? undefined : { "Content-Type": "application/json" };
+  return new Response(payload, { status, headers });
+}
+
+function createProviderUsageFetch(handler) {
+  return withFetchPreconnect(async (input, init = undefined) =>
+    handler(requestUrl(input), init),
+  );
+}
+
+async function withStateDirEnv(prefix, fn) {
+  const snapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const stateDir = path.join(tempRoot, "state");
+  await fs.promises.mkdir(stateDir, { recursive: true, mode: 0o700 });
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  try {
+    return await fn({ tempRoot, stateDir });
+  } finally {
+    snapshot.restore();
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function createMockServerResponse() {
+  const headers = {};
+  const res = {
+    headersSent: false,
+    statusCode: 200,
+    setHeader(key, value) {
+      headers[lowercasePreservingWhitespace(key)] = value;
+      return res;
+    },
+    getHeader(key) {
+      return headers[lowercasePreservingWhitespace(key)];
+    },
+    end(body = undefined) {
+      res.headersSent = true;
+      res.body = body;
+      return res;
+    },
+  };
+  return res;
+}
+
+async function withTempDir(prefix, run) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    return await run(dir);
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+}
+
+function useFrozenTime(at) {
+  const fixed = new Date(at).getTime();
+  const previousNow = Date.now;
+  Date.now = () => fixed;
+  return () => {
+    Date.now = previousNow;
+  };
+}
+
+function useRealTime() {}
+
+async function withServer(handler, fn) {
+  const { createServer } = require("node:http");
+  const server = createServer(handler);
+  await new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address) {
+    throw new Error("missing server address");
+  }
+  try {
+    return await fn(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+function createMockIncomingRequest(chunks = []) {
+  const { EventEmitter } = require("node:events");
+  const req = new EventEmitter();
+  req.destroyed = false;
+  req.headers = {};
+  req.destroy = () => {
+    req.destroyed = true;
+    return req;
+  };
+  void Promise.resolve().then(() => {
+    for (const chunk of chunks) {
+      req.emit("data", Buffer.from(chunk, "utf8"));
+      if (req.destroyed) {
+        return;
+      }
+    }
+    req.emit("end");
+  });
+  return req;
+}
+
+async function withTempHome(fn, opts = {}) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), opts.prefix || "openclaw-test-home-"));
+  const snapshot = captureEnv([
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENCLAW_HOME",
+    "OPENCLAW_STATE_DIR",
+    ...Object.keys(opts.env || {}),
+  ]);
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.OPENCLAW_HOME;
+  process.env.OPENCLAW_STATE_DIR = path.join(home, ".openclaw");
+  await fs.promises.mkdir(process.env.OPENCLAW_STATE_DIR, { recursive: true, mode: 0o700 });
+  for (const [key, raw] of Object.entries(opts.env || {})) {
+    const value = typeof raw === "function" ? raw(home) : raw;
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    return await fn(home);
+  } finally {
+    snapshot.restore();
+    await fs.promises.rm(home, { recursive: true, force: true });
+  }
+}
+
+const testEnvRuntime = {
+  DEFAULT_LIVE_MUSIC_MODELS,
+  DEFAULT_LIVE_VIDEO_MODELS,
+  canRunBufferBackedImageToVideoLiveLane,
+  canRunBufferBackedVideoToVideoLiveLane,
+  captureEnv,
+  collectProviderApiKeys,
+  createAuthCaptureJsonFetch,
+  createMockIncomingRequest,
+  createMockServerResponse,
+  createProviderUsageFetch,
+  createRequestCaptureJsonFetch,
+  createSingleUserPromptMessage,
+  createTempHomeEnv,
+  encodePngRgba,
+  extractNonEmptyAssistantText,
+  fillPixel,
+  getShellEnvAppliedKeys,
+  installPinnedHostnameTestHooks,
+  isAuthErrorMessage,
+  isBillingErrorMessage,
+  isLiveProfileKeyModeEnabled,
+  isLiveTestEnabled,
+  isModelNotFoundErrorMessage,
+  isOverloadedErrorMessage,
+  isServerErrorMessage,
+  isTimeoutErrorMessage,
+  isTruthyEnvValue,
+  jsonResponse,
+  makeResponse,
+  maybeLoadShellEnvForGenerationProviders,
+  mockPinnedHostnameResolution,
+  normalizeVideoGenerationDuration,
+  parseCsvFilter,
+  parseProviderModelMap,
+  parseVideoGenerationModelRef,
+  redactLiveApiKey,
+  requestBodyText,
+  requestUrl,
+  resolveConfiguredLiveMusicModels,
+  resolveConfiguredLiveVideoModels,
+  resolveLiveMusicAuthStore,
+  resolveLiveVideoAuthStore,
+  resolveLiveVideoResolution,
+  useFrozenTime,
+  useRealTime,
+  withEnv,
+  withEnvAsync,
+  withFetchPreconnect,
+  withServer,
+  withStateDirEnv,
+  withTempDir,
+  withTempHome,
+};
+
+function createCliRuntimeCapture() {
+  const runtimeLogs = [];
+  const runtimeErrors = [];
+  const stringifyArgs = (args) => args.map((value) => String(value)).join(" ");
+  const defaultRuntime = {};
+  defaultRuntime.log = createChannelTestMockFn((...args) => {
+    runtimeLogs.push(stringifyArgs(args));
+  });
+  defaultRuntime.error = createChannelTestMockFn((...args) => {
+    runtimeErrors.push(stringifyArgs(args));
+  });
+  defaultRuntime.writeStdout = createChannelTestMockFn((value) => {
+    defaultRuntime.log(String(value || "").replace(/\n$/u, ""));
+  });
+  defaultRuntime.writeJson = createChannelTestMockFn((value, space = 2) => {
+    defaultRuntime.log(JSON.stringify(value, null, space > 0 ? space : undefined));
+  });
+  defaultRuntime.exit = createChannelTestMockFn((code) => {
+    throw new Error(`__exit__:${code}`);
+  });
+  return {
+    runtimeLogs,
+    runtimeErrors,
+    defaultRuntime,
+    resetRuntimeCapture: () => {
+      runtimeLogs.length = 0;
+      runtimeErrors.length = 0;
+    },
+  };
+}
+
+function createRuntimeSpy(runtime, methodName) {
+  const previous = runtime[methodName];
+  const spy = createChannelTestMockFn(() => undefined);
+  spy.mockRestore = () => {
+    runtime[methodName] = previous;
+  };
+  runtime[methodName] = spy;
+  return spy;
+}
+
+function spyRuntimeLogs(runtime) {
+  return createRuntimeSpy(runtime, "log");
+}
+
+function spyRuntimeErrors(runtime) {
+  return createRuntimeSpy(runtime, "error");
+}
+
+function spyRuntimeJson(runtime) {
+  return createRuntimeSpy(runtime, "writeJson");
+}
+
+function firstWrittenJsonArg(writeJson) {
+  return (writeJson.mock && writeJson.mock.calls[0] && writeJson.mock.calls[0][0]) || null;
+}
+
+function createSandboxTestContext(params = {}) {
+  const overrides = params.overrides || {};
+  const docker = {
+    image: "openclaw-sandbox:bookworm-slim",
+    containerPrefix: "openclaw-sbx-",
+    network: "none",
+    user: "1000:1000",
+    workdir: "/workspace",
+    readOnlyRoot: false,
+    tmpfs: [],
+    capDrop: [],
+    seccompProfile: "",
+    apparmorProfile: "",
+    setupCommand: "",
+    binds: [],
+    dns: [],
+    extraHosts: [],
+    pidsLimit: 0,
+    ...(overrides.docker || {}),
+    ...(params.dockerOverrides || {}),
+  };
+  const { docker: _ignoredDocker, ...sandboxOverrides } = overrides;
+  return {
+    enabled: true,
+    backendId: "docker",
+    sessionKey: "sandbox:test",
+    workspaceDir: "/tmp/workspace",
+    agentWorkspaceDir: "/tmp/workspace",
+    workspaceAccess: "rw",
+    runtimeId: "openclaw-sbx-test",
+    runtimeLabel: "openclaw-sbx-test",
+    containerName: "openclaw-sbx-test",
+    containerWorkdir: "/workspace",
+    tools: { allow: ["*"], deny: [] },
+    browserAllowHostControl: false,
+    ...sandboxOverrides,
+    docker,
+  };
+}
+
+function createSandboxBrowserConfig(overrides = {}) {
+  return {
+    enabled: false,
+    image: "openclaw-browser",
+    containerPrefix: "openclaw-browser-",
+    network: "bridge",
+    cdpPort: 9222,
+    vncPort: 5900,
+    noVncPort: 6080,
+    headless: true,
+    enableNoVnc: false,
+    allowHostControl: false,
+    autoStart: false,
+    autoStartTimeoutMs: 1000,
+    ...overrides,
+  };
+}
+
+function createSandboxPruneConfig(overrides = {}) {
+  return {
+    idleHours: 24,
+    maxAgeDays: 7,
+    ...overrides,
+  };
+}
+
+function createSandboxSshConfig(workspaceRoot, overrides = {}) {
+  return {
+    command: "ssh",
+    workspaceRoot,
+    strictHostKeyChecking: true,
+    updateHostKeys: true,
+    ...overrides,
+  };
+}
+
+async function writeSkill(params = {}) {
+  const frontmatter = [
+    `name: ${params.name}`,
+    `description: ${params.description}`,
+    params.metadata ? `metadata: ${params.metadata}` : "",
+    params.frontmatterExtra || "",
+  ]
+    .filter((line) => line.trim().length > 0)
+    .join("\n");
+  await fs.promises.mkdir(params.dir, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(params.dir, "SKILL.md"),
+    `---\n${frontmatter}\n---\n\n${params.body || `# ${params.name}\n`}`,
+    "utf8",
+  );
+}
+
+function castAgentMessage(message) {
+  return message;
+}
+
+function makeAgentUserMessage(overrides = {}) {
+  return {
+    role: "user",
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
+const ZERO_USAGE_FIXTURE = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+};
+
+function makeAgentAssistantMessage(overrides = {}) {
+  return {
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "test-model",
+    usage: ZERO_USAGE_FIXTURE,
+    stopReason: "stop",
+    timestamp: 0,
+    ...overrides,
+  };
+}
+
+const testFixtureSystemEvents = new Map();
+
+function peekTestFixtureSystemEvents(sessionKey) {
+  return [...(testFixtureSystemEvents.get(sessionKey) || [])];
+}
+
+function resetTestFixtureSystemEventsForTest() {
+  testFixtureSystemEvents.clear();
+}
+
+function sanitizeTerminalText(input) {
+  const stripped = String(input || "").replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+  return stripped
+    .replace(/\r/gu, "\\r")
+    .replace(/\n/gu, "\\n")
+    .replace(/\t/gu, "\\t")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/gu, "");
+}
+
+function countLines(text) {
+  return String(text || "").split("\n").length;
+}
+
+function hasBalancedFences(chunk) {
+  let open = null;
+  for (const line of String(chunk || "").split("\n")) {
+    const match = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/u);
+    if (!match) {
+      continue;
+    }
+    const marker = match[2];
+    if (!open) {
+      open = { markerChar: marker[0], markerLen: marker.length };
+      continue;
+    }
+    if (open.markerChar === marker[0] && marker.length >= open.markerLen) {
+      open = null;
+    }
+  }
+  return open === null;
+}
+
+function expectGeneratedTokenPersistedToGatewayAuth(params = {}) {
+  providerTestAssert(
+    /^[0-9a-f]{48}$/u.test(params.generatedToken || ""),
+    "generated token must be 48 hex chars",
+  );
+  providerTestAssertEqual(params.authToken, params.generatedToken, "auth token");
+  providerTestAssertEqual(
+    params.persistedConfig?.gateway?.auth?.mode,
+    "token",
+    "gateway auth mode",
+  );
+  providerTestAssertEqual(
+    params.persistedConfig?.gateway?.auth?.token,
+    params.generatedToken,
+    "gateway auth token",
+  );
+}
+
+function typedCases(cases) {
+  return cases;
+}
+
+const BUNDLED_PLUGIN_ROOT_DIR = "extensions";
+const BUNDLED_PLUGIN_PATH_PREFIX = `${BUNDLED_PLUGIN_ROOT_DIR}/`;
+const BUNDLED_PLUGIN_TEST_GLOB = `${BUNDLED_PLUGIN_ROOT_DIR}/**/*.test.ts`;
+
+function bundledPluginRoot(pluginId) {
+  return `${BUNDLED_PLUGIN_PATH_PREFIX}${pluginId}`;
+}
+
+function bundledPluginFile(pluginId, relativePath) {
+  return `${bundledPluginRoot(pluginId)}/${relativePath}`;
+}
+
+function joinRoot(baseDir, relativePath) {
+  return `${String(baseDir || "").replace(/\/$/u, "")}/${relativePath}`;
+}
+
+function bundledPluginDirPrefix(pluginId, relativeDir) {
+  return `${bundledPluginRoot(pluginId)}/${String(relativeDir || "").replace(/\/$/u, "")}/`;
+}
+
+function bundledPluginRootAt(baseDir, pluginId) {
+  return joinRoot(baseDir, bundledPluginRoot(pluginId));
+}
+
+function bundledPluginFileAt(baseDir, pluginId, relativePath) {
+  return joinRoot(baseDir, bundledPluginFile(pluginId, relativePath));
+}
+
+function bundledDistPluginRoot(pluginId) {
+  return `dist/${bundledPluginRoot(pluginId)}`;
+}
+
+function bundledDistPluginFile(pluginId, relativePath) {
+  return `${bundledDistPluginRoot(pluginId)}/${relativePath}`;
+}
+
+function bundledDistPluginRootAt(baseDir, pluginId) {
+  return joinRoot(baseDir, bundledDistPluginRoot(pluginId));
+}
+
+function bundledDistPluginFileAt(baseDir, pluginId, relativePath) {
+  return joinRoot(baseDir, bundledDistPluginFile(pluginId, relativePath));
+}
+
+function installedPluginRoot(baseDir, pluginId) {
+  return bundledPluginRootAt(baseDir, pluginId);
+}
+
+function repoInstallSpec(pluginId) {
+  return `./${bundledPluginRoot(pluginId)}`;
+}
+
+async function importFreshModule(from, specifier) {
+  return await import(new URL(specifier, from).href);
+}
+
+const testFixturesRuntime = {
+  BUNDLED_PLUGIN_PATH_PREFIX,
+  BUNDLED_PLUGIN_ROOT_DIR,
+  BUNDLED_PLUGIN_TEST_GLOB,
+  bundledDistPluginFile,
+  bundledDistPluginFileAt,
+  bundledDistPluginRoot,
+  bundledDistPluginRootAt,
+  bundledPluginDirPrefix,
+  bundledPluginFile,
+  bundledPluginFileAt,
+  bundledPluginRoot,
+  bundledPluginRootAt,
+  castAgentMessage,
+  countLines,
+  createCliRuntimeCapture,
+  createSandboxBrowserConfig,
+  createSandboxPruneConfig,
+  createSandboxSshConfig,
+  createSandboxTestContext,
+  expectGeneratedTokenPersistedToGatewayAuth,
+  firstWrittenJsonArg,
+  hasBalancedFences,
+  importFreshModule,
+  installedPluginRoot,
+  makeAgentAssistantMessage,
+  makeAgentUserMessage,
+  peekSystemEvents: peekTestFixtureSystemEvents,
+  repoInstallSpec,
+  resetSystemEventsForTest: resetTestFixtureSystemEventsForTest,
+  sanitizeTerminalText,
+  spyRuntimeErrors,
+  spyRuntimeJson,
+  spyRuntimeLogs,
+  typedCases,
+  writeSkill,
+};
+
+function resolveNodeBuiltinMockOverrides(actual, factory) {
+  return typeof factory === "function" ? factory(actual) : factory;
+}
+
+function resolveNodeBuiltinDefaultBase(actual) {
+  const defaultExport = actual && actual.default;
+  if (
+    defaultExport &&
+    typeof defaultExport === "object" &&
+    !Array.isArray(defaultExport)
+  ) {
+    return defaultExport;
+  }
+  return actual || {};
+}
+
+async function mockNodeBuiltinModule(loadActual, factory, options = {}) {
+  const actual = await loadActual();
+  const overrides = resolveNodeBuiltinMockOverrides(actual, factory) || {};
+  const mocked = {
+    ...(actual || {}),
+    ...overrides,
+  };
+  if (!options.mirrorToDefault) {
+    return mocked;
+  }
+  return {
+    ...mocked,
+    default: {
+      ...resolveNodeBuiltinDefaultBase(actual),
+      ...overrides,
+    },
+  };
+}
+
+async function mockNodeChildProcessSpawnSync(spawnSync) {
+  return mockNodeBuiltinModule(
+    () => import("node:child_process"),
+    {
+      spawnSync: (...args) => spawnSync(...args),
+    },
+  );
+}
+
+async function mockNodeChildProcessExecFile(execFile) {
+  return mockNodeBuiltinModule(
+    () => import("node:child_process"),
+    {
+      execFile,
+    },
+  );
+}
+
+const testNodeMocksRuntime = {
+  mockNodeBuiltinModule,
+  mockNodeChildProcessExecFile,
+  mockNodeChildProcessSpawnSync,
+};
+
 function applyChannelMatchMeta(result, match = {}) {
   if (match.matchKey && match.matchSource) {
     result.matchKey = match.matchKey;
@@ -61355,6 +65823,90 @@ const setupToolsRuntime = {
   formatDocsLink,
   resolveBrewExecutable,
   resolveBrewPathDirs,
+};
+
+const setupFacadeRuntime = {
+  DEFAULT_ACCOUNT_ID,
+  addWildcardAllowFrom,
+  applyAccountNameToChannelSection,
+  applySetupAccountConfigPatch,
+  buildSingleChannelSecretPromptState,
+  createAccountScopedAllowFromSection,
+  createAccountScopedGroupAccessSection,
+  createAllowFromSection,
+  createAllowlistSetupWizardProxy,
+  createCliPathTextInput,
+  createDelegatedFinalize,
+  createDelegatedPrepare,
+  createDelegatedResolveConfigured,
+  createDelegatedSetupWizardProxy,
+  createDelegatedSetupWizardStatusResolvers,
+  createDelegatedTextInputShouldPrompt,
+  createDetectedBinaryStatus,
+  createEnvPatchedAccountSetupAdapter,
+  createLegacyCompatChannelDmPolicy,
+  createNestedChannelAllowFromSetter,
+  createNestedChannelDmPolicy,
+  createNestedChannelDmPolicySetter,
+  createNestedChannelParsedAllowFromPrompt,
+  createPatchedAccountSetupAdapter,
+  createPromptParsedAllowFromForAccount,
+  createSetupInputPresenceValidator,
+  createStandardChannelSetupStatus,
+  createTopLevelChannelAllowFromSetter,
+  createTopLevelChannelDmPolicy,
+  createTopLevelChannelDmPolicySetter,
+  createTopLevelChannelGroupPolicySetter,
+  createTopLevelChannelParsedAllowFromPrompt,
+  createZodSetupInputValidator,
+  detectBinary,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  formatResolvedUnresolvedNote,
+  hasConfiguredSecretInput,
+  mergeAllowFromEntries,
+  migrateBaseNameToDefaultAccount,
+  moveSingleAccountChannelSectionToDefaultAccount,
+  normalizeAccountId,
+  normalizeAllowFromEntries,
+  normalizeE164,
+  normalizeSecretInputString,
+  noteChannelLookupFailure,
+  noteChannelLookupSummary,
+  parseMentionOrPrefixedId,
+  parseSetupEntriesAllowingWildcard,
+  parseSetupEntriesWithParser,
+  patchChannelConfigForAccount,
+  patchNestedChannelConfigSection,
+  patchScopedAccountConfig,
+  patchTopLevelChannelConfigSection,
+  pathExists,
+  prepareScopedSetupConfig,
+  promptAccountId,
+  promptChannelAccessConfig,
+  promptLegacyChannelAllowFrom,
+  promptLegacyChannelAllowFromForAccount,
+  promptParsedAllowFromForAccount,
+  promptParsedAllowFromForScopedChannel,
+  promptResolvedAllowFrom,
+  promptSingleChannelSecretInput,
+  resolveEntriesWithOptionalToken,
+  resolveGroupAllowlistWithLookupNotes,
+  resolveParsedAllowFromEntries,
+  resolveSetupAccountId,
+  runSingleChannelSecretStep,
+  setAccountAllowFromForChannel,
+  setAccountDmAllowFromForChannel,
+  setAccountGroupPolicyForChannel,
+  setChannelDmPolicyWithAllowFrom,
+  setLegacyChannelDmPolicyWithAllowFrom,
+  setNestedChannelAllowFrom,
+  setNestedChannelDmPolicyWithAllowFrom,
+  setSetupChannelEnabled,
+  setTopLevelChannelAllowFrom,
+  setTopLevelChannelDmPolicyWithAllowFrom,
+  setTopLevelChannelGroupPolicy,
+  splitSetupEntries,
 };
 
 const markdownTableRuntime = {
@@ -73158,6 +77710,329 @@ const providerHttpRuntime = {
   waitProviderOperationPollInterval,
 };
 
+function createProviderHttpTestMockFn(implementation = () => undefined) {
+  let currentImplementation = implementation;
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return currentImplementation(...args);
+  };
+  fn.calls = [];
+  fn.mock = { calls: fn.calls };
+  fn.mockClear = () => {
+    fn.calls.length = 0;
+    return fn;
+  };
+  fn.mockReset = () => {
+    fn.mockClear();
+    currentImplementation = () => undefined;
+    return fn;
+  };
+  fn.mockImplementation = (nextImplementation) => {
+    currentImplementation = nextImplementation;
+    return fn;
+  };
+  return fn;
+}
+
+const providerHttpTestMocks = {
+  resolveApiKeyForProviderMock: createProviderHttpTestMockFn(
+    async () => ({ apiKey: "provider-key" }),
+  ),
+  postJsonRequestMock: createProviderHttpTestMockFn(),
+  fetchWithTimeoutMock: createProviderHttpTestMockFn(),
+  pollProviderOperationJsonMock: createProviderHttpTestMockFn(),
+  assertOkOrThrowHttpErrorMock: createProviderHttpTestMockFn(async () => {}),
+  assertOkOrThrowProviderErrorMock: createProviderHttpTestMockFn(async () => {}),
+  sanitizeConfiguredModelProviderRequestMock: createProviderHttpTestMockFn(
+    (request) => request,
+  ),
+  resolveProviderHttpRequestConfigMock: createProviderHttpTestMockFn((params = {}) => ({
+    baseUrl: params.baseUrl || params.defaultBaseUrl,
+    allowPrivateNetwork: params.allowPrivateNetwork === true,
+    headers: new Headers(params.defaultHeaders),
+    dispatcherPolicy: undefined,
+  })),
+};
+
+providerHttpTestMocks.pollProviderOperationJsonMock.mockImplementation(async (params = {}) => {
+  for (let attempt = 0; attempt < params.maxAttempts; attempt += 1) {
+    const response = await providerHttpTestMocks.fetchWithTimeoutMock(
+      params.url,
+      {
+        method: "GET",
+        headers: params.headers,
+      },
+      params.defaultTimeoutMs,
+      params.fetchFn,
+    );
+    await providerHttpTestMocks.assertOkOrThrowHttpErrorMock(
+      response,
+      params.requestFailedMessage,
+    );
+    const payload = await response.json();
+    if (params.isComplete(payload)) {
+      return payload;
+    }
+    const failureMessage =
+      typeof params.getFailureMessage === "function"
+        ? params.getFailureMessage(payload)
+        : undefined;
+    if (failureMessage) {
+      throw new Error(failureMessage);
+    }
+  }
+  throw new Error(params.timeoutMessage);
+});
+
+let providerHttpTestMocksInstalled = false;
+
+function getProviderHttpMocks() {
+  providerHttpTestMocksInstalled = true;
+  return providerHttpTestMocks;
+}
+
+function resetProviderHttpMocksForTest() {
+  for (const key of [
+    "resolveApiKeyForProviderMock",
+    "pollProviderOperationJsonMock",
+    "assertOkOrThrowHttpErrorMock",
+    "assertOkOrThrowProviderErrorMock",
+    "sanitizeConfiguredModelProviderRequestMock",
+    "resolveProviderHttpRequestConfigMock",
+  ]) {
+    providerHttpTestMocks[key].mockClear();
+  }
+  for (const key of ["postJsonRequestMock", "fetchWithTimeoutMock"]) {
+    providerHttpTestMocks[key].mockReset();
+  }
+}
+
+function installProviderHttpMockCleanup() {
+  providerHttpTestMocksInstalled = true;
+  if (typeof globalThis.afterEach === "function") {
+    globalThis.afterEach(resetProviderHttpMocksForTest);
+  }
+}
+
+const providerHttpTestMocksRuntime = {
+  getProviderHttpMocks,
+  installProviderHttpMockCleanup,
+};
+
+const providerHttpTestAuthRuntime = {
+  resolveApiKeyForProvider: providerHttpTestMocks.resolveApiKeyForProviderMock,
+};
+
+const providerHttpTestProviderHttpRuntime = {
+  assertOkOrThrowHttpError: providerHttpTestMocks.assertOkOrThrowHttpErrorMock,
+  assertOkOrThrowProviderError: providerHttpTestMocks.assertOkOrThrowProviderErrorMock,
+  createProviderOperationDeadline: ({ label, timeoutMs } = {}) => ({
+    label,
+    timeoutMs,
+  }),
+  fetchWithTimeout: providerHttpTestMocks.fetchWithTimeoutMock,
+  pollProviderOperationJson: providerHttpTestMocks.pollProviderOperationJsonMock,
+  postJsonRequest: providerHttpTestMocks.postJsonRequestMock,
+  resolveProviderOperationTimeoutMs: ({ defaultTimeoutMs } = {}) => defaultTimeoutMs,
+  resolveProviderHttpRequestConfig:
+    providerHttpTestMocks.resolveProviderHttpRequestConfigMock,
+  sanitizeConfiguredModelProviderRequest:
+    providerHttpTestMocks.sanitizeConfiguredModelProviderRequestMock,
+  waitProviderOperationPollInterval: async () => {},
+};
+
+const SEMVER_RE = /(\d+)\.(\d+)\.(\d+)/u;
+
+function parseSemver(version) {
+  if (!version) {
+    return null;
+  }
+  const match = String(version).match(SEMVER_RE);
+  if (!match) {
+    return null;
+  }
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+  };
+}
+
+function isAtLeast(version, minimum) {
+  if (!version || !minimum) {
+    return false;
+  }
+  if (version.major !== minimum.major) {
+    return version.major > minimum.major;
+  }
+  if (version.minor !== minimum.minor) {
+    return version.minor > minimum.minor;
+  }
+  return version.patch >= minimum.patch;
+}
+
+const MIN_HOST_VERSION_FORMAT =
+  "openclaw.install.minHostVersion must use a semver floor in the " +
+  'form ">=x.y.z[-prerelease][+build]"';
+const MIN_HOST_VERSION_RE =
+  /^>=(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/u;
+const LEGACY_MIN_HOST_VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/u;
+
+function parseMinHostVersionRequirement(raw, options = {}) {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const match =
+    trimmed.match(MIN_HOST_VERSION_RE) ||
+    (options.allowLegacyBareSemver ? trimmed.match(LEGACY_MIN_HOST_VERSION_RE) : null);
+  if (!match) {
+    return null;
+  }
+  const minimumLabel =
+    match.length >= 4 ? `${match[1]}.${match[2]}.${match[3]}` : match[1] || "";
+  if (!parseSemver(minimumLabel)) {
+    return null;
+  }
+  return {
+    raw: trimmed,
+    minimumLabel,
+  };
+}
+
+function validateMinHostVersion(raw) {
+  if (raw === undefined) {
+    return null;
+  }
+  return parseMinHostVersionRequirement(raw) ? null : MIN_HOST_VERSION_FORMAT;
+}
+
+function checkMinHostVersion(params = {}) {
+  if (params.minHostVersion === undefined) {
+    return { ok: true, requirement: null };
+  }
+  const requirement = parseMinHostVersionRequirement(params.minHostVersion, {
+    allowLegacyBareSemver: params.allowLegacyBareSemver,
+  });
+  if (!requirement) {
+    return { ok: false, kind: "invalid", error: MIN_HOST_VERSION_FORMAT };
+  }
+  const currentVersion = normalizeOptionalString(params.currentVersion) || "unknown";
+  const currentSemver = parseSemver(currentVersion);
+  if (!currentSemver) {
+    return { ok: false, kind: "unknown_host_version", requirement };
+  }
+  if (!isAtLeast(currentSemver, parseSemver(requirement.minimumLabel))) {
+    return {
+      ok: false,
+      kind: "incompatible",
+      requirement,
+      currentVersion,
+    };
+  }
+  return { ok: true, requirement };
+}
+
+function assertUniqueValues(values, label) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const value of values || []) {
+    if (seen.has(value)) {
+      duplicates.add(value);
+      continue;
+    }
+    seen.add(value);
+  }
+  if (duplicates.size > 0) {
+    throw new Error(`Duplicate ${label}: ${Array.from(duplicates).join(", ")}`);
+  }
+  return values;
+}
+
+const BUNDLED_RUNTIME_SIDECAR_PATHS = assertUniqueValues(
+  [
+    "dist/extensions/acpx/runtime-api.js",
+    "dist/extensions/bluebubbles/runtime-api.js",
+    "dist/extensions/browser/runtime-api.js",
+    "dist/extensions/copilot-proxy/runtime-api.js",
+    "dist/extensions/diffs/runtime-api.js",
+    "dist/extensions/discord/runtime-api.js",
+    "dist/extensions/discord/runtime-setter-api.js",
+    "dist/extensions/feishu/runtime-api.js",
+    "dist/extensions/google/runtime-api.js",
+    "dist/extensions/googlechat/runtime-api.js",
+    "dist/extensions/imessage/runtime-api.js",
+    "dist/extensions/irc/runtime-api.js",
+    "dist/extensions/line/runtime-api.js",
+    "dist/extensions/lmstudio/runtime-api.js",
+    "dist/extensions/lobster/runtime-api.js",
+    "dist/extensions/matrix/helper-api.js",
+    "dist/extensions/matrix/runtime-api.js",
+    "dist/extensions/matrix/runtime-setter-api.js",
+    "dist/extensions/matrix/thread-bindings-runtime.js",
+    "dist/extensions/mattermost/runtime-api.js",
+    "dist/extensions/memory-core/runtime-api.js",
+    "dist/extensions/msteams/runtime-api.js",
+    "dist/extensions/nextcloud-talk/runtime-api.js",
+    "dist/extensions/nostr/runtime-api.js",
+    "dist/extensions/ollama/runtime-api.js",
+    "dist/extensions/open-prose/runtime-api.js",
+    "dist/extensions/qqbot/runtime-api.js",
+    "dist/extensions/signal/runtime-api.js",
+    "dist/extensions/slack/runtime-api.js",
+    "dist/extensions/slack/runtime-setter-api.js",
+    "dist/extensions/telegram/runtime-api.js",
+    "dist/extensions/telegram/runtime-setter-api.js",
+    "dist/extensions/tlon/runtime-api.js",
+    "dist/extensions/tokenjuice/runtime-api.js",
+    "dist/extensions/twitch/runtime-api.js",
+    "dist/extensions/voice-call/runtime-api.js",
+    "dist/extensions/webhooks/runtime-api.js",
+    "dist/extensions/whatsapp/light-runtime-api.js",
+    "dist/extensions/whatsapp/runtime-api.js",
+    "dist/extensions/zai/runtime-api.js",
+    "dist/extensions/zalo/runtime-api.js",
+    "dist/extensions/zalouser/runtime-api.js",
+  ],
+  "bundled runtime sidecar path",
+);
+
+async function callGateway(params = {}) {
+  return {
+    ok: false,
+    error: "gateway calls are unavailable inside the native plugin testing shim",
+    method: params.method,
+  };
+}
+
+const testingRuntime = {
+  BUNDLED_RUNTIME_SIDECAR_PATHS,
+  MIN_HOST_VERSION_FORMAT,
+  __testing: acpRuntimeTesting,
+  acpManagerTesting: acpRuntimeTesting,
+  assertUniqueValues,
+  callGateway,
+  checkMinHostVersion,
+  isAtLeast,
+  parseMinHostVersionRequirement,
+  parseSemver,
+  validateMinHostVersion,
+  ...channelContractTestingRuntime,
+  ...channelTargetTestingRuntime,
+  ...channelTestHelpersRuntime,
+  ...pluginTestApiRuntime,
+  ...pluginTestContractsRuntime,
+  ...pluginTestRuntimeRuntime,
+  ...providerTestContractsRuntime,
+  ...providerHttpTestMocksRuntime,
+  ...testEnvRuntime,
+  ...testFixturesRuntime,
+  ...testNodeMocksRuntime,
+};
+
 const runtimeSecretResolutionRuntime = {
   applyResolvedAssignments,
   createResolverContext,
@@ -76653,6 +81528,13 @@ const genericSdk = new Proxy(
     ...channelContractTestingRuntime,
     ...channelTargetTestingRuntime,
     ...channelTestHelpersRuntime,
+    ...pluginTestApiRuntime,
+    ...pluginTestContractsRuntime,
+    ...pluginTestRuntimeRuntime,
+    ...providerTestContractsRuntime,
+    ...testEnvRuntime,
+    ...testFixturesRuntime,
+    ...testNodeMocksRuntime,
     ...channelTargetsRuntime,
     ...channelStreamingRuntime,
     ...channelEnvelopeRuntime,
@@ -76706,6 +81588,8 @@ const genericSdk = new Proxy(
     ...providerWebFetchRuntime,
     ...providerWebSearchRuntime,
     ...providerHttpRuntime,
+    ...providerHttpTestMocksRuntime,
+    ...testingRuntime,
     ...deviceBootstrapRuntime,
     ...runtimeStoreRuntime,
     ...fileLockRuntime,
@@ -77869,6 +82753,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "openclaw/plugin-sdk/provider-auth-runtime" ||
     request === "@openclaw/plugin-sdk/provider-auth-runtime"
   ) {
+    if (providerHttpTestMocksInstalled) {
+      return providerHttpTestAuthRuntime;
+    }
     return providerAuthRuntimeRuntime;
   }
   if (
@@ -78279,6 +83166,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return optionalChannelSetupRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/setup" ||
+    request === "@openclaw/plugin-sdk/setup"
+  ) {
+    return setupFacadeRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/setup-runtime" ||
     request === "@openclaw/plugin-sdk/setup-runtime"
   ) {
@@ -78362,6 +83255,9 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "openclaw/plugin-sdk/provider-http" ||
     request === "@openclaw/plugin-sdk/provider-http"
   ) {
+    if (providerHttpTestMocksInstalled) {
+      return providerHttpTestProviderHttpRuntime;
+    }
     return providerHttpRuntime;
   }
   if (
@@ -78703,6 +83599,61 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/channel-test-helpers"
   ) {
     return channelTestHelpersRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-api" ||
+    request === "@openclaw/plugin-sdk/plugin-test-api"
+  ) {
+    return pluginTestApiRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-contracts" ||
+    request === "@openclaw/plugin-sdk/plugin-test-contracts"
+  ) {
+    return pluginTestContractsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-test-runtime" ||
+    request === "@openclaw/plugin-sdk/plugin-test-runtime"
+  ) {
+    return pluginTestRuntimeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-http-test-mocks" ||
+    request === "@openclaw/plugin-sdk/provider-http-test-mocks"
+  ) {
+    providerHttpTestMocksInstalled = true;
+    return providerHttpTestMocksRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/provider-test-contracts" ||
+    request === "@openclaw/plugin-sdk/provider-test-contracts"
+  ) {
+    return providerTestContractsRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-env" ||
+    request === "@openclaw/plugin-sdk/test-env"
+  ) {
+    return testEnvRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-fixtures" ||
+    request === "@openclaw/plugin-sdk/test-fixtures"
+  ) {
+    return testFixturesRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/test-node-mocks" ||
+    request === "@openclaw/plugin-sdk/test-node-mocks"
+  ) {
+    return testNodeMocksRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/testing" ||
+    request === "@openclaw/plugin-sdk/testing"
+  ) {
+    return testingRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/channel-targets" ||

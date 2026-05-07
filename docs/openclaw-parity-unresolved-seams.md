@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.998%.
+  band of ~80-99.99991%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -1860,9 +1860,83 @@ unresolved queue head: the exact scoped and unscoped subpath resolves to native
 OpenZues target-resolution error-case helpers, preserving the four upstream
 common error cases and supporting both fakeable test registration and immediate
 assertion execution. Remaining plugin SDK queue heads should continue with
-exact `channel-test-helpers`, `plugin-test-api`, `plugin-test-contracts`, and
-other public test/contract barrels that still require source-backed native
-shims.
+exact `provider-test-contracts` and other public test/contract barrels that
+still require source-backed native shims.
+Imported plugin SDK `channel-test-helpers` is now also no longer an unresolved
+queue head: the exact scoped and unscoped subpath resolves to native OpenZues
+test helper shims for directory surfaces, channel contract suites,
+registry/outbound plugin builders, hook handlers, send-config assertions,
+account lifecycle helpers, bundled entry assertions, envelope timestamps,
+pairing reply extraction, and plugin runtime mocks. Remaining plugin SDK queue
+heads should continue with exact `provider-test-contracts` and adjacent public
+test barrels that still require source-backed native shims.
+Imported plugin SDK `plugin-test-api` is now also no longer an unresolved queue
+head: the exact scoped and unscoped subpath resolves to native OpenZues
+`createTestPluginApi` defaults, no-op registration methods, next-turn
+injection fallback, logger/runtime/config defaults, run-context no-ops, and
+caller override handling. Remaining plugin SDK queue heads should continue with
+exact `provider-test-contracts` and adjacent public test barrels that still
+require source-backed native shims.
+Imported plugin SDK `plugin-test-contracts` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues contract helper shims for registry fixtures, virtual/test plugin
+registration, provider capture/lookup, import side-effect assertions, direct
+import smoke execution, package and registration contract registration, public
+artifact guards, public-surface loader helpers, and bundled plugin registration
+case maps. Remaining plugin SDK queue heads should continue with exact
+`provider-test-contracts` and adjacent public test barrels that still require
+source-backed native shims.
+Imported plugin SDK `plugin-test-runtime` is now also no longer an unresolved
+queue head: the exact scoped and unscoped subpath resolves to native OpenZues
+aggregate runtime test helper shims for registry helpers, captured
+registration, provider registration helpers, runtime env mocks, setup wizard
+helper runners, provider wizard option resolution, hook registry helpers,
+provider contract lookup, and lightweight task-flow binding.
+Imported plugin SDK `provider-test-contracts` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to
+native OpenZues provider contract suite helpers, provider registry describers,
+wizard/runtime/discovery/auth contract describers, onboard config assertions,
+replay-policy assertions, captured thinking stream hooks, STT live-audio
+helpers, Dashscope video test helpers, media capability assertions, provider
+catalog constants, and public-surface loaders.
+Imported plugin SDK `test-env` is now also no longer an unresolved queue head:
+the exact scoped and unscoped subpath resolves to native OpenZues
+environment/network/time fixture helpers for env scoping, live-test helpers,
+provider key collection, error classifiers, shell-env posture, PNG helpers,
+media live model parsing/defaults, video duration/model helpers, HTTP
+request/response helpers, provider usage fetch mocks, temp/state/home
+fixtures, fetch preconnect mocks, mock incoming request/response helpers, and
+local HTTP server fixtures.
+Imported plugin SDK `test-fixtures` is now also no longer an unresolved queue
+head: the exact scoped and unscoped subpath resolves to native OpenZues generic
+fixture helper shims for CLI runtime capture/spies, sandbox context/browser/
+prune/SSH fixtures, skill writers, agent message fixtures, fixture-local
+system-event peeks/reset, terminal sanitizing, chunk/fence helpers,
+generated-token assertions, typed cases, bundled plugin path helpers, and
+fresh dynamic import helpers.
+Imported plugin SDK `test-node-mocks` is now also no longer an unresolved
+queue head: the exact scoped and unscoped subpath resolves to native OpenZues
+Node builtin mock helpers for actual-module override merging, factory
+overrides, default-export mirroring, and child_process `spawnSync`/`execFile`
+mock helpers.
+Imported plugin SDK `provider-http-test-mocks` is now also no longer an
+unresolved queue head: the exact scoped and unscoped subpath resolves to native
+OpenZues provider HTTP/auth mock helpers, including `getProviderHttpMocks`,
+`installProviderHttpMockCleanup`, provider-http/provider-auth module
+replacement after helper import, poll-loop mocks, fetch/post mocks,
+HTTP/provider assertion mocks, request config mocks, sanitizing mocks, and
+after-each cleanup semantics.
+Imported plugin SDK `testing` is now also no longer an unresolved queue head:
+the exact scoped and unscoped subpath resolves to the native OpenZues
+deprecated compatibility test barrel, including CLI runtime capture, env/temp
+fixtures, plugin registry/runtime helpers, setup wizard helpers, provider
+contract/test helpers, semver/min-host parsing, bundled runtime sidecar path
+uniqueness, and task-flow helpers. Remaining advertised plugin SDK queue heads
+that still need exact source-backed native routes begin with `setup`, followed
+by `config-types`, `channel-runtime`, `compat`, `discord`, `extension-shared`,
+`session-transcript-hit`, `ssrf-dispatcher`, `image-generation`,
+`music-generation`, `video-generation`, `provider-model-types`,
+`document-extractor`, and `telegram-account`.
 
 Current queue-head adjustment: the CLI now exposes `plugins list` with
 OpenClaw-shaped JSON (`workspaceDir`, `plugins`, `diagnostics`) and human
@@ -9543,9 +9617,17 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   helpers, redaction, secure token generation, and constant-time secret
   comparison. Source/test checkpointed in `16f5ab50`; repo-wide parity remains
   estimated at ~99.9%, with the evidence band tightened to ~80-99.99%.
-- The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `gateway-runtime` facade, broader runtime/client
-  integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
-  approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
-  provenance/false steer-runtime/custom-agent-session/plugin-dependency
-  placeholders.
+- Current queue-head adjustment: imported plugin SDK `setup` now exposes the
+  source-backed exact barrel for scoped and unscoped imports, including setup
+  runtime helpers, setup-tools helpers, account setup patching, setup wizard
+  section builders, delegated setup proxy helpers, access-policy prompting,
+  binary status helpers, config/secret/path helpers, and
+  resolved/unresolved note formatting. Source/test checkpointed in
+  `ec94f934`; repo-wide parity remains estimated at ~99.9%, with the evidence
+  band tightened to ~80-99.99991%.
+- The queue head now tracks the remaining exact advertised SDK subpath
+  `channel-runtime`, followed by `compat`, `discord`, `extension-shared`,
+  generation/provider/document helper facades, and any newly exposed
+  repo-wide OpenClaw namespaces. `config-types` was re-verified on
+  2026-05-07 as an upstream type-only barrel through the existing empty
+  runtime module proof.

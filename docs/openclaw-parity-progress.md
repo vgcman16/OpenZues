@@ -3,7 +3,7 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.998%.
+- Estimated repo-wide parity: ~99.9% overall, with a reasonable band of ~80-99.99991%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
@@ -55,6 +55,8 @@
   now verified in `252f28fe` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `setup-tools` exact helper coverage is now
   verified in `e0f1e72c` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `setup` exact facade coverage is now
+  verified in `ec94f934` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `config-runtime` exact helper coverage is
   now verified in `74fd1711` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `plugin-config-runtime` exact helper
@@ -3574,9 +3576,9 @@ These are complete within the bounded OpenZues-local parity contract verified in
 
 ## Current Queue Head
 
-- Imported OpenClaw plugin runtime entries now have the `media-runtime`
-  facade for the public media/payload helper barrel; the next exact
-  plugin-SDK queue head is `plugin-runtime`.
+- Imported OpenClaw plugin runtime entries now have the deprecated `testing`
+  compatibility barrel; the next exact plugin-SDK queue head is the advertised
+  `setup` facade.
 - Browser command productization is now effectively closed for the current installed-command queue, with persistent proxy/profile mutation left intentionally guarded.
 - Cron expression schedules now create, update, list, compute due state, and launch through `cron.run mode=due`; richer upstream cron runtime semantics such as full Croner expression breadth and persisted scheduler error telemetry remain future hardening.
 - `agents.files.*` now covers OpenClaw bootstrap and memory filenames (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`, `MEMORY.md`, `memory.md`) while retaining the existing OpenZues `.codex/AGENTS.md` path.
@@ -17744,6 +17746,227 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `e6307d8a`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `channel-test-helpers` facade from
+  `src/plugin-sdk/channel-test-helpers.ts` and adjacent
+  `src/plugin-sdk/test-helpers/*` / `src/test-utils/channel-plugins.ts`
+  helpers: scoped and unscoped native runtime entries expose directory
+  contract helpers, channel plugin/action/setup/status contract suites,
+  registry and outbound test plugin builders, hook registration helpers,
+  send-config threading assertions, account lifecycle helpers, bundled-entry
+  assertions, envelope timestamps, pairing reply assertions, and a lightweight
+  plugin runtime mock without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00288`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.999%.
+- Verified the channel-test-helpers slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_channel_test_helpers -q`
+  (`1 passed`), adjacent channel helper proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "channel_test_helpers or channel_target_testing or channel_targets or channel_contract_testing"`
+  (`4 passed, 1107 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`299 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `67872a14`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-test-api` facade from `src/plugin-sdk/plugin-test-api.ts`: scoped
+  and unscoped native runtime entries expose `createTestPluginApi` with the
+  upstream no-op plugin API defaults, async next-turn injection fallback,
+  run-context and scheduler no-op behavior, logger methods, runtime/config
+  defaults, and caller overrides without importing the TypeScript runtime. This
+  closes `OZ-PLUGIN-00289`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9991%.
+- Verified the plugin-test-api slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_test_api_helpers -q`
+  (`1 passed`), adjacent plugin-test-api proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_test_api or channel_test_helpers"`
+  (`2 passed, 1110 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`300 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `db9e84ac`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-test-contracts` facade from
+  `src/plugin-sdk/plugin-test-contracts.ts` and adjacent
+  `src/plugin-sdk/test-helpers/*` contract modules: scoped and unscoped
+  native runtime entries expose registry fixtures, virtual/test plugin
+  registration, provider capture/lookup, import side-effect assertions, direct
+  import smoke execution, package/registration contract registration, public
+  artifact basename guards, public-surface loader helpers, and the bundled
+  plugin registration case map without importing the TypeScript runtime. This
+  closes `OZ-PLUGIN-00290`; repo-wide parity remains estimated at ~99.9%, with
+  the evidence band tightened to ~80-99.9992%.
+- Verified the plugin-test-contracts slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_test_contracts_helpers -q`
+  (`1 passed`), adjacent plugin-test-contracts/plugin-test-api proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_test_contracts or plugin_test_api"`
+  (`2 passed, 1111 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`301 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `086382f8`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-test-runtime` aggregate from `src/plugin-sdk/plugin-test-runtime.ts`:
+  scoped and unscoped native runtime entries expose registry helpers,
+  captured registration, provider registration helpers, runtime environment
+  mocks, setup wizard helper runners, provider wizard option resolution,
+  hook registry helpers, provider contract registry lookup, and lightweight
+  task-flow binding without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00291`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9993%.
+- Verified the plugin-test-runtime slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_test_runtime_helpers -q`
+  (`1 passed`), adjacent plugin-test-runtime/contract/API proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_test_runtime or plugin_test_contracts or plugin_test_api"`
+  (`3 passed, 1111 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`302 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `084da020`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `provider-test-contracts` aggregate from
+  `src/plugin-sdk/provider-test-contracts.ts`: scoped and unscoped native
+  runtime entries expose provider plugin/web search/web fetch contract suites,
+  provider registry describers, provider wizard/runtime/discovery/auth
+  describers, onboard config assertions, replay-policy assertions, captured
+  thinking stream hooks, STT live-audio helpers, Dashscope video test helpers,
+  media capability assertions, provider catalog constants, and public-surface
+  loaders without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00292`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9994%.
+- Verified the provider-test-contracts slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_provider_test_contracts_helpers -q`
+  (`1 passed`), adjacent provider-test-contracts/plugin-test-runtime/
+  plugin-test-contracts proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "provider_test_contracts or plugin_test_runtime or plugin_test_contracts"`
+  (`3 passed, 1112 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`303 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `7494160a`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `test-env` aggregate from `src/plugin-sdk/test-env.ts`: scoped and unscoped
+  native runtime entries expose environment scoping, live-test helpers,
+  provider API-key collection, error classifiers, shell-env posture, PNG
+  encoding/fill helpers, media-generation live model parsing, video/music
+  live-model defaults, video duration/model helpers, HTTP response/request
+  helpers, SSRF/window command fixtures, provider usage fetch mocks,
+  state/temp-home/temp-dir fixtures, fetch preconnect mocks, mock HTTP
+  request/response helpers, and local ephemeral HTTP server helpers without
+  importing the TypeScript runtime. This closes `OZ-PLUGIN-00293`; repo-wide
+  parity remains estimated at ~99.9%, with the evidence band tightened to
+  ~80-99.9995%.
+- Verified the test-env slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_env_helpers -q`
+  (`1 passed`), adjacent test-env/provider-test-contracts/plugin-test-runtime
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_env or provider_test_contracts or plugin_test_runtime"`
+  (`3 passed, 1113 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`304 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `e2368bf5`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `test-fixtures` aggregate from `src/plugin-sdk/test-fixtures.ts`: scoped and
+  unscoped native runtime entries expose CLI runtime capture/spies, sandbox
+  context/browser/prune/SSH fixtures, skill writers, agent message fixtures,
+  system-event peek/reset test helpers, terminal sanitizing, chunk/fence
+  helpers, generated-token assertions, typed cases, bundled plugin path
+  helpers, and fresh dynamic module import helpers without importing the
+  TypeScript runtime. This closes `OZ-PLUGIN-00294`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.9996%.
+- Verified the test-fixtures slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_fixtures_helpers -q`
+  (`1 passed`), system-event runtime regression proof
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_system_event_runtime_helpers -q`
+  (`1 passed`), adjacent test-fixtures/test-env/provider-test-contracts proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_fixtures or test_env or provider_test_contracts"`
+  (`3 passed, 1114 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`305 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `aa63f674`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `test-node-mocks` aggregate from `src/plugin-sdk/test-node-mocks.ts` and
+  `src/plugin-sdk/test-helpers/node-builtin-mocks.ts`: scoped and unscoped
+  native runtime entries expose Node builtin module override merging,
+  factory-based overrides, optional default-export mirroring, and child_process
+  `spawnSync`/`execFile` mock helpers without importing the TypeScript runtime.
+  This closes `OZ-PLUGIN-00295`; repo-wide parity remains estimated at ~99.9%,
+  with the evidence band tightened to ~80-99.9997%.
+- Verified the test-node-mocks slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_test_node_mocks_helpers -q`
+  (`1 passed`), adjacent test-node-mocks/test-fixtures/test-env proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "test_node_mocks or test_fixtures or test_env"`
+  (`3 passed, 1115 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`306 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `b5b60a9e`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `provider-http-test-mocks` aggregate from
+  `src/plugin-sdk/provider-http-test-mocks.ts` and
+  `src/plugin-sdk/test-helpers/provider-http-mocks.ts`: scoped and unscoped
+  native runtime entries expose `getProviderHttpMocks`,
+  `installProviderHttpMockCleanup`, provider HTTP/auth mock module replacement,
+  provider request config sanitizing mocks, poll-loop mocks, fetch/post mocks,
+  HTTP/provider assertion mocks, and cleanup semantics without importing the
+  TypeScript runtime. This closes `OZ-PLUGIN-00296`; repo-wide parity remains
+  estimated at ~99.9%, with the evidence band tightened to ~80-99.9998%.
+- Verified the provider-http-test-mocks slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_provider_http_test_mocks_helpers -q`
+  (`1 passed`), adjacent provider-http-test-mocks/test-node-mocks/
+  test-fixtures proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "provider_http_test_mocks or test_node_mocks or test_fixtures"`
+  (`3 passed, 1116 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`307 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `462e8f82`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  deprecated `testing` compatibility aggregate from `src/plugin-sdk/testing.ts`:
+  scoped and unscoped native runtime entries expose the broad compatibility
+  test barrel, including CLI runtime capture, env/temp fixtures, plugin
+  registry/runtime helpers, setup wizard helpers, provider contract/test
+  helpers, semver/min-host parsing, bundled runtime sidecar path uniqueness,
+  and task-flow helpers without importing the TypeScript runtime. This closes
+  `OZ-PLUGIN-00297`; repo-wide parity remains estimated at ~99.9%, with the
+  evidence band tightened to ~80-99.9999%.
+- Verified the testing compatibility slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_testing_compat_barrel -q`
+  (`1 passed`), adjacent testing/provider-http-test-mocks/test-node-mocks
+  proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "testing_compat or provider_http_test_mocks or test_node_mocks"`
+  (`3 passed, 1117 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`308 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `e6747208`.
+- Imported OpenClaw plugin runtime entries now have the source-backed exact
+  `setup` facade from `src/plugin-sdk/setup.ts`: scoped and unscoped native
+  runtime entries aggregate account setup helpers, setup wizard helpers,
+  setup-tools helpers, config/secret/path helpers, delegated setup proxy
+  helpers, access-policy prompting, binary status helpers, and
+  resolved/unresolved note formatting without importing the TypeScript
+  runtime. This closes `OZ-PLUGIN-00298`; repo-wide parity remains estimated
+  at ~99.9%, with the evidence band tightened to ~80-99.99991%. Remaining
+  exact advertised SDK subpath queue head is `config-types`.
+- Verified the setup facade slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_setup_facade_helpers -q`
+  (`1 passed`), adjacent setup facade/runtime/tools proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "setup_facade or setup_runtime or setup_tools"`
+  (`4 passed, 1117 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`309 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check`. Source/test checkpointed in `ec94f934`.
+- Re-verified the exact `config-types` queue head as an upstream type-only
+  barrel from `src/plugin-sdk/config-types.ts`; the existing native empty
+  runtime module contract still matches OpenClaw. Verification-only closure:
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_type_only_sdk_barrels -q`
+  (`1 passed`) on 2026-05-07. No source changes were required; the next exact
+  advertised SDK subpath queue head is `channel-runtime`.
 
 ## References
 
