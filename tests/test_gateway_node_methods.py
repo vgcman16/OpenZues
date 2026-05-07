@@ -28088,6 +28088,272 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_interactive_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-interactive-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const interactive = require("openclaw/plugin-sdk/interactive-runtime");
+const scopedInteractive = require("@openclaw/plugin-sdk/interactive-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.interactive_runtime",
+      description: "Use OpenClaw interactive-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const interactiveReply = interactive.normalizeInteractiveReply({
+          blocks: [
+            { type: "text", text: "First" },
+            {
+              type: "buttons",
+              buttons: [
+                { text: "Retry", callback_data: "retry", style: "SUCCESS" },
+                { label: "Docs", url: "https://example.com/docs", style: "secondary" },
+                { label: "Ignored" }
+              ]
+            },
+            {
+              type: "select",
+              placeholder: "Pick",
+              options: [
+                { text: "One", value: "1" },
+                { label: "Ignored" }
+              ]
+            },
+            { type: "unknown", text: "ignored" }
+          ]
+        });
+        const presentation = interactive.normalizeMessagePresentation({
+          title: "Title",
+          tone: "WARNING",
+          blocks: [
+            { type: "context", text: "Context" },
+            { type: "divider" },
+            {
+              type: "buttons",
+              buttons: [{ label: "Docs", url: "https://example.com/docs" }]
+            },
+            {
+              type: "select",
+              placeholder: "Pick",
+              options: [{ label: "One", value: "1" }]
+            }
+          ]
+        });
+        const reduced = interactive.reduceInteractiveReply(
+          interactiveReply,
+          { text: 0, buttons: 0, select: 0 },
+          (state, block) => ({
+            ...state,
+            [block.type]: state[block.type] + 1
+          })
+        );
+        return {
+          keys: Object.keys(interactive).sort(),
+          scopedSame:
+            scopedInteractive.normalizeInteractiveReply ===
+            interactive.normalizeInteractiveReply,
+          interactiveReply,
+          presentation,
+          presentationToInteractive:
+            interactive.presentationToInteractiveReply(presentation),
+          interactiveToPresentation:
+            interactive.interactiveReplyToPresentation(interactiveReply),
+          fallbackText: interactive.renderMessagePresentationFallbackText({
+            text: "Lead",
+            presentation
+          }),
+          interactiveFallback: interactive.resolveInteractiveTextFallback({
+            interactive: interactiveReply
+          }),
+          has: {
+            interactiveBlocks:
+              interactive.hasInteractiveReplyBlocks(interactiveReply),
+            presentationBlocks:
+              interactive.hasMessagePresentationBlocks(presentation),
+            channelData: interactive.hasReplyChannelData({ slack: { blocks: [] } }),
+            emptyChannelData: interactive.hasReplyChannelData({}),
+            emptyContent: interactive.hasReplyContent({
+              text: "   ",
+              mediaUrls: ["", "   "],
+              interactive: { blocks: [] },
+              hasChannelData: false
+            }),
+            interactiveContent:
+              interactive.hasReplyContent({ interactive: interactiveReply })
+          },
+          reduced
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-interactive-runtime-plugin",
+                    "name": "Runtime Interactive Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-interactive-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.interactive_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke", {"tool": "runtime.interactive_runtime"}
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "hasInteractiveReplyBlocks",
+            "hasMessagePresentationBlocks",
+            "hasReplyChannelData",
+            "hasReplyContent",
+            "interactiveReplyToPresentation",
+            "normalizeInteractiveReply",
+            "normalizeMessagePresentation",
+            "presentationToInteractiveReply",
+            "reduceInteractiveReply",
+            "renderMessagePresentationFallbackText",
+            "resolveInteractiveTextFallback",
+        ],
+        "scopedSame": True,
+        "interactiveReply": {
+            "blocks": [
+                {"type": "text", "text": "First"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Retry", "value": "retry", "style": "success"},
+                        {
+                            "label": "Docs",
+                            "url": "https://example.com/docs",
+                            "style": "secondary",
+                        },
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "presentation": {
+            "title": "Title",
+            "tone": "warning",
+            "blocks": [
+                {"type": "context", "text": "Context"},
+                {"type": "divider"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Docs", "url": "https://example.com/docs"}
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ],
+        },
+        "presentationToInteractive": {
+            "blocks": [
+                {"type": "text", "text": "Title"},
+                {"type": "text", "text": "Context"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Docs", "url": "https://example.com/docs"}
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "interactiveToPresentation": {
+            "blocks": [
+                {"type": "text", "text": "First"},
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {"label": "Retry", "value": "retry", "style": "success"},
+                        {
+                            "label": "Docs",
+                            "url": "https://example.com/docs",
+                            "style": "secondary",
+                        },
+                    ],
+                },
+                {
+                    "type": "select",
+                    "placeholder": "Pick",
+                    "options": [{"label": "One", "value": "1"}],
+                },
+            ]
+        },
+        "fallbackText": (
+            "Lead\n\nTitle\n\nContext\n\n- Docs: https://example.com/docs\n\n"
+            "Pick:\n- One"
+        ),
+        "interactiveFallback": "First",
+        "has": {
+            "interactiveBlocks": True,
+            "presentationBlocks": True,
+            "channelData": True,
+            "emptyChannelData": False,
+            "emptyContent": False,
+            "interactiveContent": True,
+        },
+        "reduced": {"text": 1, "buttons": 1, "select": 1},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_reply_runtime_helpers(
     tmp_path,
 ) -> None:

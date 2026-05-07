@@ -47022,6 +47022,303 @@ function hasPresentationBlocks(value) {
   return hasObjectContent(value) || (Array.isArray(value) && value.length > 0);
 }
 
+function normalizeInteractiveButtonStyle(value) {
+  const style = normalizeOptionalLowercaseString(value);
+  return ["primary", "secondary", "success", "danger"].includes(style)
+    ? style
+    : undefined;
+}
+
+function normalizeMessagePresentationTone(value) {
+  const tone = normalizeOptionalLowercaseString(value);
+  return ["info", "success", "warning", "danger", "neutral"].includes(tone)
+    ? tone
+    : undefined;
+}
+
+function toInteractiveRecord(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  return raw;
+}
+
+function normalizeInteractiveButton(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const label = normalizeOptionalString(record.label) || normalizeOptionalString(record.text);
+  const value =
+    normalizeOptionalString(record.value) ||
+    normalizeOptionalString(record.callbackData) ||
+    normalizeOptionalString(record.callback_data);
+  const url = normalizeOptionalString(record.url);
+  if (!label || (!value && !url)) {
+    return undefined;
+  }
+  const style = normalizeInteractiveButtonStyle(record.style);
+  return {
+    label,
+    ...(value ? { value } : {}),
+    ...(url ? { url } : {}),
+    ...(style ? { style } : {}),
+  };
+}
+
+function normalizeInteractiveOption(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const label = normalizeOptionalString(record.label) || normalizeOptionalString(record.text);
+  const value = normalizeOptionalString(record.value);
+  if (!label || !value) {
+    return undefined;
+  }
+  return { label, value };
+}
+
+function normalizeInteractiveList(value, normalizeEntry) {
+  return Array.isArray(value)
+    ? value.map((entry) => normalizeEntry(entry)).filter(Boolean)
+    : [];
+}
+
+function normalizeInteractiveReplyBlock(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const type = normalizeOptionalLowercaseString(record.type);
+  if (type === "text") {
+    const text = normalizeOptionalString(record.text);
+    return text ? { type: "text", text } : undefined;
+  }
+  if (type === "buttons") {
+    const buttons = normalizeInteractiveList(record.buttons, normalizeInteractiveButton);
+    return buttons.length > 0 ? { type: "buttons", buttons } : undefined;
+  }
+  if (type === "select") {
+    const options = normalizeInteractiveList(record.options, normalizeInteractiveOption);
+    if (options.length === 0) {
+      return undefined;
+    }
+    const placeholder = normalizeOptionalString(record.placeholder);
+    return {
+      type: "select",
+      ...(placeholder ? { placeholder } : {}),
+      options,
+    };
+  }
+  return undefined;
+}
+
+function normalizeInteractiveReply(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const blocks = normalizeInteractiveList(record.blocks, normalizeInteractiveReplyBlock);
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function normalizeMessagePresentationBlock(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const type = normalizeOptionalLowercaseString(record.type);
+  if (type === "text" || type === "context") {
+    const text = normalizeOptionalString(record.text);
+    return text ? { type, text } : undefined;
+  }
+  if (type === "divider") {
+    return { type: "divider" };
+  }
+  if (type === "buttons") {
+    const buttons = normalizeInteractiveList(record.buttons, normalizeInteractiveButton);
+    return buttons.length > 0 ? { type: "buttons", buttons } : undefined;
+  }
+  if (type === "select") {
+    const options = normalizeInteractiveList(record.options, normalizeInteractiveOption);
+    if (options.length === 0) {
+      return undefined;
+    }
+    const placeholder = normalizeOptionalString(record.placeholder);
+    return {
+      type: "select",
+      ...(placeholder ? { placeholder } : {}),
+      options,
+    };
+  }
+  return undefined;
+}
+
+function normalizeMessagePresentation(raw) {
+  const record = toInteractiveRecord(raw);
+  if (!record) {
+    return undefined;
+  }
+  const blocks = normalizeInteractiveList(record.blocks, normalizeMessagePresentationBlock);
+  const title = normalizeOptionalString(record.title);
+  if (!title && blocks.length === 0) {
+    return undefined;
+  }
+  const tone = normalizeMessagePresentationTone(record.tone);
+  return {
+    ...(title ? { title } : {}),
+    ...(tone ? { tone } : {}),
+    blocks,
+  };
+}
+
+function hasInteractiveReplyBlocks(value) {
+  return Boolean(normalizeInteractiveReply(value));
+}
+
+function hasMessagePresentationBlocks(value) {
+  return Boolean(normalizeMessagePresentation(value));
+}
+
+function presentationToInteractiveReply(presentation = {}) {
+  const blocks = [];
+  if (presentation.title) {
+    blocks.push({ type: "text", text: presentation.title });
+  }
+  for (const block of Array.isArray(presentation.blocks) ? presentation.blocks : []) {
+    if (block.type === "text" || block.type === "context") {
+      blocks.push({ type: "text", text: block.text });
+      continue;
+    }
+    if (block.type === "buttons") {
+      const buttons = (Array.isArray(block.buttons) ? block.buttons : [])
+        .filter((button) => button && (button.value || button.url))
+        .map((button) => ({
+          label: button.label,
+          ...(button.value ? { value: button.value } : {}),
+          ...(button.url ? { url: button.url } : {}),
+          ...(button.style ? { style: button.style } : {}),
+        }));
+      if (buttons.length > 0) {
+        blocks.push({ type: "buttons", buttons });
+      }
+      continue;
+    }
+    if (block.type === "select") {
+      blocks.push({
+        type: "select",
+        ...(block.placeholder ? { placeholder: block.placeholder } : {}),
+        options: block.options,
+      });
+    }
+  }
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function interactiveReplyToPresentation(interactive = {}) {
+  const blocks = (Array.isArray(interactive.blocks) ? interactive.blocks : []).map((block) => {
+    if (block.type === "text") {
+      return { type: "text", text: block.text };
+    }
+    if (block.type === "buttons") {
+      return { type: "buttons", buttons: block.buttons };
+    }
+    return {
+      type: "select",
+      ...(block.placeholder ? { placeholder: block.placeholder } : {}),
+      options: block.options,
+    };
+  });
+  return blocks.length > 0 ? { blocks } : undefined;
+}
+
+function renderMessagePresentationFallbackText(params = {}) {
+  const lines = [];
+  const text = normalizeOptionalString(params.text);
+  if (text) {
+    lines.push(text);
+  }
+  const presentation = params.presentation;
+  if (!presentation) {
+    return lines.join("\n\n");
+  }
+  if (presentation.title) {
+    lines.push(presentation.title);
+  }
+  for (const block of Array.isArray(presentation.blocks) ? presentation.blocks : []) {
+    if (block.type === "text" || block.type === "context") {
+      lines.push(block.text);
+      continue;
+    }
+    if (block.type === "buttons") {
+      const labels = (Array.isArray(block.buttons) ? block.buttons : [])
+        .map((button) => (button.url ? `${button.label}: ${button.url}` : button.label))
+        .filter(Boolean);
+      if (labels.length > 0) {
+        lines.push(labels.map((label) => `- ${label}`).join("\n"));
+      }
+      continue;
+    }
+    if (block.type === "select") {
+      const labels = (Array.isArray(block.options) ? block.options : [])
+        .map((option) => option.label)
+        .filter(Boolean);
+      if (labels.length > 0) {
+        const heading = block.placeholder ? `${block.placeholder}:` : "Options:";
+        lines.push(`${heading}\n${labels.map((label) => `- ${label}`).join("\n")}`);
+      }
+    }
+  }
+  return lines.join("\n\n");
+}
+
+function hasReplyChannelData(value) {
+  return Boolean(
+    value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0,
+  );
+}
+
+function hasReplyContent(params = {}) {
+  const text = normalizeOptionalString(params.text);
+  const mediaUrl = normalizeOptionalString(params.mediaUrl);
+  const hasMediaUrls =
+    Array.isArray(params.mediaUrls) &&
+    params.mediaUrls.some((entry) => Boolean(normalizeOptionalString(entry)));
+  return Boolean(
+    text ||
+    mediaUrl ||
+    hasMediaUrls ||
+    hasMessagePresentationBlocks(params.presentation) ||
+    hasInteractiveReplyBlocks(params.interactive) ||
+    params.hasChannelData ||
+    params.extraContent,
+  );
+}
+
+function resolveInteractiveTextFallback(params = {}) {
+  const text = normalizeOptionalString(params.text);
+  if (text) {
+    return params.text;
+  }
+  const interactive = params.interactive || {};
+  const interactiveText = (Array.isArray(interactive.blocks) ? interactive.blocks : [])
+    .filter((block) => block.type === "text")
+    .map((block) => String(block.text || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+  return interactiveText || params.text;
+}
+
+function reduceInteractiveReply(interactive, initialState, reduce) {
+  let state = initialState;
+  const blocks = interactive && Array.isArray(interactive.blocks) ? interactive.blocks : [];
+  for (const [index, block] of blocks.entries()) {
+    state = reduce(state, block, index);
+  }
+  return state;
+}
+
 function createOutboundPayloadPlan(payloads, context = {}) {
   const prepared = [];
   for (const entry of Array.isArray(payloads) ? payloads : []) {
@@ -47212,6 +47509,20 @@ const outboundRuntime = {
   sanitizeForPlainText,
   stripInternalRuntimeScaffolding,
   summarizeOutboundPayloadForTransport,
+};
+
+const interactiveRuntime = {
+  hasInteractiveReplyBlocks,
+  hasMessagePresentationBlocks,
+  hasReplyChannelData,
+  hasReplyContent,
+  interactiveReplyToPresentation,
+  normalizeInteractiveReply,
+  normalizeMessagePresentation,
+  presentationToInteractiveReply,
+  reduceInteractiveReply,
+  renderMessagePresentationFallbackText,
+  resolveInteractiveTextFallback,
 };
 
 const outboundSendDepsRuntime = {
@@ -72669,6 +72980,7 @@ const genericSdk = new Proxy(
     ...replyRuntime,
     ...replyDispatchRuntime,
     ...inboundReplyDispatchRuntime,
+    ...interactiveRuntime,
     ...outboundRuntime,
     ...outboundSendDepsRuntime,
     ...deliveryQueueRuntime,
@@ -74737,6 +75049,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/inbound-reply-dispatch"
   ) {
     return inboundReplyDispatchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/interactive-runtime" ||
+    request === "@openclaw/plugin-sdk/interactive-runtime"
+  ) {
+    return interactiveRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-chunking" ||
