@@ -22183,8 +22183,106 @@ function webToolStripTags(value) {
   return webToolDecodeEntities(String(value || "").replace(/<[^>]+>/g, ""));
 }
 
+function readHtmlAttribute(attrs, name) {
+  const escapedName = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const unquotedAttributeValue = "[^\\s\"'=<>`]+";
+  const match = String(attrs || "").match(
+    new RegExp(
+      `(?:^|\\s)${escapedName}(?:\\s*=\\s*(?:"([^"]*)"|'([^']*)'|` +
+        `(${unquotedAttributeValue})))?`,
+      "i",
+    ),
+  );
+  if (!match) {
+    return undefined;
+  }
+  return match[1] ?? match[2] ?? match[3] ?? "";
+}
+
+function hasHtmlAttribute(attrs, name) {
+  return readHtmlAttribute(attrs, name) !== undefined;
+}
+
+function hasHiddenHtmlClass(className) {
+  const hiddenClasses = new Set([
+    "d-none",
+    "hidden",
+    "invisible",
+    "offscreen",
+    "screen-reader-only",
+    "sr-only",
+    "visually-hidden",
+  ]);
+  return String(className || "")
+    .toLowerCase()
+    .split(/\s+/)
+    .some((entry) => hiddenClasses.has(entry));
+}
+
+function isHiddenHtmlStyle(style) {
+  const text = String(style || "");
+  if (/(?:^|;)\s*display\s*:\s*none\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*visibility\s*:\s*hidden\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*opacity\s*:\s*0\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*font-size\s*:\s*0(?:px|em|rem|pt|%)?\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  if (/(?:^|;)\s*color\s*:\s*transparent\s*(?:;|$)/i.test(text)) {
+    return true;
+  }
+  return /(?:^|;)\s*transform\s*:\s*scale\s*\(\s*0\s*\)/i.test(text);
+}
+
+function shouldRemoveHtmlElement(_tagName, attrs) {
+  const tagName = String(_tagName || "").toLowerCase();
+  if (["meta", "template", "svg", "canvas", "iframe", "object", "embed"].includes(tagName)) {
+    return true;
+  }
+  if (tagName === "input" && readHtmlAttribute(attrs, "type")?.toLowerCase() === "hidden") {
+    return true;
+  }
+  if (readHtmlAttribute(attrs, "aria-hidden")?.toLowerCase() === "true") {
+    return true;
+  }
+  if (hasHtmlAttribute(attrs, "hidden")) {
+    return true;
+  }
+  if (hasHiddenHtmlClass(readHtmlAttribute(attrs, "class"))) {
+    return true;
+  }
+  return isHiddenHtmlStyle(readHtmlAttribute(attrs, "style"));
+}
+
+async function sanitizeHtml(html) {
+  let output = String(html || "");
+  output = output.replace(/<!--[\s\S]*?-->/g, "");
+  output = output.replace(
+    /<(template|svg|canvas|iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1>/gi,
+    "",
+  );
+  output = output.replace(/<meta\b[^>]*>/gi, "");
+  output = output.replace(
+    /<([a-z][\w:-]*)\b(?=[^>]*(?:aria-hidden|hidden|class\s*=|style\s*=))([^>]*)>[\s\S]*?<\/\1>/gi,
+    (match, tagName, attrs) => (shouldRemoveHtmlElement(tagName, attrs) ? "" : match),
+  );
+  output = output.replace(
+    /<([a-z][\w:-]*)\b(?=[^>]*(?:aria-hidden|hidden|class\s*=|style\s*=))([^>]*)\/?>/gi,
+    (match, tagName, attrs) => (shouldRemoveHtmlElement(tagName, attrs) ? "" : match),
+  );
+  return output;
+}
+
 function stripInvisibleUnicode(value) {
-  return String(value || "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+  return String(value || "").replace(
+    /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]/g,
+    "",
+  );
 }
 
 function htmlToMarkdown(html) {
@@ -22241,7 +22339,7 @@ function truncateText(value, maxChars) {
 }
 
 async function extractBasicHtmlContent(params = {}) {
-  const cleanHtml = String(params.html || "");
+  const cleanHtml = await sanitizeHtml(String(params.html || ""));
   const rendered = htmlToMarkdown(cleanHtml);
   if (params.extractMode === "text") {
     const text =
@@ -41377,6 +41475,94 @@ const webMediaRuntime = {
   optimizeImageToPng,
 };
 
+function resolveOutboundMediaLocalRoots(mediaLocalRoots) {
+  if (mediaLocalRoots === "any") {
+    return mediaLocalRoots;
+  }
+  return Array.isArray(mediaLocalRoots) && mediaLocalRoots.length > 0
+    ? mediaLocalRoots
+    : undefined;
+}
+
+function resolveOutboundMediaAccess(params = {}) {
+  const resolvedLocalRoots = resolveOutboundMediaLocalRoots(
+    (params.mediaAccess && params.mediaAccess.localRoots) || params.mediaLocalRoots,
+  );
+  const localRoots = resolvedLocalRoots === "any" ? undefined : resolvedLocalRoots;
+  const readFile = (params.mediaAccess && params.mediaAccess.readFile) || params.mediaReadFile;
+  const workspaceDir = params.mediaAccess && params.mediaAccess.workspaceDir;
+  if (!localRoots && !readFile && !workspaceDir) {
+    return undefined;
+  }
+  return {
+    ...(localRoots ? { localRoots } : {}),
+    ...(readFile ? { readFile } : {}),
+    ...(workspaceDir ? { workspaceDir } : {}),
+  };
+}
+
+function buildOutboundMediaLoadOptions(params = {}) {
+  const explicitLocalRoots = resolveOutboundMediaLocalRoots(params.mediaLocalRoots);
+  const mediaAccess = resolveOutboundMediaAccess({
+    mediaAccess: params.mediaAccess,
+    mediaLocalRoots: explicitLocalRoots === "any" ? undefined : explicitLocalRoots,
+    mediaReadFile:
+      params.mediaAccess && params.mediaAccess.readFile ? undefined : params.mediaReadFile,
+  });
+  const workspaceDir = (mediaAccess && mediaAccess.workspaceDir) || params.workspaceDir;
+  const readFile = (mediaAccess && mediaAccess.readFile) || params.mediaReadFile;
+  const localRoots = (mediaAccess && mediaAccess.localRoots) || explicitLocalRoots;
+  const common = {
+    ...(params.maxBytes !== undefined ? { maxBytes: params.maxBytes } : {}),
+    ...(params.fetchImpl ? { fetchImpl: params.fetchImpl } : {}),
+    ...(params.proxyUrl ? { proxyUrl: params.proxyUrl } : {}),
+    ...(params.requestInit ? { requestInit: params.requestInit } : {}),
+    ...(params.trustExplicitProxyDns !== undefined
+      ? { trustExplicitProxyDns: params.trustExplicitProxyDns }
+      : {}),
+    ...(params.optimizeImages !== undefined ? { optimizeImages: params.optimizeImages } : {}),
+    ...(workspaceDir ? { workspaceDir } : {}),
+  };
+  if (readFile) {
+    if (!localRoots) {
+      throw new Error(
+        "Host media read requires explicit localRoots. Pass mediaAccess.localRoots " +
+          'or opt in with localRoots: "any".',
+      );
+    }
+    return {
+      ...common,
+      localRoots,
+      readFile,
+      hostReadCapability: true,
+    };
+  }
+  return {
+    ...common,
+    ...(localRoots ? { localRoots } : {}),
+  };
+}
+
+async function loadOutboundMediaFromUrl(mediaUrl, options = {}) {
+  return await loadWebMedia(
+    mediaUrl,
+    buildOutboundMediaLoadOptions({
+      maxBytes: options.maxBytes,
+      mediaAccess: options.mediaAccess,
+      mediaLocalRoots: options.mediaLocalRoots,
+      mediaReadFile: options.mediaReadFile,
+      proxyUrl: options.proxyUrl,
+      fetchImpl: options.fetchImpl,
+      requestInit: options.requestInit,
+      trustExplicitProxyDns: options.trustExplicitProxyDns,
+    }),
+  );
+}
+
+const outboundMediaRuntime = {
+  loadOutboundMediaFromUrl,
+};
+
 const stringNormalizationRuntime = {
   normalizeAtHashSlug,
   normalizeHyphenSlug,
@@ -43222,6 +43408,15 @@ const providerWebSharedRuntime = {
   withStrictWebToolsEndpoint,
   withTrustedWebToolsEndpoint,
   writeCache,
+};
+
+const webContentExtractorRuntime = {
+  extractBasicHtmlContent,
+  htmlToMarkdown,
+  markdownToText,
+  normalizeWhitespace,
+  sanitizeHtml,
+  stripInvisibleUnicode,
 };
 
 const providerWebFetchRuntime = {
@@ -46611,6 +46806,553 @@ const outboundRuntime = {
   sanitizeForPlainText,
   stripInternalRuntimeScaffolding,
   summarizeOutboundPayloadForTransport,
+};
+
+async function drainPendingDeliveries(opts = {}) {
+  const deliver =
+    opts.deliver ||
+    (async (params) => {
+      const runtime = globalThis.__openzuesOutboundDeliverRuntime;
+      if (runtime && typeof runtime.deliverOutboundPayloads === "function") {
+        return await runtime.deliverOutboundPayloads(params);
+      }
+      return await deliverOutboundPayloads(params);
+    });
+  const runtime = globalThis.__openzuesDeliveryQueueRuntime;
+  if (runtime && typeof runtime.drainPendingDeliveries === "function") {
+    return await runtime.drainPendingDeliveries({
+      ...opts,
+      deliver,
+    });
+  }
+  throw new Error("delivery queue runtime is unavailable in OpenZues plugin runtime.");
+}
+
+const deliveryQueueRuntime = {
+  drainPendingDeliveries,
+};
+
+const MIGRATION_REASON_MISSING_SOURCE_OR_TARGET = "missing source or target";
+const MIGRATION_REASON_TARGET_EXISTS = "target exists";
+const REDACTED_MIGRATION_VALUE = "[redacted]";
+const MIGRATION_SECRET_KEY_MARKERS = [
+  "accesstoken",
+  "apikey",
+  "authorization",
+  "bearertoken",
+  "clientsecret",
+  "cookie",
+  "credential",
+  "password",
+  "privatekey",
+  "refreshtoken",
+  "secret",
+];
+const MIGRATION_SECRET_VALUE_PATTERNS = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]+/gu,
+  /\bsk-[A-Za-z0-9_-]{8,}\b/gu,
+  /\bgh[pousr]_[A-Za-z0-9_]{16,}\b/gu,
+  /\bxox[abprs]-[A-Za-z0-9-]{8,}\b/gu,
+  /\bAIza[0-9A-Za-z_-]{12,}\b/gu,
+];
+
+function cloneMigrationValue(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function markMigrationItemConflict(item, reason) {
+  return { ...item, status: "conflict", reason };
+}
+
+function markMigrationItemError(item, reason) {
+  return { ...item, status: "error", reason };
+}
+
+function markMigrationItemSkipped(item, reason) {
+  return { ...item, status: "skipped", reason };
+}
+
+function createMigrationItem(params) {
+  return {
+    ...params,
+    status: params.status || "planned",
+  };
+}
+
+function summarizeMigrationItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  return {
+    total: list.length,
+    planned: list.filter((item) => item.status === "planned").length,
+    migrated: list.filter((item) => item.status === "migrated").length,
+    skipped: list.filter((item) => item.status === "skipped").length,
+    conflicts: list.filter((item) => item.status === "conflict").length,
+    errors: list.filter((item) => item.status === "error").length,
+    sensitive: list.filter((item) => item.sensitive).length,
+  };
+}
+
+function isMigrationRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeMigrationSecretKey(key) {
+  return String(key || "").toLowerCase().replaceAll(/[^a-z0-9]/gu, "");
+}
+
+function isMigrationSecretKey(key) {
+  const normalized = normalizeMigrationSecretKey(key);
+  if (normalized === "token" || normalized.endsWith("token")) {
+    return true;
+  }
+  if (normalized === "auth" || normalized === "authorization") {
+    return true;
+  }
+  return MIGRATION_SECRET_KEY_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function isMigrationSecretReferenceLike(value) {
+  return (
+    isMigrationRecord(value) &&
+    value.source === "env" &&
+    typeof value.id === "string" &&
+    (value.provider === undefined || typeof value.provider === "string")
+  );
+}
+
+function redactMigrationString(value) {
+  let next = value;
+  for (const pattern of MIGRATION_SECRET_VALUE_PATTERNS) {
+    next = next.replace(pattern, REDACTED_MIGRATION_VALUE);
+  }
+  return next;
+}
+
+function redactMigrationValueInternal(value, seen) {
+  if (typeof value === "string") {
+    return redactMigrationString(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactMigrationValueInternal(entry, seen));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  if (seen.has(value)) {
+    return REDACTED_MIGRATION_VALUE;
+  }
+  seen.add(value);
+  const next = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isMigrationSecretKey(key) && !isMigrationSecretReferenceLike(entry)) {
+      next[key] = REDACTED_MIGRATION_VALUE;
+    } else {
+      next[key] = redactMigrationValueInternal(entry, seen);
+    }
+  }
+  return next;
+}
+
+function redactMigrationPlan(plan) {
+  return redactMigrationValueInternal(plan, new WeakSet());
+}
+
+function redactMigrationValue(value) {
+  return redactMigrationValueInternal(value, new WeakSet());
+}
+
+function redactMigrationItem(item) {
+  return redactMigrationValue(item);
+}
+
+function readMigrationConfigPath(root, pathSegments) {
+  let current = root;
+  for (const segment of Array.isArray(pathSegments) ? pathSegments : []) {
+    if (!isMigrationRecord(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function mergeMigrationConfigValue(left, right) {
+  if (!isMigrationRecord(left) || !isMigrationRecord(right)) {
+    return cloneMigrationValue(right);
+  }
+  const next = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    next[key] = mergeMigrationConfigValue(next[key], value);
+  }
+  return next;
+}
+
+function writeMigrationConfigPath(root, pathSegments, value) {
+  if (!isMigrationRecord(root) || !Array.isArray(pathSegments)) {
+    return;
+  }
+  let current = root;
+  for (const segment of pathSegments.slice(0, -1)) {
+    const existing = current[segment];
+    if (!isMigrationRecord(existing)) {
+      current[segment] = {};
+    }
+    current = current[segment];
+  }
+  const leaf = pathSegments.at(-1);
+  if (!leaf) {
+    return;
+  }
+  current[leaf] = mergeMigrationConfigValue(current[leaf], value);
+}
+
+function hasMigrationConfigPatchConflict(config, pathSegments, value) {
+  if (!isMigrationRecord(value)) {
+    return readMigrationConfigPath(config || {}, pathSegments) !== undefined;
+  }
+  const existing = readMigrationConfigPath(config || {}, pathSegments);
+  if (!isMigrationRecord(existing)) {
+    return false;
+  }
+  return Object.keys(value).some((key) => existing[key] !== undefined);
+}
+
+function createMigrationConfigPatchItem(params) {
+  return createMigrationItem({
+    id: params.id,
+    kind: "config",
+    action: "merge",
+    source: params.source,
+    target: params.target,
+    status: params.conflict ? "conflict" : "planned",
+    reason: params.conflict
+      ? params.reason || MIGRATION_REASON_TARGET_EXISTS
+      : undefined,
+    message: params.message,
+    details: { ...(params.details || {}), path: params.path, value: params.value },
+  });
+}
+
+function createMigrationManualItem(params) {
+  return createMigrationItem({
+    id: params.id,
+    kind: "manual",
+    action: "manual",
+    source: params.source,
+    status: "skipped",
+    message: params.message,
+    reason: params.recommendation,
+  });
+}
+
+function readMigrationConfigPatchDetails(item) {
+  const pathValue = item && item.details && item.details.path;
+  if (
+    !Array.isArray(pathValue) ||
+    !pathValue.every((segment) => typeof segment === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    path: pathValue,
+    value: item.details && item.details.value,
+  };
+}
+
+class MigrationConfigPatchConflictError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = "MigrationConfigPatchConflictError";
+    this.reason = reason;
+  }
+}
+
+async function applyMigrationConfigPatchItem(ctx, item) {
+  if (item.status !== "planned") {
+    return item;
+  }
+  const details = readMigrationConfigPatchDetails(item);
+  if (!details) {
+    return markMigrationItemError(item, "missing config patch");
+  }
+  const configApi = ctx && ctx.runtime && ctx.runtime.config;
+  if (
+    !configApi ||
+    typeof configApi.current !== "function" ||
+    typeof configApi.mutateConfigFile !== "function"
+  ) {
+    return markMigrationItemError(item, "config runtime unavailable");
+  }
+  try {
+    const currentConfig = configApi.current();
+    if (
+      !(ctx && ctx.overwrite) &&
+      hasMigrationConfigPatchConflict(currentConfig || {}, details.path, details.value)
+    ) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    await configApi.mutateConfigFile({
+      base: "runtime",
+      afterWrite: { mode: "auto" },
+      mutate(draft) {
+        if (
+          !(ctx && ctx.overwrite) &&
+          hasMigrationConfigPatchConflict(draft || {}, details.path, details.value)
+        ) {
+          throw new MigrationConfigPatchConflictError(MIGRATION_REASON_TARGET_EXISTS);
+        }
+        writeMigrationConfigPath(draft, details.path, details.value);
+      },
+    });
+    return { ...item, status: "migrated" };
+  } catch (err) {
+    if (err instanceof MigrationConfigPatchConflictError) {
+      return markMigrationItemConflict(item, err.reason);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+function applyMigrationManualItem(item) {
+  return markMigrationItemSkipped(item, item.reason || "manual follow-up required");
+}
+
+async function migrationPathExists(filePath) {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isMigrationFileAlreadyExistsError(err) {
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      (err.code === "ERR_FS_CP_EEXIST" || err.code === "EEXIST"),
+  );
+}
+
+async function backupExistingMigrationTarget(target, reportDir) {
+  if (!(await migrationPathExists(target))) {
+    return undefined;
+  }
+  const backupRoot = path.join(reportDir, "item-backups");
+  await fs.promises.mkdir(backupRoot, { recursive: true });
+  const targetHash = crypto
+    .createHash("sha256")
+    .update(path.resolve(target))
+    .digest("hex")
+    .slice(0, 12);
+  const backupDir = await fs.promises.mkdtemp(
+    path.join(backupRoot, `${Date.now()}-${targetHash}-${path.basename(target)}-`),
+  );
+  const backupPath = path.join(backupDir, path.basename(target));
+  await fs.promises.cp(target, backupPath, { recursive: true, force: true });
+  return backupPath;
+}
+
+function readArchiveMigrationRelativePath(item) {
+  const detailPath = item.details && item.details.archiveRelativePath;
+  const raw = typeof detailPath === "string" && detailPath.trim() ? detailPath : undefined;
+  const fallback = item.source ? path.basename(item.source) : item.id;
+  const normalized = path
+    .normalize(raw || fallback)
+    .split(path.sep)
+    .filter((part) => part && part !== "." && part !== "..")
+    .join(path.sep);
+  return normalized || "item";
+}
+
+async function resolveUniqueArchiveMigrationPath(archiveRoot, relativePath) {
+  const parsed = path.parse(relativePath);
+  let candidate = path.join(archiveRoot, relativePath);
+  let index = 2;
+  while (await migrationPathExists(candidate)) {
+    const filename = `${parsed.name}-${index}${parsed.ext}`;
+    candidate = path.join(archiveRoot, parsed.dir, filename);
+    index += 1;
+  }
+  return candidate;
+}
+
+async function archiveMigrationItem(item, reportDir) {
+  if (!item.source) {
+    return markMigrationItemError(item, MIGRATION_REASON_MISSING_SOURCE_OR_TARGET);
+  }
+  try {
+    const sourceStat = await fs.promises.lstat(item.source);
+    if (sourceStat.isSymbolicLink()) {
+      return markMigrationItemError(item, "archive source is a symlink");
+    }
+    const archiveRoot = path.join(reportDir, "archive");
+    const relativePath = readArchiveMigrationRelativePath(item);
+    const archivePath = await resolveUniqueArchiveMigrationPath(archiveRoot, relativePath);
+    await fs.promises.mkdir(path.dirname(archivePath), { recursive: true });
+    await fs.promises.cp(item.source, archivePath, {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      verbatimSymlinks: true,
+    });
+    return {
+      ...item,
+      status: "migrated",
+      target: archivePath,
+      details: { ...(item.details || {}), archivePath, archiveRelativePath: relativePath },
+    };
+  } catch (err) {
+    if (isMigrationFileAlreadyExistsError(err)) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function copyMigrationFileItem(item, reportDir, opts = {}) {
+  if (!item.source || !item.target) {
+    return markMigrationItemError(item, MIGRATION_REASON_MISSING_SOURCE_OR_TARGET);
+  }
+  try {
+    const targetExists = await migrationPathExists(item.target);
+    if (targetExists && !opts.overwrite) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    const backupPath = opts.overwrite
+      ? await backupExistingMigrationTarget(item.target, reportDir)
+      : undefined;
+    await fs.promises.mkdir(path.dirname(item.target), { recursive: true });
+    await fs.promises.cp(item.source, item.target, {
+      recursive: true,
+      force: Boolean(opts.overwrite),
+      errorOnExist: !opts.overwrite,
+    });
+    return {
+      ...item,
+      status: "migrated",
+      details: { ...(item.details || {}), ...(backupPath ? { backupPath } : {}) },
+    };
+  } catch (err) {
+    if (isMigrationFileAlreadyExistsError(err)) {
+      return markMigrationItemConflict(item, MIGRATION_REASON_TARGET_EXISTS);
+    }
+    return markMigrationItemError(item, err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function writeMigrationReport(result, opts = {}) {
+  if (!result.reportDir) {
+    return;
+  }
+  await fs.promises.mkdir(result.reportDir, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(result.reportDir, "report.json"),
+    `${JSON.stringify(redactMigrationPlan(result), null, 2)}\n`,
+    "utf8",
+  );
+  const lines = [
+    `# ${opts.title || "Migration Report"}`,
+    "",
+    `Source: ${result.source}`,
+    result.target ? `Target: ${result.target}` : undefined,
+    result.backupPath ? `Backup: ${result.backupPath}` : undefined,
+    "",
+    `Migrated: ${result.summary.migrated}`,
+    `Skipped: ${result.summary.skipped}`,
+    `Conflicts: ${result.summary.conflicts}`,
+    `Errors: ${result.summary.errors}`,
+    "",
+    ...(Array.isArray(result.items) ? result.items : []).map(
+      (item) => `- ${item.status}: ${item.id}${item.reason ? ` (${item.reason})` : ""}`,
+    ),
+  ].filter((line) => typeof line === "string");
+  await fs.promises.writeFile(
+    path.join(result.reportDir, "summary.md"),
+    `${lines.join("\n")}\n`,
+    "utf8",
+  );
+}
+
+function withCachedMigrationConfigRuntime(runtime, fallbackConfig) {
+  if (!runtime) {
+    return undefined;
+  }
+  const configApi = runtime.config;
+  if (
+    !configApi ||
+    typeof configApi.current !== "function" ||
+    typeof configApi.mutateConfigFile !== "function"
+  ) {
+    return runtime;
+  }
+  let cachedConfig;
+  const current = () => {
+    if (cachedConfig === undefined) {
+      cachedConfig = cloneMigrationValue(configApi.current() || fallbackConfig);
+    }
+    return cachedConfig;
+  };
+  return {
+    ...runtime,
+    config: {
+      ...runtime.config,
+      current,
+      mutateConfigFile: async (params) => {
+        const result = await configApi.mutateConfigFile({
+          ...params,
+          mutate: async (draft, context) => {
+            const mutationResult = await params.mutate(draft, context);
+            cachedConfig = cloneMigrationValue(draft);
+            return mutationResult;
+          },
+        });
+        cachedConfig = cloneMigrationValue(result.nextConfig);
+        return result;
+      },
+      ...(typeof configApi.replaceConfigFile === "function"
+        ? {
+            replaceConfigFile: async (params) => {
+              const result = await configApi.replaceConfigFile(params);
+              cachedConfig = cloneMigrationValue(result.nextConfig);
+              return result;
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+const migrationRuntime = {
+  archiveMigrationItem,
+  copyMigrationFileItem,
+  withCachedMigrationConfigRuntime,
+  writeMigrationReport,
+};
+
+const migrationHelperRuntime = {
+  MIGRATION_REASON_MISSING_SOURCE_OR_TARGET,
+  MIGRATION_REASON_TARGET_EXISTS,
+  applyMigrationConfigPatchItem,
+  applyMigrationManualItem,
+  createMigrationConfigPatchItem,
+  createMigrationItem,
+  createMigrationManualItem,
+  hasMigrationConfigPatchConflict,
+  markMigrationItemConflict,
+  markMigrationItemError,
+  markMigrationItemSkipped,
+  mergeMigrationConfigValue,
+  readMigrationConfigPatchDetails,
+  readMigrationConfigPath,
+  redactMigrationItem,
+  redactMigrationPlan,
+  redactMigrationValue,
+  summarizeMigrationItems,
+  writeMigrationConfigPath,
 };
 
 const providerAuthResultRuntime = {
@@ -55622,6 +56364,12 @@ const coreRuntime = {
   normalizeOptionalAccountId,
 };
 
+const pluginEntryRuntime = {
+  buildPluginConfigSchema,
+  definePluginEntry,
+  emptyPluginConfigSchema,
+};
+
 function filePathFromImportMetaUrl(importMetaUrl) {
   if (typeof importMetaUrl === "string" && importMetaUrl.startsWith("file:")) {
     return require("node:url").fileURLToPath(importMetaUrl);
@@ -58197,6 +58945,11 @@ const channelSetupRuntime = {
   formatDocsLink,
   setSetupChannelEnabled,
   splitSetupEntries,
+};
+
+const optionalChannelSetupRuntime = {
+  createOptionalChannelSetupAdapter,
+  createOptionalChannelSetupWizard,
 };
 
 const setupRuntime = {
@@ -71430,6 +72183,9 @@ const genericSdk = new Proxy(
     ...sessionKeyRuntime,
     ...sessionStoreRuntime,
     ...outboundRuntime,
+    ...deliveryQueueRuntime,
+    ...migrationRuntime,
+    ...migrationHelperRuntime,
     ...providerAuthResultRuntime,
     ...providerAuthRuntimeRuntime,
     ...providerAuthApiKeyRuntime,
@@ -71933,6 +72689,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return webMediaRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/outbound-media" ||
+    request === "@openclaw/plugin-sdk/outbound-media"
+  ) {
+    return outboundMediaRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/error-runtime" ||
     request === "@openclaw/plugin-sdk/error-runtime"
   ) {
@@ -72117,6 +72879,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/provider-web-fetch"
   ) {
     return providerWebFetchRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/web-content-extractor" ||
+    request === "@openclaw/plugin-sdk/web-content-extractor"
+  ) {
+    return webContentExtractorRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search" ||
@@ -72484,6 +73252,24 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/outbound-runtime"
   ) {
     return outboundRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/delivery-queue-runtime" ||
+    request === "@openclaw/plugin-sdk/delivery-queue-runtime"
+  ) {
+    return deliveryQueueRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/migration-runtime" ||
+    request === "@openclaw/plugin-sdk/migration-runtime"
+  ) {
+    return migrationRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/migration" ||
+    request === "@openclaw/plugin-sdk/migration"
+  ) {
+    return migrationHelperRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/provider-web-search-config-contract" ||
@@ -72905,6 +73691,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     return channelSetupRuntime;
   }
   if (
+    request === "openclaw/plugin-sdk/optional-channel-setup" ||
+    request === "@openclaw/plugin-sdk/optional-channel-setup"
+  ) {
+    return optionalChannelSetupRuntime;
+  }
+  if (
     request === "openclaw/plugin-sdk/setup-runtime" ||
     request === "@openclaw/plugin-sdk/setup-runtime"
   ) {
@@ -72933,6 +73725,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/plugin-config-runtime"
   ) {
     return pluginConfigRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/plugin-entry" ||
+    request === "@openclaw/plugin-sdk/plugin-entry"
+  ) {
+    return pluginEntryRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/config-mutation" ||

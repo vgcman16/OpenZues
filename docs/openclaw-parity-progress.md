@@ -3,11 +3,11 @@
 ## Snapshot
 
 - Updated: 2026-05-07.
-- Estimated repo-wide parity: ~98.6% overall, with a reasonable band of ~80-99%.
+- Estimated repo-wide parity: ~99.2% overall, with a reasonable band of ~80-99.5%.
 - Estimated active gateway/session/tool-contract family parity: ~99.9% for the bounded local OpenZues path.
 - Estimated chat/session contract subfamily parity: ~98.3% after the latest `chat.send`, `chat.inject` live-event, `chat.abort`, `sessions.create`, `sessions.patch`, `sessions.pluginPatch`, `sessions.delete`, `sessions.spawn`, sandboxed remote media staging, and `tools.invoke` slices.
 - Estimated browser/canvas/nodes/voice bounded-command family parity: ~99%; it is no longer the active queue head.
-- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, and zod facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
+- Estimated runtime/CLI/doctor native-bridge parity: ~99.9% after the runtime bridge doctor posture, native ACP client interactive replay, secrets reload CLI surface, provider route send/poll alias-precedence, plugin runtime executor inventory, plugin imported-state projection, errored runtime-imported plugin projection, facade-loaded plugin imported-state preservation, diagnostics-loaded plugin imported-state counts, bundled plugin reported-version normalization, bundled plugin env discovery/default-disable, plugin inspect scoped diagnostics, plugin registry inspect/refresh persistence, plugin list registry-source projection, plugin inspect runtime-inspection flag, missing-target static preflight, target-scoped runtime inventory, installed plugin activation-state projection, installed plugin allowlist activation guard, installed plugin slot activation reason, manifest load-path activation-state projection, plugin public-surface/runtime-sidecar artifact metadata projection, configured-channel owner activation projection, configured-channel disabled-owner policy, configured-channel bundled-owner allowlist bypass, configured-channel config/global owner trust gate, configured-channel workspace owner activation gate, manifest toolMetadata availability gate, installed plugin runtime activation adapter, installed plugin disabled activation gate, installed plugin inspect runtime activation adapter tool projection, installed plugin scoped runtime activation load context, installed plugin activation adapter failure diagnostics, installed activation-adapter manifest tool contract enforcement, plugin list verbose activation/import state, plugin list human enabled label, plugin list human enabled count, plugin doctor failure-phase projection, plugin inspect failure-phase projection, plugin inspect failed-at timestamp projection, plugin inspect loader error text projection, plugin inspect human base metadata, plugin inspect human header/bundle-format labels, plugin inspect human capability sections, plugin inspect human runtime surface sections, plugin inspect human tools section, plugin inspect human MCP/LSP sections, plugin inspect human HTTP route count, plugin inspect human policy section, plugin inspect human diagnostics section, plugin inspect human install section, plugin inspect human compatibility warnings section, plugin inspect typed/custom hook sections, doctor workspaceStatus imported-state counts, doctor-contract artifact projection/touched-path narrowing, channel-plugin doctor compatibility/sequence/stale-cleanup/preview/repair/mutable-allowlist/empty-allowlist-extra/empty-group-skip hooks, exec safe-bin coverage/repair/trusted-dir hints, packaged bundled runtime root preference, and manifest command/activation/setup/auth/QA/channel-config/model-support/config-contract/root/package/min-host plus JSON5-capable explicit/manifestless bundle metadata, Claude bundle command projection, bundle MCP/LSP server projection, known Claude marketplace shortcut, remote marketplace listing, remote marketplace path-entry install/update, Git/GitHub entry-source install, URL/archive entry-source install, local path/copy install, missing local-looking install-spec guard, bundled pre-npm install, explicit and preferred ClawHub install/fallback, production-wired ClawHub API/archive install/update, fakeable plus production-wired npm install/update, npm-not-found bundled fallback, hook-pack npm update, hook-pack npm install fallback, native manifest activation-planner reason projection, active-registry executor projection, runtime activation doctor posture, and plugin helper slices through session-binding/session-key runtime aliases, session-store runtime helpers, session-visibility helpers, simple-completion-runtime extractAssistantText helper, poll-runtime helpers, lazy-runtime helpers, config-paths helpers, context-visibility-runtime helpers, heartbeat-runtime helpers, json-store helpers, diagnostic-runtime helpers, system-event-runtime helpers, oauth-utils helpers, runtime-config-snapshot helpers, runtime-fetch helpers, runtime-doctor helpers, runtime-secret-resolution helpers, memory-core-host-query helpers, memory-core-host-multimodal helpers, memory-core-host-secret helpers, memory-core-host-events helpers, memory-core-host-status helpers, provider-setup helpers, self-hosted-provider-setup helpers, LM Studio runtime helpers, group-activation helpers, media-store helpers, web-media helpers, browser-security-runtime helpers, approval-auth-helpers, approval-approvers helpers, approval-reply-runtime helpers, approval-renderers helpers, approval-client-helpers, approval-client-runtime alias helpers, approval-delivery-helpers, approval-native-helpers, approval-native-runtime delivery helpers, approval-handler-adapter-runtime helpers, approval-handler-runtime adapter factory, speech facade helpers, model-session-runtime helpers, process-runtime command helpers, run-command normalized command helpers, string-coerce-runtime primitive helpers, provider-auth-login runtime alias helpers, approval-auth-runtime helpers, telegram-command-config helpers, param-readers helpers, provider-zai-endpoint helpers, provider-env-vars helpers, account-id/configured-id subpath helpers, agent-media-payload helpers, agent-config-primitives helpers, ACP binding resolve helpers, Anthropic CLI facade helpers, Anthropic Vertex auth-presence helpers, Anthropic Vertex facade helpers, XAI model-id helpers, channel pairing path helpers, channel inbound root helpers, channel location helpers, state path helpers, setup adapter runtime helpers, channel secret TTS runtime helpers, channel secret basic/runtime helpers, secret-file-runtime helpers, secret-ref-runtime helpers, secret-input-runtime helpers, secret-input-schema helpers, cron-store-runtime helpers, file-access-runtime helpers, logging-core helpers, native-command-config-runtime helpers, host-runtime helpers, image-generation-core auth-runtime helpers, talk config runtime helpers, GitHub Copilot token helper shims, channel plugin common/core helper shims, channel entry contract helper shims, channel config primitives/schema helper shims, runtime-env helper shims, channel-config-helpers shim, channel-config-writes alias shim, channel-lifecycle shim, exact channel-core shim, channel-contract-testing shim, channel-targets shim, channel-streaming shim, channel-envelope shim, channel-mention-gating shim, channel-runtime-context shim, channel-activity-runtime shim, inbound-envelope shim, CLI runtime helper shim, memory-core-engine-runtime facade shim, memory-core-host-engine-embeddings helper shim, memory-core-host-engine-foundation helper shim, models-provider-runtime helper shim, skill-commands-runtime helper shim, skills-runtime helper shim, provider-tools helper shim, provider-stream-shared helper shim, provider-stream family helper shim, provider-transport-runtime helper shim, provider-http helper shim, provider-catalog-runtime helper shim, provider-onboard helper shim, provider-usage helper shim, tool-send helper shim, webhook-ingress helper shim, web-media helper shim, speech facade helper shim, zalouser facade shim, zod facade shim, web-content-extractor facade shim, plugin-entry facade shim, optional-channel-setup facade shim, outbound-media facade shim, delivery-queue-runtime facade shim, and migration-runtime facade shim; remaining gaps are packaging/distribution breadth, standalone ACP bridge lifecycle depth, real installed plugin module import/activation, and broader runtime command ergonomics.
 - Runtime helper addendum: imported `agent-runtime` core helper coverage is
   now verified in `a8e871a3` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `agent-runtime` model-selection helper
@@ -96,6 +96,21 @@
   above.
 - Runtime helper addendum: imported `zod` facade coverage is now verified in
   `c49cbd4a` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `web-content-extractor` facade coverage
+  is now verified in `563d69d7` and counted with the plugin helper slices
+  above.
+- Runtime helper addendum: imported `plugin-entry` facade coverage is now
+  verified in `b1fd730f` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `optional-channel-setup` facade coverage
+  is now verified in `34c792c1` and counted with the plugin helper slices
+  above.
+- Runtime helper addendum: imported `outbound-media` facade coverage is now
+  verified in `49969f8f` and counted with the plugin helper slices above.
+- Runtime helper addendum: imported `delivery-queue-runtime` facade coverage
+  is now verified in `183c5a68` and counted with the plugin helper slices
+  above.
+- Runtime helper addendum: imported `migration-runtime` facade coverage is now
+  verified in `7a9c8208` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `file-lock` helper coverage is now
   verified in `ed03c127` and counted with the plugin helper slices above.
 - Runtime helper addendum: imported `google-model-id` alias coverage is now
@@ -17328,6 +17343,113 @@ These are complete within the bounded OpenZues-local parity contract verified in
   tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
   `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
   Source/test checkpointed in `c49cbd4a`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `web-content-extractor` facade from `src/plugin-sdk/web-content-extractor.ts`:
+  scoped and unscoped native runtime entries expose the public HTML/Markdown
+  helper surface from `web-fetch-utils.ts` and `web-fetch-visibility.ts`,
+  including hidden element sanitization, invisible Unicode stripping,
+  whitespace normalization, markdown/text projection, and basic HTML content
+  extraction. This closes `OZ-PLUGIN-00267`; repo-wide parity is now
+  estimated at ~98.7%.
+- Verified the web-content-extractor helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_web_content_extractor_helpers -q`
+  (`1 passed`), adjacent web/provider proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "web_content_extractor or provider_web_fetch or provider_web_search or web_media"`
+  (`3 passed, 1087 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`278 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `563d69d7`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `plugin-entry` facade from `src/plugin-sdk/plugin-entry.ts`: scoped and
+  unscoped native runtime entries expose `definePluginEntry`,
+  `buildPluginConfigSchema`, and `emptyPluginConfigSchema`, including lazy
+  cached config-schema evaluation and runtime entry metadata projection for
+  kind, reload, node-host commands, security audit collectors, and register.
+  This closes `OZ-PLUGIN-00268`; repo-wide parity is now estimated at ~98.8%.
+- Verified the plugin-entry helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_plugin_entry_helpers -q`
+  (`1 passed`), adjacent entrypoint/facade proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "plugin_entry or entrypoints_helpers or diffs_helpers or open_prose"`
+  (`5 passed, 1086 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`279 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `b1fd730f`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `optional-channel-setup` facade from
+  `src/plugin-sdk/optional-channel-setup.ts`: scoped and unscoped native
+  runtime entries expose `createOptionalChannelSetupAdapter` and
+  `createOptionalChannelSetupWizard`, preserving default-account resolution,
+  unavailable setup messages, docs links, wizard labels/status lines, empty
+  credentials, and finalize/apply errors. This closes `OZ-PLUGIN-00269`;
+  repo-wide parity is now estimated at ~98.9%.
+- Verified the optional-channel-setup helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_optional_channel_setup_helpers -q`
+  (`1 passed`), adjacent setup/channel proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "optional_channel_setup or channel_setup_helpers or setup_runtime_helper or setup_tools_helper"`
+  (`5 passed, 1087 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`280 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `34c792c1`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `outbound-media` facade from `src/plugin-sdk/outbound-media.ts` and
+  `src/media/load-options.ts`: scoped and unscoped native runtime entries
+  expose `loadOutboundMediaFromUrl`, preserve web-media MIME/kind/fileName
+  projection, enforce explicit local-root host-read requirements, and route
+  validated host-read CSV/Markdown media through the shared web-media policy.
+  This closes `OZ-PLUGIN-00270`; repo-wide parity is now estimated at ~99.0%.
+- Verified the outbound-media helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_outbound_media_helpers -q`
+  (`1 passed`), adjacent media/reply proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "outbound_media_helpers or web_media_helpers or reply_payload_helpers"`
+  (`3 passed, 1090 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`281 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `49969f8f`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `delivery-queue-runtime` facade from
+  `src/plugin-sdk/delivery-queue-runtime.ts`: scoped and unscoped native
+  runtime entries expose `drainPendingDeliveries`, inject the shared outbound
+  deliver runtime when a caller omits `deliver`, preserve explicit deliver
+  functions, and return the precise native unavailable error when no queue
+  drain runtime is wired. This closes `OZ-PLUGIN-00271`; repo-wide parity is
+  now estimated at ~99.1%.
+- Verified the delivery-queue-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_delivery_queue_runtime_helpers -q`
+  (`1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "delivery_queue_runtime or outbound_runtime_helpers or conversation_binding_runtime_helpers"`
+  (`3 passed, 1091 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`282 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `183c5a68`.
+- Imported OpenClaw plugin runtime entries now have the source-backed
+  `migration-runtime` facade from `src/plugin-sdk/migration-runtime.ts`:
+  scoped and unscoped native runtime entries expose
+  `withCachedMigrationConfigRuntime`, `copyMigrationFileItem`,
+  `archiveMigrationItem`, and `writeMigrationReport`, including overwrite
+  backup uniqueness, copy conflict/error shaping, archive relative-path
+  normalization, nested secret redaction in JSON reports, Markdown summary
+  output, and cached config mutation/replace behavior. This closes
+  `OZ-PLUGIN-00272`; repo-wide parity is now estimated at ~99.2%.
+- Verified the migration-runtime helper slice with
+  `python -m pytest tests\test_gateway_node_methods.py::test_tools_invoke_imported_openclaw_migration_runtime_helpers -q`
+  (`1 passed`), adjacent runtime proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "migration_runtime or delivery_queue_runtime or outbound_runtime_helpers"`
+  (`3 passed, 1092 deselected`), adjacent imported-plugin proof
+  `python -m pytest tests\test_gateway_node_methods.py -q -k "imported_openclaw"`
+  (`283 passed, 812 deselected`), `ruff check src\openzues\cli.py
+  tests\test_gateway_node_methods.py`, `mypy src\openzues\cli.py`, and
+  `git diff --check -- src\openzues\cli.py tests\test_gateway_node_methods.py`.
+  Source/test checkpointed in `7a9c8208`.
 
 ## References
 

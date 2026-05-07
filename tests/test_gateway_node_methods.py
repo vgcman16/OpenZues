@@ -10371,6 +10371,166 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_web_content_extractor_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-web-content-extractor.cjs"
+    runtime_entry.write_text(
+        """
+const extractor = require("openclaw/plugin-sdk/web-content-extractor");
+const scopedExtractor = require("@openclaw/plugin-sdk/web-content-extractor");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.web_content_extractor",
+      description: "Use OpenClaw web-content-extractor SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const html = `
+          <html>
+            <head><title>Demo &amp; Docs</title></head>
+            <body>
+              <h1> Hello&nbsp;World </h1>
+              <p>Visible <a href="https://example.test">Link</a></p>
+              <div aria-hidden="true">Prompt Injection</div>
+              <span class="sr-only">Screen Reader Trap</span>
+              <p style="display: none">Invisible Text</p>
+              <template>Template Trap</template>
+              <svg><text>Vector Trap</text></svg>
+              <input type="hidden" value="Input Trap">
+              <ul><li>One</li></ul>
+            </body>
+          </html>
+        `;
+        const clean = await extractor.sanitizeHtml(html);
+        const markdown = extractor.htmlToMarkdown(clean);
+        const extractedMarkdown = await extractor.extractBasicHtmlContent({
+          html,
+          extractMode: "markdown"
+        });
+        const extractedText = await scopedExtractor.extractBasicHtmlContent({
+          html,
+          extractMode: "text"
+        });
+        return {
+          keys: Object.keys(extractor).sort(),
+          scopedType: typeof scopedExtractor.extractBasicHtmlContent,
+          sameNormalize:
+            extractor.normalizeWhitespace === scopedExtractor.normalizeWhitespace,
+          cleanContains: {
+            visible: clean.includes("Visible"),
+            prompt: clean.includes("Prompt Injection"),
+            trap: clean.includes("Screen Reader Trap"),
+            invisible: clean.includes("Invisible Text"),
+            template: clean.includes("Template Trap"),
+            vector: clean.includes("Vector Trap"),
+            input: clean.includes("Input Trap")
+          },
+          markdown,
+          extractedMarkdown,
+          extractedText,
+          invisible: extractor.stripInvisibleUnicode("a\\u200bb\\u202ec\\ufeffd"),
+          normalized: extractor.normalizeWhitespace(" A  B \\n\\n\\n C "),
+          plain: extractor.markdownToText("# Head\\n- [Link](https://ex)\\n`code`")
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-web-content-extractor-plugin",
+                    "name": "Runtime Web Content Extractor Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-web-content-extractor.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.web_content_extractor"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.web_content_extractor"},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert result["keys"] == [
+        "extractBasicHtmlContent",
+        "htmlToMarkdown",
+        "markdownToText",
+        "normalizeWhitespace",
+        "sanitizeHtml",
+        "stripInvisibleUnicode",
+    ]
+    assert result["scopedType"] == "function"
+    assert result["sameNormalize"] is True
+    assert result["cleanContains"] == {
+        "visible": True,
+        "prompt": False,
+        "trap": False,
+        "invisible": False,
+        "template": False,
+        "vector": False,
+        "input": False,
+    }
+    assert result["markdown"] == {
+        "text": (
+            "Demo & Docs\n\n# Hello World\n\n "
+            "Visible [Link](https://example.test)\n\n- One"
+        ),
+        "title": "Demo & Docs",
+    }
+    assert result["extractedMarkdown"] == result["markdown"]
+    assert result["extractedText"] == {
+        "text": "Demo & Docs\n\nHello World\n\n Visible Link\nOne",
+        "title": "Demo & Docs",
+    }
+    assert result["invisible"] == "abcd"
+    assert result["normalized"] == "A B\n\n C"
+    assert result["plain"] == "Head\nLink\ncode"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_channel_setup_helpers(
     tmp_path,
 ) -> None:
@@ -10597,6 +10757,164 @@ module.exports = {
             "defaultAccountId": "default",
         },
         "exportTypes": ["function", "function", "function", "function"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_optional_channel_setup_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-optional-channel-setup.cjs"
+    runtime_entry.write_text(
+        """
+const setup = require("openclaw/plugin-sdk/optional-channel-setup");
+const scopedSetup = require("@openclaw/plugin-sdk/optional-channel-setup");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.optional_channel_setup",
+      description: "Use OpenClaw optional-channel-setup SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const adapter = setup.createOptionalChannelSetupAdapter({
+          channel: "sample",
+          label: "Sample",
+          npmSpec: "@openclaw/sample",
+          docsPath: "/channels/sample"
+        });
+        const wizard = scopedSetup.createOptionalChannelSetupWizard({
+          channel: "wizard",
+          label: "Wizard",
+          docsPath: "/channels/wizard"
+        });
+        let adapterError = "";
+        try {
+          adapter.applyAccountConfig({ cfg: {}, input: {} });
+        } catch (error) {
+          adapterError = error.message;
+        }
+        let wizardError = "";
+        try {
+          await wizard.finalize({ runtime: { log: () => {} } });
+        } catch (error) {
+          wizardError = error.message;
+        }
+        return {
+          keys: Object.keys(setup).sort(),
+          scopedSame:
+            scopedSetup.createOptionalChannelSetupAdapter ===
+            setup.createOptionalChannelSetupAdapter,
+          adapter: {
+            defaultAccount: adapter.resolveAccountId({ cfg: {} }),
+            explicitAccount: adapter.resolveAccountId({ accountId: "work" }),
+            validation: adapter.validateInput({ cfg: {}, input: {} }),
+            error: adapterError
+          },
+          wizard: {
+            channel: wizard.channel,
+            labels: {
+              configured: wizard.status.configuredLabel,
+              unconfigured: wizard.status.unconfiguredLabel
+            },
+            configured: wizard.status.resolveConfigured({ cfg: {} }),
+            lines: wizard.status.resolveStatusLines({ cfg: {} }),
+            selectionHint: wizard.status.resolveSelectionHint({ cfg: {} }),
+            credentials: wizard.credentials,
+            error: wizardError
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-optional-channel-setup-plugin",
+                    "name": "Runtime Optional Channel Setup Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-optional-channel-setup.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {
+                    "tools": {"allow": ["runtime.optional_channel_setup"]}
+                },
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.optional_channel_setup"},
+    )
+
+    message = (
+        "Sample setup requires @openclaw/sample to be installed. "
+        "Docs: channels/sample (https://docs.openclaw.ai/channels/sample)"
+    )
+    wizard_message = (
+        "Wizard setup requires the Wizard plugin to be installed. "
+        "Docs: channels/wizard (https://docs.openclaw.ai/channels/wizard)"
+    )
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "createOptionalChannelSetupAdapter",
+            "createOptionalChannelSetupWizard",
+        ],
+        "scopedSame": True,
+        "adapter": {
+            "defaultAccount": "default",
+            "explicitAccount": "work",
+            "validation": message,
+            "error": message,
+        },
+        "wizard": {
+            "channel": "wizard",
+            "labels": {
+                "configured": "Wizard plugin installed",
+                "unconfigured": "install Wizard plugin",
+            },
+            "configured": False,
+            "lines": [wizard_message],
+            "selectionHint": wizard_message,
+            "credentials": [],
+            "error": wizard_message,
+        },
     }
 
 
@@ -24287,6 +24605,791 @@ module.exports = {
                 "replyToId": "root",
             },
         ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_delivery_queue_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-delivery-queue-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const deliveryQueue = require("openclaw/plugin-sdk/delivery-queue-runtime");
+const scopedDeliveryQueue = require("@openclaw/plugin-sdk/delivery-queue-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.delivery_queue_runtime",
+      description: "Use OpenClaw delivery queue runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const calls = [];
+        const log = {
+          info: (msg) => calls.push(["info", msg]),
+          warn: (msg) => calls.push(["warn", msg]),
+          error: (msg) => calls.push(["error", msg])
+        };
+        globalThis.__openzuesDeliveryQueueRuntime = {
+          async drainPendingDeliveries(opts) {
+            const selected = opts.selectEntry({
+              id: "entry-1",
+              channel: "slack",
+              retryCount: 0,
+              enqueuedAt: 10
+            }, 1234);
+            const delivered = await opts.deliver({
+              cfg: opts.cfg,
+              channel: "slack",
+              to: opts.to || "C1",
+              payloads: [{ text: opts.text || "hello" }],
+              deps: {
+                slack: async (ctx) => ({
+                  messageId: `default-${ctx.text}`,
+                  text: ctx.text,
+                  to: ctx.to
+                })
+              },
+              skipQueue: true
+            });
+            calls.push({
+              drainKey: opts.drainKey,
+              logLabel: opts.logLabel,
+              selected,
+              delivered
+            });
+          }
+        };
+        await deliveryQueue.drainPendingDeliveries({
+          drainKey: "demo:test",
+          logLabel: "Demo reconnect drain",
+          cfg: {},
+          log,
+          selectEntry: (entry, now) => ({
+            match: entry.channel === "slack" && now === 1234,
+            bypassBackoff: true
+          })
+        });
+        const explicitDeliver = async (params) => [{
+          messageId: `explicit-${params.to}`,
+          skipQueue: params.skipQueue === true
+        }];
+        await scopedDeliveryQueue.drainPendingDeliveries({
+          drainKey: "demo:explicit",
+          logLabel: "Demo explicit drain",
+          cfg: {},
+          log,
+          to: "C2",
+          text: "manual",
+          deliver: explicitDeliver,
+          selectEntry: () => ({ match: true })
+        });
+        delete globalThis.__openzuesDeliveryQueueRuntime;
+        let noRuntimeError = "";
+        try {
+          await deliveryQueue.drainPendingDeliveries({
+            drainKey: "demo:missing",
+            logLabel: "Demo missing drain",
+            cfg: {},
+            log,
+            selectEntry: () => ({ match: true })
+          });
+        } catch (error) {
+          noRuntimeError = error.message;
+        }
+        return {
+          keys: Object.keys(deliveryQueue).sort(),
+          scopedSame:
+            scopedDeliveryQueue.drainPendingDeliveries ===
+            deliveryQueue.drainPendingDeliveries,
+          calls,
+          noRuntimeError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "delivery-queue-runtime-plugin",
+                    "name": "Delivery Queue Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-delivery-queue-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.delivery_queue_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.delivery_queue_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["drainPendingDeliveries"],
+        "scopedSame": True,
+        "calls": [
+            {
+                "drainKey": "demo:test",
+                "logLabel": "Demo reconnect drain",
+                "selected": {"match": True, "bypassBackoff": True},
+                "delivered": [
+                    {"messageId": "default-hello", "text": "hello", "to": "C1"}
+                ],
+            },
+            {
+                "drainKey": "demo:explicit",
+                "logLabel": "Demo explicit drain",
+                "selected": {"match": True},
+                "delivered": [{"messageId": "explicit-C2", "skipQueue": True}],
+            },
+        ],
+        "noRuntimeError": (
+            "delivery queue runtime is unavailable in OpenZues plugin runtime."
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_migration_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-migration.cjs"
+    runtime_entry.write_text(
+        """
+const migration = require("openclaw/plugin-sdk/migration");
+const scopedMigration = require("@openclaw/plugin-sdk/migration");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.migration",
+      description: "Use OpenClaw migration SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const config = {
+          agents: {
+            defaults: {
+              model: { primary: "openai/base" },
+              tools: { web: true }
+            }
+          }
+        };
+        const patchItem = migration.createMigrationConfigPatchItem({
+          id: "config:model",
+          target: "openclaw.json",
+          path: ["agents", "defaults"],
+          value: {
+            model: { fallback: ["openai/fallback"] },
+            tools: { code: true }
+          },
+          message: "Merge defaults"
+        });
+        const manualItem = migration.createMigrationManualItem({
+          id: "manual:note",
+          source: "hermes",
+          message: "Manual step",
+          recommendation: "review manually"
+        });
+        const beforePath = migration.readMigrationConfigPath(config, [
+          "agents",
+          "defaults",
+          "model",
+          "primary"
+        ]);
+        const merged = migration.mergeMigrationConfigValue(
+          { a: { b: 1 }, keep: true },
+          { a: { c: 2 }, added: "yes" }
+        );
+        migration.writeMigrationConfigPath(config, patchItem.details.path, patchItem.details.value);
+        const afterPath = migration.readMigrationConfigPath(config, [
+          "agents",
+          "defaults",
+          "model",
+          "fallback"
+        ]);
+        const conflict = migration.hasMigrationConfigPatchConflict(
+          { agents: { defaults: { tools: { web: true } } } },
+          ["agents", "defaults", "tools"],
+          { web: false }
+        );
+        const conflictItem = migration.createMigrationConfigPatchItem({
+          id: "config:conflict",
+          target: "openclaw.json",
+          path: ["agents", "defaults"],
+          value: { model: { primary: "openai/new" } },
+          message: "Conflict defaults",
+          conflict: true
+        });
+        const details = migration.readMigrationConfigPatchDetails(patchItem);
+        let runtimeConfig = { agents: { defaults: { tools: { web: true } } } };
+        const applied = await migration.applyMigrationConfigPatchItem({
+          config: runtimeConfig,
+          overwrite: true,
+          runtime: {
+            config: {
+              current: () => runtimeConfig,
+              mutateConfigFile: async (params) => {
+                const draft = structuredClone(runtimeConfig);
+                await params.mutate(draft, { snapshot: {}, previousHash: null });
+                runtimeConfig = draft;
+                return {
+                  path: "openclaw.json",
+                  previousHash: null,
+                  snapshot: {},
+                  nextConfig: runtimeConfig,
+                  afterWrite: { mode: "auto" },
+                  followUp: { mode: "auto", requiresRestart: false }
+                };
+              }
+            }
+          }
+        }, patchItem);
+        const unavailable = await migration.applyMigrationConfigPatchItem({
+          config: {},
+          overwrite: false,
+          runtime: {}
+        }, patchItem);
+        const skippedManual = migration.applyMigrationManualItem(manualItem);
+        const redactedPlan = migration.redactMigrationPlan({
+          items: [{
+            id: "secret",
+            kind: "config",
+            action: "merge",
+            status: "planned",
+            details: {
+              value: {
+                Authorization: "Bearer short-dev-key",
+                token: "plain-token",
+                keep: { source: "env", id: "OPENAI_API_KEY" }
+              }
+            }
+          }]
+        });
+        const summary = migration.summarizeMigrationItems([
+          migration.createMigrationItem({ id: "planned", kind: "file", action: "copy" }),
+          { ...applied, sensitive: true },
+          conflictItem,
+          unavailable,
+          skippedManual
+        ]);
+
+        return {
+          keys: Object.keys(migration).sort(),
+          scopedSame: scopedMigration.createMigrationItem === migration.createMigrationItem,
+          constants: [
+            migration.MIGRATION_REASON_MISSING_SOURCE_OR_TARGET,
+            migration.MIGRATION_REASON_TARGET_EXISTS
+          ],
+          itemStatus: [
+            migration.createMigrationItem({ id: "x", kind: "file", action: "copy" }).status,
+            migration.markMigrationItemConflict(patchItem, "nope").status,
+            migration.markMigrationItemError(patchItem, "bad").status,
+            migration.markMigrationItemSkipped(patchItem, "later").reason
+          ],
+          config: {
+            beforePath,
+            merged,
+            afterPath,
+            conflict,
+            details,
+            appliedStatus: applied.status,
+            runtimeConfig,
+            unavailable: {
+              status: unavailable.status,
+              reason: unavailable.reason
+            }
+          },
+          manual: {
+            initial: manualItem.status,
+            skipped: skippedManual.status,
+            reason: skippedManual.reason
+          },
+          redacted: redactedPlan.items[0].details.value,
+          summary
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "migration-plugin",
+                    "name": "Migration Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-migration.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.migration"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.migration"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "MIGRATION_REASON_MISSING_SOURCE_OR_TARGET",
+            "MIGRATION_REASON_TARGET_EXISTS",
+            "applyMigrationConfigPatchItem",
+            "applyMigrationManualItem",
+            "createMigrationConfigPatchItem",
+            "createMigrationItem",
+            "createMigrationManualItem",
+            "hasMigrationConfigPatchConflict",
+            "markMigrationItemConflict",
+            "markMigrationItemError",
+            "markMigrationItemSkipped",
+            "mergeMigrationConfigValue",
+            "readMigrationConfigPatchDetails",
+            "readMigrationConfigPath",
+            "redactMigrationItem",
+            "redactMigrationPlan",
+            "redactMigrationValue",
+            "summarizeMigrationItems",
+            "writeMigrationConfigPath",
+        ],
+        "scopedSame": True,
+        "constants": ["missing source or target", "target exists"],
+        "itemStatus": ["planned", "conflict", "error", "later"],
+        "config": {
+            "beforePath": "openai/base",
+            "merged": {
+                "a": {"b": 1, "c": 2},
+                "keep": True,
+                "added": "yes",
+            },
+            "afterPath": ["openai/fallback"],
+            "conflict": True,
+            "details": {
+                "path": ["agents", "defaults"],
+                "value": {
+                    "model": {"fallback": ["openai/fallback"]},
+                    "tools": {"code": True},
+                },
+            },
+            "appliedStatus": "migrated",
+            "runtimeConfig": {
+                "agents": {
+                    "defaults": {
+                        "tools": {"web": True, "code": True},
+                        "model": {"fallback": ["openai/fallback"]},
+                    }
+                }
+            },
+            "unavailable": {"status": "error", "reason": "config runtime unavailable"},
+        },
+        "manual": {
+            "initial": "skipped",
+            "skipped": "skipped",
+            "reason": "review manually",
+        },
+        "redacted": {
+            "Authorization": "[redacted]",
+            "token": "[redacted]",
+            "keep": {"source": "env", "id": "OPENAI_API_KEY"},
+        },
+        "summary": {
+            "total": 5,
+            "planned": 1,
+            "migrated": 1,
+            "skipped": 1,
+            "conflicts": 1,
+            "errors": 1,
+            "sensitive": 1,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_migration_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    migration_root = tmp_path / "migration-runtime-root"
+    runtime_entry = tmp_path / "runtime-plugin-migration-runtime.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const migration = require("openclaw/plugin-sdk/migration-runtime");
+const scopedMigration = require("@openclaw/plugin-sdk/migration-runtime");
+
+const root = {json.dumps(str(migration_root))};
+
+async function writeFile(filePath, contents) {{
+  await fs.mkdir(path.dirname(filePath), {{ recursive: true }});
+  await fs.writeFile(filePath, contents, "utf8");
+}}
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.migration_runtime",
+      description: "Use OpenClaw migration runtime SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        await fs.rm(root, {{ recursive: true, force: true }});
+        const reportDir = path.join(root, "report");
+        const sourceOne = path.join(root, "source-one", "AGENTS.md");
+        const sourceTwo = path.join(root, "source-two", "AGENTS.md");
+        const sourceThree = path.join(root, "source-three", "NOTES.md");
+        const targetOne = path.join(root, "target-one", "AGENTS.md");
+        const targetTwo = path.join(root, "target-two", "AGENTS.md");
+        const targetConflict = path.join(root, "target-conflict", "AGENTS.md");
+        await writeFile(sourceOne, "new one");
+        await writeFile(sourceTwo, "new two");
+        await writeFile(sourceThree, "archive me");
+        await writeFile(targetOne, "old one");
+        await writeFile(targetTwo, "old two");
+        await writeFile(targetConflict, "already here");
+
+        const originalNow = Date.now;
+        Date.now = () => 123;
+        let first;
+        let second;
+        try {{
+          first = await migration.copyMigrationFileItem({{
+            id: "first",
+            kind: "file",
+            action: "copy",
+            status: "planned",
+            source: sourceOne,
+            target: targetOne
+          }}, reportDir, {{ overwrite: true }});
+          second = await scopedMigration.copyMigrationFileItem({{
+            id: "second",
+            kind: "file",
+            action: "copy",
+            status: "planned",
+            source: sourceTwo,
+            target: targetTwo
+          }}, reportDir, {{ overwrite: true }});
+        }} finally {{
+          Date.now = originalNow;
+        }}
+
+        const conflict = await migration.copyMigrationFileItem({{
+          id: "conflict",
+          kind: "file",
+          action: "copy",
+          status: "planned",
+          source: sourceOne,
+          target: targetConflict
+        }}, reportDir);
+        const missing = await migration.copyMigrationFileItem({{
+          id: "missing",
+          kind: "file",
+          action: "copy",
+          status: "planned",
+          source: sourceOne
+        }}, reportDir);
+        const archived = await migration.archiveMigrationItem({{
+          id: "archive",
+          kind: "file",
+          action: "archive",
+          status: "planned",
+          source: sourceThree,
+          details: {{ archiveRelativePath: "../safe/NOTES.md" }}
+        }}, reportDir);
+
+        await migration.writeMigrationReport({{
+          providerId: "hermes",
+          source: path.join(root, "hermes"),
+          target: path.join(root, "openzues"),
+          summary: {{
+            total: 1,
+            planned: 0,
+            migrated: 1,
+            skipped: 0,
+            conflicts: 0,
+            errors: 0,
+            sensitive: 0
+          }},
+          items: [{{
+            id: "config:mcp-servers",
+            kind: "config",
+            action: "merge",
+            status: "migrated",
+            details: {{
+              value: {{
+                mcp: {{
+                  env: {{
+                    OPENAI_API_KEY: "short-dev-key",
+                    SAFE_FLAG: "visible"
+                  }},
+                  headers: {{
+                    Authorization: "Bearer short-dev-key",
+                    "x-api-key": "another-short-dev-key"
+                  }}
+                }}
+              }}
+            }}
+          }}],
+          reportDir
+        }}, {{ title: "Hermes Migration" }});
+
+        const fallbackConfig = {{
+          agents: {{ defaults: {{ model: {{ primary: "openai/base" }} }} }}
+        }};
+        let runtimeConfig = structuredClone(fallbackConfig);
+        let currentCalls = 0;
+        const wrapped = migration.withCachedMigrationConfigRuntime({{
+          config: {{
+            current() {{
+              currentCalls += 1;
+              return runtimeConfig;
+            }},
+            async mutateConfigFile(params) {{
+              const draft = structuredClone(runtimeConfig);
+              const result = await params.mutate(draft, {{
+                snapshot: {{}},
+                previousHash: null
+              }});
+              runtimeConfig = structuredClone(draft);
+              return {{
+                path: "/tmp/openclaw.json",
+                previousHash: null,
+                snapshot: {{}},
+                nextConfig: runtimeConfig,
+                afterWrite: {{ mode: "auto" }},
+                followUp: {{ mode: "auto", requiresRestart: false }},
+                result
+              }};
+            }},
+            async replaceConfigFile(params) {{
+              runtimeConfig = structuredClone(params.nextConfig);
+              return {{
+                path: "/tmp/openclaw.json",
+                previousHash: null,
+                snapshot: {{}},
+                nextConfig: runtimeConfig,
+                afterWrite: {{ mode: "auto" }},
+                followUp: {{ mode: "auto", requiresRestart: false }}
+              }};
+            }}
+          }}
+        }}, fallbackConfig);
+        const initialConfig = wrapped.config.current();
+        runtimeConfig = {{ agents: {{ defaults: {{ model: {{ primary: "openai/external" }} }} }} }};
+        await wrapped.config.mutateConfigFile({{
+          base: "runtime",
+          afterWrite: {{ mode: "auto" }},
+          mutate(draft) {{
+            draft.agents.defaults.model.primary = "openai/mutated";
+          }}
+        }});
+        const afterMutate = wrapped.config.current();
+        await wrapped.config.replaceConfigFile({{
+          nextConfig: {{ agents: {{ defaults: {{ model: {{ primary: "openai/replaced" }} }} }} }},
+          afterWrite: {{ mode: "auto" }}
+        }});
+        const afterReplace = wrapped.config.current();
+
+        const report = JSON.parse(await fs.readFile(path.join(reportDir, "report.json"), "utf8"));
+        const summary = await fs.readFile(path.join(reportDir, "summary.md"), "utf8");
+        const firstBackup = first.details.backupPath;
+        const secondBackup = second.details.backupPath;
+        return {{
+          keys: Object.keys(migration).sort(),
+          scopedSame: scopedMigration.copyMigrationFileItem === migration.copyMigrationFileItem,
+          copied: {{
+            firstStatus: first.status,
+            secondStatus: second.status,
+            backupParentsDifferent: path.dirname(firstBackup) !== path.dirname(secondBackup),
+            backupTexts: [
+              await fs.readFile(firstBackup, "utf8"),
+              await fs.readFile(secondBackup, "utf8")
+            ],
+            targetTexts: [
+              await fs.readFile(targetOne, "utf8"),
+              await fs.readFile(targetTwo, "utf8")
+            ]
+          }},
+          conflict: {{ status: conflict.status, reason: conflict.reason }},
+          missing: {{ status: missing.status, reason: missing.reason }},
+          archived: {{
+            status: archived.status,
+            text: await fs.readFile(archived.details.archivePath, "utf8"),
+            relativePath: archived.details.archiveRelativePath.split(path.sep).join("/")
+          }},
+          report: {{
+            redacted: report.items[0].details.value.mcp,
+            summaryIncludesTitle: summary.includes("# Hermes Migration"),
+            summaryIncludesMigrated: summary.includes("Migrated: 1")
+          }},
+          cache: {{
+            initial: initialConfig.agents.defaults.model.primary,
+            afterMutate: afterMutate.agents.defaults.model.primary,
+            afterReplace: afterReplace.agents.defaults.model.primary,
+            currentCalls
+          }}
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "migration-runtime-plugin",
+                    "name": "Migration Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-migration-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.migration_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.migration_runtime"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "archiveMigrationItem",
+            "copyMigrationFileItem",
+            "withCachedMigrationConfigRuntime",
+            "writeMigrationReport",
+        ],
+        "scopedSame": True,
+        "copied": {
+            "firstStatus": "migrated",
+            "secondStatus": "migrated",
+            "backupParentsDifferent": True,
+            "backupTexts": ["old one", "old two"],
+            "targetTexts": ["new one", "new two"],
+        },
+        "conflict": {"status": "conflict", "reason": "target exists"},
+        "missing": {"status": "error", "reason": "missing source or target"},
+        "archived": {
+            "status": "migrated",
+            "text": "archive me",
+            "relativePath": "safe/NOTES.md",
+        },
+        "report": {
+            "redacted": {
+                "env": {
+                    "OPENAI_API_KEY": "[redacted]",
+                    "SAFE_FLAG": "visible",
+                },
+                "headers": {
+                    "Authorization": "[redacted]",
+                    "x-api-key": "[redacted]",
+                },
+            },
+            "summaryIncludesTitle": True,
+            "summaryIncludesMigrated": True,
+        },
+        "cache": {
+            "initial": "openai/base",
+            "afterMutate": "openai/mutated",
+            "afterReplace": "openai/replaced",
+            "currentCalls": 1,
+        },
     }
 
 
@@ -50376,6 +51479,160 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_plugin_entry_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-entry.cjs"
+    runtime_entry.write_text(
+        """
+const pluginEntry = require("openclaw/plugin-sdk/plugin-entry");
+const scopedPluginEntry = require("@openclaw/plugin-sdk/plugin-entry");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.plugin_entry",
+      description: "Use OpenClaw plugin-entry SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        let schemaCalls = 0;
+        const schema = { type: "object", properties: { enabled: { type: "boolean" } } };
+        const entry = pluginEntry.definePluginEntry({
+          id: "demo-plugin",
+          name: "Demo Plugin",
+          description: "Demo description",
+          kind: "provider",
+          configSchema: () => {
+            schemaCalls += 1;
+            return schema;
+          },
+          reload: { strategy: "restart" },
+          nodeHostCommands: [{ name: "demo", command: "demo.exe" }],
+          securityAuditCollectors: [{ id: "audit", collect: () => [] }],
+          register: () => "registered"
+        });
+        const firstSchema = entry.configSchema;
+        const secondSchema = entry.configSchema;
+        const defaultEntry = pluginEntry.definePluginEntry({
+          id: "default-plugin",
+          name: "Default Plugin",
+          description: "Default description",
+          register: () => undefined
+        });
+        return {
+          keys: Object.keys(pluginEntry).sort(),
+          scopedSame:
+            scopedPluginEntry.definePluginEntry === pluginEntry.definePluginEntry,
+          entry: {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            kind: entry.kind,
+            reload: entry.reload,
+            nodeHostCommandName: entry.nodeHostCommands[0].name,
+            auditId: entry.securityAuditCollectors[0].id,
+            registerType: typeof entry.register,
+            schemaCalls,
+            sameSchema: firstSchema === secondSchema,
+            schema: firstSchema
+          },
+          defaultEntry: {
+            id: defaultEntry.id,
+            registerType: typeof defaultEntry.register,
+            configSchemaType: typeof defaultEntry.configSchema
+          },
+          configHelpers: {
+            emptyType: typeof pluginEntry.emptyPluginConfigSchema,
+            buildType: typeof pluginEntry.buildPluginConfigSchema
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-plugin-entry-plugin",
+                    "name": "Runtime Plugin Entry Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-plugin-entry.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.plugin_entry"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.plugin_entry"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildPluginConfigSchema",
+            "definePluginEntry",
+            "emptyPluginConfigSchema",
+        ],
+        "scopedSame": True,
+        "entry": {
+            "id": "demo-plugin",
+            "name": "Demo Plugin",
+            "description": "Demo description",
+            "kind": "provider",
+            "reload": {"strategy": "restart"},
+            "nodeHostCommandName": "demo",
+            "auditId": "audit",
+            "registerType": "function",
+            "schemaCalls": 1,
+            "sameSchema": True,
+            "schema": {
+                "type": "object",
+                "properties": {"enabled": {"type": "boolean"}},
+            },
+        },
+        "defaultEntry": {
+            "id": "default-plugin",
+            "registerType": "function",
+            "configSchemaType": "object",
+        },
+        "configHelpers": {"emptyType": "function", "buildType": "function"},
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diffs_helpers(
     tmp_path,
 ) -> None:
@@ -57698,6 +58955,129 @@ module.exports = {{
                 "localMediaAccessError": False,
             },
         },
+    }
+
+
+@pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_outbound_media_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    media_root = tmp_path / "outbound-media-root"
+    media_root.mkdir()
+    sample_file = media_root / "sample.csv"
+    sample_file.write_text("name,value\nalpha,1\n", encoding="utf-8", newline="\n")
+    runtime_entry = tmp_path / "runtime-plugin-outbound-media.cjs"
+    runtime_entry.write_text(
+        f"""
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const outbound = require("openclaw/plugin-sdk/outbound-media");
+const scopedOutbound = require("@openclaw/plugin-sdk/outbound-media");
+
+const mediaRoot = {json.dumps(str(media_root))};
+const filePath = path.join(mediaRoot, "sample.csv");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.outbound_media",
+      description: "Use OpenClaw outbound-media SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const loaded = await outbound.loadOutboundMediaFromUrl(filePath, {{
+          maxBytes: 1024,
+          mediaAccess: {{
+            localRoots: [mediaRoot],
+            readFile: async (sourcePath) => await fs.readFile(sourcePath)
+          }}
+        }});
+        let missingRootsError = "";
+        try {{
+          await scopedOutbound.loadOutboundMediaFromUrl(filePath, {{
+            mediaReadFile: async (sourcePath) => await fs.readFile(sourcePath)
+          }});
+        }} catch (error) {{
+          missingRootsError = error.message;
+        }}
+        return {{
+          keys: Object.keys(outbound).sort(),
+          scopedSame:
+            scopedOutbound.loadOutboundMediaFromUrl === outbound.loadOutboundMediaFromUrl,
+          loaded: {{
+            text: loaded.buffer.toString("utf8"),
+            contentType: loaded.contentType,
+            kind: loaded.kind,
+            fileName: loaded.fileName
+          }},
+          missingRootsError
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-outbound-media-plugin",
+                    "name": "Runtime Outbound Media Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-imported-outbound-media-plugin.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.outbound_media"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.outbound_media"})
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": ["loadOutboundMediaFromUrl"],
+        "scopedSame": True,
+        "loaded": {
+            "text": "name,value\nalpha,1\n",
+            "contentType": "text/csv",
+            "kind": "document",
+            "fileName": "sample.csv",
+        },
+        "missingRootsError": (
+            "Host media read requires explicit localRoots. "
+            'Pass mediaAccess.localRoots or opt in with localRoots: "any".'
+        ),
     }
 
 
