@@ -39615,6 +39615,7 @@ const pluginSdkEntrypoints = [
   "browser-node-host",
   "browser-node-runtime",
   "browser-profiles",
+  "browser-setup-tools",
   "browser-trash",
   "boolean-param",
   "channel-contract-testing",
@@ -39799,6 +39800,7 @@ const publicPluginOwnedSdkEntrypoints = [
   "browser-node-host",
   "browser-node-runtime",
   "browser-profiles",
+  "browser-setup-tools",
   "browser-trash",
   "image-generation-core",
   "memory-core-host-engine-embeddings",
@@ -55240,6 +55242,230 @@ const browserNodeRuntime = {
   withTimeout: withAbortableTimeout,
 };
 
+const IMAGE_REDUCE_QUALITY_STEPS = [85, 75, 65, 55, 45, 35];
+
+async function callGatewayTool() {
+  throw new Error("UNAVAILABLE: gateway tool calls unavailable in OpenZues plugin runtime");
+}
+
+async function listNodes() {
+  return [];
+}
+
+function hasNodeCapability(node, capability) {
+  return !capability || !Array.isArray(node.caps) || node.caps.includes(capability);
+}
+
+function isLocalMacNode(node) {
+  return (
+    normalizeLowercaseStringOrEmpty(node && node.platform).startsWith("mac") &&
+    typeof (node && node.nodeId) === "string" &&
+    node.nodeId.startsWith("mac-")
+  );
+}
+
+function compareDefaultNodeOrder(a, b) {
+  const aConnectedAt = Number.isFinite(a && a.connectedAtMs) ? a.connectedAtMs : -1;
+  const bConnectedAt = Number.isFinite(b && b.connectedAtMs) ? b.connectedAtMs : -1;
+  if (aConnectedAt !== bConnectedAt) {
+    return bConnectedAt - aConnectedAt;
+  }
+  return String((a && a.nodeId) || "").localeCompare(String((b && b.nodeId) || ""));
+}
+
+function selectDefaultNodeFromList(nodes = [], options = {}) {
+  const capability = normalizeOptionalString(options.capability);
+  const withCapability = (Array.isArray(nodes) ? nodes : []).filter((node) =>
+    hasNodeCapability(node, capability),
+  );
+  if (withCapability.length === 0) {
+    return null;
+  }
+  const connected = withCapability.filter((node) => node && node.connected);
+  const candidates = connected.length > 0 ? connected : withCapability;
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+  if (options.preferLocalMac !== false) {
+    const local = candidates.filter(isLocalMacNode);
+    if (local.length === 1) {
+      return local[0];
+    }
+  }
+  if ((options.fallback || "none") === "none") {
+    return null;
+  }
+  return [...candidates].sort(compareDefaultNodeOrder)[0] || null;
+}
+
+function resolveNodeIdFromList(nodes = [], query, allowDefault = false) {
+  const normalized = normalizeLowercaseStringOrEmpty(query);
+  if (normalized) {
+    const match = (Array.isArray(nodes) ? nodes : []).find((node) => {
+      const nodeId = normalizeLowercaseStringOrEmpty(node && node.nodeId);
+      const displayName = normalizeLowercaseStringOrEmpty(node && node.displayName);
+      return nodeId === normalized || displayName === normalized ||
+        nodeId.includes(normalized) || displayName.includes(normalized);
+    });
+    if (match && match.nodeId) {
+      return match.nodeId;
+    }
+    throw new Error(`node not found: ${query}`);
+  }
+  if (allowDefault) {
+    const fallback = selectDefaultNodeFromList(nodes, { fallback: "first" });
+    if (fallback && fallback.nodeId) {
+      return fallback.nodeId;
+    }
+  }
+  throw new Error("node required");
+}
+
+function buildImageResizeSideGrid(maxSide, sideStart) {
+  return [sideStart, 1800, 1600, 1400, 1200, 1000, 800]
+    .map((value) => Math.min(maxSide, value))
+    .filter((value, index, values) => value > 0 && values.indexOf(value) === index)
+    .sort((a, b) => b - a);
+}
+
+async function getImageMetadata() {
+  return null;
+}
+
+async function resizeToJpeg(params = {}) {
+  if (Buffer.isBuffer(params.buffer)) {
+    return params.buffer;
+  }
+  throw new Error("UNAVAILABLE: image resize unavailable in OpenZues plugin runtime");
+}
+
+async function ensureMediaDir() {
+  const mediaDir = resolveMediaDir();
+  await fs.promises.mkdir(mediaDir, { recursive: true, mode: 0o700 });
+  return mediaDir;
+}
+
+async function imageResultFromFile(filePath, opts = {}) {
+  const buffer = await fs.promises.readFile(filePath);
+  const mimeType =
+    normalizeOptionalString(opts.mimeType) ||
+    (await detectMime({ buffer, filePath })) ||
+    "application/octet-stream";
+  return {
+    content: [{ type: "image", mimeType, data: buffer.toString("base64") }],
+    details: { path: filePath, mimeType },
+  };
+}
+
+function captureEnv(keys = []) {
+  const snapshot = new Map();
+  for (const key of keys) {
+    snapshot.set(key, process.env[key]);
+  }
+  return {
+    restore() {
+      for (const [key, value] of snapshot) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    },
+  };
+}
+
+function applyEnvValues(env = {}) {
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
+function withEnv(env, fn) {
+  const snapshot = captureEnv(Object.keys(env || {}));
+  try {
+    applyEnvValues(env || {});
+    return fn();
+  } finally {
+    snapshot.restore();
+  }
+}
+
+async function withEnvAsync(env, fn) {
+  const snapshot = captureEnv(Object.keys(env || {}));
+  try {
+    applyEnvValues(env || {});
+    return await fn();
+  } finally {
+    snapshot.restore();
+  }
+}
+
+function withFetchPreconnect(fn) {
+  return Object.assign(fn, {
+    preconnect: () => {},
+    __openclawAcceptsDispatcher: true,
+  });
+}
+
+async function createTempHomeEnv(prefix = "openzues-browser-setup-") {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const snapshot = captureEnv([
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENCLAW_STATE_DIR",
+  ]);
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.OPENCLAW_STATE_DIR = path.join(home, ".openclaw");
+  await fs.promises.mkdir(process.env.OPENCLAW_STATE_DIR, { recursive: true, mode: 0o700 });
+  return {
+    home,
+    restore: async () => {
+      snapshot.restore();
+      await fs.promises.rm(home, { recursive: true, force: true });
+    },
+  };
+}
+
+const browserSetupToolsRuntime = {
+  IMAGE_REDUCE_QUALITY_STEPS,
+  buildImageResizeSideGrid,
+  callGatewayTool,
+  captureEnv,
+  createTempHomeEnv,
+  danger: identityTheme,
+  detectMime,
+  ensureMediaDir,
+  formatCliCommand: formatOpenClawCliCommand,
+  formatDocsLink,
+  formatHelpExamples,
+  getImageMetadata,
+  imageResultFromFile,
+  info: identityTheme,
+  inheritOptionFromParent,
+  jsonResult,
+  listNodes,
+  note,
+  optionalStringEnum,
+  readStringParam,
+  resizeToJpeg,
+  resolveNodeIdFromList,
+  saveMediaBuffer,
+  selectDefaultNodeFromList,
+  stringEnum,
+  theme: cliTheme,
+  withEnv,
+  withEnvAsync,
+  withFetchPreconnect,
+};
+
 function decodeBrowserProxyParams(paramsJSON) {
   if (!paramsJSON) {
     throw new Error("INVALID_REQUEST: paramsJSON required");
@@ -64362,6 +64588,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-node-runtime"
   ) {
     return browserNodeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/browser-setup-tools" ||
+    request === "@openclaw/plugin-sdk/browser-setup-tools"
+  ) {
+    return browserSetupToolsRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/secret-ref-runtime" ||

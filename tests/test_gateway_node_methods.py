@@ -42396,6 +42396,214 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_browser_setup_tools_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-browser-setup-tools.cjs"
+    runtime_entry.write_text(
+        """
+const setup = require("openclaw/plugin-sdk/browser-setup-tools");
+const scopedSetup = require("@openclaw/plugin-sdk/browser-setup-tools");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.browser_setup_tools",
+      description: "Use OpenClaw browser setup-tools helpers",
+      parameters: { type: "object" },
+      async execute() {
+        const nodes = [
+          {
+            nodeId: "mac-local",
+            displayName: "Local Mac",
+            platform: "macos",
+            connected: true,
+            caps: ["canvas"],
+            connectedAtMs: 1
+          },
+          {
+            nodeId: "win-remote",
+            displayName: "Remote Win",
+            platform: "windows",
+            connected: true,
+            caps: ["browser"],
+            connectedAtMs: 2
+          }
+        ];
+        const taggedFetch = setup.withFetchPreconnect(async () => new Response("ok"));
+        let preconnectReturn = taggedFetch.preconnect("https://example.com");
+        const beforeEnv = process.env.OPENZUES_BROWSER_SETUP_TEST || null;
+        const insideEnv = setup.withEnv(
+          { OPENZUES_BROWSER_SETUP_TEST: "inside" },
+          () => process.env.OPENZUES_BROWSER_SETUP_TEST || null
+        );
+        const afterEnv = process.env.OPENZUES_BROWSER_SETUP_TEST || null;
+        await setup.ensureMediaDir();
+        return {
+          keys: Object.keys(setup).sort(),
+          scopedSame: scopedSetup.formatDocsLink === setup.formatDocsLink,
+          jsonResult: setup.jsonResult({ ok: true }),
+          readString: setup.readStringParam({ title: " Browser " }, "title"),
+          enumSchema: setup.stringEnum(["a", "b"], { default: "a" }),
+          optionalEnum: setup.optionalStringEnum(["x", "y"]).type,
+          docs: setup.formatDocsLink("/browser", "Browser"),
+          command: setup.formatCliCommand("openclaw browser --help"),
+          help: setup.formatHelpExamples([
+            ["openclaw browser", "Open browser"]
+          ]),
+          noteType: typeof setup.note,
+          themeInfo: setup.theme.info("hi"),
+          info: setup.info("ok"),
+          danger: setup.danger("bad"),
+          qualitySteps: setup.IMAGE_REDUCE_QUALITY_STEPS,
+          sideGrid: setup.buildImageResizeSideGrid(1500, 2000),
+          mime: await setup.detectMime({ headerMime: " Text/Plain; charset=utf-8" }),
+          defaultNode: setup.selectDefaultNodeFromList(nodes, {
+            capability: "canvas",
+            fallback: "first"
+          }).nodeId,
+          resolvedNode: setup.resolveNodeIdFromList(nodes, "remote"),
+          listNodes: await setup.listNodes({}),
+          callGatewayToolError: await (async () => {
+            try {
+              await setup.callGatewayTool("node.list", {}, {});
+              return null;
+            } catch (error) {
+              return String(error && error.message ? error.message : error);
+            }
+          })(),
+          beforeEnv,
+          insideEnv,
+          afterEnv,
+          fetchPreconnect: {
+            acceptsDispatcher: taggedFetch.__openclawAcceptsDispatcher,
+            preconnectReturn
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-browser-setup-tools-plugin",
+                    "name": "Runtime Browser Setup Tools Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-browser-setup-tools.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.browser_setup_tools"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.browser_setup_tools", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    result = payload["result"]
+    assert set(result.pop("keys")) >= {
+        "IMAGE_REDUCE_QUALITY_STEPS",
+        "buildImageResizeSideGrid",
+        "callGatewayTool",
+        "captureEnv",
+        "createTempHomeEnv",
+        "danger",
+        "detectMime",
+        "ensureMediaDir",
+        "formatCliCommand",
+        "formatDocsLink",
+        "formatHelpExamples",
+        "imageResultFromFile",
+        "info",
+        "inheritOptionFromParent",
+        "jsonResult",
+        "listNodes",
+        "note",
+        "optionalStringEnum",
+        "readStringParam",
+        "resizeToJpeg",
+        "resolveNodeIdFromList",
+        "saveMediaBuffer",
+        "selectDefaultNodeFromList",
+        "stringEnum",
+        "theme",
+        "withEnv",
+        "withEnvAsync",
+        "withFetchPreconnect",
+    }
+    assert result == {
+        "scopedSame": True,
+        "jsonResult": {
+            "content": [{"type": "text", "text": '{\n  "ok": true\n}'}],
+            "details": {"ok": True},
+        },
+        "readString": "Browser",
+        "enumSchema": {"type": "string", "enum": ["a", "b"], "default": "a"},
+        "optionalEnum": "string",
+        "docs": "Browser (https://docs.openclaw.ai/browser)",
+        "command": "openclaw browser --help",
+        "help": "  openclaw browser\n    Open browser",
+        "noteType": "function",
+        "themeInfo": "hi",
+        "info": "ok",
+        "danger": "bad",
+        "qualitySteps": [85, 75, 65, 55, 45, 35],
+        "sideGrid": [1500, 1400, 1200, 1000, 800],
+        "mime": "text/plain",
+        "defaultNode": "mac-local",
+        "resolvedNode": "win-remote",
+        "listNodes": [],
+        "callGatewayToolError": (
+            "UNAVAILABLE: gateway tool calls unavailable in OpenZues plugin runtime"
+        ),
+        "beforeEnv": None,
+        "insideEnv": "inside",
+        "afterEnv": None,
+        "fetchPreconnect": {
+            "acceptsDispatcher": True,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
@@ -44599,11 +44807,11 @@ module.exports = {
         ],
         "scopedType": "function",
         "counts": {
-            "entrypoints": 302,
-            "subpaths": 301,
-            "specifiers": 302,
-            "exports": 302,
-            "artifacts": 604,
+            "entrypoints": 303,
+            "subpaths": 302,
+            "specifiers": 303,
+            "exports": 303,
+            "artifacts": 606,
         },
         "first": ["index", "core", "lmstudio", "lmstudio-runtime", "provider-setup"],
         "last": [
