@@ -59548,6 +59548,301 @@ const agentRuntime = {
   wrapOwnerOnlyToolExecution,
 };
 
+const TOOL_PROGRESS_OUTPUT_MAX_CHARS = 8000;
+const AGENT_HARNESS_DETAIL_LABEL_OVERRIDES = {
+  agentId: "agent",
+  channelId: "channel",
+  guildId: "guild",
+  includeTools: "tools",
+  maxChars: "max chars",
+  messageId: "message",
+  nodeId: "node",
+  pollQuestion: "poll",
+  requestId: "request",
+  runTimeoutSeconds: "timeout",
+  sessionKey: "session",
+  targetId: "target",
+  targetUrl: "url",
+  threadId: "thread",
+  timeoutSeconds: "timeout",
+  userId: "user",
+};
+
+function agentHarnessFormatDetailKey(raw) {
+  const parts = String(raw || "").split(".").filter(Boolean);
+  const last = parts.length > 0 ? parts[parts.length - 1] : String(raw || "");
+  const override = AGENT_HARNESS_DETAIL_LABEL_OVERRIDES[last];
+  if (override) {
+    return override;
+  }
+  return normalizeLowercaseStringOrEmpty(
+    last
+      .replace(/_/g, " ")
+      .replace(/-/g, " ")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2"),
+  );
+}
+
+function agentHarnessAsRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function agentHarnessLookupValueByPath(value, rawPath) {
+  const segments = String(rawPath || "").split(".").filter(Boolean);
+  let current = value;
+  for (const segment of segments) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+    if (Array.isArray(current)) {
+      const index = Number.parseInt(segment, 10);
+      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+        return undefined;
+      }
+      current = current[index];
+      continue;
+    }
+    if (typeof current !== "object" || !(segment in current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+}
+
+function agentHarnessCoerceDisplayValue(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const entries = value
+      .map((entry) => agentHarnessCoerceDisplayValue(entry))
+      .filter(Boolean);
+    return entries.length > 0 ? entries.join(", ") : undefined;
+  }
+  return undefined;
+}
+
+function agentHarnessResolvePathArg(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  for (const key of ["path", "file_path", "filePath"]) {
+    const value = agentHarnessCoerceDisplayValue(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function agentHarnessResolveReadDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const pathValue = agentHarnessResolvePathArg(record);
+  if (!pathValue) {
+    return undefined;
+  }
+  const offsetRaw =
+    typeof record.offset === "number" && Number.isFinite(record.offset)
+      ? Math.floor(record.offset)
+      : undefined;
+  const limitRaw =
+    typeof record.limit === "number" && Number.isFinite(record.limit)
+      ? Math.floor(record.limit)
+      : undefined;
+  const offset = offsetRaw !== undefined ? Math.max(1, offsetRaw) : undefined;
+  const limit = limitRaw !== undefined ? Math.max(1, limitRaw) : undefined;
+  if (offset !== undefined && limit !== undefined) {
+    return `${limit === 1 ? "line" : "lines"} ${offset}-${offset + limit - 1} from ${pathValue}`;
+  }
+  if (offset !== undefined) {
+    return `from line ${offset} in ${pathValue}`;
+  }
+  if (limit !== undefined) {
+    return `first ${limit} ${limit === 1 ? "line" : "lines"} of ${pathValue}`;
+  }
+  return `from ${pathValue}`;
+}
+
+function agentHarnessResolveWriteDetail(toolKey, args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const pathValue = agentHarnessResolvePathArg(record) || normalizeOptionalString(record.url);
+  if (!pathValue) {
+    return undefined;
+  }
+  if (toolKey === "attach") {
+    return `from ${pathValue}`;
+  }
+  const content =
+    typeof record.content === "string"
+      ? record.content
+      : typeof record.newText === "string"
+        ? record.newText
+        : typeof record.new_string === "string"
+          ? record.new_string
+          : undefined;
+  const prefix = toolKey === "edit" ? "in" : "to";
+  return content && content.length > 0
+    ? `${prefix} ${pathValue} (${content.length} chars)`
+    : `${prefix} ${pathValue}`;
+}
+
+function agentHarnessResolveWebSearchDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const query = normalizeOptionalString(record.query);
+  if (!query) {
+    return undefined;
+  }
+  const count =
+    typeof record.count === "number" && Number.isFinite(record.count) && record.count > 0
+      ? Math.floor(record.count)
+      : undefined;
+  return count !== undefined ? `for "${query}" (top ${count})` : `for "${query}"`;
+}
+
+function agentHarnessResolveWebFetchDetail(args) {
+  const record = agentHarnessAsRecord(args);
+  if (!record) {
+    return undefined;
+  }
+  const url = normalizeOptionalString(record.url);
+  if (!url) {
+    return undefined;
+  }
+  const suffix = [
+    normalizeOptionalString(record.extractMode)
+      ? `mode ${normalizeOptionalString(record.extractMode)}`
+      : undefined,
+    typeof record.maxChars === "number" && Number.isFinite(record.maxChars) && record.maxChars > 0
+      ? `max ${Math.floor(record.maxChars)} chars`
+      : undefined,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return suffix ? `from ${url} (${suffix})` : `from ${url}`;
+}
+
+function agentHarnessResolveDetailFromKeys(args, keys) {
+  const entries = [];
+  for (const key of keys) {
+    const display = agentHarnessCoerceDisplayValue(agentHarnessLookupValueByPath(args, key));
+    if (display) {
+      entries.push({ label: agentHarnessFormatDetailKey(key), value: display });
+    }
+  }
+  if (entries.length === 0) {
+    return undefined;
+  }
+  if (entries.length === 1) {
+    return entries[0].value;
+  }
+  const seen = new Set();
+  return entries
+    .filter((entry) => {
+      const token = `${entry.label}:${entry.value}`;
+      if (seen.has(token)) {
+        return false;
+      }
+      seen.add(token);
+      return true;
+    })
+    .slice(0, 8)
+    .map((entry) => `${entry.label} ${entry.value}`)
+    .join(", ");
+}
+
+function inferToolMetaFromArgs(toolName, args) {
+  const toolKey = normalizeLowercaseStringOrEmpty(toolName);
+  if (toolKey === "read") {
+    return agentHarnessResolveReadDetail(args);
+  }
+  if (toolKey === "write" || toolKey === "edit" || toolKey === "attach") {
+    return agentHarnessResolveWriteDetail(toolKey, args);
+  }
+  if (toolKey === "web_search") {
+    return agentHarnessResolveWebSearchDetail(args);
+  }
+  if (toolKey === "web_fetch") {
+    return agentHarnessResolveWebFetchDetail(args);
+  }
+  return agentHarnessResolveDetailFromKeys(args, [
+    "path",
+    "paths",
+    "url",
+    "urls",
+    "prompt",
+    "query",
+    "message",
+    "task",
+    "command",
+    "sessionKey",
+    "agentId",
+    "targetId",
+    "targetUrl",
+  ]);
+}
+
+function formatToolProgressOutput(output, options = {}) {
+  const normalized = String(output || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  const maxRaw = options && typeof options.maxChars === "number" ? options.maxChars : undefined;
+  const maxChars =
+    maxRaw !== undefined && Number.isFinite(maxRaw) && maxRaw >= 0
+      ? Math.floor(maxRaw)
+      : TOOL_PROGRESS_OUTPUT_MAX_CHARS;
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${truncateUtf16Safe(normalized, maxChars)}\n...(truncated)...`;
+}
+
+function classifyAgentHarnessTerminalOutcome(params = {}) {
+  if (
+    !params.turnCompleted ||
+    (params.promptError !== undefined && params.promptError !== null) ||
+    (Array.isArray(params.assistantTexts) &&
+      params.assistantTexts.some((text) => String(text || "").trim().length > 0))
+  ) {
+    return undefined;
+  }
+  if (normalizeOptionalString(params.planText)) {
+    return "planning-only";
+  }
+  if (normalizeOptionalString(params.reasoningText)) {
+    return "reasoning-only";
+  }
+  return "empty";
+}
+
+function createOpenClawCodingTools() {
+  throw new Error("OpenClaw coding tools are unavailable in the native OpenZues plugin bridge.");
+}
+
+const agentHarnessRuntime = {
+  ...agentRuntime,
+  TOOL_PROGRESS_OUTPUT_MAX_CHARS,
+  classifyAgentHarnessTerminalOutcome,
+  createOpenClawCodingTools,
+  formatToolProgressOutput,
+  inferToolMetaFromArgs,
+};
+
 function resolveMemorySearchConfig(cfg = {}, agentId) {
   return memoryRuntimeResolveMemorySearchConfig(cfg, agentId);
 }
@@ -64222,6 +64517,14 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/agent-runtime"
   ) {
     return agentRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/agent-harness-runtime" ||
+    request === "@openclaw/plugin-sdk/agent-harness-runtime" ||
+    request === "openclaw/plugin-sdk/agent-harness" ||
+    request === "@openclaw/plugin-sdk/agent-harness"
+  ) {
+    return agentHarnessRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||

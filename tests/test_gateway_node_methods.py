@@ -38223,6 +38223,191 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_agent_harness_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-agent-harness-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const harness = require("openclaw/plugin-sdk/agent-harness-runtime");
+const facade = require("openclaw/plugin-sdk/agent-harness");
+const scopedHarness = require("@openclaw/plugin-sdk/agent-harness-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.agent_harness",
+      description: "Use OpenClaw agent-harness runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const classify = (params) =>
+          harness.classifyAgentHarnessTerminalOutcome(params) || null;
+        return {
+          keys: Object.keys(harness).filter((key) => [
+            "TOOL_PROGRESS_OUTPUT_MAX_CHARS",
+            "classifyAgentHarnessTerminalOutcome",
+            "createOpenClawCodingTools",
+            "formatToolProgressOutput",
+            "inferToolMetaFromArgs"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedHarness.classifyAgentHarnessTerminalOutcome,
+          facadeCodingToolsType: typeof facade.createOpenClawCodingTools,
+          maxChars: harness.TOOL_PROGRESS_OUTPUT_MAX_CHARS,
+          classifications: {
+            incomplete: classify({
+              assistantTexts: [],
+              reasoningText: "",
+              planText: "",
+              promptError: null,
+              turnCompleted: false
+            }),
+            promptError: classify({
+              assistantTexts: [],
+              reasoningText: "",
+              planText: "",
+              promptError: "failed",
+              turnCompleted: true
+            }),
+            noReply: classify({
+              assistantTexts: ["NO_REPLY"],
+              reasoningText: "",
+              planText: "",
+              promptError: null,
+              turnCompleted: true
+            }),
+            whitespace: classify({
+              assistantTexts: ["  ", "\\n\\t"],
+              reasoningText: "",
+              planText: "",
+              promptError: null,
+              turnCompleted: true
+            }),
+            planning: classify({
+              assistantTexts: [],
+              reasoningText: "thinking",
+              planText: "1. inspect\\n2. patch",
+              promptError: null,
+              turnCompleted: true
+            }),
+            reasoning: classify({
+              assistantTexts: [],
+              reasoningText: "thinking",
+              planText: "",
+              promptError: null,
+              turnCompleted: true
+            }),
+            empty: classify({
+              assistantTexts: [],
+              reasoningText: "  ",
+              planText: "\\n",
+              promptError: null,
+              turnCompleted: true
+            })
+          },
+          details: {
+            read: harness.inferToolMetaFromArgs("read", {
+              path: "src/app.ts",
+              offset: 2,
+              limit: 3
+            }),
+            webSearch: harness.inferToolMetaFromArgs("web_search", {
+              query: "openclaw parity",
+              count: 5
+            }),
+            blankProgress: harness.formatToolProgressOutput("  \\r\\n  ") || null,
+            normalizedProgress: harness.formatToolProgressOutput("  alpha\\r\\nbeta  "),
+            truncatedProgress: harness.formatToolProgressOutput("abcd", { maxChars: 2 })
+          }
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-agent-harness-plugin",
+                    "name": "Runtime Agent Harness Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-agent-harness-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.agent_harness"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.agent_harness", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "TOOL_PROGRESS_OUTPUT_MAX_CHARS",
+            "classifyAgentHarnessTerminalOutcome",
+            "createOpenClawCodingTools",
+            "formatToolProgressOutput",
+            "inferToolMetaFromArgs",
+        ],
+        "scopedType": "function",
+        "facadeCodingToolsType": "function",
+        "maxChars": 8000,
+        "classifications": {
+            "incomplete": None,
+            "promptError": None,
+            "noReply": None,
+            "whitespace": "empty",
+            "planning": "planning-only",
+            "reasoning": "reasoning-only",
+            "empty": "empty",
+        },
+        "details": {
+            "read": "lines 2-4 from src/app.ts",
+            "webSearch": 'for "openclaw parity" (top 5)',
+            "blankProgress": None,
+            "normalizedProgress": "alpha\nbeta",
+            "truncatedProgress": "ab\n...(truncated)...",
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_agent_runtime_model_catalog_helpers(
     tmp_path,
 ) -> None:
