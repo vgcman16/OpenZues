@@ -35326,6 +35326,183 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_config_mutation_helpers(tmp_path) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text('{"saved":1}\n', encoding="utf-8")
+    runtime_entry = tmp_path / "runtime-plugin-config-mutation.cjs"
+    runtime_entry.write_text(
+        f"""
+const mutation = require("openclaw/plugin-sdk/config-mutation");
+const scopedMutation = require("@openclaw/plugin-sdk/config-mutation");
+
+module.exports = {{
+  register(api) {{
+    api.registerTool({{
+      name: "runtime.configMutation",
+      description: "Use OpenClaw config-mutation SDK shim",
+      parameters: {{ type: "object" }},
+      async execute() {{
+        const snapshot = await mutation.readConfigFileSnapshotForWrite({{
+          configPath: {json.dumps(str(config_path))}
+        }});
+        const writes = [];
+        const fakeIO = {{
+          async readConfigFileSnapshotForWrite() {{
+            return {{
+              snapshot: {{
+                path: "fake-openclaw.json",
+                raw: "{{\\"saved\\":1}}",
+                hash: "base-hash",
+                config: {{ saved: 1 }},
+                parsed: {{ saved: 1 }},
+                sourceConfig: {{ saved: 1 }},
+                runtimeConfig: {{ saved: 1 }},
+                valid: true,
+                issues: []
+              }},
+              writeOptions: {{ afterWrite: "none" }}
+            }};
+          }},
+          async writeConfigFile(nextConfig, options) {{
+            writes.push({{ nextConfig, afterWrite: options && options.afterWrite }});
+          }}
+        }};
+        const replaced = await mutation.replaceConfigFile({{
+          nextConfig: {{ saved: 2 }},
+          baseHash: "base-hash",
+          afterWrite: "restart",
+          io: fakeIO
+        }});
+        const mutated = await mutation.mutateConfigFile({{
+          baseHash: "base-hash",
+          afterWrite: "reload",
+          io: fakeIO,
+          mutate(draft) {{
+            draft.extra = 3;
+            return "mutated";
+          }}
+        }});
+        const logs = [];
+        mutation.logConfigUpdated({{ log: (message) => logs.push(message) }}, {{
+          path: "fake-openclaw.json",
+          suffix: "after mutation"
+        }});
+        return {{
+          keys: Object.keys(mutation).filter((key) => [
+            "logConfigUpdated",
+            "mutateConfigFile",
+            "readConfigFileSnapshotForWrite",
+            "replaceConfigFile",
+            "updateConfig"
+          ].includes(key)).sort(),
+          scopedType: typeof scopedMutation.mutateConfigFile,
+          snapshot: {{
+            path: snapshot.snapshot.path,
+            sourceConfig: snapshot.snapshot.sourceConfig,
+            valid: snapshot.snapshot.valid
+          }},
+          replaced: {{
+            path: replaced.path,
+            previousHash: replaced.previousHash,
+            afterWrite: replaced.afterWrite,
+            followUp: replaced.followUp
+          }},
+          mutated: {{
+            result: mutated.result,
+            nextConfig: mutated.nextConfig,
+            afterWrite: mutated.afterWrite,
+            followUp: mutated.followUp
+          }},
+          writes,
+          log: logs[0]
+        }};
+      }}
+    }});
+  }}
+}};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-config-mutation-plugin",
+                    "name": "Runtime Config Mutation Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-config-mutation.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.configMutation"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call("tools.invoke", {"tool": "runtime.configMutation"})
+
+    assert payload["ok"] is True
+    assert payload["result"]["keys"] == [
+        "logConfigUpdated",
+        "mutateConfigFile",
+        "readConfigFileSnapshotForWrite",
+        "replaceConfigFile",
+        "updateConfig",
+    ]
+    assert payload["result"]["scopedType"] == "function"
+    assert payload["result"]["snapshot"] == {
+        "path": str(config_path),
+        "sourceConfig": {"saved": 1},
+        "valid": True,
+    }
+    assert payload["result"]["replaced"] == {
+        "path": "fake-openclaw.json",
+        "previousHash": "base-hash",
+        "afterWrite": "restart",
+        "followUp": "restart",
+    }
+    assert payload["result"]["mutated"] == {
+        "result": "mutated",
+        "nextConfig": {"saved": 1, "extra": 3},
+        "afterWrite": "reload",
+        "followUp": "reload",
+    }
+    assert payload["result"]["writes"] == [
+        {"nextConfig": {"saved": 2}, "afterWrite": "restart"},
+        {"nextConfig": {"saved": 1, "extra": 3}, "afterWrite": "reload"},
+    ]
+    assert payload["result"]["log"] == "Updated fake-openclaw.json after mutation"
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_string_coerce_runtime_helpers(
     tmp_path,
 ) -> None:
