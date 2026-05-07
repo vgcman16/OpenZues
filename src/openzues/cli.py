@@ -62156,6 +62156,307 @@ async function withAbortableTimeout(work, timeoutMs, label) {
   }
 }
 
+function createConnectedChannelStatusPatch(at = Date.now()) {
+  return {
+    connected: true,
+    lastConnectedAt: at,
+    lastEventAt: at,
+  };
+}
+
+function createTransportActivityStatusPatch(at = Date.now()) {
+  return {
+    lastTransportActivityAt: at,
+  };
+}
+
+const GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15000;
+const GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS = 250;
+const GATEWAY_CLOSE_CODE_HINTS = {
+  1000: "normal closure",
+  1006: "abnormal closure (no close frame)",
+  1008: "policy violation",
+  1012: "service restart",
+  1013: "try again later",
+};
+
+function describeGatewayCloseCode(code) {
+  return GATEWAY_CLOSE_CODE_HINTS[code];
+}
+
+function normalizePositiveGatewayTimeoutMs(timeoutMs) {
+  return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs
+    : undefined;
+}
+
+function getGatewayPreauthHandshakeTimeoutMsFromEnv(env = process.env) {
+  const configuredTimeout =
+    env.OPENCLAW_HANDSHAKE_TIMEOUT_MS ||
+    (env.VITEST ? env.OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS : undefined);
+  if (configuredTimeout) {
+    const parsed = Number(configuredTimeout);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS;
+}
+
+function resolveGatewayPreauthHandshakeTimeoutMs(params = {}) {
+  const env = params.env || process.env;
+  const configuredTimeout =
+    env.OPENCLAW_HANDSHAKE_TIMEOUT_MS ||
+    (env.VITEST ? env.OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS : undefined);
+  if (configuredTimeout) {
+    const parsed = Number(configuredTimeout);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  const configured = normalizePositiveGatewayTimeoutMs(params.configuredTimeoutMs);
+  if (configured !== undefined) {
+    return configured;
+  }
+  return getGatewayPreauthHandshakeTimeoutMsFromEnv(env);
+}
+
+function getGatewayConnectChallengeTimeoutMsFromEnv(env = process.env) {
+  const raw = env.OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function clampGatewayConnectChallengeTimeoutMs(timeoutMs, maxTimeoutMs) {
+  const resolvedMax = Math.max(
+    GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS,
+    maxTimeoutMs || GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS,
+  );
+  return Math.max(
+    GATEWAY_MIN_CONNECT_CHALLENGE_TIMEOUT_MS,
+    Math.min(resolvedMax, timeoutMs),
+  );
+}
+
+function resolveGatewayConnectChallengeTimeoutMs(timeoutMs, params = {}) {
+  const configuredPreauthTimeoutMs = resolveGatewayPreauthHandshakeTimeoutMs({
+    env: params.env,
+    configuredTimeoutMs: params.configuredTimeoutMs,
+  });
+  const maxTimeoutMs = Math.max(
+    GATEWAY_DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS,
+    configuredPreauthTimeoutMs,
+  );
+  if (typeof timeoutMs === "number" && Number.isFinite(timeoutMs)) {
+    return clampGatewayConnectChallengeTimeoutMs(timeoutMs, maxTimeoutMs);
+  }
+  const envOverride = getGatewayConnectChallengeTimeoutMsFromEnv(params.env);
+  if (envOverride !== undefined) {
+    return clampGatewayConnectChallengeTimeoutMs(envOverride, Math.max(maxTimeoutMs, envOverride));
+  }
+  return clampGatewayConnectChallengeTimeoutMs(configuredPreauthTimeoutMs, maxTimeoutMs);
+}
+
+function readGatewayClientConnectChallengeTimeoutOverride(opts = {}) {
+  if (
+    typeof opts.connectChallengeTimeoutMs === "number" &&
+    Number.isFinite(opts.connectChallengeTimeoutMs)
+  ) {
+    return opts.connectChallengeTimeoutMs;
+  }
+  if (typeof opts.connectDelayMs === "number" && Number.isFinite(opts.connectDelayMs)) {
+    return opts.connectDelayMs;
+  }
+  return undefined;
+}
+
+function resolveGatewayClientConnectChallengeTimeoutMs(opts = {}) {
+  return resolveGatewayConnectChallengeTimeoutMs(
+    readGatewayClientConnectChallengeTimeoutOverride(opts),
+    { configuredTimeoutMs: opts.preauthHandshakeTimeoutMs },
+  );
+}
+
+function resolveGatewayClientStartReadinessTimeoutMs(options = {}) {
+  if (typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs)) {
+    return options.timeoutMs;
+  }
+  const clientOptions = options.clientOptions || {};
+  return resolveGatewayClientConnectChallengeTimeoutMs(clientOptions);
+}
+
+async function waitForOpenZuesGatewayEventLoopReady(options = {}) {
+  const signal = options.signal;
+  const startedAt = Date.now();
+  if (signal && signal.aborted) {
+    return {
+      ready: false,
+      elapsedMs: 0,
+      maxDriftMs: 0,
+      checks: 0,
+      aborted: true,
+    };
+  }
+  const maxWaitMs = Math.max(1, Math.floor(resolveGatewayClientStartReadinessTimeoutMs(options)));
+  await new Promise((resolve) => setTimeout(resolve, Math.min(1, maxWaitMs)));
+  if (signal && signal.aborted) {
+    return {
+      ready: false,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      maxDriftMs: 0,
+      checks: 1,
+      aborted: true,
+    };
+  }
+  return {
+    ready: true,
+    elapsedMs: Math.max(0, Date.now() - startedAt),
+    maxDriftMs: 0,
+    checks: 1,
+    aborted: false,
+  };
+}
+
+function formatGatewayClientRequestErrorMessage(error = {}) {
+  if (typeof error.message === "string" && error.message.trim()) {
+    return error.message;
+  }
+  if (error.details !== undefined) {
+    try {
+      return JSON.stringify(error.details);
+    } catch {
+      return String(error.details);
+    }
+  }
+  return "gateway request failed";
+}
+
+class GatewayClientRequestError extends Error {
+  constructor(error = {}) {
+    super(formatGatewayClientRequestErrorMessage(error));
+    this.name = "GatewayClientRequestError";
+    this.gatewayCode = error.code || ErrorCodes.UNAVAILABLE;
+    this.details = error.details;
+    this.retryable = error.retryable === true;
+    this.retryAfterMs = error.retryAfterMs;
+  }
+}
+
+class GatewayClient {
+  constructor(options = {}) {
+    this.options = { ...options };
+    this.opts = this.options;
+    this.started = false;
+    this.stopped = false;
+    this.requests = [];
+    this._helloDelivered = false;
+  }
+
+  start() {
+    this.started = true;
+    this.stopped = false;
+    if (!this._helloDelivered && typeof this.options.onHelloOk === "function") {
+      this._helloDelivered = true;
+      this.options.onHelloOk({
+        ok: true,
+        protocolVersion: 1,
+      });
+    }
+  }
+
+  stop() {
+    this.started = false;
+    this.stopped = true;
+  }
+
+  async stopAndWait() {
+    this.stop();
+  }
+
+  async request(method, params = {}, options = {}) {
+    this.requests.push({ method, params, options });
+    throw new GatewayClientRequestError({
+      code: ErrorCodes.UNAVAILABLE,
+      message: "gateway client request unavailable in OpenZues plugin runtime",
+      retryable: true,
+    });
+  }
+
+  notifyEvent(event) {
+    if (typeof this.options.onEvent === "function") {
+      this.options.onEvent(event);
+    }
+  }
+}
+
+async function startGatewayClientWhenEventLoopReady(client, options = {}) {
+  const readiness = await waitForOpenZuesGatewayEventLoopReady(options);
+  if (readiness.ready && !readiness.aborted && !(options.signal && options.signal.aborted)) {
+    if (client && typeof client.start === "function") {
+      client.start();
+    }
+  }
+  return readiness;
+}
+
+function readGatewayConfig(params = {}) {
+  const config = params.config || {};
+  return config.gateway && typeof config.gateway === "object" ? config.gateway : {};
+}
+
+async function createOperatorApprovalsGatewayClient(params = {}) {
+  const gatewayConfig = readGatewayConfig(params);
+  const url =
+    normalizeOptionalString(params.gatewayUrl) ||
+    normalizeOptionalString(gatewayConfig.url) ||
+    "ws://127.0.0.1:18789";
+  return new GatewayClient({
+    url,
+    token: normalizeOptionalString(gatewayConfig.token),
+    password: normalizeOptionalString(gatewayConfig.password),
+    preauthHandshakeTimeoutMs: normalizePositiveGatewayTimeoutMs(
+      gatewayConfig.handshakeTimeoutMs,
+    ),
+    clientName: "gateway-client",
+    clientDisplayName: params.clientDisplayName,
+    mode: "backend",
+    scopes: ["operator.approvals"],
+    onEvent: params.onEvent,
+    onHelloOk: params.onHelloOk,
+    onConnectError: params.onConnectError,
+    onReconnectPaused: params.onReconnectPaused,
+    onClose: params.onClose,
+  });
+}
+
+async function withOperatorApprovalsGatewayClient(params = {}, run) {
+  const gatewayClient = await createOperatorApprovalsGatewayClient(params);
+  try {
+    const readiness = await startGatewayClientWhenEventLoopReady(gatewayClient, {
+      clientOptions: {
+        preauthHandshakeTimeoutMs: readGatewayConfig(params).handshakeTimeoutMs,
+      },
+    });
+    if (!readiness.ready) {
+      throw new Error("gateway event loop readiness timeout");
+    }
+    return await run(gatewayClient);
+  } finally {
+    if (gatewayClient && typeof gatewayClient.stopAndWait === "function") {
+      try {
+        await gatewayClient.stopAndWait();
+      } catch {
+        gatewayClient.stop();
+      }
+    }
+  }
+}
+
 const browserNodeRuntime = {
   ErrorCodes,
   addGatewayClientOptions,
@@ -62174,6 +62475,20 @@ const browserNodeRuntime = {
   safeParseJson,
   startLazyPluginServiceModule,
   withTimeout: withAbortableTimeout,
+};
+
+const gatewayRuntime = {
+  ...browserNodeRuntime,
+  GATEWAY_CLOSE_CODE_HINTS,
+  GatewayClient,
+  GatewayClientRequestError,
+  createConnectedChannelStatusPatch,
+  createOperatorApprovalsGatewayClient,
+  createTransportActivityStatusPatch,
+  describeGatewayCloseCode,
+  resolveGatewayClientConnectChallengeTimeoutMs,
+  startGatewayClientWhenEventLoopReady,
+  withOperatorApprovalsGatewayClient,
 };
 
 const IMAGE_REDUCE_QUALITY_STEPS = [85, 75, 65, 55, 45, 35];
@@ -74495,6 +74810,7 @@ const genericSdk = new Proxy(
     ...runtimeRuntime,
     ...channelSecretRuntime,
     ...securityRuntime,
+    ...gatewayRuntime,
     ...directoryRuntime,
     ...threadBindingsRuntime,
     ...conversationRuntime,
@@ -76313,6 +76629,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/browser-node-runtime"
   ) {
     return browserNodeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/gateway-runtime" ||
+    request === "@openclaw/plugin-sdk/gateway-runtime"
+  ) {
+    return gatewayRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/browser-setup-tools" ||

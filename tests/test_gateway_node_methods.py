@@ -50347,6 +50347,269 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_gateway_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+
+    runtime_entry = tmp_path / "runtime-plugin-gateway-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const gateway = require("openclaw/plugin-sdk/gateway-runtime");
+const scopedGateway = require("@openclaw/plugin-sdk/gateway-runtime");
+
+function clientOptions(client) {
+  return client.options || client.opts || {};
+}
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.gateway_runtime",
+      description: "Use OpenClaw gateway-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const events = [];
+        const client = new gateway.GatewayClient({
+          url: "ws://127.0.0.1:18789",
+          requestTimeoutMs: 5,
+          onEvent: (evt) => events.push(evt)
+        });
+        const readiness = await gateway.startGatewayClientWhenEventLoopReady(client, {
+          timeoutMs: 5,
+          clientOptions: { connectChallengeTimeoutMs: 999 }
+        });
+        if (typeof client.notifyEvent === "function") {
+          client.notifyEvent({ type: "demo", seq: 1 });
+        }
+        const startedAfterReadiness = client.started === true;
+        const requestError = new gateway.GatewayClientRequestError({
+          code: "BAD_GATEWAY",
+          message: "bad gateway",
+          details: { why: "test" },
+          retryable: true,
+          retryAfterMs: 12
+        });
+        const unavailable = await (async () => {
+          try {
+            await client.request("demo.method", { ok: true });
+            return null;
+          } catch (error) {
+            return {
+              name: error.name,
+              gatewayCode: error.gatewayCode,
+              retryable: error.retryable,
+              message: String(error && error.message ? error.message : error)
+            };
+          }
+        })();
+        await client.stopAndWait({ timeoutMs: 1 });
+        const approvalsClient = await gateway.createOperatorApprovalsGatewayClient({
+          config: { gateway: { url: "ws://127.0.0.1:18789", handshakeTimeoutMs: 900 } },
+          clientDisplayName: "Approvals"
+        });
+        const approvalsOptions = clientOptions(approvalsClient);
+        let withClientStopped = null;
+        const withResult = await gateway.withOperatorApprovalsGatewayClient({
+          config: { gateway: { url: "ws://127.0.0.1:18789", handshakeTimeoutMs: 900 } },
+          clientDisplayName: "Approvals"
+        }, async (inner) => {
+          const opts = clientOptions(inner);
+          withClientStopped = inner.stopped === true;
+          return {
+            started: inner.started === true,
+            scopes: opts.scopes,
+            clientName: opts.clientName,
+            display: opts.clientDisplayName,
+            mode: opts.mode
+          };
+        });
+        let cliUnavailable = null;
+        try {
+          await gateway.callGatewayFromCli();
+        } catch (error) {
+          cliUnavailable = String(error && error.message ? error.message : error);
+        }
+        return {
+          selectedTypes: {
+            GatewayClient: typeof gateway.GatewayClient,
+            GatewayClientRequestError: typeof gateway.GatewayClientRequestError,
+            createConnectedChannelStatusPatch:
+              typeof gateway.createConnectedChannelStatusPatch,
+            startGatewayClientWhenEventLoopReady:
+              typeof gateway.startGatewayClientWhenEventLoopReady,
+            createOperatorApprovalsGatewayClient:
+              typeof gateway.createOperatorApprovalsGatewayClient
+          },
+          scopedSame: scopedGateway.GatewayClient === gateway.GatewayClient,
+          patches: [
+            gateway.createConnectedChannelStatusPatch(123),
+            gateway.createTransportActivityStatusPatch(456)
+          ],
+          readiness: {
+            ready: readiness.ready,
+            aborted: readiness.aborted,
+            elapsedType: typeof readiness.elapsedMs,
+            checksType: typeof readiness.checks,
+            maxDriftType: typeof readiness.maxDriftMs
+          },
+          client: {
+            startedAfterReadiness,
+            stoppedAfterStopAndWait: client.stopped === true,
+            eventCount: events.length
+          },
+          requestError: {
+            name: requestError.name,
+            gatewayCode: requestError.gatewayCode,
+            message: requestError.message,
+            details: requestError.details,
+            retryable: requestError.retryable,
+            retryAfterMs: requestError.retryAfterMs
+          },
+          unavailable,
+          closeHints: [
+            gateway.describeGatewayCloseCode(1000),
+            gateway.describeGatewayCloseCode(1008),
+            gateway.describeGatewayCloseCode(9999) || null
+          ],
+          timeouts: [
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              connectChallengeTimeoutMs: 42,
+              preauthHandshakeTimeoutMs: 5000
+            }),
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              connectDelayMs: 999
+            }),
+            gateway.resolveGatewayClientConnectChallengeTimeoutMs({
+              preauthHandshakeTimeoutMs: 20000
+            })
+          ],
+          approvals: {
+            scopes: approvalsOptions.scopes,
+            clientName: approvalsOptions.clientName,
+            display: approvalsOptions.clientDisplayName,
+            mode: approvalsOptions.mode
+          },
+          withResult,
+          withClientStopped,
+          cliUnavailable
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-gateway-runtime-plugin",
+                    "name": "Runtime Gateway Runtime Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-gateway-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.gateway_runtime"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {"tool": "runtime.gateway_runtime", "args": {}},
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "selectedTypes": {
+            "GatewayClient": "function",
+            "GatewayClientRequestError": "function",
+            "createConnectedChannelStatusPatch": "function",
+            "startGatewayClientWhenEventLoopReady": "function",
+            "createOperatorApprovalsGatewayClient": "function",
+        },
+        "scopedSame": True,
+        "patches": [
+            {"connected": True, "lastConnectedAt": 123, "lastEventAt": 123},
+            {"lastTransportActivityAt": 456},
+        ],
+        "readiness": {
+            "ready": True,
+            "aborted": False,
+            "elapsedType": "number",
+            "checksType": "number",
+            "maxDriftType": "number",
+        },
+        "client": {
+            "startedAfterReadiness": True,
+            "stoppedAfterStopAndWait": True,
+            "eventCount": 1,
+        },
+        "requestError": {
+            "name": "GatewayClientRequestError",
+            "gatewayCode": "BAD_GATEWAY",
+            "message": "bad gateway",
+            "details": {"why": "test"},
+            "retryable": True,
+            "retryAfterMs": 12,
+        },
+        "unavailable": {
+            "name": "GatewayClientRequestError",
+            "gatewayCode": "UNAVAILABLE",
+            "retryable": True,
+            "message": "gateway client request unavailable in OpenZues plugin runtime",
+        },
+        "closeHints": ["normal closure", "policy violation", None],
+        "timeouts": [250, 999, 20000],
+        "approvals": {
+            "scopes": ["operator.approvals"],
+            "clientName": "gateway-client",
+            "display": "Approvals",
+            "mode": "backend",
+        },
+        "withResult": {
+            "started": True,
+            "scopes": ["operator.approvals"],
+            "clientName": "gateway-client",
+            "display": "Approvals",
+            "mode": "backend",
+        },
+        "withClientStopped": False,
+        "cliUnavailable": "UNAVAILABLE: gateway RPC unavailable in OpenZues plugin runtime",
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_browser_setup_tools_helpers(
     tmp_path,
 ) -> None:
