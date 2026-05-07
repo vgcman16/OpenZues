@@ -5,7 +5,7 @@ Updated: 2026-05-07
 Current percentage rollup:
 
 - Repo-wide OpenClaw parity is estimated at ~99.9% overall, with a reasonable
-  band of ~80-99.96%.
+  band of ~80-99.97%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
 - The chat/session contract subfamily is estimated at ~98.3% after the latest
@@ -121,8 +121,8 @@ Current percentage rollup:
   zalouser, zod, web-content-extractor, plugin-entry, optional-channel-setup,
   outbound-media, delivery-queue-runtime, migration-runtime, migration helper,
   outbound-send-deps, command-status-runtime, reply-runtime,
-  reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime, and
-  infra-runtime slices.
+  reply-dispatch-runtime, inbound-reply-dispatch, interactive-runtime,
+  infra-runtime, and media-runtime slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9486,8 +9486,16 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   concurrency, outbound, SSRF, system-event, temp-path, and file-lock helpers.
   Source/test checkpointed in `0ba78971`; repo-wide parity remains estimated
   at ~99.9%, with the high-confidence band tightened to ~80-99.96%.
+- Current queue-head adjustment: imported plugin SDK `media-runtime` now
+  exposes the source-backed public media/payload barrel for scoped and
+  unscoped imports, including media byte-limit constants, MIME/path helpers,
+  saved media buffers, outbound local media loading, poll normalization,
+  agent media payloads, media-understanding exports, and direct text/media
+  outbound adapter helpers. Source/test checkpointed in `85e4b720`;
+  repo-wide parity remains estimated at ~99.9%, with the evidence band
+  tightened to ~80-99.97%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
-  especially the exact `media-runtime` facade, broader runtime/client
+  especially the exact `plugin-runtime` facade, broader runtime/client
   integration, and session runtime methods (`chat.*`, `sessions.*`), rather than the older
   approval lifecycle/config/device-token/agent-mutation/memory-doctor/placeheld
   provenance/false steer-runtime/custom-agent-session/plugin-dependency
