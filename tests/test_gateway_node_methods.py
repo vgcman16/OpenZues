@@ -36005,6 +36005,283 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_models_provider_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-models-provider-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const modelsRuntime = require("openclaw/plugin-sdk/models-provider-runtime");
+const scopedModelsRuntime = require("@openclaw/plugin-sdk/models-provider-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.models_provider",
+      description: "Use OpenClaw models-provider-runtime SDK shim",
+      parameters: { type: "object" },
+      async execute() {
+        const cfg = {
+          agents: {
+            defaults: {
+              model: {
+                primary: "openai/gpt-5.4",
+                fallbacks: ["anthropic/claude-sonnet-4.5"]
+              },
+              models: {
+                "x-ai/grok-4": {}
+              }
+            }
+          },
+          models: {
+            providers: {
+              openai: {
+                models: [
+                  { id: "gpt-5.4", name: "GPT 5.4" },
+                  "gpt-4.1-mini"
+                ]
+              },
+              anthropic: {
+                models: [
+                  { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" }
+                ]
+              },
+              google: {
+                models: []
+              },
+              "codex-cli": {
+                models: ["gpt-5.4"]
+              }
+            }
+          }
+        };
+        const data = await modelsRuntime.buildModelsProviderData(cfg, "main");
+        const byProvider = Object.fromEntries(
+          [...data.byProvider.entries()].map(([provider, values]) => [
+            provider,
+            [...values].sort()
+          ])
+        );
+        const modelNames = Object.fromEntries([...data.modelNames.entries()].sort());
+        const runtimeChoiceOpenaiFirst = data.runtimeChoicesByProvider
+          ? data.runtimeChoicesByProvider.get("openai")?.[0]
+          : null;
+        const header = modelsRuntime.formatModelsAvailableHeader({
+          provider: "openai",
+          total: byProvider.openai.length,
+          cfg
+        });
+        const headerWithAuth = modelsRuntime.formatModelsAvailableHeader({
+          provider: "anthropic",
+          total: byProvider.anthropic.length,
+          cfg,
+          sessionEntry: { authProfileOverride: "target-auth" }
+        });
+        const menu = await scopedModelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models"
+        });
+        const list = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models list openai limit=1"
+        });
+        const page2 = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models openai 2 limit=1"
+        });
+        const all = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models openai all"
+        });
+        const outOfRange = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models openai page=9 limit=1"
+        });
+        const unknown = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models nope"
+        });
+        const add = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/models add openai gpt-5.4"
+        });
+        const ignored = await modelsRuntime.resolveModelsCommandReply({
+          cfg,
+          commandBodyNormalized: "/model openai/gpt-5.4"
+        });
+
+        return {
+          keys: Object.keys(modelsRuntime).sort(),
+          scopedType: typeof scopedModelsRuntime.resolveModelsCommandReply,
+          providers: data.providers,
+          byProvider,
+          modelNames,
+          defaultModel: data.resolvedDefault,
+          runtimeChoiceOpenaiFirst,
+          header,
+          headerWithAuth,
+          menu,
+          list,
+          page2,
+          all,
+          outOfRange,
+          unknown,
+          add,
+          ignored
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-models-provider-plugin",
+                    "name": "Runtime Models Provider Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-models-provider-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.models_provider"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.models_provider",
+            "args": {},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "buildModelsProviderData",
+            "formatModelsAvailableHeader",
+            "resolveModelsCommandReply",
+        ],
+        "scopedType": "function",
+        "providers": ["anthropic", "openai", "x-ai"],
+        "byProvider": {
+            "anthropic": ["claude-sonnet-4.5"],
+            "openai": ["gpt-4.1-mini", "gpt-5.4"],
+            "x-ai": ["grok-4"],
+        },
+        "modelNames": {
+            "anthropic/claude-sonnet-4.5": "Claude Sonnet 4.5",
+            "openai/gpt-5.4": "GPT 5.4",
+        },
+        "defaultModel": {"provider": "openai", "model": "gpt-5.4"},
+        "runtimeChoiceOpenaiFirst": {
+            "id": "pi",
+            "label": "OpenClaw Pi Default",
+            "description": "Use the built-in OpenClaw Pi runtime.",
+        },
+        "header": "Models (openai) \u2014 2 available",
+        "headerWithAuth": "Models (anthropic \u00b7 \U0001f511 target-auth) \u2014 1 available",
+        "menu": {
+            "text": (
+                "Providers:\n"
+                "- anthropic (1)\n"
+                "- openai (2)\n"
+                "- x-ai (1)\n"
+                "\n"
+                "Use: /models <provider>\n"
+                "Switch: /model <provider/model>"
+            )
+        },
+        "list": {
+            "text": (
+                "Models (openai) \u2014 showing 1-1 of 2 (page 1/2)\n"
+                "- openai/gpt-4.1-mini\n"
+                "\n"
+                "Switch: /model <provider/model>\n"
+                "More: /models list openai 2\n"
+                "All: /models list openai all"
+            )
+        },
+        "page2": {
+            "text": (
+                "Models (openai) \u2014 showing 2-2 of 2 (page 2/2)\n"
+                "- openai/gpt-5.4\n"
+                "\n"
+                "Switch: /model <provider/model>\n"
+                "All: /models list openai all"
+            )
+        },
+        "all": {
+            "text": (
+                "Models (openai) \u2014 showing 1-2 of 2 (page 1/1)\n"
+                "- openai/gpt-4.1-mini\n"
+                "- openai/gpt-5.4\n"
+                "\n"
+                "Switch: /model <provider/model>"
+            )
+        },
+        "outOfRange": {
+            "text": (
+                "Page out of range: 9 (valid: 1-2)\n"
+                "\n"
+                "Try: /models list openai 2\n"
+                "All: /models list openai all"
+            )
+        },
+        "unknown": {
+            "text": (
+                "Unknown provider: nope\n"
+                "\n"
+                "Available providers:\n"
+                "- anthropic\n"
+                "- openai\n"
+                "- x-ai\n"
+                "\n"
+                "Use: /models <provider>"
+            )
+        },
+        "add": {
+            "text": "\u26a0\ufe0f /models add is deprecated. Use /models to browse providers "
+            "and /model to switch models."
+        },
+        "ignored": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:

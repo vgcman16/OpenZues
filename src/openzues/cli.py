@@ -24318,6 +24318,574 @@ function createClaimableDedupe(options) {
   };
 }
 
+const MODELS_PROVIDER_PAGE_SIZE_DEFAULT = 20;
+const MODELS_PROVIDER_PAGE_SIZE_MAX = 100;
+const MODELS_PROVIDER_ADD_DEPRECATED_TEXT =
+  "\u26a0\ufe0f /models add is deprecated. Use /models to browse providers " +
+  "and /model to switch models.";
+const MODELS_PROVIDER_HIDDEN_PICKER_PROVIDERS = new Set([
+  "claude-cli",
+  "codex",
+  "codex-cli",
+  "google-gemini-cli",
+]);
+
+function normalizeModelsProviderId(value) {
+  return normalizeOptionalLowercaseString(value) || "";
+}
+
+function normalizeModelsProviderModelId(value) {
+  return normalizeOptionalString(value) || "";
+}
+
+function isModelsProviderPickerVisible(provider) {
+  const normalized = normalizeModelsProviderId(provider);
+  return Boolean(normalized) && !MODELS_PROVIDER_HIDDEN_PICKER_PROVIDERS.has(normalized);
+}
+
+function readModelsProviderConfig(cfg, provider) {
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (!providers || typeof providers !== "object") {
+    return undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(providers, provider)) {
+    return providers[provider];
+  }
+  const normalized = normalizeModelsProviderId(provider);
+  for (const [candidate, value] of Object.entries(providers)) {
+    if (normalizeModelsProviderId(candidate) === normalized) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function listModelsProviderCatalogEntries(cfg) {
+  const entries = [];
+  const providers = cfg && cfg.models && cfg.models.providers;
+  if (providers && typeof providers === "object") {
+    for (const [rawProvider, providerConfig] of Object.entries(providers)) {
+      const provider = normalizeModelsProviderId(rawProvider);
+      if (!provider || !providerConfig || typeof providerConfig !== "object") {
+        continue;
+      }
+      const models = providerConfig.models || providerConfig.catalog || providerConfig.modelCatalog;
+      if (Array.isArray(models)) {
+        for (const item of models) {
+          if (typeof item === "string") {
+            entries.push({ provider, id: item });
+          } else if (item && typeof item === "object") {
+            const id = normalizeModelsProviderModelId(item.id || item.model || item.name);
+            if (id) {
+              entries.push({
+                provider,
+                id,
+                ...(item.name && item.name !== id ? { name: String(item.name) } : {}),
+              });
+            }
+          }
+        }
+      } else if (models && typeof models === "object") {
+        for (const [rawId, modelConfig] of Object.entries(models)) {
+          const id =
+            normalizeModelsProviderModelId(
+              modelConfig && typeof modelConfig === "object"
+                ? modelConfig.id || modelConfig.model || rawId
+                : rawId,
+            ) || "";
+          if (id) {
+            entries.push({
+              provider,
+              id,
+              ...(modelConfig &&
+              typeof modelConfig === "object" &&
+              modelConfig.name &&
+              modelConfig.name !== id
+                ? { name: String(modelConfig.name) }
+                : {}),
+            });
+          }
+        }
+      }
+    }
+  }
+  const topLevelCatalog = cfg && (cfg.modelCatalog || (cfg.models && cfg.models.catalog));
+  if (Array.isArray(topLevelCatalog)) {
+    for (const item of topLevelCatalog) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const provider = normalizeModelsProviderId(item.provider);
+      const id = normalizeModelsProviderModelId(item.id || item.model);
+      if (provider && id) {
+        entries.push({
+          provider,
+          id,
+          ...(item.name && item.name !== id ? { name: String(item.name) } : {}),
+        });
+      }
+    }
+  }
+  return entries;
+}
+
+function resolveBareModelsProviderForModel(cfg, model, defaultProvider, catalogEntries) {
+  const normalizedModel = normalizeModelsProviderModelId(model);
+  const matches = [];
+  for (const entry of catalogEntries) {
+    if (entry.id === normalizedModel) {
+      matches.push(entry.provider);
+    }
+  }
+  const unique = [...new Set(matches)];
+  if (unique.length === 1) {
+    return unique[0];
+  }
+  return normalizeModelsProviderId(defaultProvider) || "openai";
+}
+
+function resolveModelsProviderRefFromString(raw, defaultProvider, catalogEntries, cfg) {
+  const trimmed = normalizeModelsProviderModelId(raw);
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex > 0) {
+    const provider = normalizeModelsProviderId(trimmed.slice(0, slashIndex));
+    const model = normalizeModelsProviderModelId(trimmed.slice(slashIndex + 1));
+    return provider && model ? { provider, model } : null;
+  }
+  const provider = resolveBareModelsProviderForModel(cfg, trimmed, defaultProvider, catalogEntries);
+  return provider ? { provider, model: trimmed } : null;
+}
+
+function resolveDefaultModelsProviderModel(cfg, agentId, catalogEntries) {
+  const agents = (cfg && cfg.agents) || {};
+  const agentConfig =
+    agentId && agents && typeof agents === "object" && agents[agentId]
+      ? agents[agentId]
+      : undefined;
+  const modelConfig =
+    (agentConfig && agentConfig.model) ||
+    (agents.defaults && agents.defaults.model) ||
+    (cfg && cfg.models && (cfg.models.default || cfg.models.model)) ||
+    "openai/gpt-5";
+  const primary =
+    typeof modelConfig === "string"
+      ? modelConfig
+      : modelConfig && typeof modelConfig === "object"
+        ? modelConfig.primary || modelConfig.id || modelConfig.model
+        : undefined;
+  const defaultProvider =
+    (cfg && cfg.models && (cfg.models.defaultProvider || cfg.models.provider)) || "openai";
+  return (
+    resolveModelsProviderRefFromString(primary, defaultProvider, catalogEntries, cfg) || {
+      provider: normalizeModelsProviderId(defaultProvider) || "openai",
+      model: "gpt-5",
+    }
+  );
+}
+
+function addModelsProviderEntry(byProvider, provider, model) {
+  const normalizedProvider = normalizeModelsProviderId(provider);
+  const normalizedModel = normalizeModelsProviderModelId(model);
+  if (!isModelsProviderPickerVisible(normalizedProvider) || !normalizedModel) {
+    return;
+  }
+  const models = byProvider.get(normalizedProvider) || new Set();
+  models.add(normalizedModel);
+  byProvider.set(normalizedProvider, models);
+}
+
+function addModelsProviderRawRef(byProvider, raw, defaultProvider, catalogEntries, cfg) {
+  const resolved = resolveModelsProviderRefFromString(raw, defaultProvider, catalogEntries, cfg);
+  if (resolved) {
+    addModelsProviderEntry(byProvider, resolved.provider, resolved.model);
+  }
+}
+
+function addModelsProviderConfigRefs(byProvider, cfg, defaultProvider, catalogEntries) {
+  const defaults = cfg && cfg.agents && cfg.agents.defaults;
+  const modelConfig = defaults && defaults.model;
+  if (typeof modelConfig === "string") {
+    addModelsProviderRawRef(byProvider, modelConfig, defaultProvider, catalogEntries, cfg);
+  } else if (modelConfig && typeof modelConfig === "object") {
+    addModelsProviderRawRef(byProvider, modelConfig.primary, defaultProvider, catalogEntries, cfg);
+    for (const fallback of modelConfig.fallbacks || []) {
+      addModelsProviderRawRef(byProvider, fallback, defaultProvider, catalogEntries, cfg);
+    }
+  }
+  const imageConfig = defaults && defaults.imageModel;
+  if (typeof imageConfig === "string") {
+    addModelsProviderRawRef(byProvider, imageConfig, defaultProvider, catalogEntries, cfg);
+  } else if (imageConfig && typeof imageConfig === "object") {
+    addModelsProviderRawRef(byProvider, imageConfig.primary, defaultProvider, catalogEntries, cfg);
+    for (const fallback of imageConfig.fallbacks || []) {
+      addModelsProviderRawRef(byProvider, fallback, defaultProvider, catalogEntries, cfg);
+    }
+  }
+}
+
+async function buildModelsProviderData(cfg = {}, agentId, options = {}) {
+  const catalogEntries = listModelsProviderCatalogEntries(cfg);
+  const resolvedDefault = resolveDefaultModelsProviderModel(cfg, agentId, catalogEntries);
+  const byProvider = new Map();
+  const modelNames = new Map();
+  for (const entry of catalogEntries) {
+    addModelsProviderEntry(byProvider, entry.provider, entry.id);
+    if (entry.name && entry.name !== entry.id) {
+      modelNames.set(`${normalizeModelsProviderId(entry.provider)}/${entry.id}`, entry.name);
+    }
+  }
+  const defaultsModels =
+    cfg && cfg.agents && cfg.agents.defaults && cfg.agents.defaults.models
+      ? cfg.agents.defaults.models
+      : {};
+  if (defaultsModels && typeof defaultsModels === "object") {
+    for (const raw of Object.keys(defaultsModels)) {
+      addModelsProviderRawRef(
+        byProvider,
+        raw,
+        resolvedDefault.provider,
+        catalogEntries,
+        cfg,
+      );
+    }
+  }
+  addModelsProviderEntry(byProvider, resolvedDefault.provider, resolvedDefault.model);
+  addModelsProviderConfigRefs(byProvider, cfg, resolvedDefault.provider, catalogEntries);
+  const providers = [...byProvider.keys()].sort();
+  const runtimeChoicesByProvider = new Map();
+  const legacyAliases = [
+    { provider: "openai", runtime: "codex-cli", cli: true },
+    { provider: "anthropic", runtime: "claude-cli", cli: true },
+    { provider: "google", runtime: "google-gemini-cli", cli: true },
+  ];
+  for (const alias of legacyAliases) {
+    const provider = normalizeModelsProviderId(alias.provider);
+    const choices = runtimeChoicesByProvider.get(provider) || [
+      {
+        id: "pi",
+        label: "OpenClaw Pi Default",
+        description: "Use the built-in OpenClaw Pi runtime.",
+      },
+    ];
+    choices.push({
+      id: alias.runtime,
+      label: alias.runtime,
+      description: alias.cli
+        ? `Run ${provider} models through ${alias.runtime}.`
+        : `Run ${provider} models through the ${alias.runtime} harness.`,
+    });
+    runtimeChoicesByProvider.set(provider, choices);
+  }
+  return {
+    byProvider,
+    providers,
+    resolvedDefault,
+    modelNames,
+    runtimeChoicesByProvider,
+  };
+}
+
+function resolveModelsProviderAuthLabel(params) {
+  const provider = normalizeModelsProviderId(params.provider);
+  const sessionEntry = params.sessionEntry;
+  if (sessionEntry && typeof sessionEntry === "object") {
+    const override = sessionEntry.authProfileOverride;
+    if (typeof override === "string" && override.trim()) {
+      return override.trim();
+    }
+    if (override && typeof override === "object") {
+      const providerOverride = normalizeOptionalString(override[provider]);
+      if (providerOverride) {
+        return providerOverride;
+      }
+    }
+  }
+  const providerConfig = readModelsProviderConfig(params.cfg || {}, provider);
+  if (providerConfig && typeof providerConfig === "object") {
+    return normalizeOptionalString(
+      providerConfig.authLabel ||
+        providerConfig.authProfileLabel ||
+        providerConfig.authProfile ||
+        providerConfig.accountLabel,
+    );
+  }
+  return undefined;
+}
+
+function resolveModelsProviderLabel(params) {
+  const provider = normalizeModelsProviderId(params.provider);
+  const authLabel = resolveModelsProviderAuthLabel({
+    provider,
+    cfg: params.cfg,
+    sessionEntry: params.sessionEntry,
+  });
+  if (!authLabel || authLabel === "unknown") {
+    return provider;
+  }
+  return `${provider} \u00b7 \ud83d\udd11 ${authLabel}`;
+}
+
+function formatModelsAvailableHeader(params) {
+  const providerLabel = resolveModelsProviderLabel({
+    provider: params.provider,
+    cfg: params.cfg || {},
+    sessionEntry: params.sessionEntry,
+  });
+  return `Models (${providerLabel}) \u2014 ${params.total} available`;
+}
+
+function buildModelsProviderLine(params) {
+  return `- ${params.provider} (${params.count})`;
+}
+
+function buildModelsProviderMenuText(params) {
+  return [
+    "Providers:",
+    ...params.providers.map((provider) =>
+      buildModelsProviderLine({
+        provider,
+        count: (params.byProvider.get(provider) || new Set()).size,
+      }),
+    ),
+    "",
+    "Use: /models <provider>",
+    "Switch: /model <provider/model>",
+  ].join("\n");
+}
+
+function buildModelsProviderInfos(params) {
+  return params.providers.map((provider) => ({
+    id: provider,
+    count: (params.byProvider.get(provider) || new Set()).size,
+  }));
+}
+
+function parseModelsProviderListArgs(tokens) {
+  const provider = normalizeOptionalString(tokens[0]);
+  let page = 1;
+  let all = false;
+  for (const token of tokens.slice(1)) {
+    const lower = normalizeLowercaseStringOrEmpty(token);
+    if (lower === "all" || lower === "--all") {
+      all = true;
+      continue;
+    }
+    if (lower.startsWith("page=")) {
+      const value = Number.parseInt(lower.slice("page=".length), 10);
+      if (Number.isFinite(value) && value > 0) {
+        page = value;
+      }
+      continue;
+    }
+    if (/^[0-9]+$/.test(lower)) {
+      const value = Number.parseInt(lower, 10);
+      if (Number.isFinite(value) && value > 0) {
+        page = value;
+      }
+    }
+  }
+  let pageSize = MODELS_PROVIDER_PAGE_SIZE_DEFAULT;
+  for (const token of tokens) {
+    const lower = normalizeLowercaseStringOrEmpty(token);
+    if (lower.startsWith("limit=") || lower.startsWith("size=")) {
+      const value = Number.parseInt(lower.slice(lower.indexOf("=") + 1), 10);
+      if (Number.isFinite(value) && value > 0) {
+        pageSize = Math.min(MODELS_PROVIDER_PAGE_SIZE_MAX, value);
+      }
+    }
+  }
+  return {
+    action: "list",
+    provider: provider ? normalizeModelsProviderId(provider) : undefined,
+    page,
+    pageSize,
+    all,
+  };
+}
+
+function parseModelsProviderArgs(raw) {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) {
+    return { action: "providers" };
+  }
+  const tokens = trimmed.split(/\s+/g).filter(Boolean);
+  const first = normalizeLowercaseStringOrEmpty(tokens[0]);
+  if (first === "providers") {
+    return { action: "providers" };
+  }
+  if (first === "list") {
+    return parseModelsProviderListArgs(tokens.slice(1));
+  }
+  if (first === "add") {
+    return {
+      action: "add",
+      provider: normalizeOptionalString(tokens[1]),
+      modelId: normalizeOptionalString(tokens.slice(2).join(" ")),
+    };
+  }
+  return parseModelsProviderListArgs(tokens);
+}
+
+function getModelsProviderChannelPlugin(surface) {
+  const host = globalThis.__openzuesModelsProviderRuntime || {};
+  if (typeof host.getChannelPlugin === "function") {
+    return host.getChannelPlugin(surface);
+  }
+  if (host.channelPlugins && typeof host.channelPlugins === "object") {
+    return host.channelPlugins[surface] || null;
+  }
+  return null;
+}
+
+async function resolveModelsCommandReply(params) {
+  const body = String(params.commandBodyNormalized || "").trim();
+  if (!/^\/models\b/i.test(body)) {
+    return null;
+  }
+  const argText = body.replace(/^\/models\b/i, "").trim();
+  const parsed = parseModelsProviderArgs(argText);
+  const data = await buildModelsProviderData(params.cfg || {}, params.agentId, {
+    ...(parsed.action === "list" && parsed.all ? { view: "all" } : {}),
+    ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+  });
+  const { byProvider, providers, modelNames } = data;
+  const commandPlugin = params.surface ? getModelsProviderChannelPlugin(params.surface) : null;
+  const providerInfos = buildModelsProviderInfos({ providers, byProvider });
+
+  if (parsed.action === "providers") {
+    const channelData =
+      (commandPlugin &&
+        commandPlugin.commands &&
+        typeof commandPlugin.commands.buildModelsMenuChannelData === "function" &&
+        commandPlugin.commands.buildModelsMenuChannelData({ providers: providerInfos })) ||
+      (commandPlugin &&
+        commandPlugin.commands &&
+        typeof commandPlugin.commands.buildModelsProviderChannelData === "function" &&
+        commandPlugin.commands.buildModelsProviderChannelData({ providers: providerInfos }));
+    if (channelData) {
+      return { text: "Select a provider:", channelData };
+    }
+    return { text: buildModelsProviderMenuText({ providers, byProvider }) };
+  }
+
+  if (parsed.action === "add") {
+    return { text: MODELS_PROVIDER_ADD_DEPRECATED_TEXT };
+  }
+
+  const { provider, page, pageSize, all } = parsed;
+  if (!provider) {
+    const channelData =
+      commandPlugin &&
+      commandPlugin.commands &&
+      typeof commandPlugin.commands.buildModelsProviderChannelData === "function"
+        ? commandPlugin.commands.buildModelsProviderChannelData({ providers: providerInfos })
+        : null;
+    if (channelData) {
+      return { text: "Select a provider:", channelData };
+    }
+    return { text: buildModelsProviderMenuText({ providers, byProvider }) };
+  }
+
+  if (!byProvider.has(provider)) {
+    return {
+      text: [
+        `Unknown provider: ${provider}`,
+        "",
+        "Available providers:",
+        ...providers.map((entry) => `- ${entry}`),
+        "",
+        "Use: /models <provider>",
+      ].join("\n"),
+    };
+  }
+
+  const models = [...(byProvider.get(provider) || new Set())].sort();
+  const total = models.length;
+  if (total === 0) {
+    const emptyProviderLabel = resolveModelsProviderLabel({
+      provider,
+      cfg: params.cfg || {},
+      sessionEntry: params.sessionEntry,
+    });
+    return {
+      text: [
+        `Models (${emptyProviderLabel}) \u2014 none`,
+        "",
+        "Browse: /models",
+        "Switch: /model <provider/model>",
+      ].join("\n"),
+    };
+  }
+
+  const interactivePageSize = 8;
+  const interactiveTotalPages = Math.max(1, Math.ceil(total / interactivePageSize));
+  const interactivePage = Math.max(1, Math.min(page, interactiveTotalPages));
+  const interactiveChannelData =
+    commandPlugin &&
+    commandPlugin.commands &&
+    typeof commandPlugin.commands.buildModelsListChannelData === "function"
+      ? commandPlugin.commands.buildModelsListChannelData({
+          provider,
+          models,
+          currentModel: params.currentModel,
+          currentPage: interactivePage,
+          totalPages: interactiveTotalPages,
+          pageSize: interactivePageSize,
+          modelNames,
+        })
+      : null;
+  if (interactiveChannelData) {
+    return {
+      text: formatModelsAvailableHeader({
+        provider,
+        total,
+        cfg: params.cfg || {},
+        sessionEntry: params.sessionEntry,
+      }),
+      channelData: interactiveChannelData,
+    };
+  }
+
+  const effectivePageSize = all ? total : pageSize;
+  const pageCount = effectivePageSize > 0 ? Math.ceil(total / effectivePageSize) : 1;
+  const safePage = all ? 1 : Math.max(1, Math.min(page, pageCount));
+  if (!all && page !== safePage) {
+    return {
+      text: [
+        `Page out of range: ${page} (valid: 1-${pageCount})`,
+        "",
+        `Try: /models list ${provider} ${safePage}`,
+        `All: /models list ${provider} all`,
+      ].join("\n"),
+    };
+  }
+  const startIndex = (safePage - 1) * effectivePageSize;
+  const endIndexExclusive = Math.min(total, startIndex + effectivePageSize);
+  const providerLabel = resolveModelsProviderLabel({
+    provider,
+    cfg: params.cfg || {},
+    sessionEntry: params.sessionEntry,
+  });
+  const shownRange = `${startIndex + 1}-${endIndexExclusive} of ${total}`;
+  const lines = [
+    `Models (${providerLabel}) \u2014 showing ${shownRange} (page ${safePage}/${pageCount})`,
+  ];
+  for (const id of models.slice(startIndex, endIndexExclusive)) {
+    lines.push(`- ${provider}/${id}`);
+  }
+  lines.push("", "Switch: /model <provider/model>");
+  if (!all && safePage < pageCount) {
+    lines.push(`More: /models list ${provider} ${safePage + 1}`);
+  }
+  if (!all) {
+    lines.push(`All: /models list ${provider} all`);
+  }
+  return { text: lines.join("\n") };
+}
+
 function getQaRunnerRuntimeHost() {
   return globalThis.__openzuesQaRunnerRuntime || {};
 }
@@ -50190,6 +50758,12 @@ const persistentDedupeRuntime = {
   createPersistentDedupe,
 };
 
+const modelsProviderRuntime = {
+  buildModelsProviderData,
+  formatModelsAvailableHeader,
+  resolveModelsCommandReply,
+};
+
 const qaRunnerRuntime = {
   isQaRuntimeAvailable,
   listQaRunnerCliContributions,
@@ -57269,6 +57843,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/persistent-dedupe"
   ) {
     return persistentDedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/models-provider-runtime" ||
+    request === "@openclaw/plugin-sdk/models-provider-runtime"
+  ) {
+    return modelsProviderRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/qa-runner-runtime" ||
