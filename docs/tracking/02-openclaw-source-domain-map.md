@@ -56,6 +56,11 @@ The imported `music-generation-core` SDK helper coverage from
 failover helpers, model input helpers, logging, and provider env-var helpers
 is verified in `a17da4e3` and is counted with the plugin/extension system row
 above.
+The imported `media-generation-runtime` and `media-generation-runtime-shared`
+SDK helper coverage from `src/plugin-sdk/media-generation-runtime.ts`,
+`src/plugin-sdk/media-generation-runtime-shared.ts`, and
+`src/media-generation/runtime-shared.ts` is verified in `f475d85a` and is
+counted with the plugin/extension system row above.
 
 Latest verified plugin SDK helper additions: `fetch-runtime` from
 `src/plugin-sdk/fetch-runtime.ts`, `src/infra/fetch.ts`,
@@ -172,6 +177,10 @@ env-var helpers is checkpointed in `1a128fa5`.
 `music-generation-core` from `src/plugin-sdk/music-generation-core.ts`,
 adjacent music generation helpers, failover helpers, model input helpers,
 logging, and provider env-var helpers is checkpointed in `a17da4e3`.
+`media-generation-runtime` and `media-generation-runtime-shared` from
+`src/plugin-sdk/media-generation-runtime.ts`,
+`src/plugin-sdk/media-generation-runtime-shared.ts`, and
+`src/media-generation/runtime-shared.ts` are checkpointed in `f475d85a`.
 Count all with the plugin/extension system row above.
 
 ## How To Use This Map
