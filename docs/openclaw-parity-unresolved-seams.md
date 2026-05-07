@@ -4,7 +4,7 @@ Updated: 2026-05-07
 
 Current percentage rollup:
 
-- Repo-wide OpenClaw parity is estimated at ~98.6% overall, with a reasonable
+- Repo-wide OpenClaw parity is estimated at ~98.7% overall, with a reasonable
   band of ~80-99%.
 - The active gateway/session/tool-contract family is estimated at ~99.9% of the
   bounded OpenZues-local parity path.
@@ -118,7 +118,7 @@ Current percentage rollup:
   approval-handler-adapter-runtime helper, approval-handler-runtime
   adapter-factory, realtime-voice helper, media-understanding-runtime helper,
   media-understanding provider-helper, messaging-targets, web-media, speech,
-  zalouser, and zod slices.
+  zalouser, zod, and web-content-extractor slices.
 - The gateway session/tool-contract family is estimated at ~99.9% after the
   latest companion remote macOS bin discovery slice.
 - The CLI/operator control-plane family is estimated at ~99.9% after the bundle
@@ -9396,6 +9396,13 @@ Current queue-head adjustment: `agents.files.list`, `agents.files.get`, and `age
   arrays, records, unknown, optional/default/describe, transforms, safe parse,
   and `superRefine` custom issue projection. Source/test checkpointed in
   `c49cbd4a`; repo-wide parity is now estimated at ~98.6%.
+- Current queue-head adjustment: imported plugin SDK `web-content-extractor`
+  now exposes the source-backed HTML/Markdown helper facade for scoped and
+  unscoped imports: `extractBasicHtmlContent`, `htmlToMarkdown`,
+  `markdownToText`, `normalizeWhitespace`, `sanitizeHtml`, and
+  `stripInvisibleUnicode`, including hidden element removal and invisible
+  Unicode cleanup. Source/test checkpointed in `563d69d7`; repo-wide parity is
+  now estimated at ~98.7%.
 - The queue head now tracks the remaining advertised runtime-control hard gaps,
   especially broader runtime/client integration and session runtime methods
   (`chat.*`, `sessions.*`), rather than the older
