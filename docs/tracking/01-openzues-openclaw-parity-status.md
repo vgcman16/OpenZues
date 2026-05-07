@@ -16,7 +16,7 @@ may lag behind this tracker.
 
 | Family | Percent | Confidence | Notes |
 | --- | ---: | --- | --- |
-| Repo-wide OpenClaw parity | ~93.0% | Medium | Breadth-weighted planning estimate, not generated metric |
+| Repo-wide OpenClaw parity | ~93.1% | Medium | Breadth-weighted planning estimate, not generated metric |
 | Active gateway/session/tool-contract family | ~99.9% | High for bounded local path | Does not mean whole product parity |
 | Chat/session contract subfamily | ~98.3% | High for bounded local path | Current local session/chat contracts are near complete |
 | Browser/canvas/nodes/voice bounded command family | ~99% | High for bounded local path | No longer active queue head |
@@ -2605,6 +2605,18 @@ may lag behind this tracker.
   - Last verified: 2026-05-07, focused models-provider-runtime proof (`1
     passed`), adjacent SDK helper proof (`6 passed, 1027 deselected`),
     adjacent imported-plugin proof (`221 passed, 812 deselected`),
+    `ruff check`, `mypy`, and `git diff --check`.
+
+- [x] Imported plugin SDK skill-commands-runtime helper shim.
+  - Source: `openclaw-main/src/plugin-sdk/skill-commands-runtime.ts`,
+    `openclaw-main/src/auto-reply/skill-commands.ts`
+  - Target: `src/openzues/cli.py`, `tests/test_gateway_node_methods.py`
+  - Test: `tests/test_gateway_node_methods.py`
+  - Status: checkpointed in `14864460`
+  - Weight: 1
+  - Last verified: 2026-05-07, focused skill-commands-runtime proof (`1
+    passed`), adjacent SDK helper proof (`5 passed, 1029 deselected`),
+    adjacent imported-plugin proof (`222 passed, 812 deselected`),
     `ruff check`, `mypy`, and `git diff --check`.
 
 - [x] Imported plugin runtime tool factory context.
