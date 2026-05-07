@@ -24318,6 +24318,206 @@ function createClaimableDedupe(options) {
   };
 }
 
+function getQaRunnerRuntimeHost() {
+  return globalThis.__openzuesQaRunnerRuntime || {};
+}
+
+function resolvePrivateQaBundledPluginsEnv(env = process.env) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.resolvePrivateQaBundledPluginsEnv === "function") {
+    return host.resolvePrivateQaBundledPluginsEnv(env);
+  }
+  if (env.OPENCLAW_ENABLE_PRIVATE_QA_CLI !== "1") {
+    return undefined;
+  }
+  const bundledPluginsDir = host.privateQaBundledPluginsDir;
+  if (!bundledPluginsDir) {
+    return undefined;
+  }
+  return {
+    ...env,
+    OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+  };
+}
+
+function loadBundledPluginPublicSurfaceModuleSync(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.loadBundledPluginPublicSurfaceModuleSync === "function") {
+    return host.loadBundledPluginPublicSurfaceModuleSync(params);
+  }
+  throw new Error(
+    `Unable to open bundled plugin public surface ${params.dirName}/${params.artifactBasename}`,
+  );
+}
+
+function tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.tryLoadActivatedBundledPluginPublicSurfaceModuleSync === "function") {
+    return host.tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params);
+  }
+  return null;
+}
+
+function loadPluginManifestRegistryForQa(params) {
+  const host = getQaRunnerRuntimeHost();
+  if (typeof host.loadPluginManifestRegistry === "function") {
+    return host.loadPluginManifestRegistry(params);
+  }
+  if (host.manifestRegistry) {
+    return host.manifestRegistry;
+  }
+  return { plugins: [], diagnostics: [] };
+}
+
+function isMissingQaRuntimeError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.message.includes("qa-lab") &&
+    (error.message.includes("runtime-api.js") ||
+      error.message.startsWith("Unable to open bundled plugin public surface "))
+  );
+}
+
+function loadQaRuntimeModule() {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: ["qa", "lab"].join("-"),
+    artifactBasename: ["runtime-api", "js"].join("."),
+    ...(env ? { env } : {}),
+  });
+}
+
+function loadQaRunnerBundledPluginTestApi(pluginId) {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  return loadBundledPluginPublicSurfaceModuleSync({
+    dirName: pluginId,
+    artifactBasename: "test-api.js",
+    ...(env ? { env } : {}),
+  });
+}
+
+function isQaRuntimeAvailable() {
+  try {
+    loadQaRuntimeModule();
+    return true;
+  } catch (error) {
+    if (isMissingQaRuntimeError(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function listDeclaredQaRunnerPlugins(env = resolvePrivateQaBundledPluginsEnv()) {
+  const registry = loadPluginManifestRegistryForQa(env ? { env } : undefined);
+  return (registry.plugins || [])
+    .filter((plugin) => Array.isArray(plugin.qaRunners) && plugin.qaRunners.length > 0)
+    .slice()
+    .sort((left, right) => {
+      const idCompare = String(left.id || "").localeCompare(String(right.id || ""));
+      if (idCompare !== 0) {
+        return idCompare;
+      }
+      return String(left.rootDir || "").localeCompare(String(right.rootDir || ""));
+    });
+}
+
+function indexQaRunnerRuntimeRegistrations(pluginId, surface) {
+  const registrations = (surface && surface.qaRunnerCliRegistrations) || [];
+  const registrationByCommandName = new Map();
+  for (const registration of registrations) {
+    if (!registration || !registration.commandName || typeof registration.register !== "function") {
+      throw new Error(`QA runner plugin "${pluginId}" exported an invalid CLI registration`);
+    }
+    if (registrationByCommandName.has(registration.commandName)) {
+      throw new Error(
+        `QA runner plugin "${pluginId}" exported duplicate CLI registration ` +
+          `"${registration.commandName}"`,
+      );
+    }
+    registrationByCommandName.set(registration.commandName, registration);
+  }
+  return registrationByCommandName;
+}
+
+function loadQaRunnerRuntimeSurface(plugin, env) {
+  if (plugin.origin === "bundled") {
+    return loadBundledPluginPublicSurfaceModuleSync({
+      dirName: plugin.id,
+      artifactBasename: "runtime-api.js",
+      ...(env ? { env } : {}),
+    });
+  }
+  return tryLoadActivatedBundledPluginPublicSurfaceModuleSync({
+    dirName: plugin.id,
+    artifactBasename: "runtime-api.js",
+    ...(env ? { env } : {}),
+  });
+}
+
+function listQaRunnerCliContributions() {
+  const env = resolvePrivateQaBundledPluginsEnv();
+  const contributions = new Map();
+  for (const plugin of listDeclaredQaRunnerPlugins(env)) {
+    const runtimeSurface = loadQaRunnerRuntimeSurface(plugin, env);
+    const runtimeRegistrationByCommandName = runtimeSurface
+      ? indexQaRunnerRuntimeRegistrations(plugin.id, runtimeSurface)
+      : null;
+    const declaredCommandNames = new Set(
+      (plugin.qaRunners || []).map((runner) => runner.commandName),
+    );
+
+    for (const runner of plugin.qaRunners || []) {
+      const previous = contributions.get(runner.commandName);
+      if (previous && previous.pluginId !== plugin.id) {
+        throw new Error(
+          `QA runner command "${runner.commandName}" declared by both ` +
+            `"${previous.pluginId}" and "${plugin.id}"`,
+        );
+      }
+      const registration = runtimeRegistrationByCommandName
+        ? runtimeRegistrationByCommandName.get(runner.commandName)
+        : null;
+      if (!runtimeSurface) {
+        contributions.set(runner.commandName, {
+          pluginId: plugin.id,
+          commandName: runner.commandName,
+          ...(runner.description ? { description: runner.description } : {}),
+          status: "blocked",
+        });
+        continue;
+      }
+      if (!registration) {
+        throw new Error(
+          `QA runner plugin "${plugin.id}" declared "${runner.commandName}" ` +
+            "in openclaw.plugin.json but did not export a matching CLI registration",
+        );
+      }
+      contributions.set(runner.commandName, {
+        pluginId: plugin.id,
+        commandName: runner.commandName,
+        ...(runner.description ? { description: runner.description } : {}),
+        status: "available",
+        registration,
+      });
+    }
+
+    for (const commandName of runtimeRegistrationByCommandName
+      ? runtimeRegistrationByCommandName.keys()
+      : []) {
+      if (!declaredCommandNames.has(commandName)) {
+        throw new Error(
+          `QA runner plugin "${plugin.id}" exported "${commandName}" from ` +
+            "runtime-api.js but did not declare it in openclaw.plugin.json",
+        );
+      }
+    }
+  }
+  return [...contributions.values()];
+}
+
 const DEFAULT_INBOUND_DEDUPE_TTL_MS = 20 * 60000;
 const DEFAULT_INBOUND_DEDUPE_MAX = 5000;
 const INBOUND_DEDUPE_CACHE_KEY = Symbol.for("openclaw.inboundDedupeCache");
@@ -49990,6 +50190,13 @@ const persistentDedupeRuntime = {
   createPersistentDedupe,
 };
 
+const qaRunnerRuntime = {
+  isQaRuntimeAvailable,
+  listQaRunnerCliContributions,
+  loadQaRunnerBundledPluginTestApi,
+  loadQaRuntimeModule,
+};
+
 const replyDedupeRuntime = {
   resetInboundDedupe,
 };
@@ -57062,6 +57269,12 @@ Module._load = function openzuesPluginSdkAlias(request, parent, isMain) {
     request === "@openclaw/plugin-sdk/persistent-dedupe"
   ) {
     return persistentDedupeRuntime;
+  }
+  if (
+    request === "openclaw/plugin-sdk/qa-runner-runtime" ||
+    request === "@openclaw/plugin-sdk/qa-runner-runtime"
+  ) {
+    return qaRunnerRuntime;
   }
   if (
     request === "openclaw/plugin-sdk/reply-dedupe" ||

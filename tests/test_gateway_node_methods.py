@@ -35704,6 +35704,307 @@ module.exports = {
 
 
 @pytest.mark.asyncio
+async def test_tools_invoke_imported_openclaw_qa_runner_runtime_helpers(
+    tmp_path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is required for native OpenClaw plugin runtime imports.")
+    runtime_entry = tmp_path / "runtime-plugin-qa-runner-runtime.cjs"
+    runtime_entry.write_text(
+        """
+const qaRuntime = require("openclaw/plugin-sdk/qa-runner-runtime");
+const scopedQaRuntime = require("@openclaw/plugin-sdk/qa-runner-runtime");
+
+module.exports = {
+  register(api) {
+    api.registerTool({
+      name: "runtime.qa_runner",
+      description: "Use OpenClaw qa-runner-runtime SDK shim",
+      parameters: { type: "object" },
+      execute() {
+        const calls = [];
+        const makeRegistration = (commandName) => ({
+          commandName,
+          register: (qa) => ({ qa, commandName })
+        });
+        globalThis.__openzuesQaRunnerRuntime = {
+          loadBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push({ kind: "bundled", params });
+            if (params.dirName === "qa-lab") {
+              return {
+                defaultQaRuntimeModelForMode: (mode) => `model:${mode}`,
+                startQaLiveLaneGateway: () => "started"
+              };
+            }
+            if (params.artifactBasename === "test-api.js") {
+              return { testApi: params.dirName };
+            }
+            if (params.dirName === "qa-matrix") {
+              return { qaRunnerCliRegistrations: [makeRegistration("matrix")] };
+            }
+            return { qaRunnerCliRegistrations: [] };
+          },
+          tryLoadActivatedBundledPluginPublicSurfaceModuleSync(params) {
+            calls.push({ kind: "activated", params });
+            if (params.dirName === "qa-activated") {
+              return { qaRunnerCliRegistrations: [makeRegistration("activated")] };
+            }
+            return null;
+          },
+          loadPluginManifestRegistry(params) {
+            calls.push({ kind: "manifest", params: params || null });
+            return {
+              diagnostics: [],
+              plugins: [
+                {
+                  id: "qa-blocked",
+                  origin: "workspace",
+                  rootDir: "/tmp/qa-blocked",
+                  qaRunners: [{ commandName: "blocked" }]
+                },
+                {
+                  id: "qa-matrix",
+                  origin: "bundled",
+                  rootDir: "/tmp/qa-matrix",
+                  qaRunners: [
+                    {
+                      commandName: "matrix",
+                      description: "Run Matrix QA"
+                    }
+                  ]
+                },
+                {
+                  id: "qa-activated",
+                  origin: "workspace",
+                  rootDir: "/tmp/qa-activated",
+                  qaRunners: [{ commandName: "activated" }]
+                },
+                {
+                  id: "not-qa",
+                  origin: "workspace",
+                  rootDir: "/tmp/not-qa",
+                  qaRunners: []
+                }
+              ]
+            };
+          }
+        };
+
+        const keys = Object.keys(qaRuntime).sort();
+        const beforeCalls = calls.length;
+        const lab = qaRuntime.loadQaRuntimeModule();
+        const testApi = scopedQaRuntime.loadQaRunnerBundledPluginTestApi("qa-matrix");
+        const contributions = qaRuntime.listQaRunnerCliContributions().map((contribution) => ({
+          pluginId: contribution.pluginId,
+          commandName: contribution.commandName,
+          description: contribution.description || null,
+          status: contribution.status,
+          registrationType: contribution.registration
+            ? typeof contribution.registration.register
+            : null
+        }));
+
+        let unavailable = false;
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = () => {
+          throw new Error("Unable to open bundled plugin public surface qa-lab/runtime-api.js");
+        };
+        unavailable = qaRuntime.isQaRuntimeAvailable();
+
+        let duplicateError = "";
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = (
+          params
+        ) => ({
+          qaRunnerCliRegistrations: [
+            makeRegistration(params.dirName === "alpha" ? "dupe" : "dupe")
+          ]
+        });
+        globalThis.__openzuesQaRunnerRuntime.tryLoadActivatedBundledPluginPublicSurfaceModuleSync =
+          () => null;
+        globalThis.__openzuesQaRunnerRuntime.loadPluginManifestRegistry = () => ({
+          diagnostics: [],
+          plugins: [
+            {
+              id: "alpha",
+              origin: "bundled",
+              rootDir: "/tmp/alpha",
+              qaRunners: [{ commandName: "dupe" }]
+            },
+            {
+              id: "beta",
+              origin: "bundled",
+              rootDir: "/tmp/beta",
+              qaRunners: [{ commandName: "dupe" }]
+            }
+          ]
+        });
+        try {
+          qaRuntime.listQaRunnerCliContributions();
+        } catch (error) {
+          duplicateError = error.message;
+        }
+
+        let undeclaredError = "";
+        globalThis.__openzuesQaRunnerRuntime.loadPluginManifestRegistry = () => ({
+          diagnostics: [],
+          plugins: [
+            {
+              id: "qa-extra",
+              origin: "bundled",
+              rootDir: "/tmp/qa-extra",
+              qaRunners: [{ commandName: "declared" }]
+            }
+          ]
+        });
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = () => ({
+          qaRunnerCliRegistrations: [
+            makeRegistration("declared"),
+            makeRegistration("extra")
+          ]
+        });
+        try {
+          qaRuntime.listQaRunnerCliContributions();
+        } catch (error) {
+          undeclaredError = error.message;
+        }
+
+        let invalidError = "";
+        globalThis.__openzuesQaRunnerRuntime.loadBundledPluginPublicSurfaceModuleSync = () => ({
+          qaRunnerCliRegistrations: [{ commandName: "bad", register: "nope" }]
+        });
+        try {
+          qaRuntime.listQaRunnerCliContributions();
+        } catch (error) {
+          invalidError = error.message;
+        }
+
+        return {
+          keys,
+          beforeCalls,
+          scopedType: typeof scopedQaRuntime.listQaRunnerCliContributions,
+          labModel: lab.defaultQaRuntimeModelForMode("live"),
+          testApi,
+          contributions,
+          callSummary: calls.map((call) => ({
+            kind: call.kind,
+            dirName: call.params && call.params.dirName,
+            artifact: call.params && call.params.artifactBasename
+          })),
+          unavailable,
+          duplicateError,
+          undeclaredError,
+          invalidError
+        };
+      }
+    });
+  }
+};
+""".strip(),
+        encoding="utf-8",
+    )
+    adapter = cli_module._NativeInstalledPluginRuntimeActivationAdapter()
+    runtime_specs = adapter.activate_installed_plugins(
+        {
+            "plugins": [
+                {
+                    "id": "runtime-qa-runner-plugin",
+                    "name": "Runtime QA Runner Plugin",
+                    "status": "loaded",
+                    "runtimeEntrySource": str(runtime_entry),
+                }
+            ]
+        }
+    )
+    database = Database(tmp_path / "gateway-tools-invoke-qa-runner-runtime.db")
+    await database.initialize()
+    config_service = GatewayConfigService(
+        assistant_name="OpenZues",
+        assistant_avatar="/static/favicon.svg",
+        assistant_agent_id="assistant-control-ui",
+        server_version="9.9.9",
+        data_dir=tmp_path,
+    )
+    config_service.set_raw(
+        json.dumps(
+            {
+                "assistantName": "OpenZues",
+                "assistantAvatar": "/static/favicon.svg",
+                "assistantAgentId": "assistant-control-ui",
+                "serverVersion": "9.9.9",
+                "gateway": {"tools": {"allow": ["runtime.qa_runner"]}},
+            }
+        )
+    )
+    service = GatewayNodeMethodService(
+        GatewayNodeRegistry(),
+        database=database,
+        config_service=config_service,
+        plugin_runtime_service=GatewayPluginRuntimeService(
+            registry_executors=runtime_specs,
+        ),
+    )
+
+    payload = await service.call(
+        "tools.invoke",
+        {
+            "tool": "runtime.qa_runner",
+            "args": {},
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["result"] == {
+        "keys": [
+            "isQaRuntimeAvailable",
+            "listQaRunnerCliContributions",
+            "loadQaRunnerBundledPluginTestApi",
+            "loadQaRuntimeModule",
+        ],
+        "beforeCalls": 0,
+        "scopedType": "function",
+        "labModel": "model:live",
+        "testApi": {"testApi": "qa-matrix"},
+        "contributions": [
+            {
+                "pluginId": "qa-activated",
+                "commandName": "activated",
+                "description": None,
+                "status": "available",
+                "registrationType": "function",
+            },
+            {
+                "pluginId": "qa-blocked",
+                "commandName": "blocked",
+                "description": None,
+                "status": "blocked",
+                "registrationType": None,
+            },
+            {
+                "pluginId": "qa-matrix",
+                "commandName": "matrix",
+                "description": "Run Matrix QA",
+                "status": "available",
+                "registrationType": "function",
+            },
+        ],
+        "callSummary": [
+            {"kind": "bundled", "dirName": "qa-lab", "artifact": "runtime-api.js"},
+            {"kind": "bundled", "dirName": "qa-matrix", "artifact": "test-api.js"},
+            {"kind": "manifest", "dirName": None, "artifact": None},
+            {"kind": "activated", "dirName": "qa-activated", "artifact": "runtime-api.js"},
+            {"kind": "activated", "dirName": "qa-blocked", "artifact": "runtime-api.js"},
+            {"kind": "bundled", "dirName": "qa-matrix", "artifact": "runtime-api.js"},
+        ],
+        "unavailable": False,
+        "duplicateError": 'QA runner command "dupe" declared by both "alpha" and "beta"',
+        "undeclaredError": (
+            'QA runner plugin "qa-extra" exported "extra" from runtime-api.js but did not '
+            "declare it in openclaw.plugin.json"
+        ),
+        "invalidError": 'QA runner plugin "qa-extra" exported an invalid CLI registration',
+    }
+
+
+@pytest.mark.asyncio
 async def test_tools_invoke_imported_openclaw_diagnostic_runtime_helpers(
     tmp_path,
 ) -> None:
